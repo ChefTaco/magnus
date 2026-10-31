@@ -144,6 +144,7 @@ export const envSchema = z.object({
   SSH_USERNAME: z.string().optional(),
   SSH_PASSWORD: z.string().optional(),
   SSH_PRIVATE_KEY_PATH: z.string().optional(),
+  SSH_HOST_KEY_PINS_FILE: z.string().optional(),
   MAGNUS_DOCKER_USER: z.string().optional(),
 
   // HiveMem (shared agent memory)

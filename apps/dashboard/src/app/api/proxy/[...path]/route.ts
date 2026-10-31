@@ -7,6 +7,8 @@ import { validateProxyTarget } from '../allowed-targets';
 import { COOKIE_NAME, getSecretKey, sessionVerificationOptions } from '@/lib/auth-constants';
 import { controlApiFetch } from '@/lib/control-api-fetch';
 import { resolveProxyTarget } from '@/lib/proxy-target';
+import { readLimitedRequestBody, RequestBodyTooLarge } from '@/lib/limited-request-body';
+import { readDashboardEnvironment } from '../../../../../runtime-environment.mjs';
 
 /**
  * Server-side proxy for Control Node API calls.
@@ -59,7 +61,7 @@ async function proxyHandler(
     );
   }
 
-  const limitBytes = Number(process.env['DASHBOARD_PROXY_BODY_LIMIT_BYTES'] ?? 1_048_576);
+  const limitBytes = Number(readDashboardEnvironment('DASHBOARD_PROXY_BODY_LIMIT_BYTES'));
   const contentLength = Number(req.headers.get('content-length') ?? '0');
   if (Number.isFinite(contentLength) && contentLength > limitBytes) {
     return NextResponse.json(
@@ -123,10 +125,13 @@ async function proxyHandler(
   // Forward body for methods that have one
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     try {
-      const body = await req.text();
+      const body = await readLimitedRequestBody(req, limitBytes);
       if (body) init.body = body;
-    } catch {
-      // no body — fine
+    } catch (error) {
+      return NextResponse.json(
+        { success: false, error: error instanceof RequestBodyTooLarge ? 'Request body too large' : 'Unable to read request body' },
+        { status: error instanceof RequestBodyTooLarge ? 413 : 400 },
+      );
     }
   }
 

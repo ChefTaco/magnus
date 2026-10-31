@@ -119,6 +119,19 @@ without any of them. `magnus-server check` prints which are on.
 
 Credentials for services that call Magnus are stored only as SHA-256 digests.
 
+SSH helpers require `SSH_HOST_KEY_PINS_FILE` before they open a connection.
+Set it to an operator-owned JSON file mapping lowercase `hostname:port` keys
+to arrays of OpenSSH SHA-256 fingerprints, for example:
+
+```json
+{"node-1.example.com:22": ["SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"]}
+```
+
+Replace the example with fingerprints verified through a trusted channel.
+Unknown destinations and changed keys fail before authentication. Multiple
+pins permit a reviewed host-key rotation; remove the old pin afterward.
+This setting does not enable the retired browser deployment routes.
+
 ## Develop
 
 From the repository root:

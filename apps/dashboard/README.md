@@ -114,6 +114,7 @@ Every variable the runtime configuration accepts. `magnus-ui env-schema` prints 
 | `CONTROL_API_URL` | Optional | `https://localhost:4000` | Default Magnus Control API target. |
 | `CONTROL_API_CA_PATH` | Optional | None | Private CA bundle used for verified Control API TLS. |
 | `CONTROL_API_MAX_RESPONSE_BYTES` | Optional | `1048576` | Maximum accepted Control API response size in bytes. |
+| `DASHBOARD_PROXY_BODY_LIMIT_BYTES` | Optional | `1048576` | Maximum forwarded request body size in bytes, enforced while streaming. |
 | `API_SECRET` | Required | None | Server-side secret injected into Control API proxy requests. |
 | `CONTROL_NODE_CREDENTIAL_KEY` | Required | None | Dedicated key for encrypted control-node credentials at rest. |
 | `SESSION_SECRET` | Required; temporary legacy fallback is separately gated | None | Dedicated dashboard session signing secret. |

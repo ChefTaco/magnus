@@ -4,6 +4,25 @@ All notable changes to this project are documented in this file. The format is b
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Security
+
+- Enforce dashboard proxy body limits while streaming, including requests with
+  missing or understated `Content-Length` headers.
+- Require explicit SSH host-key pins for Control API SSH helpers. Remove the
+  unused deployment and migration implementations behind the retired API,
+  including their unsafe shell interpolation and broad source-bundle transfer.
+- Update vulnerable production and development dependencies; retain the
+  compatible OpenAPI generator dependency with its documented development-only
+  advisory pending an upstream fix.
+- Scan staged Git content and npm payload contents for credentials and private
+  infrastructure. Redact scanner findings, reject local-state files, and clean
+  compiled outputs before building packages so deleted code cannot be shipped.
+- Run the full repository verification before npm publication.
+- Refuse real npm publication when the GitHub environment has no required
+  reviewer, and pin workflow actions to immutable release commits.
+
 ## [1.0.0] - 2026-10-31
 
 The first public release.

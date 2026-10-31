@@ -2,6 +2,7 @@ import { withApiSshOwnership } from './managed-ssh-admission.js';
 import { Client } from 'ssh2';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { sshHostVerification } from './ssh-host-verification.js';
 
 export interface SshCredentials {
   username: string;
@@ -160,6 +161,7 @@ export async function runRemoteCommand(
     });
 
     conn.connect({
+      ...sshHostVerification(target.hostname, target.port ?? 22),
       host: target.hostname,
       port: target.port ?? 22,
       username: target.username,

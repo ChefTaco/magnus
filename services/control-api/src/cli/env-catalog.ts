@@ -67,6 +67,7 @@ export const ENV_CATALOG: readonly EnvVariable[] = [
   { name: 'MAGNUS_NODE_DNS_SUFFIX', group: 'agents', description: 'Optional DNS suffix (for example a private overlay domain) under which agents report their FQDN.' },
   { name: 'SSH_USERNAME', group: 'agents', description: 'SSH user for agent install and upgrade over SSH.' },
   { name: 'SSH_PRIVATE_KEY_PATH', group: 'agents', description: 'SSH private key for SSH_USERNAME (preferred over a password).' },
+  { name: 'SSH_HOST_KEY_PINS_FILE', group: 'agents', description: 'Required for SSH operations: trusted hostname:port to SHA256 host-key fingerprint arrays in a local JSON file.' },
   { name: 'SSH_PASSWORD', group: 'agents', secret: true, description: 'SSH password for SSH_USERNAME.' },
   { name: 'MAGNUS_DOCKER_USER', group: 'agents', description: 'Account whose docker group membership the server checks on its own host.' },
   { name: 'MAGNUS_RESOURCE_LEASES_ENABLED', group: 'agents', default: 'false', description: 'Enable durable node and shared-resource lease coordination.' },

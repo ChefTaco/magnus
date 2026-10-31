@@ -12,6 +12,7 @@ export const dashboardEnvironmentSchema = Object.freeze({
   CONTROL_API_URL: url({ default: 'https://localhost:4000', purpose: 'Default Magnus Control API target.' }),
   CONTROL_API_CA_PATH: path({ optional: true, purpose: 'Private CA bundle used for verified Control API TLS.' }),
   CONTROL_API_MAX_RESPONSE_BYTES: integer({ default: 1_048_576, minimum: 1024, purpose: 'Maximum accepted Control API response size in bytes.' }),
+  DASHBOARD_PROXY_BODY_LIMIT_BYTES: integer({ default: 1_048_576, minimum: 1, purpose: 'Maximum forwarded request body size in bytes, enforced while streaming.' }),
   API_SECRET: string({ required: true, sensitive: true, purpose: 'Server-side secret injected into Control API proxy requests.' }),
   CONTROL_NODE_CREDENTIAL_KEY: string({ required: true, sensitive: true, minimumLength: 32, purpose: 'Dedicated key for encrypted control-node credentials at rest.' }),
   SESSION_SECRET: string({ optional: true, sensitive: true, requirement: 'Required; temporary legacy fallback is separately gated', purpose: 'Dedicated dashboard session signing secret.' }),

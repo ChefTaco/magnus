@@ -1,8 +1,11 @@
 /** Disposable PostgreSQL + real loopback SSH; no fleet commands or credentials. */
-import { createHmac, randomUUID, generateKeyPairSync } from 'node:crypto';
+import { createHash, createHmac, randomUUID, generateKeyPairSync } from 'node:crypto';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { Server } from 'ssh2';
+import { Server, utils } from 'ssh2';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 const nodeId = `api-ssh-${randomUUID()}`; const host = `${nodeId}.invalid`;
 describe.skipIf(!process.env['TEST_DATABASE_URL'])('API SSH durable participant ownership (PostgreSQL)', () => {
@@ -369,6 +372,14 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('API SSH durable participant 
       client.on('ready', () => client.on('session', accept => accept().on('exec', acceptExec => { const stream = acceptExec(); stream.write('fixture'); stream.exit(0); stream.end(); })));
     });
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const temporary = await mkdtemp(join(tmpdir(), 'magnus-participant-ssh-'));
+    const previousPinsFile = process.env['SSH_HOST_KEY_PINS_FILE'];
+    const pinsFile = join(temporary, 'pins.json');
+    const parsed = utils.parseKey(key);
+    if (parsed instanceof Error || Array.isArray(parsed)) throw new Error('Invalid fixture key');
+    const fingerprint = `SHA256:${createHash('sha256').update(parsed.getPublicSSH()).digest('base64').replace(/=+$/, '')}`;
+    await writeFile(pinsFile, JSON.stringify({ [`127.0.0.1:${server.address().port}`]: [fingerprint] }));
+    vi.stubEnv('SSH_HOST_KEY_PINS_FILE', pinsFile);
     try {
       const { runRemoteCommand } = await import('./ssh-exec-service.js');
       const target = { hostname: '127.0.0.1', port: server.address().port, username: 'fixture' };
@@ -377,6 +388,11 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('API SSH durable participant 
       await enrollment.beginEnrollmentDrain(nodeId, 'fixture');
       await expect(runRemoteCommand(target, 'must-never-run')).rejects.toMatchObject({ code: 'RESOURCE_DRAIN_REQUIRED' });
       expect(connectionCount).toBe(1); expect((await enrollment.inspectEnrollment(nodeId)).api.unknownCount).toBe(1);
-    } finally { for (const client of clients) client.end(); await new Promise<void>(resolve => server.close(() => resolve())); }
+    } finally {
+      for (const client of clients) client.end();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+      vi.stubEnv('SSH_HOST_KEY_PINS_FILE', previousPinsFile);
+      await rm(temporary, { recursive: true, force: true });
+    }
   });
 });
