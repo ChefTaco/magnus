@@ -114,6 +114,7 @@ export const ENV_CATALOG: readonly EnvVariable[] = [
   { name: 'APPROVAL_SIGNER_PUBLIC_KEY_PEM', group: 'plugins', description: 'Ed25519 public key (PEM) that signs approval decisions. _B64 (DER) and _PATH variants are also accepted.' },
   { name: 'APPROVAL_TELEGRAM_ACTOR_SHA256', group: 'plugins', description: 'Actor binding digest for decisions from the Telegram channel.' },
   { name: 'APPROVAL_IPHONE_ACTOR_SHA256', group: 'plugins', description: 'Actor binding digest for decisions from the iPhone channel.' },
+  { name: 'MAGNUS_APPROVAL_ASSERTION_DOMAINS', group: 'plugins', default: 'magnus.approval-assertion', description: 'Comma-separated signature domain prefixes accepted for approval decisions (signed message is <prefix>.v<N>). The first is preferred; add a legacy signer domain to keep older signers working.' },
   { name: 'MAGNUS_COLLECTOR_TOKEN_SHA256', group: 'plugins', description: 'SHA-256 digest of a read-only external observability collector credential.' },
   { name: 'MAGNUS_FLEET_CHECK_TOKEN_SHA256', group: 'plugins', description: 'SHA-256 digest of the fleet-check reporter credential.' },
 

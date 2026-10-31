@@ -3,6 +3,26 @@ import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 import { HttpError } from '../middleware/error-handler.js';
 
+/** Signature domain prefix for approval assertions; the signed message is `<prefix>.v<version>\n<canonical payload>`. */
+export const DEFAULT_APPROVAL_ASSERTION_DOMAIN = 'magnus.approval-assertion';
+export const approvalAssertionDomainPattern = /^[a-z0-9](?:[a-z0-9.-]{0,98}[a-z0-9])?$/;
+/**
+ * Accepted signature domain prefixes, in preference order. The first one is the
+ * domain this server would sign with. `MAGNUS_APPROVAL_ASSERTION_DOMAINS`
+ * (comma-separated) lets older signers that use another prefix keep working.
+ */
+export function approvalAssertionDomains(value = process.env['MAGNUS_APPROVAL_ASSERTION_DOMAINS']): string[] {
+  if (value === undefined || value.trim() === '') return [DEFAULT_APPROVAL_ASSERTION_DOMAIN];
+  const domains = value.split(',').map(item => item.trim()).filter(Boolean);
+  if (!domains.length || domains.some(domain => !approvalAssertionDomainPattern.test(domain)))
+    throw new Error('MAGNUS_APPROVAL_ASSERTION_DOMAINS must list domain prefixes made of a-z, 0-9, "." and "-"');
+  return [...new Set(domains)];
+}
+/** The exact bytes signed for an approval payload under a domain prefix. */
+export function approvalSigningMessage(payload: ApprovalPayload, domain = approvalAssertionDomains()[0]!): Buffer {
+  return Buffer.from(`${domain}.v${payload.version}\n` + approvalPayloadCanonical(payload));
+}
+
 const identifier = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9:._-]{0,159}$/);
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const payloadFields = {
@@ -50,8 +70,9 @@ export function verifyApprovalAssertion(raw: unknown): { payload: ApprovalPayloa
     const key = createPublicKey(inline ?? (encoded
       ? { key: Buffer.from(encoded, 'base64'), format: 'der', type: 'spki' }
       : readFileSync(path!, 'utf8')));
-    valid = key.asymmetricKeyType === 'ed25519' && verify(null,
-      Buffer.from(`magnus.approval-assertion.v${payload.version}\n`+canonical), key, Buffer.from(signature, 'base64url'));
+    const signatureBytes = Buffer.from(signature, 'base64url');
+    valid = key.asymmetricKeyType === 'ed25519' && approvalAssertionDomains()
+      .some(domain => verify(null, approvalSigningMessage(payload, domain), key, signatureBytes));
   } catch { valid = false; }
   if (!valid || !timingSafeEqual(Buffer.from(actor, 'hex'), Buffer.from(payload.actor_binding_sha256, 'hex')))
     throw new HttpError(403, 'APPROVAL_ASSERTION_INVALID', 'Approval decision authentication failed');

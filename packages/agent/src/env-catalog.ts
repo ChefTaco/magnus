@@ -64,6 +64,7 @@ export const agentEnvCatalog: EnvVarSpec[] = [
   { name: 'CODEX_HOME', required: false, secret: false, default: '~/.codex', group: 'codex', description: 'Codex state directory override.' },
   { name: 'ARDENT_OWNER_USER', required: false, secret: false, group: 'ardent', description: 'Local account that owns the Ardent runtime and profiles.' },
   { name: 'ARDENT_STAGED_PACKAGE', required: false, secret: false, default: '/opt/magnus-agent/ardent-package.tgz', group: 'ardent', description: 'Verified Ardent package tarball staged for installation.' },
+  { name: 'MAGNUS_AGENT_ARDENT_PACKAGES', required: false, secret: false, default: '@hivemagnus/ardent', group: 'ardent', description: 'Comma-separated scoped npm package names accepted as the Ardent runtime (staged sidecar, install path, receipt), in preference order. Add a legacy name to keep managing an older Ardent build.' },
   { name: 'MAGNUS_AGENT_RENEWAL_CONFIG', required: false, secret: false, default: '$AGENT_INSTALL_DIR/credential-renewal.json', group: 'renewal', description: 'HiveMem credential renewal entries (root-owned, mode 0600). Absent means renewal is off.' },
   { name: 'MAGNUS_AGENT_RENEWAL_ENDPOINTS', required: false, secret: false, group: 'renewal', description: 'Comma-separated HTTPS HiveMem base URLs renewal may call.' },
   { name: 'MAGNUS_AGENT_RENEWAL_UNITS', required: false, secret: false, group: 'renewal', description: 'Comma-separated systemd units renewal may try-restart after replacing a credential.' },

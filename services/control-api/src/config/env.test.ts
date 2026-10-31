@@ -80,6 +80,13 @@ describe('Hive IAM environment contract', () => {
     expect(env.IAM_TOKEN_AUDIENCE).toBe('magnus');
   });
 
+  it('validates accepted approval-assertion signature domains', () => {
+    expect(loadEnv({}).MAGNUS_APPROVAL_ASSERTION_DOMAINS).toBeUndefined();
+    expect(loadEnv({ MAGNUS_APPROVAL_ASSERTION_DOMAINS: 'magnus.approval-assertion, legacy.approval' }).MAGNUS_APPROVAL_ASSERTION_DOMAINS)
+      .toBe('magnus.approval-assertion, legacy.approval');
+    for (const invalid of ['Legacy', 'a,,b', 'legacy_approval', 'x.'])
+      expect(() => loadEnv({ MAGNUS_APPROVAL_ASSERTION_DOMAINS: invalid }), invalid).toThrow(/MAGNUS_APPROVAL_ASSERTION_DOMAINS/);
+  });
   it('rejects a short dedicated audit-chain secret', () => {
     expect(() => loadEnv({ AUDIT_HMAC_SECRET: 'source-known-default' })).toThrow(
       /AUDIT_HMAC_SECRET/,

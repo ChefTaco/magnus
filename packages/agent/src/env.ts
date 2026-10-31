@@ -10,6 +10,7 @@
 import { getFqdn } from './fqdn.js';
 import { isIPv4 } from 'node:net';
 import { agentPrivileged, isRoot } from './privileged.js';
+import { ardentPackageNames } from './executors/ardent-packages.js';
 
 function envFlag(name: string, fallback = false): boolean {
   return (process.env[name] ?? String(fallback)).toLowerCase() === 'true';
@@ -127,6 +128,10 @@ export function configurationErrors(): string[] {
   }
   if (!agentPrivileged() && MAGNUS_EXECUTION_SUPERVISOR_ENABLED) {
     errors.push('MAGNUS_EXECUTION_SUPERVISOR_ENABLED=true requires MAGNUS_AGENT_PRIVILEGED=true');
+  }
+
+  try { ardentPackageNames(); } catch (error: unknown) {
+    errors.push(error instanceof Error ? error.message : 'MAGNUS_AGENT_ARDENT_PACKAGES is invalid');
   }
 
   return errors;

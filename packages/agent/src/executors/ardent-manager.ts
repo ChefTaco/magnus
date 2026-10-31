@@ -7,6 +7,9 @@ import { Hono } from 'hono';
 import { parse as parseEnv } from 'dotenv';
 import YAML from 'yaml';
 import { z } from 'zod';
+import { ardentPackageNames } from './ardent-packages.js';
+
+export { ardentPackageNames, DEFAULT_ARDENT_PACKAGE } from './ardent-packages.js';
 
 const profileName = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
 const configSummary = z.object({
@@ -16,12 +19,31 @@ const configSummary = z.object({
   a2a: z.object({ enabled: z.boolean() }).passthrough(),
   channels: z.record(z.string().regex(/^[a-z][a-z0-9_-]{0,31}$/), z.object({ enabled: z.boolean() }).passthrough()).default({}),
 }).passthrough();
-const packageVersion = z.object({ name: z.literal('@hivemagnus/ardent'), version: z.string() });
+const acceptedPackageName = z.string().refine(name => ardentPackageNames().includes(name), 'Ardent package name is not accepted by MAGNUS_AGENT_ARDENT_PACKAGES');
+const packageVersion = z.object({ name: acceptedPackageName, version: z.string() });
 const installedPackageReceipt = z.object({
-  schemaVersion: z.literal(1), name: z.literal('@hivemagnus/ardent'),
+  schemaVersion: z.literal(1), name: acceptedPackageName,
   version: z.string(), sha256: z.string().regex(/^[a-f0-9]{64}$/),
   packageTreeSha256: z.string().regex(/^[a-f0-9]{64}$/),
 }).strict();
+/** Package directory of an accepted Ardent package name inside an install prefix. */
+function packageDir(install: string, name: string): string {
+  if (!ardentPackageNames().includes(name)) throw new Error('Ardent package name is not accepted by MAGNUS_AGENT_ARDENT_PACKAGES');
+  return join(install, 'node_modules', ...name.split('/'));
+}
+/** The accepted Ardent package installed under `install`, in preference order. */
+async function installedPackageName(install: string): Promise<string | null> {
+  for (const name of ardentPackageNames()) {
+    try {
+      const installed = packageVersion.parse(JSON.parse(await readFile(join(packageDir(install, name), 'package.json'), 'utf8')) as unknown);
+      if (installed.name === name) return name;
+    } catch { /* Try the next accepted name. */ }
+  }
+  return null;
+}
+async function installedCli(install: string): Promise<string> {
+  return join(packageDir(install, await installedPackageName(install) ?? ardentPackageNames()[0]!), 'dist/cli.js');
+}
 type ConfigSummary = z.infer<typeof configSummary>;
 /** Channel name -> enabled, for every channel the profile config declares. */
 function channelStates(config: ConfigSummary): Record<string, boolean> {
@@ -85,7 +107,7 @@ async function probe(port: number, dir: string, tokenEnv: string, profile: strin
   } catch { return false; }
 }
 
-async function stagedPackage(): Promise<{ version: string; sha256: string } | null> {
+async function stagedPackage(): Promise<{ name: string; version: string; sha256: string } | null> {
   const archive = process.env['ARDENT_STAGED_PACKAGE'] ?? '/opt/magnus-agent/ardent-package.tgz';
   if (!isAbsolute(archive)) throw new Error('Ardent staged package path must be absolute');
   const sidecar = join(dirname(archive), 'ardent-package.json');
@@ -102,10 +124,10 @@ async function stagedPackage(): Promise<{ version: string; sha256: string } | nu
   const entry = (path: string) => manifest.files.find(item => item.path === path)?.sha256;
   const sidecarBytes = await readFile(sidecar);
   if (createHash('sha256').update(sidecarBytes).digest('hex') !== entry('ardent-package.json')) throw new Error('Staged Ardent package sidecar differs from release manifest');
-  const details = z.object({ name: z.literal('@hivemagnus/ardent'), version: z.string(), sha256: z.string().regex(/^[a-f0-9]{64}$/) }).parse(JSON.parse(sidecarBytes.toString('utf8')) as unknown);
+  const details = z.object({ name: acceptedPackageName, version: z.string(), sha256: z.string().regex(/^[a-f0-9]{64}$/) }).parse(JSON.parse(sidecarBytes.toString('utf8')) as unknown);
   const digest = createHash('sha256').update(await readFile(archive)).digest('hex');
   if (digest !== details.sha256 || digest !== entry('ardent-package.tgz')) throw new Error('Staged Ardent package differs from release manifest');
-  return { version: details.version, sha256: digest };
+  return { name: details.name, version: details.version, sha256: digest };
 }
 
 async function packageTreeDigest(packageRoot: string): Promise<string> {
@@ -130,7 +152,7 @@ async function packageTreeDigest(packageRoot: string): Promise<string> {
   return createHash('sha256').update(entries.sort().join('')).digest('hex');
 }
 
-export async function verifiedInstalledArdentPackage(install: string, staged: { version: string; sha256: string }): Promise<boolean> {
+export async function verifiedInstalledArdentPackage(install: string, staged: { name?: string; version: string; sha256: string }): Promise<boolean> {
   const receiptPath = join(install, 'package-receipt.json');
   const metadata = await lstat(receiptPath).catch((error: unknown) => {
     if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return undefined;
@@ -140,16 +162,20 @@ export async function verifiedInstalledArdentPackage(install: string, staged: { 
   if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > 4096) throw new Error('Installed Ardent package receipt is unsafe');
   const receipt = installedPackageReceipt.safeParse(JSON.parse(await readFile(receiptPath, 'utf8')) as unknown);
   if (!receipt.success || receipt.data.version !== staged.version || receipt.data.sha256 !== staged.sha256) return false;
-  return await packageTreeDigest(join(install, 'node_modules/@hivemagnus/ardent')) === receipt.data.packageTreeSha256;
+  if (staged.name !== undefined && receipt.data.name !== staged.name) return false;
+  return await packageTreeDigest(packageDir(install, receipt.data.name)) === receipt.data.packageTreeSha256;
 }
 
 export async function readArdentState(target?: ArdentRoot): Promise<object> {
   const root = target ?? await ardentRoot();
   let version: string | null = null;
+  let packageName: string | null = null;
   try {
-    const packageFile = join(root.install, 'node_modules/@hivemagnus/ardent/package.json');
-    const installed: unknown = JSON.parse(await readFile(packageFile, 'utf8'));
-    version = packageVersion.parse(installed).version;
+    packageName = await installedPackageName(root.install);
+    if (packageName) {
+      const installed: unknown = JSON.parse(await readFile(join(packageDir(root.install, packageName), 'package.json'), 'utf8'));
+      version = packageVersion.parse(installed).version;
+    }
   } catch { /* An uninstalled package is a normal inventory state. */ }
   const profiles = await Promise.all((await safeProfiles(root.root)).map(async name => {
     try {
@@ -166,7 +192,7 @@ export async function readArdentState(target?: ArdentRoot): Promise<object> {
   let stagedPackageError: string | null = null;
   try { staged = await stagedPackage(); }
   catch (error: unknown) { stagedPackageError = error instanceof Error ? error.message.slice(0, 200) : 'Staged package unavailable'; }
-  return { installed: version !== null, version, owner: root.owner, profiles, stagedPackage: staged, stagedPackageError, checkedAt: new Date().toISOString() };
+  return { installed: version !== null, version, packageName, owner: root.owner, profiles, stagedPackage: staged, stagedPackageError, checkedAt: new Date().toISOString() };
 }
 
 async function managementToken(dir: string, envName: string): Promise<string> {
@@ -236,11 +262,11 @@ export async function hermesTrafficConsumersDisabled(home: string): Promise<bool
   } catch { return false; }
 }
 
-export function ardentUserUnit(root: ArdentRoot, profile: string): string {
+export function ardentUserUnit(root: ArdentRoot, profile: string, packageName = ardentPackageNames()[0]!): string {
   profileName.parse(profile);
   const safe = /^[A-Za-z0-9_./-]+$/;
   if (![root.home, root.root, root.install].every(path => safe.test(path))) throw new Error('Ardent service paths contain unsupported characters');
-  return `[Unit]\nDescription=Magnus Ardent ${profile}\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nWorkingDirectory=${join(root.root, 'profiles', profile)}\nEnvironment=ARDENT_HOME=${root.root}\nExecStart=/usr/bin/node ${join(root.install, 'node_modules/@hivemagnus/ardent/dist/cli.js')} --profile ${profile} gateway run\nRestart=on-failure\nRestartSec=5\nTimeoutStopSec=75\nNoNewPrivileges=true\n\n[Install]\nWantedBy=default.target\n`;
+  return `[Unit]\nDescription=Magnus Ardent ${profile}\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nWorkingDirectory=${join(root.root, 'profiles', profile)}\nEnvironment=ARDENT_HOME=${root.root}\nExecStart=/usr/bin/node ${join(packageDir(root.install, packageName), 'dist/cli.js')} --profile ${profile} gateway run\nRestart=on-failure\nRestartSec=5\nTimeoutStopSec=75\nNoNewPrivileges=true\n\n[Install]\nWantedBy=default.target\n`;
 }
 
 async function serviceAction(root: ArdentRoot, profile: string, action: 'service-start' | 'service-stop' | 'service-restart'): Promise<object> {
@@ -259,7 +285,7 @@ async function serviceAction(root: ArdentRoot, profile: string, action: 'service
   }
   const unit = `ardent@${profile}.service`;
   const path = join(root.home, '.config/systemd/user', unit);
-  const expected = ardentUserUnit(root, profile);
+  const expected = ardentUserUnit(root, profile, await installedPackageName(root.install) ?? undefined);
   const metadata = await lstat(path).catch((error: unknown) => {
     if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return undefined;
     throw error;
@@ -272,7 +298,7 @@ async function serviceAction(root: ArdentRoot, profile: string, action: 'service
   if (existing !== undefined && existing !== expected) throw new Error('Existing Ardent user service differs from the managed unit');
   if (action !== 'service-start' && existing === undefined) throw new Error('Managed Ardent user service is not installed');
   if (action === 'service-start' && existing === undefined) {
-    const script = join(root.install, 'node_modules/@hivemagnus/ardent/dist/cli.js');
+    const script = await installedCli(root.install);
     const scriptInfo = await lstat(script);
     if (!scriptInfo.isFile() || scriptInfo.isSymbolicLink()) throw new Error('Ardent package executable is unavailable');
     await runAsOwner(root, ['/usr/bin/mkdir', '-p', join(root.home, '.config/systemd/user')], 10_000);
@@ -329,13 +355,13 @@ async function installPackage(root: ArdentRoot): Promise<object> {
   let installed = false;
   try {
     await runAsOwner(root, ['/usr/bin/npm', 'install', '--prefix', stage, '--omit=dev', '--no-audit', '--no-fund', '--no-save', archive], 9 * 60_000);
-    const packageFile = join(stage, 'node_modules/@hivemagnus/ardent/package.json');
+    const packageFile = join(packageDir(stage, staged.name), 'package.json');
     const candidate = packageVersion.parse(JSON.parse(await readFile(packageFile, 'utf8')) as unknown);
-    if (candidate.version !== staged.version) throw new Error('Staged Ardent package version differs');
+    if (candidate.name !== staged.name || candidate.version !== staged.version) throw new Error('Staged Ardent package name or version differs');
     await runAsOwner(root, ['/usr/bin/node', '-e', "const Database=require(process.argv[1]);new Database(':memory:').close()", join(stage, 'node_modules/better-sqlite3')], 10_000);
-    const packageTreeSha256 = await packageTreeDigest(join(stage, 'node_modules/@hivemagnus/ardent'));
+    const packageTreeSha256 = await packageTreeDigest(packageDir(stage, staged.name));
     await writeFile(join(stage, 'package-receipt.json'), `${JSON.stringify({
-      schemaVersion: 1, name: '@hivemagnus/ardent', version: staged.version, sha256: staged.sha256, packageTreeSha256,
+      schemaVersion: 1, name: staged.name, version: staged.version, sha256: staged.sha256, packageTreeSha256,
     })}\n`, { mode: 0o644 });
     if (priorInfo) { await rename(root.install, previous); movedPrior = true; }
     await rename(stage, root.install); installed = true;
@@ -363,7 +389,7 @@ async function createProfile(root: ArdentRoot, profile: string, body: unknown): 
     const current = await profileConfig(root.root, name);
     if (current.config.api.port === input.api_port) throw new Error(`API port is already assigned to profile ${name}`);
   }
-  const script = join(root.install, 'node_modules/@hivemagnus/ardent/dist/cli.js');
+  const script = await installedCli(root.install);
   const metadata = await lstat(script);
   if (!metadata.isFile() || metadata.isSymbolicLink()) throw new Error('Installed Ardent CLI is unsafe');
   await runAsOwner(root, ['/usr/bin/env', `ARDENT_HOME=${root.root}`, '/usr/bin/node', script,
@@ -384,7 +410,7 @@ async function importHermesProfile(root: ArdentRoot, profile: string, body: unkn
   const source = join(root.home, '.hermes');
   const sourceInfo = await lstat(source);
   if (!sourceInfo.isDirectory() || sourceInfo.isSymbolicLink()) throw new Error('Hermes source home is unsafe');
-  const script = join(root.install, 'node_modules/@hivemagnus/ardent/dist/cli.js');
+  const script = await installedCli(root.install);
   const scriptInfo = await lstat(script);
   if (!scriptInfo.isFile() || scriptInfo.isSymbolicLink()) throw new Error('Installed Ardent CLI is unsafe');
   const stdout = await runAsOwner(root, ['/usr/bin/env', `ARDENT_HOME=${root.root}`, '/usr/bin/node', script,

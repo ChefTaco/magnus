@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { approvalCanonicalJson, requireFreshApproval, verifyApprovalAssertion, type ApprovalPayload } from './approval-assertion.js';
+import { approvalAssertionDomains, approvalCanonicalJson, requireFreshApproval, verifyApprovalAssertion, type ApprovalPayload } from './approval-assertion.js';
 import { approvalSignerPublicKeyB64, signApprovalAssertion } from './approval-assertion-test-fixture.js';
 
 const actor = 'b'.repeat(64);
@@ -47,5 +47,31 @@ describe('isolated native Telegram decision assertion', () => {
     for (const change of [{ expires_at: Date.now()-1 }, { decided_at: Date.now()+40_000 },
       { expires_at: Date.now()+16*60_000 }])
       expect(() => requireFreshApproval({ ...payload(), ...change })).toThrow();
+  });
+});
+
+describe('configurable approval signature domains', () => {
+  it('defaults to the current domain and validates the configured list', () => {
+    expect(approvalAssertionDomains(undefined)).toEqual(['magnus.approval-assertion']);
+    expect(approvalAssertionDomains(' magnus.approval-assertion , legacy.approval,legacy.approval ')).toEqual(['magnus.approval-assertion', 'legacy.approval']);
+    for (const invalid of [',', 'Legacy.Approval', 'legacy approval', 'legacy\nx', '.legacy', 'legacy.', 'legacy_approval', 'x'.repeat(101)])
+      expect(() => approvalAssertionDomains(invalid), invalid).toThrow(/MAGNUS_APPROVAL_ASSERTION_DOMAINS/);
+  });
+  it('rejects a legacy signer domain unless it is configured', () => {
+    const legacy = signApprovalAssertion(payload(), 'legacy.approval');
+    expect(() => verifyApprovalAssertion(legacy)).toThrow('authentication failed');
+    vi.stubEnv('MAGNUS_APPROVAL_ASSERTION_DOMAINS', 'magnus.approval-assertion,legacy.approval');
+    expect(verifyApprovalAssertion(legacy).payload).toEqual(legacy.payload);
+    expect(verifyApprovalAssertion(signApprovalAssertion(payload())).payload.decision).toBe('approve');
+    expect(() => verifyApprovalAssertion(signApprovalAssertion(payload(), 'other.approval'))).toThrow('authentication failed');
+  });
+  it('stops accepting the default domain when the list omits it', () => {
+    vi.stubEnv('MAGNUS_APPROVAL_ASSERTION_DOMAINS', 'legacy.approval');
+    expect(() => verifyApprovalAssertion(signApprovalAssertion(payload()))).toThrow('authentication failed');
+    expect(verifyApprovalAssertion(signApprovalAssertion(payload(), 'legacy.approval')).payload.version).toBe(2);
+  });
+  it('fails closed when the configured list is malformed', () => {
+    vi.stubEnv('MAGNUS_APPROVAL_ASSERTION_DOMAINS', 'bad domain');
+    expect(() => verifyApprovalAssertion(signApprovalAssertion(payload()))).toThrow('authentication failed');
   });
 });

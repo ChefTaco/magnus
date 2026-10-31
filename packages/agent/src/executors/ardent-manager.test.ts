@@ -4,11 +4,13 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { createArdentRoutes, hermesTrafficConsumersDisabled, readArdentState, verifiedInstalledArdentPackage } from './ardent-manager.js';
+import { ardentPackageNames, ardentUserUnit, createArdentRoutes, hermesTrafficConsumersDisabled, readArdentState, verifiedInstalledArdentPackage } from './ardent-manager.js';
 
 const dirs: string[] = [];
 const servers: Server[] = [];
+const originalPackages = process.env['MAGNUS_AGENT_ARDENT_PACKAGES'];
 afterEach(async () => {
+  if (originalPackages === undefined) delete process.env['MAGNUS_AGENT_ARDENT_PACKAGES']; else process.env['MAGNUS_AGENT_ARDENT_PACKAGES'] = originalPackages;
   for (const server of servers.splice(0)) await new Promise<void>(resolve => server.close(() => resolve()));
   for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true });
 });
@@ -134,5 +136,82 @@ describe('node-local Ardent inventory and management boundary', () => {
     expect(admission.status).toBe(200);
     expect(await admission.json()).toEqual({ task_id: '00000000-0000-4000-8000-000000000001', state: 'queued' });
     expect(requests).toEqual(['/api/v1/profile', '/api/v1/profile', '/api/v1/status', '/api/v1/profile', `/api/v1/artifacts/${artifactId}`, '/api/v1/profile', '/api/v1/config/validate', '/api/v1/profile', '/api/v1/tasks']);
+  });
+});
+
+describe('accepted Ardent package names', () => {
+  const digest = (value: string) => createHash('sha256').update(value).digest('hex');
+  async function installFixture(name: string) {
+    const home = await mkdtemp(join(tmpdir(), 'magnus-ardent-names-'));
+    dirs.push(home);
+    const install = join(home, '.local/share/ardent');
+    const packageRoot = join(install, 'node_modules', ...name.split('/'));
+    await mkdir(join(packageRoot, 'dist'), { recursive: true });
+    const files = [['dist/cli.js', 'export {};\n'], ['package.json', JSON.stringify({ name, version: '0.1.9' })]] as const;
+    for (const [file, content] of files) await writeFile(join(packageRoot, file), content);
+    const tree = digest(files.map(([file, content]) => file + ' ' + digest(content) + '\n').sort().join(''));
+    const staged = { version: '0.1.9', sha256: digest('legacy-package') };
+    await writeFile(join(install, 'package-receipt.json'), JSON.stringify({ schemaVersion: 1, name, ...staged, packageTreeSha256: tree }));
+    return { home, install, staged, target: { owner: 'fixture', home, root: join(home, '.ardent'), install } };
+  }
+
+  it('defaults to the public package and validates the configured list', () => {
+    expect(ardentPackageNames(undefined)).toEqual(['@hivemagnus/ardent']);
+    expect(ardentPackageNames('')).toEqual(['@hivemagnus/ardent']);
+    expect(ardentPackageNames(' @hivemagnus/ardent , @legacy-scope/ardent,@legacy-scope/ardent ')).toEqual(['@hivemagnus/ardent', '@legacy-scope/ardent']);
+    for (const invalid of ['ardent', '@scope/../x', '@Scope/ardent', '@scope/ardent/extra', ',', '@scope/ar dent'])
+      expect(() => ardentPackageNames(invalid), invalid).toThrow(/MAGNUS_AGENT_ARDENT_PACKAGES/);
+  });
+
+  it('ignores an installed legacy package unless its name is accepted', async () => {
+    const { install, staged, target } = await installFixture('@legacy-scope/ardent');
+    delete process.env['MAGNUS_AGENT_ARDENT_PACKAGES'];
+    expect((await readArdentState(target) as { installed: boolean }).installed).toBe(false);
+    expect(await verifiedInstalledArdentPackage(install, staged)).toBe(false);
+    process.env['MAGNUS_AGENT_ARDENT_PACKAGES'] = '@hivemagnus/ardent,@legacy-scope/ardent';
+    const state = await readArdentState(target) as { installed: boolean; version: string; packageName: string };
+    expect(state).toMatchObject({ installed: true, version: '0.1.9', packageName: '@legacy-scope/ardent' });
+    expect(await verifiedInstalledArdentPackage(install, staged)).toBe(true);
+    expect(await verifiedInstalledArdentPackage(install, { ...staged, name: '@legacy-scope/ardent' })).toBe(true);
+    expect(await verifiedInstalledArdentPackage(install, { ...staged, name: '@hivemagnus/ardent' })).toBe(false);
+    expect(ardentUserUnit(target, 'example', '@legacy-scope/ardent')).toContain(join(install, 'node_modules/@legacy-scope/ardent/dist/cli.js'));
+    expect(ardentUserUnit(target, 'example')).toContain(join(install, 'node_modules/@hivemagnus/ardent/dist/cli.js'));
+  });
+
+  it('accepts a legacy staged sidecar only for an accepted package name', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'magnus-ardent-legacy-stage-'));
+    dirs.push(home);
+    const archive = join(home, 'ardent-package.tgz');
+    const packageBytes = 'legacy package fixture';
+    // Older release builders wrote exactly this sidecar shape.
+    const details = JSON.stringify({ name: '@legacy-scope/ardent', version: '0.1.5', sha256: digest(packageBytes) }) + '\n';
+    await writeFile(archive, packageBytes);
+    await writeFile(join(home, 'ardent-package.json'), details);
+    await writeFile(join(home, 'component-manifest.json'), JSON.stringify({ component: 'agent', files: [
+      { path: 'ardent-package.tgz', sha256: digest(packageBytes) }, { path: 'ardent-package.json', sha256: digest(details) },
+    ] }));
+    const previous = process.env['ARDENT_STAGED_PACKAGE'];
+    process.env['ARDENT_STAGED_PACKAGE'] = archive;
+    try {
+      const target = { owner: 'fixture', home, root: join(home, '.ardent'), install: join(home, '.local/share/ardent') };
+      const rejected = await readArdentState(target) as { stagedPackage: unknown; stagedPackageError: string | null };
+      expect(rejected.stagedPackage).toBeNull();
+      expect(rejected.stagedPackageError).toMatch(/not accepted/);
+      process.env['MAGNUS_AGENT_ARDENT_PACKAGES'] = '@hivemagnus/ardent,@legacy-scope/ardent';
+      const accepted = await readArdentState(target) as { stagedPackage: { name: string; version: string } | null };
+      expect(accepted.stagedPackage).toMatchObject({ name: '@legacy-scope/ardent', version: '0.1.5' });
+    } finally {
+      if (previous === undefined) delete process.env['ARDENT_STAGED_PACKAGE']; else process.env['ARDENT_STAGED_PACKAGE'] = previous;
+    }
+  });
+
+  it('reports profile channels with keys beyond the built-in adapters', async () => {
+    const { home, target } = await installFixture('@hivemagnus/ardent');
+    const profile = join(home, '.ardent/profiles/example');
+    await mkdir(profile, { recursive: true });
+    await writeFile(join(profile, 'config.yaml'), 'schema_version: 1\nprofile: example\nname: Example\nexecution:\n  backend: codex\napi:\n  host: 127.0.0.1\n  port: 9\n  token_env: ARDENT_API_TOKEN\na2a:\n  enabled: false\nchannels:\n  telegram:\n    enabled: true\n  legacy-chat:\n    enabled: false\n    url: https://chat.example.com\n');
+    await writeFile(join(profile, '.env'), 'ARDENT_API_TOKEN=fixture-token\n', { mode: 0o600 });
+    const state = await readArdentState(target) as { profiles: Array<{ id: string; channels: Record<string, boolean>; error: string | null }> };
+    expect(state.profiles).toEqual([expect.objectContaining({ id: 'example', error: null, channels: { telegram: true, 'legacy-chat': false } })]);
   });
 });

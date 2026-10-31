@@ -54,6 +54,11 @@ export const envSchema = z.object({
   APPROVAL_TELEGRAM_ACTOR_SHA256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   APPROVAL_IPHONE_ACTOR_SHA256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   MAGNUS_APPROVAL_BRIDGE_CONSUMER: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/i).optional(),
+  // Accepted approval-assertion signature domain prefixes (comma-separated); first is preferred.
+  MAGNUS_APPROVAL_ASSERTION_DOMAINS: z.string()
+    .regex(/^\s*[a-z0-9](?:[a-z0-9.-]{0,98}[a-z0-9])?\s*(?:,\s*[a-z0-9](?:[a-z0-9.-]{0,98}[a-z0-9])?\s*)*$/,
+      'must list domain prefixes made of a-z, 0-9, "." and "-", separated by commas')
+    .optional(),
   // Security Fusion: off (default) | local (in-process) | remote (external security console).
   SECURITY_FUSION_MODE: z.enum(['off', 'local', 'remote']).default('off'),
   SECURITY_FUSION_API_URL: z.string().url().optional(),
