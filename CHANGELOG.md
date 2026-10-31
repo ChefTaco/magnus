@@ -4,7 +4,7 @@ All notable changes to this project are documented in this file. The format is b
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.0.3] - 2026-10-31
 
 ### Added
 
@@ -133,6 +133,7 @@ The initial release snapshot.
   Pass them to `npm install -g` with `--allow-scripts=...`, or list them under `allowScripts` in
   your project's `package.json`.
 
+[1.0.3]: https://github.com/ChefTaco/magnus/releases/tag/v1.0.3
 [1.0.2]: https://github.com/ChefTaco/magnus/releases/tag/v1.0.2
 [1.0.1]: https://github.com/ChefTaco/magnus/releases/tag/v1.0.1
 [1.0.0]: https://github.com/ChefTaco/magnus/releases/tag/v1.0.0

@@ -1,6 +1,6 @@
 {
   "name": "magnus",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "description": "Magnus: self-hosted fleet management for Linux hosts and AI agents (UI, server, node agent, Ardent runtime)",
   "license": "Apache-2.0",
