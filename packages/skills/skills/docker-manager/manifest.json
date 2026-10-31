@@ -1,0 +1,9 @@
+{
+  "name": "docker-manager",
+  "version": "1.0.0",
+  "description": "Docker container and image management — lists running containers, inspects resource usage, cleans dangling images/volumes, and reports disk usage by Docker.",
+  "author": "magnus",
+  "entryPoint": "containers.sh",
+  "dependencies": ["docker"],
+  "tags": ["docker", "containers", "images", "cleanup", "ubuntu"]
+}

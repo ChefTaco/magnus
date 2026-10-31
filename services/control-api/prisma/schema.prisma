@@ -1,0 +1,2185 @@
+// ─── Prisma Schema — Magnus Fleet Management ───
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/db/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Append-only database side of the root-owned release anti-rewind chain.
+// Application routes never mutate these receipts; deployment tooling does.
+model MagnusReleaseCanary {
+  epoch            BigInt
+  tokenSha256      String   @id @db.VarChar(64)
+  acceptedCommit   String   @db.VarChar(40)
+  sourceTreeSha256 String   @db.VarChar(64)
+  createdAt        DateTime @default(now()) @db.Timestamptz(6)
+
+  @@map("magnus_release_canaries")
+  @@index([epoch])
+}
+
+// ─── Users & Auth ───
+
+model User {
+  id          String    @id @default(cuid())
+  email       String    @unique
+  name        String
+  password    String
+  role        UserRole  @default(VIEWER)
+  active      Boolean   @default(true)
+  lastLoginAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@map("users")
+}
+
+enum UserRole {
+  ADMIN
+  OPERATOR
+  VIEWER
+}
+
+// ─── Nodes ───
+
+model Node {
+  id              String     @id @default(cuid())
+  name            String     @unique
+  hostname        String
+  ipAddress       String
+  port            Int        @default(4100)
+  status          NodeStatus @default(PROVISIONING)
+  os              String
+  arch            String
+  tags            String     @default("[]")
+  metadata        String     @default("{}")
+  token           String     @unique
+  roleId          String?
+  lastHeartbeatAt DateTime?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  role                Role?                @relation(fields: [roleId], references: [id], onDelete: SetNull)
+  agent               Agent?
+  healthSnapshots     HealthSnapshot[]
+  gpuSnapshots        GpuSnapshot[]
+  logs                LogEntry[]
+  commands            RemoteCommand[]
+  cronJobs            CronJob[]
+  cronExecutions      CronJobExecution[]
+  filePatches         FilePatchTask[]
+  skillInstalls       SkillInstallation[]
+  rolloutTargets      RolloutTarget[]
+  roleApplications    RoleApplication[]
+  notifications       Notification[]
+  alertViolations     AlertViolation[]
+  alertConditionStates AlertConditionState[]
+  driftScans          DriftScan[]
+  anomalyEvents       AnomalyEvent[]
+  hermesInstallations HermesInstallation[]
+  ardentInstallation ArdentInstallation?
+  resourceEnrollment ResourceEnrollment?
+  ardentScopeEnrollment ArdentScopeEnrollment?
+  admissionFence AdmissionFence?
+  resourceParticipantWork ResourceParticipantWork[]
+  engineeringMetricSamples EngineeringMetricSample[]
+
+  @@index([status])
+  @@index([ipAddress])
+  @@index([lastHeartbeatAt])
+  @@index([roleId])
+  @@map("nodes")
+}
+
+// Node-local Ardent remains the authority for tasks, sessions and artifacts.
+// These rows contain only fleet references and bounded observed status.
+model ArdentInstallation {
+  id          String   @id @default(cuid())
+  nodeId      String   @unique
+  owner       String?
+  version     String?
+  installed   Boolean  @default(false)
+  reachable   Boolean  @default(false)
+  error       String?
+  observedAt  DateTime?
+  checkedAt   DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  node     Node            @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  profiles ArdentProfile[]
+
+  @@index([reachable, checkedAt])
+  @@map("ardent_installations")
+}
+
+model ArdentProfile {
+  id              String   @id @default(cuid())
+  installationId  String
+  name            String
+  displayName     String
+  backend         String?
+  apiPort         Int?
+  running         Boolean  @default(false)
+  a2aEnabled      Boolean  @default(false)
+  telegramEnabled Boolean  @default(false)
+  error           String?
+  observedAt      DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  installation ArdentInstallation @relation(fields: [installationId], references: [id], onDelete: Cascade)
+
+  @@unique([installationId, name])
+  @@index([running, observedAt])
+  @@map("ardent_profiles")
+}
+
+enum NodeStatus {
+  ONLINE
+  OFFLINE
+  DEGRADED
+  PROVISIONING
+  DECOMMISSIONED
+}
+
+// ─── Agent ───
+
+model Agent {
+  id           String      @id @default(cuid())
+  nodeId       String      @unique
+  version      String
+  status       AgentStatus @default(RUNNING)
+  pid          Int?
+  startedAt    DateTime    @default(now())
+  lastCheckIn  DateTime    @default(now())
+  capabilities String      @default("[]")
+
+  node Node @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@map("agents")
+}
+
+enum AgentStatus {
+  RUNNING
+  STOPPED
+  UPDATING
+  ERROR
+}
+
+// ─── Hermes Agent Runtime ───
+
+model HermesInstallation {
+  id               String    @id @default(cuid())
+  nodeId           String?
+  hostname         String
+  sshPort          Int       @default(22)
+  displayName      String?
+  installMode      String    @default("unknown") // unknown | official-script | pip | git | existing
+  hermesHome       String    @default("~/.hermes")
+  hermesBin        String    @default("hermes")
+  version          String?
+  status           String    @default("unknown") // unknown | not_installed | detected | needs_setup | running | degraded | error
+  gatewayStatus    String    @default("unknown")
+  dashboardHost    String    @default("127.0.0.1")
+  dashboardPort    Int       @default(9119)
+  dashboardStatus  String    @default("unknown")
+  apiServerEnabled Boolean   @default(false)
+  apiServerHost    String    @default("127.0.0.1")
+  apiServerPort    Int?
+  lastDetectedAt   DateTime?
+  lastSyncedAt     DateTime?
+  metadata         String    @default("{}")
+  rawStatus        String    @default("{}")
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  node     Node?                @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  profiles HermesProfile[]
+  jobs     HermesOperationJob[]
+
+  @@unique([hostname, hermesHome])
+  @@index([nodeId])
+  @@index([status])
+  @@index([hostname])
+  @@map("hermes_installations")
+}
+
+model HermesProfile {
+  id                      String    @id @default(cuid())
+  installationId          String
+  name                    String
+  description             String    @default("")
+  profileHome             String    @default("")
+  isDefault               Boolean   @default(false)
+  providerSummary         String?
+  modelSummary            String?
+  distribution            String?
+  gatewayStatus           String    @default("unknown")
+  apiServerEnabled        Boolean   @default(false)
+  apiServerHost           String    @default("127.0.0.1")
+  apiServerPort           Int?
+  apiServerKeyFingerprint String?
+  capabilities            String    @default("{}")
+  envStatus               String    @default("{}")
+  metadata                String    @default("{}")
+  lastSyncedAt            DateTime?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  installation HermesInstallation   @relation(fields: [installationId], references: [id], onDelete: Cascade)
+  jobs         HermesOperationJob[]
+
+  @@unique([installationId, name])
+  @@index([installationId])
+  @@index([gatewayStatus])
+  @@map("hermes_profiles")
+}
+
+model HermesOperationJob {
+  id             String    @id @default(cuid())
+  type           String
+  status         String    @default("queued") // queued | running | completed | failed | cancelled
+  installationId String?
+  profileId      String?
+  targetHost     String?
+  createdBy      String
+  steps          String    @default("[]")
+  result         String?
+  error          String?
+  metadata       String    @default("{}")
+  startedAt      DateTime  @default(now())
+  completedAt    DateTime?
+
+  installation HermesInstallation? @relation(fields: [installationId], references: [id], onDelete: SetNull)
+  profile      HermesProfile?      @relation(fields: [profileId], references: [id], onDelete: SetNull)
+
+  @@index([type])
+  @@index([status])
+  @@index([installationId])
+  @@index([profileId])
+  @@index([createdBy])
+  @@index([startedAt])
+  @@map("hermes_operation_jobs")
+}
+
+// ─── Health ───
+
+model HealthSnapshot {
+  id               String   @id @default(cuid())
+  nodeId           String
+  timestamp        DateTime @default(now())
+  cpuUsagePercent  Float
+  cpuCores         Int
+  cpuLoadAverage   String
+  memoryTotalBytes BigInt
+  memoryUsedBytes  BigInt
+  memoryPercent    Float
+  swapTotalBytes   BigInt
+  swapUsedBytes    BigInt
+  disks            String
+  network          String
+  services         String
+  wazuh            String   @default("{}")
+  systemUpdates    String   @default("{}")
+  cockpitAvailable Boolean  @default(false)
+  source           String   @default("system-probe")
+
+  node Node @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  anomalyEvents AnomalyEvent[]
+
+  @@index([nodeId, timestamp])
+  @@map("health_snapshots")
+}
+
+model GpuSnapshot {
+  id                    String   @id @default(cuid())
+  nodeId                String
+  sampledAt             DateTime
+  sampleIntervalSeconds Int      @default(30)
+  status                String   @default("unavailable")
+  devices               String
+  maxUtilizationPercent Float?
+  maxFanPercent         Float?
+
+  node Node @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@unique([nodeId, sampledAt])
+  @@index([nodeId, sampledAt])
+  @@map("gpu_snapshots")
+}
+
+// ─── Logs ───
+
+model LogEntry {
+  id        String   @id @default(cuid())
+  nodeId    String
+  source    String
+  level     String
+  message   String
+  metadata  String   @default("{}")
+  timestamp DateTime @default(now())
+
+  node Node @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@index([nodeId, timestamp])
+  @@index([level])
+  @@index([source])
+  @@map("log_entries")
+}
+
+// ─── Remote Commands ───
+
+model RemoteCommand {
+  id               String        @id @default(cuid())
+  nodeId           String
+  command          String
+  args             String        @default("[]")
+  workingDirectory String?
+  environment      String        @default("{}")
+  timeoutSeconds   Int           @default(300)
+  status           CommandStatus @default(PENDING)
+  riskLevel        String        @default("low")
+  idempotencyKey   String        @unique
+  correlationId    String?
+  createdBy        String
+  approvedBy       String?
+  executionDeadline DateTime?
+  coordinationJson String?
+  createdAt        DateTime      @default(now())
+  startedAt        DateTime?
+  completedAt      DateTime?
+
+  node   Node           @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  result CommandResult?
+
+  @@index([nodeId, status])
+  @@index([idempotencyKey])
+  @@index([correlationId])
+  @@map("remote_commands")
+}
+
+enum CommandStatus {
+  PENDING
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  TIMEOUT
+  CANCELLED
+}
+
+model CommandResult {
+  id         String  @id @default(cuid())
+  commandId  String  @unique
+  exitCode   Int
+  stdout     String
+  stderr     String
+  durationMs Int
+  truncated  Boolean @default(false)
+
+  command RemoteCommand @relation(fields: [commandId], references: [id], onDelete: Cascade)
+
+  @@map("command_results")
+}
+
+// ─── Cron Jobs ───
+
+model CronJob {
+  id               String        @id @default(cuid())
+  nodeId           String
+  name             String
+  description      String        @default("")
+  schedule         String
+  command          String
+  args             String        @default("[]")
+  workingDirectory String?
+  environment      String        @default("{}")
+  timeoutSeconds   Int           @default(600)
+  status           CronJobStatus @default(ACTIVE)
+  lastRunAt        DateTime?
+  lastRunExitCode  Int?
+  nextRunAt        DateTime?
+  createdBy        String
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  node       Node               @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  executions CronJobExecution[]
+
+  @@unique([nodeId, name])
+  @@map("cron_jobs")
+}
+
+enum CronJobStatus {
+  ACTIVE
+  PAUSED
+  ERROR
+}
+
+model CronJobExecution {
+  id          String    @id @default(cuid())
+  cronJobId   String
+  nodeId      String
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+  exitCode    Int?
+  stdout      String
+  stderr      String
+  durationMs  Int?
+
+  cronJob CronJob @relation(fields: [cronJobId], references: [id], onDelete: Cascade)
+  node    Node    @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@index([cronJobId, startedAt])
+  @@map("cron_job_executions")
+}
+
+// ─── File Sync ───
+
+model FilePatchTask {
+  id               String    @id @default(cuid())
+  nodeId           String
+  filePath         String
+  direction        String    @default("push")
+  content          String?
+  checksum         String?
+  previousChecksum String?
+  status           String    @default("pending")
+  error            String?
+  createdBy        String
+  createdAt        DateTime  @default(now())
+  completedAt      DateTime?
+
+  node Node @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@index([nodeId, status])
+  @@map("file_patch_tasks")
+}
+
+// ─── Skills ───
+
+model SkillRegistryEntry {
+  id            String   @id @default(cuid())
+  slug          String   @unique
+  displayName   String
+  description   String   @default("")
+  author        String   @default("")
+  source        String   @default("local")
+  sourceUrl     String?
+  entryPoint    String   @default("run.sh")
+  dependencies  String   @default("[]")
+  metadata      String   @default("{}")
+  latestVersion String?
+  status        String   @default("active")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  versions      SkillVersion[]
+  tags          SkillTag[]
+  installations SkillInstallation[]
+
+  @@index([status])
+  @@index([source])
+  @@map("skill_registry_entries")
+}
+
+model SkillVersion {
+  id          String   @id @default(cuid())
+  skillId     String
+  version     String
+  changelog   String   @default("")
+  contentHash String
+  files       String   @default("[]")
+  entryPoint  String   @default("run.sh")
+  sizeBytes   Int      @default(0)
+  publishedBy String   @default("system")
+  createdAt   DateTime @default(now())
+
+  skill SkillRegistryEntry @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@unique([skillId, version])
+  @@index([skillId, createdAt])
+  @@map("skill_versions")
+}
+
+model SkillTag {
+  id        String   @id @default(cuid())
+  skillId   String
+  tag       String
+  versionId String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  skill SkillRegistryEntry @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@unique([skillId, tag])
+  @@map("skill_tags")
+}
+
+model SkillInstallation {
+  id              String    @id @default(cuid())
+  skillName       String
+  nodeId          String
+  version         String
+  status          String    @default("available")
+  registryEntryId String?
+  versionHash     String?
+  bundleSha256    String?
+  treeSha256      String?
+  workflowCommandId       String? @unique
+  workflowRequestSha256   String?
+  workflowReceiptSha256   String? @unique
+  installedAt     DateTime?
+  error           String?
+
+  node          Node                @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  registryEntry SkillRegistryEntry? @relation(fields: [registryEntryId], references: [id], onDelete: SetNull)
+
+  @@unique([skillName, nodeId])
+  @@index([registryEntryId])
+  @@map("skill_installations")
+}
+
+// ─── Rollout / Execution Runs ───
+
+model ExecutionRun {
+  id              String    @id @default(cuid())
+  type            String
+  rolloutStrategy String    @default("all_at_once")
+  status          String    @default("created")
+  totalNodes      Int       @default(0)
+  completedNodes  Int       @default(0)
+  failedNodes     Int       @default(0)
+  metadata        String    @default("{}")
+  createdBy       String
+  createdAt       DateTime  @default(now())
+  startedAt       DateTime?
+  completedAt     DateTime?
+
+  targets RolloutTarget[]
+
+  @@index([status])
+  @@map("execution_runs")
+}
+
+model RolloutTarget {
+  id          String    @id @default(cuid())
+  rolloutId   String
+  nodeId      String
+  status      String    @default("pending")
+  error       String?
+  startedAt   DateTime?
+  completedAt DateTime?
+
+  commandId   String? @unique
+  evidence    String @default("{}")
+
+  rollout ExecutionRun @relation(fields: [rolloutId], references: [id], onDelete: Cascade)
+  node    Node         @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@unique([rolloutId, nodeId])
+  @@map("rollout_targets")
+}
+
+// ─── Library ───
+
+model LibraryCategory {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String   @default("")
+  color       String   @default("#6366f1")
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  files LibraryFile[]
+
+  @@map("library_categories")
+}
+
+model LibraryFile {
+  id         String   @id @default(cuid())
+  name       String
+  fileName   String
+  mimeType   String   @default("text/markdown")
+  content    String   @default("")
+  sizeBytes  Int      @default(0)
+  categoryId String?
+  tags       String   @default("[]")
+  createdBy  String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  category LibraryCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  @@index([categoryId])
+  @@index([name])
+  @@map("library_files")
+}
+
+// ─── Roles ───
+
+model Role {
+  id                 String   @id @default(cuid())
+  name               String   @unique
+  description        String   @default("")
+  libraryFileIds     String   @default("[]")
+  skillNames         String   @default("[]")
+  aptPackages        String   @default("[]")
+  npmPackages        String   @default("[]")
+  envConfig          String   @default("{}")
+  dockerEnabled      Boolean  @default(false)
+  dockerNonRoot      Boolean  @default(false)
+  dockerImage        String?
+  dockerVolumes      String   @default("[]")
+  firewallEnabled    Boolean  @default(false)
+  firewallMode       String   @default("restrictive")
+  firewallAllowRules String   @default("[]")
+  status             String   @default("active")
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  nodes        Node[]
+  applications RoleApplication[]
+
+  @@map("roles")
+}
+
+model RoleApplication {
+  id          String    @id @default(cuid())
+  nodeId      String
+  roleId      String
+  action      String
+  status      String    @default("pending")
+  steps       String    @default("[]")
+  error       String?
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  node Node @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@index([nodeId])
+  @@index([roleId])
+  @@index([status])
+  @@map("role_applications")
+}
+
+// ─── Notifications ───
+
+model Notification {
+  id        String    @id @default(cuid())
+  type      String // node.offline | node.degraded | node.recovered | command.failed | deploy.failed | upgrade.failed
+  severity  String    @default("warning") // info | warning | critical
+  title     String
+  message   String
+  nodeId    String?
+  nodeName  String?
+  sourceRef String? // e.g. commandId, deployId
+  metadata  String    @default("{}") // JSON blob for extra context
+  isRead    Boolean   @default(false)
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  node Node? @relation(fields: [nodeId], references: [id], onDelete: SetNull)
+
+  @@index([isRead, createdAt])
+  @@index([nodeId, createdAt])
+  @@index([type, createdAt])
+  @@index([type, nodeId, sourceRef, createdAt])
+  @@map("notifications")
+  suppressedBy String?
+
+}
+
+// ─── Notification Preferences ───
+
+model NotificationPreference {
+  id          String   @id @default(cuid())
+  userId      String
+  channel     String   @default("in_app") // in_app | email | webhook
+  category    String // node.offline | node.degraded | command.failed | deploy.* | ai.* | etc.
+  enabled     Boolean  @default(true)
+  minSeverity String   @default("info") // info | warning | critical
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([userId, channel, category])
+  @@index([userId])
+  @@map("notification_preferences")
+}
+
+// ─── Webhook Endpoints ───
+
+model WebhookEndpoint {
+  id        String   @id @default(cuid())
+  name      String
+  url       String
+  type      String   @default("generic") // generic | slack | discord
+  secret    String? // AES-256-GCM envelope containing the HMAC signing secret
+  events    String   @default("[]") // JSON array of event patterns
+  headers   String // AES-256-GCM envelope containing JSON extra headers
+  active    Boolean  @default(true)
+  retries   Int      @default(3)
+  timeoutMs Int      @default(10000)
+  createdBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  deliveries WebhookDelivery[]
+
+  @@index([active])
+  @@map("webhook_endpoints")
+}
+
+model WebhookDelivery {
+  id          String    @id @default(cuid())
+  endpointId  String
+  event       String
+  payload     String // JSON
+  status      String    @default("pending") // pending | success | failed
+  httpStatus  Int?
+  response    String? // Response body (truncated)
+  error       String?
+  attempts    Int       @default(0)
+  deliveredAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  endpoint WebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+
+  @@index([endpointId, createdAt])
+  @@index([status])
+  @@map("webhook_deliveries")
+}
+
+// ─── Health Alert Rules ───
+
+model AlertRule {
+  id              String   @id @default(cuid())
+  name            String
+  metric          String // cpu | memory | disk | swap
+  operator        String // gt | lt | gte | lte | eq
+  threshold       Float
+  durationSeconds Int      @default(0) // Must exceed for N seconds (0 = instant)
+  severity        String   @default("warning") // info | warning | critical
+  nodeFilter      String   @default("*") // "*" = all, or comma-separated node IDs/tags
+  active          Boolean  @default(true)
+  cooldownMinutes Int      @default(15) // Don't re-fire for N minutes
+  createdBy       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  violations AlertViolation[]
+  conditionStates AlertConditionState[]
+
+  @@index([active])
+  @@index([metric])
+  @@map("alert_rules")
+}
+
+model AlertConditionState {
+  ruleId         String
+  nodeId         String
+  breachedAt     DateTime
+  lastObservedAt DateTime
+  lastValue      Float
+
+  rule AlertRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  node Node      @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@id([ruleId, nodeId])
+  @@index([nodeId])
+  @@map("alert_condition_states")
+}
+
+model AlertViolation {
+  id         String    @id @default(cuid())
+  ruleId     String
+  nodeId     String
+  nodeName   String?
+  metric     String
+  value      Float
+  threshold  Float
+  severity   String
+  status     String    @default("active") // active | resolved
+  resolvedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  rule AlertRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  node Node      @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@index([ruleId, status])
+  @@index([nodeId, status])
+  @@index([status, createdAt])
+  @@map("alert_violations")
+}
+
+// ─── Batch Deploy Jobs ───
+
+model DeployJob {
+  id          String    @id @default(cuid())
+  type        String // 'deploy' | 'upgrade'
+  status      String    @default("running") // running | completed | partial_failure
+  concurrency Int       @default(5)
+  targets     String // JSON array of target configs
+  results     String? // JSON array of per-target results
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+  createdBy   String
+
+  @@index([status])
+  @@index([createdBy])
+  @@map("deploy_jobs")
+}
+
+// ─── Drift Scans ───
+
+model DriftScan {
+  id        String   @id @default(cuid())
+  nodeId    String
+  roleId    String?
+  status    String // 'clean' | 'drifted' | 'error'
+  findings  String // JSON array of drift items
+  scannedAt DateTime @default(now())
+
+  node Node @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@index([nodeId])
+  @@index([status])
+  @@map("drift_scans")
+}
+
+// ─── Anomaly Detection ───
+
+model AnomalyEvent {
+  id              String    @id @default(cuid())
+  nodeId          String
+  healthSnapshotId String?
+  metric          String // 'cpu' | 'memory' | 'disk' | 'swap' | 'network_rx' | 'network_tx'
+  value           Float
+  zScore          Float
+  mean            Float
+  stdDev          Float
+  severity        String    @default("warning") // info | warning | critical (resource-pressure policy)
+  resolved        Boolean   @default(false)
+  resolvedAt      DateTime?
+  firstSeenAt     DateTime  @default(now())
+  lastSeenAt      DateTime  @default(now())
+  occurrenceCount Int       @default(1)
+  createdAt       DateTime  @default(now())
+
+  node Node @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  healthSnapshot HealthSnapshot? @relation(fields: [healthSnapshotId], references: [id], onDelete: Restrict)
+
+  @@index([nodeId, createdAt])
+  @@index([resolved, createdAt])
+  @@index([metric, createdAt])
+  @@index([nodeId, metric, resolved])
+  @@index([healthSnapshotId])
+  @@map("anomaly_events")
+}
+
+// ─── AI Fleet Assistant ───
+
+model AiConversation {
+  id                  String   @id @default(cuid())
+  title               String   @default("New conversation")
+  type                String   @default("chat") // 'chat' | 'heartbeat' | 'analysis'
+  nodeId              String? // If analysis is node-specific
+  parentId            String?
+  forkedFromMessageId String?
+  status              String   @default("active") // 'active' | 'archived'
+  summary             String? // Auto-generated summary for context window management
+  createdBy           String   @default("system")
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  parent   AiConversation?  @relation("AiConversationForks", fields: [parentId], references: [id], onDelete: SetNull)
+  children AiConversation[] @relation("AiConversationForks")
+  messages AiMessage[]
+
+  @@index([type, createdAt])
+  @@index([status, createdAt])
+  @@index([nodeId])
+  @@index([parentId, updatedAt])
+  @@index([forkedFromMessageId])
+  @@map("ai_conversations")
+}
+
+model AiMessage {
+  id                 String    @id @default(cuid())
+  conversationId     String
+  role               String // 'system' | 'user' | 'assistant' | 'tool'
+  content            String
+  toolCalls          String    @default("[]") // JSON array of tool call results
+  thinking           String?
+  structuredAnalysis String?
+  tokenCount         Int       @default(0)
+  isRead             Boolean   @default(false)
+  readAt             DateTime?
+  pendingApproval    String? // JSON: tool call awaiting human approval
+  createdAt          DateTime  @default(now())
+
+  conversation AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@index([role, isRead])
+  @@map("ai_messages")
+}
+
+// ─── AI Memory ───
+
+model AiMemory {
+  id         String    @id @default(cuid())
+  key        String    @unique // Deduplication key (e.g. 'node:web-01:disk_pattern')
+  category   String    @default("general") // 'general' | 'node' | 'pattern' | 'preference'
+  content    String // The memory content
+  source     String    @default("heartbeat") // Where it came from
+  relevance  Float     @default(1.0) // Decay over time
+  accessedAt DateTime? // Last time this memory was accessed/injected
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([category])
+  @@index([relevance])
+  @@map("ai_memories")
+}
+
+// Legacy persisted dashboard rows retained to avoid a destructive data migration.
+// No runtime route or dashboard page uses this model.
+
+model AiDashboard {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  layout      String   @default("[]") // JSON array of WidgetSpec objects
+  createdBy   String   @default("system")
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([createdBy])
+  @@map("ai_dashboards")
+}
+
+// ─── A2A (Agent-to-Agent) Tasks ───
+
+model A2ATask {
+  id          String   @id @default(cuid())
+  title       String   @default("")
+  description String   @default("")
+  status      String   @default("submitted") // submitted | working | input-required | completed | failed | canceled
+  fromAgent   String   @default("user") // Requesting agent/user
+  toAgent     String   @default("magnus") // Target agent
+  input       String   @default("{}") // JSON input payload
+  output      String? // JSON output / result
+  artifacts   String   @default("[]") // JSON array of artifact references
+  history     String   @default("[]") // JSON array of status change log
+  metadata    String   @default("{}") // JSON extra context
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status])
+  @@index([fromAgent])
+  @@index([toAgent])
+  @@map("a2a_tasks")
+}
+
+// ─── Auto-Remediation ───
+
+model RemediationRule {
+  id                String   @id @default(cuid())
+  name              String   @unique
+  description       String   @default("")
+  metric            String   @default("*") // cpu | memory | disk | swap | *
+  severityThreshold String   @default("critical") // warning | critical
+  agentDefinitionId String // Versioned runbook; legacy values remain record-only
+  input             String   @default("") // Reviewed runbook configuration JSON
+  cooldownMinutes   Int      @default(60)
+  maxConcurrentRuns Int      @default(1)
+  nodeFilter        String? // Optional node ID or pattern filter
+  enabled           Boolean  @default(true)
+  createdBy         String   @default("system")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  executions RemediationExecution[]
+
+  @@index([enabled, metric])
+  @@map("remediation_rules")
+}
+
+model RemediationExecution {
+  id             String    @id @default(cuid())
+  ruleId         String
+  anomalyEventId String
+  nodeId         String
+  orchestraRunId String? // Orchestra run ID (set after trigger)
+  status         String    @default("triggered") // pending_approval | approving | running | completed | failed | skipped; legacy triggered
+  input          String    @default("") // Immutable approval plan JSON
+  output         String? // Result/error message
+  triggeredAt    DateTime  @default(now())
+  completedAt    DateTime?
+
+  rule RemediationRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  @@index([ruleId, triggeredAt])
+  @@index([nodeId, triggeredAt])
+  @@index([status])
+  @@map("remediation_executions")
+}
+
+// ── Scheduled AI Operations ──
+
+model AiScheduledOp {
+  id          String    @id @default(cuid())
+  name        String
+  description String    @default("")
+  cronExpr    String // Cron expression (e.g. "0 */6 * * *")
+  enabled     Boolean   @default(true)
+  type        String    @default("chat") // chat | analysis | runbook
+  prompt      String // AI prompt to execute
+  nodeId      String? // Scope to specific node
+  createdBy   String
+  lastRunAt   DateTime?
+  nextRunAt   DateTime?
+  runCount    Int       @default(0)
+  lastResult  String? // Last execution result (truncated)
+  lastError   String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([enabled, nextRunAt])
+  @@map("ai_scheduled_ops")
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Hermes Agent — fleet-managed resources (HERMESAGENT_PLAN.md §3)
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Per-installation skill pin — which skill bundles should be present on which
+/// installation/profile. Reconciled by magnus-agent via `hermes skills install`.
+model HermesSkillAssignment {
+  id             String    @id @default(cuid())
+  installationId String
+  profileId      String    @default("")
+  skillSlug      String
+  pinnedVersion  String?
+  source         String    @default("magnus-skills") // magnus-skills | upload | agentskills.io
+  enabled        Boolean   @default(true)
+  lastSyncedAt   DateTime?
+  status         String    @default("pending") // pending | applied | drifted | error
+  error          String?
+  metadata       String    @default("{}")
+  createdBy      String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([installationId, profileId, skillSlug])
+  @@index([installationId])
+  @@index([profileId])
+  @@index([status])
+  @@map("hermes_skill_assignments")
+}
+
+/// Per-profile toolset policy — which Hermes toolsets are enabled and per-tool
+/// approval/hook configuration.
+model HermesToolsetPolicy {
+  id             String    @id @default(cuid())
+  installationId String
+  profileId      String    @default("")
+  toolset        String // web_search | terminal | file_edit | delegation | browser | image_gen | ...
+  enabled        Boolean   @default(true)
+  approvalMode   String    @default("auto") // auto | confirm | block
+  perToolHooks   String    @default("[]") // JSON array of {tool,event,target,...}
+  allowList      String    @default("[]")
+  denyList       String    @default("[]")
+  lastSyncedAt   DateTime?
+  status         String    @default("pending")
+  metadata       String    @default("{}")
+  createdBy      String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([installationId, profileId, toolset])
+  @@index([installationId])
+  @@index([profileId])
+  @@map("hermes_toolset_policies")
+}
+
+/// Composite role bundle — SOUL.md personality + toolset selection + skill set
+/// + provider preference + cron + messaging. Reusable; applied per-profile.
+model HermesRole {
+  id             String   @id @default(cuid())
+  name           String   @unique
+  description    String   @default("")
+  personalityMd  String   @default("") // embedded SOUL.md content
+  personalityRef String? // optional reference to a standalone personality (future)
+  toolsetsJson   String   @default("[]")
+  skillsJson     String   @default("[]")
+  providerJson   String   @default("{}")
+  cronJson       String   @default("[]")
+  messagingJson  String   @default("[]")
+  metadata       String   @default("{}")
+  createdBy      String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  applications HermesRoleApplication[]
+
+  @@map("hermes_roles")
+}
+
+/// Tracks where a HermesRole has been applied (installation+profile pairs).
+model HermesRoleApplication {
+  id             String    @id @default(cuid())
+  roleId         String
+  installationId String
+  profileId      String    @default("")
+  status         String    @default("pending")
+  appliedAt      DateTime?
+  error          String?
+  createdBy      String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  role HermesRole @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, installationId, profileId])
+  @@index([installationId])
+  @@index([profileId])
+  @@map("hermes_role_applications")
+}
+
+/// Per-profile provider routing configuration (chain order, sort, white/blacklists).
+model HermesProviderConfig {
+  id                  String    @id @default(cuid())
+  installationId      String
+  profileId           String    @default("")
+  chainJson           String    @default("[]") // ordered provider list
+  sortStrategy        String    @default("priority") // priority | cost | speed | quality
+  whitelistJson       String    @default("[]")
+  blacklistJson       String    @default("[]")
+  visionOverride      String?
+  compressionOverride String?
+  lastSyncedAt        DateTime?
+  status              String    @default("pending")
+  metadata            String    @default("{}")
+  createdBy           String
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@unique([installationId, profileId])
+  @@index([installationId])
+  @@map("hermes_provider_configs")
+}
+
+/// Credential pool — multiple API keys per provider with rotation.
+model HermesCredentialPool {
+  id             String   @id @default(cuid())
+  name           String   @unique
+  provider       String // openrouter | anthropic | openai | google | magnus-router | ...
+  rotationPolicy String   @default("rate-limit") // rate-limit | round-robin | failure
+  secretRefsJson String   @default("[]") // references to IAM secret-store entries
+  metadata       String   @default("{}")
+  createdBy      String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  attachments HermesCredentialPoolAttachment[]
+
+  @@map("hermes_credential_pools")
+}
+
+model HermesCredentialPoolAttachment {
+  id             String    @id @default(cuid())
+  poolId         String
+  installationId String
+  profileId      String    @default("")
+  status         String    @default("pending")
+  lastSyncedAt   DateTime?
+  createdBy      String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  pool HermesCredentialPool @relation(fields: [poolId], references: [id], onDelete: Cascade)
+
+  @@unique([poolId, installationId, profileId])
+  @@index([installationId])
+  @@map("hermes_credential_pool_attachments")
+}
+
+/// MCP server registry — per-installation attachments are tracked separately.
+model HermesMcpServer {
+  id              String   @id @default(cuid())
+  name            String   @unique
+  transport       String // stdio | http | sse
+  endpoint        String   @default("") // path or URL depending on transport
+  argsJson        String   @default("[]")
+  envJson         String   @default("{}")
+  toolFilterJson  String   @default("[]")
+  samplingEnabled Boolean  @default(false)
+  metadata        String   @default("{}")
+  createdBy       String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  attachments HermesMcpServerAttachment[]
+
+  @@map("hermes_mcp_servers")
+}
+
+model HermesMcpServerAttachment {
+  id             String    @id @default(cuid())
+  serverId       String
+  installationId String
+  profileId      String    @default("")
+  status         String    @default("pending")
+  lastSyncedAt   DateTime?
+  createdBy      String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  server HermesMcpServer @relation(fields: [serverId], references: [id], onDelete: Cascade)
+
+  @@unique([serverId, installationId, profileId])
+  @@index([installationId])
+  @@map("hermes_mcp_server_attachments")
+}
+
+/// Messaging-platform binding (Discord/Slack/etc.) for a Hermes installation+profile.
+model HermesMessagingBinding {
+  id             String    @id @default(cuid())
+  installationId String
+  profileId      String    @default("")
+  platform       String // discord | slack | telegram | ...
+  channelIdsJson String    @default("[]")
+  voiceEnabled   Boolean   @default(false)
+  voiceModel     String?
+  ttsProvider    String?
+  secretRef      String? // pointer to IAM secret store
+  metadata       String    @default("{}")
+  status         String    @default("pending")
+  lastSyncedAt   DateTime?
+  createdBy      String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([installationId, profileId, platform])
+  @@index([installationId])
+  @@map("hermes_messaging_bindings")
+}
+
+/// Hermes scheduled task (distinct from fleet-wide CronJob).
+model HermesCronJob {
+  id                 String    @id @default(cuid())
+  installationId     String
+  profileId          String    @default("")
+  name               String
+  prompt             String    @default("")
+  cronExpr           String    @default("")
+  naturalLanguage    String?
+  attachedSkillsJson String    @default("[]")
+  deliveryJson       String    @default("{}") // {channel:'messaging|file|webhook', target:'...'}
+  enabled            Boolean   @default(true)
+  status             String    @default("pending")
+  lastRunAt          DateTime?
+  metadata           String    @default("{}")
+  createdBy          String
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@unique([installationId, profileId, name])
+  @@index([installationId])
+  @@map("hermes_cron_jobs")
+}
+
+/// Per-installation Hermes plugin install records.
+model HermesPluginInstall {
+  id             String    @id @default(cuid())
+  installationId String
+  profileId      String    @default("")
+  pluginSlug     String
+  pluginType     String    @default("general") // general | memory-provider | context-engine
+  pinnedVersion  String?
+  status         String    @default("pending")
+  healthState    String    @default("unknown") // unknown | healthy | degraded | error
+  lastSyncedAt   DateTime?
+  metadata       String    @default("{}")
+  createdBy      String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([installationId, profileId, pluginSlug])
+  @@index([installationId])
+  @@index([pluginType])
+  @@map("hermes_plugin_installs")
+}
+
+/// A node's registry authority is independent of the shared heartbeat secret.
+/// The bearer itself is never stored; only its SHA-256 digest is retained.
+model HermesRegistryClient {
+  id             String   @id @default(cuid())
+  nodeId         String
+  installationId String
+  tokenSha256    String   @unique
+  canPull        Boolean  @default(false)
+  canSubmit      Boolean  @default(false)
+  enabled        Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  revokedAt      DateTime?
+
+  @@unique([nodeId, installationId])
+  @@index([installationId])
+  @@map("hermes_registry_clients")
+}
+
+/// Complete immutable bytes and provenance for a skill, plugin, or MCP release.
+model HermesRegistryRevision {
+  id             String   @id @default(cuid())
+  kind           String
+  slug           String
+  revision       Int
+  sha256         String
+  artifactJson   String
+  metadataJson   String   @default("{}")
+  status         String   @default("published")
+  sourceHost     String?
+  publishedBy    String
+  createdAt      DateTime @default(now())
+
+  @@unique([kind, slug, revision])
+  @@index([kind, slug, status])
+  @@map("hermes_registry_revisions")
+}
+
+/// A desired revision applies to one installation/profile; a null pin follows latest.
+model HermesRegistryTarget {
+  id             String   @id @default(cuid())
+  kind           String
+  slug           String
+  installationId String
+  profileId      String   @default("")
+  pinnedRevision Int?
+  enabled        Boolean  @default(true)
+  status         String   @default("pending")
+  observedRevision Int?
+  lastReceiptAt  DateTime?
+  error          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([kind, slug, installationId, profileId])
+  @@index([installationId, enabled])
+  @@map("hermes_registry_targets")
+}
+
+model HermesRegistryReceipt {
+  id             String   @id @default(cuid())
+  nodeId         String
+  installationId String
+  profileId      String   @default("")
+  kind           String
+  slug           String
+  revision       Int
+  sha256         String
+  status         String
+  detailsJson    String   @default("{}")
+  createdAt      DateTime @default(now())
+
+  @@index([installationId, kind, slug, createdAt])
+  @@map("hermes_registry_receipts")
+}
+
+model HermesRegistryInventory {
+  id             String   @id @default(cuid())
+  installationId String
+  profileId      String   @default("")
+  kind           String
+  slug           String
+  pluginType     String?
+  sourceKind     String   @default("unknown")
+  sourceUrl      String?
+  commit         String?
+  version        String?
+  status         String   @default("observed")
+  observedAt     DateTime @default(now())
+
+  @@unique([installationId, profileId, kind, slug])
+  @@index([sourceKind, status])
+  @@map("hermes_registry_inventory")
+}
+
+model HermesCoreRollout {
+  id        String   @id
+  tag       String
+  bootstrapScriptSha256 String
+  status    String   @default("active")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  hosts     HermesCoreRolloutHost[]
+
+  @@index([status, createdAt])
+  @@map("hermes_core_rollouts")
+}
+
+model HermesCoreRolloutHost {
+  id             String   @id @default(cuid())
+  rolloutId      String
+  hostname       String
+  installationId String
+  stage          Int
+  status         String   @default("pending")
+  leaseExpiresAt DateTime?
+  evidenceJson   String   @default("{}")
+  updatedAt      DateTime @updatedAt
+
+  rollout HermesCoreRollout @relation(fields: [rolloutId], references: [id], onDelete: Cascade)
+
+  @@unique([rolloutId, hostname])
+  @@index([rolloutId, stage, status])
+  @@map("hermes_core_rollout_hosts")
+}
+
+/// Global Hermes hook configuration (per-tool hooks live in HermesToolsetPolicy).
+model HermesHook {
+  id             String    @id @default(cuid())
+  installationId String
+  profileId      String    @default("")
+  event          String // pre_gateway | post_gateway | metric | webhook | ...
+  target         String // url | logger | webhook-id
+  configJson     String    @default("{}")
+  enabled        Boolean   @default(true)
+  status         String    @default("pending")
+  lastSyncedAt   DateTime?
+  metadata       String    @default("{}")
+  createdBy      String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([installationId])
+  @@index([event])
+  @@map("hermes_hooks")
+}
+
+// ─── Security Fusion ───
+
+model SecurityFusionEvent {
+  id              String   @id @default(cuid())
+  eventId         String   @unique
+  source          String
+  sourceEventId   String
+  kind            String
+  observedAt      DateTime
+  ingestedAt      DateTime @default(now())
+  severity        String
+  confidence      Float
+  summary         String
+  attributesJson  String   @default("{}")
+  integritySha256 String
+  collectorId     String
+
+  @@unique([source, sourceEventId])
+  @@index([observedAt])
+  @@index([source, observedAt])
+  @@index([kind, observedAt])
+  @@index([severity, observedAt])
+  @@map("security_fusion_events")
+}
+
+model SecurityFusionEntity {
+  id          String   @id @default(cuid())
+  type        String
+  canonical   String
+  label       String
+  aliasesJson String   @default("[]")
+  firstSeenAt DateTime
+  lastSeenAt  DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([type, canonical])
+  @@index([lastSeenAt])
+  @@map("security_fusion_entities")
+}
+
+model SecurityFusionEventEntity {
+  id       String @id @default(cuid())
+  eventId  String
+  entityId String
+
+  @@unique([eventId, entityId])
+  @@index([entityId])
+  @@map("security_fusion_event_entities")
+}
+
+model SecurityFusionEntityAlias {
+  id          String   @id @default(cuid())
+  entityId    String
+  source      String
+  value       String
+  canonical   String
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+
+  @@unique([source, canonical])
+  @@index([entityId])
+  @@map("security_fusion_entity_aliases")
+}
+
+model SecurityFusionCase {
+  id                           String    @id @default(cuid())
+  fingerprint                  String    @unique
+  title                        String
+  status                       String    @default("new")
+  severity                     String
+  confidence                   Float
+  summary                      String
+  recommendedInvestigationJson String    @default("[]")
+  evidenceStepsJson            String    @default("[]")
+  assignedTo                   String?
+  firstSeenAt                  DateTime
+  lastSeenAt                   DateTime
+  resolvedAt                   DateTime?
+  archivedAt                   DateTime?
+  evidenceAcceptedCount        Int       @default(0)
+  evidenceTruncatedCount       Int       @default(0)
+  createdAt                    DateTime  @default(now())
+  updatedAt                    DateTime  @updatedAt
+
+  @@index([status, severity, lastSeenAt])
+  @@index([archivedAt, lastSeenAt])
+  @@map("security_fusion_cases")
+}
+
+model SecurityFusionCaseEvent {
+  id                     String @id @default(cuid())
+  caseId                 String
+  eventId                String
+  ruleId                 String @default("builtin-security-fusion")
+  confidenceContribution Float  @default(0)
+
+  @@unique([caseId, eventId])
+  @@index([eventId])
+  @@map("security_fusion_case_events")
+}
+
+model SecurityFusionCaseEntity {
+  id       String @id @default(cuid())
+  caseId   String
+  entityId String
+
+  @@unique([caseId, entityId])
+  @@index([entityId])
+  @@map("security_fusion_case_entities")
+}
+
+model SecurityFusionCaseRelationship {
+  id            String   @id @default(cuid())
+  fromCaseId    String
+  toCaseId      String
+  kind          String
+  confidence    Float
+  rationaleJson String   @default("{}")
+  createdAt     DateTime @default(now())
+
+  @@unique([fromCaseId, toCaseId, kind])
+  @@index([toCaseId])
+  @@map("security_fusion_case_relationships")
+}
+
+model SecurityFusionRuleVersion {
+  id             String   @id @default(cuid())
+  ruleId         String
+  version        Int
+  enabled        Boolean  @default(true)
+  definitionJson String
+  sha256         String
+  createdAt      DateTime @default(now())
+
+  @@unique([ruleId, version])
+  @@index([enabled])
+  @@map("security_fusion_rule_versions")
+}
+
+model SecurityFusionCaseActivity {
+  id         String   @id @default(cuid())
+  caseId     String
+  kind       String
+  actorId    String
+  detailJson String   @default("{}")
+  createdAt  DateTime @default(now())
+
+  @@index([caseId, createdAt])
+  @@map("security_fusion_case_activity")
+}
+
+model SecurityFusionEvidence {
+  id               String    @id @default(cuid())
+  caseId           String
+  eventId          String?
+  sourceLocator    String
+  mediaType        String
+  sha256           String
+  storagePath      String
+  preservedBy      String
+  preservedAt      DateTime  @default(now())
+  expiresAt        DateTime
+  byteSize         Int       @default(0)
+  integrityStatus  String    @default("verified")
+  quarantinedAt    DateTime?
+  quarantineReason String?
+
+  @@index([caseId, preservedAt])
+  @@index([sha256])
+  @@map("security_fusion_evidence")
+}
+
+model SecurityFusionSourceState {
+  id             String    @id
+  source         String    @unique
+  status         String    @default("unknown")
+  checkpoint     String?
+  lastEventAt    DateTime?
+  lastSuccessAt  DateTime?
+  lastErrorAt    DateTime?
+  lastError      String?
+  rejectedCount  Int       @default(0)
+  truncatedCount Int       @default(0)
+  updatedAt      DateTime  @updatedAt
+
+  @@map("security_fusion_source_state")
+}
+
+model SecurityFusionDeletionReceipt {
+  id                    String   @id @default(cuid())
+  resourceType          String
+  resourceIdHash        String
+  reason                String
+  outcome               String
+  bytesDeleted          Int      @default(0)
+  detailJson            String   @default("{}")
+  receiptSha256         String   @unique
+  previousReceiptSha256 String?
+  chainSequence         Int
+  chainVersion          Int      @default(2)
+  deletedAt             DateTime @default(now())
+
+  @@unique([chainSequence])
+  @@index([resourceType, deletedAt])
+  @@index([deletedAt])
+  @@map("security_fusion_deletion_receipts")
+}
+
+model SecurityFusionReceiptChainHead {
+  id            String   @id
+  headSha256    String?
+  chainSequence Int      @default(0)
+  updatedAt     DateTime @updatedAt
+
+  @@map("security_fusion_receipt_chain_heads")
+}
+
+model SecurityFusionCollector {
+  id                    String    @id
+  displayName           String
+  credentialFingerprint String
+  allowedSourcesJson    String    @default("[]")
+  schemaVersion         String    @default("1.0")
+  dataClassification    String    @default("restricted")
+  status                String    @default("active")
+  lastReceiptAt         DateTime?
+  lastSuccessAt         DateTime?
+  lastErrorAt           DateTime?
+  lastError             String?
+  revokedAt             DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([status, lastReceiptAt])
+  @@map("security_fusion_collectors")
+}
+
+model SecurityFusionNonce {
+  nonce       String   @id
+  collectorId String
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  @@index([expiresAt])
+  @@map("security_fusion_nonces")
+}
+
+model SecurityFusionInvestigation {
+  id        String   @id @default(cuid())
+  caseId    String
+  revision  Int
+  authorId  String
+  draftJson String
+  createdAt DateTime @default(now())
+
+  @@unique([caseId, revision])
+  @@index([caseId, createdAt])
+  @@map("security_fusion_investigations")
+}
+
+model SecurityFusionAction {
+  id                String    @id @default(cuid())
+  caseId            String
+  nodeId            String
+  kind              String
+  serviceName       String?
+  isolationMinutes  Int?
+  rationale         String
+  rollbackPlan      String
+  previewJson       String
+  previewSha256     String
+  status            String    @default("previewed")
+  requestedBy       String
+  approvedBy        String?
+  approvalTokenHash String?
+  approvalExpiresAt DateTime?
+  executedAt        DateTime?
+  verificationDeadline DateTime?
+  resultJson        String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([caseId, createdAt])
+  @@index([status, approvalExpiresAt])
+  @@map("security_fusion_actions")
+}
+
+model SecurityFusionActionApproval {
+  id            String    @id @default(cuid())
+  actionId      String    @unique
+  previewSha256 String
+  tokenHash     String
+  status        String    @default("pending")
+  requestedBy   String
+  decidedBy     String?
+  expiresAt     DateTime
+  decidedAt     DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([expiresAt])
+  @@map("security_fusion_action_approvals")
+}
+
+model SecurityFusionCommandOutbox {
+  id              String    @id @default(cuid())
+  actionId        String
+  operation       String
+  actorId         String
+  status          String    @default("pending")
+  remoteCommandId String?
+  attempts        Int       @default(0)
+  nextAttemptAt   DateTime  @default(now())
+  leaseExpiresAt  DateTime?
+  lastError       String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  dispatchedAt    DateTime?
+
+  @@unique([actionId, operation])
+  @@unique([remoteCommandId])
+  @@index([status, nextAttemptAt])
+  @@map("security_fusion_command_outbox")
+}
+
+model SecurityFusionDelivery {
+  id          String   @id @default(cuid())
+  caseId      String
+  revisionKey String   @unique
+  channel     String
+  status      String
+  externalId  String?
+  error       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([caseId, createdAt])
+  @@map("security_fusion_deliveries")
+}
+
+// Read-only probes configured by the operator; credentials remain in server env.
+model ApplicationObservation {
+  id String @id
+  projectId String
+  serviceId String
+  nodeId String
+  status String @default("unknown")
+  resultJson String @default("{}")
+  observedAt DateTime?
+  @@index([nodeId])
+  @@map("application_observations")
+}
+
+// Append-only samples emitted by Control API-owned collectors. Callers never
+// submit these rows through the engineering assessment API.
+model EngineeringMetricSample {
+  id             String   @id @default(cuid())
+  applicationId  String
+  nodeId         String
+  metric         String
+  sourceKey      String
+  unit           String
+  value          Float
+  observedAt     DateTime
+  probeContractSha256 String
+  method         String
+  path           String
+  httpStatus     Int
+  evidenceSha256 String
+  createdAt      DateTime @default(now())
+
+  node Node @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@unique([applicationId, metric, sourceKey, observedAt])
+  @@index([applicationId, metric, observedAt])
+  @@index([nodeId, metric, observedAt])
+  @@map("engineering_metric_samples")
+}
+
+// Control API-owned results from disposable recovery exercises. The collector
+// computes all digests; public engineering routes are read-only.
+model EngineeringRecoveryExercise {
+  id                     String   @id
+  targetId               String
+  scenario               String
+  startedAt              DateTime
+  recoveredAt            DateTime
+  recoveryPointAt        DateTime
+  rtoObjectiveSeconds    Int
+  rpoObjectiveSeconds    Int
+  beforeStateSha256      String
+  beforeTaskSha256       String
+  beforeArtifactSha256   String
+  afterStateSha256       String
+  afterTaskSha256        String
+  afterArtifactSha256    String
+  beforeEvidenceJson     String
+  afterEvidenceJson      String
+  runtimeEvidenceJson    String
+  directEvidenceSha256   String
+  runnerIssuer           String
+  runnerKeyId            String
+  runnerPublicKeySha256  String
+  runnerNonce            String   @unique
+  runnerIssuedAt         DateTime
+  runnerExpiresAt        DateTime
+  runnerExerciseContractSha256 String
+  runnerReceiptJson      String
+  runnerReceiptSha256    String   @unique
+  inventorySnapshotSha256 String
+  recordSha256           String
+  createdAt              DateTime @default(now())
+
+  @@index([targetId, createdAt])
+  @@index([scenario, createdAt])
+  @@map("engineering_recovery_exercises")
+}
+
+model MaintenanceWindow {
+  id String @id @default(cuid())
+  reason String
+  nodeIds String
+  serviceIds String @default("[]")
+  actorId String
+  startsAt DateTime
+  endsAt DateTime
+  cancelledAt DateTime?
+  createdAt DateTime @default(now())
+  @@index([startsAt, endsAt])
+  @@map("maintenance_windows")
+}
+
+model IncidentLesson {
+  id String @id @default(cuid())
+  incidentId String
+  nodeId String?
+  symptom String
+  cause String
+  runbookVersion String
+  evidenceIds String
+  reviewedBy String
+  expiresAt DateTime
+  supersededAt DateTime?
+  memoryId String?
+  createdAt DateTime @default(now())
+  @@index([incidentId, expiresAt])
+  @@map("incident_lessons")
+}
+
+// Durable outbound security observations. Retained on Magnus after extraction.
+model SecurityExportOutbox {
+ id String @id
+ payload String
+ createdAt DateTime @default(now())
+ deliveredAt DateTime?
+ attempts Int @default(0)
+ nextAttemptAt DateTime @default(now())
+ lastError String?
+ @@index([deliveredAt, nextAttemptAt])
+ @@map("security_export_outbox")
+}
+
+// Durable last observed service state; transition and outbox commit together.
+model SecurityServiceState {
+  nodeId String
+  serviceName String
+  status String
+  observationId String
+  observedAt DateTime
+  @@id([nodeId, serviceName])
+  @@map("security_service_states")
+}
+
+/// Immutable native-Telegram decisions, committed with provider admission state.
+model TeamApprovalDecision {
+  decisionId       String   @id
+  proposalId       String   @unique
+  proposalRevision Int
+  planSha256       String
+  decision         String
+  assertionSha256  String
+  actorBindingSha256 String
+  executionId      String?  @unique
+  decidedAt        DateTime
+  expiresAt        DateTime
+  createdAt        DateTime @default(now())
+
+  @@map("team_approval_decisions")
+}
+
+/// Monotonic fencing generations allocated by the service; node admission owns execution.
+model CommandResourceFence {
+  resourceKey String @id
+  generation BigInt @default(0)
+  @@map("command_resource_fences")
+}
+
+/// Durable finite-command ownership. Expiry never releases uncertain effects.
+model CommandResourceLease {
+  id String @id
+  nodeId String
+  resourceKey String
+  serviceUnit String?
+  commandId String @unique
+  ownerActor String
+  requestSha256 String
+  coordinationJson String
+  completionClass String?
+  completionRegistryVersion Int?
+  completionRegistrySha256 String?
+  completionDescriptorId String?
+  completionOccurrenceId String?
+  completionSpecSha256 String?
+  state String @default("reserved")
+  directCommand Boolean @default(false)
+  deadline DateTime
+  acquiredAt DateTime @default(now())
+  dispatchedAt DateTime?
+  settledAt DateTime?
+  settlement String?
+  evidenceSha256 String?
+  @@index([nodeId, state])
+  @@index([resourceKey, state])
+  @@map("command_resource_leases")
+}
+
+/// Global monotonic generations for repository, provider and GPU ownership.
+model SharedResourceFence {
+  resourceKey String @id
+  generation BigInt @default(1)
+  updatedAt DateTime @updatedAt
+  @@map("shared_resource_fences")
+}
+
+/// Durable cross-host ownership. Deadlines and unknown outcomes never release a lease.
+model SharedResourceLease {
+  id String @id
+  missionRootId String
+  missionRevision Int
+  taskId String
+  operationId String @unique
+  requestSha256 String
+  actionClass String
+  ownerActor String
+  callerKind String
+  delegationId String?
+  missionIssuer String
+  missionKeyId String
+  missionAssertionSha256 String
+  missionAssertionJson String
+  resourceSetBinding String
+  state String @default("reserved")
+  deadline DateTime
+  acquiredAt DateTime @default(now())
+  startedAt DateTime?
+  settledAt DateTime?
+  settlement String?
+  evidenceSha256 String?
+  settlementRecordSha256 String? @unique
+  terminalEvidenceJson String?
+  reconciliationDecisionId String? @unique
+  reconciliationJson String?
+  resources SharedResourceLeaseResource[]
+  @@index([missionRootId, missionRevision])
+  @@index([taskId, state])
+  @@map("shared_resource_leases")
+}
+
+/// Exact resources and generations acquired atomically for one shared operation.
+model SharedResourceLeaseResource {
+  leaseId String
+  resourceKey String
+  fenceGeneration BigInt
+  state String @default("reserved")
+  lease SharedResourceLease @relation(fields: [leaseId], references: [id], onDelete: Restrict)
+  @@id([leaseId, resourceKey])
+  @@unique([resourceKey, fenceGeneration])
+  @@index([resourceKey, state])
+  @@map("shared_resource_lease_resources")
+}
+
+/// One-way admission barrier. Epoch and every reservation share the node advisory lock.
+model ResourceEnrollment {
+  nodeId String @id
+  nodeFqdn String
+  state String @default("legacy")
+  epoch Int @default(0)
+  barrierId String?
+  startedBy String?
+  startedAt DateTime?
+  enrolledAt DateTime?
+  updatedAt DateTime @updatedAt
+  node Node @relation(fields: [nodeId], references: [id], onDelete: Restrict)
+  participants ResourceDrainParticipant[]
+  @@map("resource_enrollments")
+}
+
+/// One-way Ardent-only admission while whole-node scheduler drain remains open.
+model ArdentScopeEnrollment {
+  nodeId String @id
+  nodeFqdn String
+  epoch Int
+  barrierId String
+  decisionId String @unique
+  assertionJson String
+  evidenceSha256 String
+  activatedAt DateTime @default(now())
+  node Node @relation(fields: [nodeId], references: [id], onDelete: Restrict)
+  @@map("ardent_scope_enrollments")
+}
+
+/// Node admission plus a conservative Control API global shared-lease pause.
+/// External writers and OS schedules remain outside coverage.
+model AdmissionFence {
+  nodeId String @id
+  nodeFqdn String
+  releaseId String
+  closedAt DateTime @default(now())
+  node Node @relation(fields: [nodeId], references: [id], onDelete: Restrict)
+  @@map("council_admission_fences")
+}
+
+model ResourceDrainParticipant {
+  nodeId String
+  participant String
+  epoch Int
+  barrierId String
+  challengeId String
+  challengeExpiresAt DateTime
+  status String @default("pending")
+  evidenceSha256 String?
+  receiptJson String?
+  verifiedAt DateTime?
+  enrollment ResourceEnrollment @relation(fields: [nodeId], references: [nodeId], onDelete: Restrict)
+  @@id([nodeId, participant])
+  @@map("resource_drain_participants")
+}
+
+/// No TTL release: a lost process or SSH close cannot prove descendant termination.
+model ResourceParticipantWork {
+  workId String @id
+  nodeId String
+  participant String
+  ownerId String
+  kind String
+  epoch Int
+  barrierId String?
+  /// Reservation-time canonical inventory identity. Historical rows remain null.
+  nodeFqdn String?
+  /// Immutable digest of reservation identity and action kind, not arbitrary
+  /// shell contents. Historical rows remain null and cannot use v1 reconciliation.
+  requestSha256 String?
+  /// Exact operation/request bytes digest for bounded work. External sessions
+  /// bind their admission descriptor but remain ineligible for terminal release.
+  operationSha256 String?
+  /// Monotonic generation allocated for this participant/node namespace.
+  fence BigInt?
+  /// Last instant at which a supervised descendant may begin.
+  deadline DateTime?
+  state String @default("reserved")
+  createdAt DateTime @default(now())
+  startedAt DateTime?
+  settledAt DateTime?
+  settlement String?
+  evidenceSha256 String?
+  reconciliationDecisionId String? @unique
+  reconciliationJson String?
+  nodeSessionReceiptSha256 String? @unique
+  nodeSessionReceiptJson String?
+  node Node @relation(fields: [nodeId], references: [id], onDelete: Restrict)
+  @@index([nodeId, participant, state])
+  @@map("resource_participant_work")
+}
+
+// Explicit opt-in finite cron authority. Historical CronJob rows remain legacy.
+model ManagedCronDefinition {
+  cronJobId String @id
+  nodeId String
+  jobId String
+  revision Int
+  specSha256 String
+  specJson String
+  enabled Boolean @default(false)
+  acknowledgementProtocolVersion Int?
+  stageCommandSha256 String?
+  stageReceiptSha256 String?
+  stageAcknowledgedAt DateTime?
+  activationCommandSha256 String?
+  activationReceiptSha256 String?
+  activationAcknowledgedAt DateTime?
+  acknowledgedJobId String?
+  acknowledgedRevision Int?
+  acknowledgedSpecSha256 String?
+  acknowledgedSpecJson String?
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  @@unique([nodeId, jobId])
+  @@map("managed_cron_definitions")
+}
+
+model ManagedCronOccurrence {
+  id String @id
+  cronJobId String
+  nodeId String
+  revision Int
+  specSha256 String
+  scheduledAt DateTime
+  deadline DateTime
+  commandId String @unique
+  state String @default("admitting")
+  admissionJson String?
+  createdAt DateTime @default(now())
+  @@index([nodeId, state])
+  @@map("managed_cron_occurrences")
+}

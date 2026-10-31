@@ -1,0 +1,9 @@
+{
+  "name": "user-manager",
+  "version": "1.0.0",
+  "description": "User account lifecycle management — audits active accounts, detects dormant users, manages SSH keys, and enforces password policies.",
+  "author": "magnus",
+  "entryPoint": "users.sh",
+  "dependencies": ["useradd", "passwd", "chage"],
+  "tags": ["users", "accounts", "ssh-keys", "access-control"]
+}

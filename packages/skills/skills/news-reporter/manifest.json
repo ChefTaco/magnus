@@ -1,0 +1,9 @@
+{
+  "name": "news-reporter",
+  "version": "1.0.0",
+  "description": "Search the web for news via NewsAPI.org, filter for prompt injection, and write structured Markdown reports to an NFS output directory",
+  "author": "magnus",
+  "entryPoint": "reporter.sh",
+  "dependencies": ["curl", "jq"],
+  "tags": ["news", "web-search", "reporting", "prompt-injection-filter"]
+}

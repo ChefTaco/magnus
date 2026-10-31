@@ -1,0 +1,42 @@
+# Example systemd unit for Magnus UI installed from npm.
+#
+#   sudo useradd --system --home /var/lib/magnus-ui --create-home magnus
+#   sudo npm install --prefix /opt/magnus-ui @hivemagnus/magnus-ui
+#   sudo install -o root -g magnus -m 0640 .env.example /etc/magnus-ui/magnus-ui.env   # then edit it
+#   sudo cp magnus-ui.service /etc/systemd/system/ && sudo systemctl enable --now magnus-ui
+#
+# Adjust paths, the listen port and the hardening options for your host.
+[Unit]
+Description=Magnus UI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=magnus
+Group=magnus
+WorkingDirectory=/var/lib/magnus-ui
+Environment=MAGNUS_UI_DATA_DIR=/var/lib/magnus-ui
+ExecStart=/opt/magnus-ui/node_modules/.bin/magnus-ui start --env-file /etc/magnus-ui/magnus-ui.env
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# Only needed to bind a port below 1024 (for example PORT=443).
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+ReadWritePaths=/var/lib/magnus-ui
+
+[Install]
+WantedBy=multi-user.target

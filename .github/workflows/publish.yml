@@ -1,0 +1,95 @@
+name: Publish to npm
+
+# Publishes every @hivemagnus package in this repository whose version is not on npm yet, with
+# provenance.
+# - Push a tag vX.Y.Z (matching every package version) to publish.
+# - Run it by hand (Actions > Publish to npm > Run workflow) for a dry run.
+# Publishing waits for approval on the `npm-publish` environment, then authenticates to npm
+# through trusted publishing (OIDC).
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Pack and validate only; publish nothing
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+env:
+  # Order: libraries, then the runtimes and servers that depend on them, then the UI.
+  PACKAGES: packages/contracts packages/skills packages/ardent packages/agent services/control-api apps/dashboard
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write # trusted publishing and provenance
+    env:
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'true' || 'false' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install repository check tools
+        run: sudo apt-get update -qq && sudo apt-get install -y ripgrep
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24.22.1
+          registry-url: https://registry.npmjs.org
+
+      - name: Check npm supports provenance and trusted publishing
+        run: |
+          npm --version
+          node -e 'const [a,b]=process.argv[1].split(".").map(Number); if (a<11||(a===11&&b<5)) { console.error("npm >= 11.5.1 is required"); process.exit(1) }' "$(npm --version)"
+
+      - name: Check the tag matches every package version
+        if: github.event_name == 'push'
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          for dir in $PACKAGES; do
+            version="$(node -p "require('./$dir/package.json').version")"
+            if [ "$version" != "$tag" ]; then echo "::error::$dir is $version, tag is v$tag"; exit 1; fi
+          done
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Gates
+        run: |
+          npm run scan:secrets
+          npm run check:private
+          npm run audit:production
+          npm run build
+          npm run typecheck
+          npm test
+          npm run check:packs
+
+      - name: Publish
+        run: |
+          for dir in $PACKAGES; do
+            name="$(node -p "require('./$dir/package.json').name")"
+            version="$(node -p "require('./$dir/package.json').version")"
+            if npm view "$name@$version" version >/dev/null 2>&1; then
+              echo "$name@$version is already on npm; skipping"
+              continue
+            fi
+            if [ "$DRY_RUN" = "true" ]; then
+              (cd "$dir" && npm publish --dry-run --ignore-scripts --access public)
+            else
+              # Already built and tested above, so skip the package lifecycle scripts.
+              (cd "$dir" && npm publish --provenance --ignore-scripts --access public)
+            fi
+          done

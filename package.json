@@ -1,0 +1,94 @@
+{
+  "name": "magnus",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Magnus: self-hosted fleet management for Linux hosts and AI agents (UI, server, node agent, Ardent runtime)",
+  "license": "Apache-2.0",
+  "type": "module",
+  "packageManager": "npm@11.16.0",
+  "engines": {
+    "node": "^24.22.1 || ^26.13.0"
+  },
+  "workspaces": [
+    "apps/*",
+    "services/*",
+    "packages/*"
+  ],
+  "overrides": {
+    "@hono/node-server": "2.1.0",
+    "@prisma/config": {
+      "deepmerge-ts": "8.0.1"
+    },
+    "fast-uri": "3.1.9",
+    "postcss": {
+      ".": "8.5.26",
+      "nanoid": "3.3.18"
+    },
+    "npm": {
+      "brace-expansion": "5.0.9",
+      "ip-address": "10.4.0",
+      "tar": "7.5.22",
+      "undici": "7.29.1"
+    },
+    "sharp": "0.35.5",
+    "mysql2": "3.24.4"
+  },
+  "scripts": {
+    "build": "npm run build -w @hivemagnus/magnus-contracts -w @hivemagnus/magnus-skills -w @hivemagnus/ardent -w @hivemagnus/magnus-agent -w @hivemagnus/magnus-server -w @hivemagnus/magnus-ui",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "verify:ui": "npm --workspace @hivemagnus/magnus-ui run test:e2e -- --project=chromium tests/navigation.spec.ts",
+    "verify:ui:ci": "npm --workspace @hivemagnus/magnus-ui run test:e2e -- --config playwright.ci.config.ts",
+    "openapi:check": "node scripts/check-openapi-contract.mjs",
+    "lockfile:check": "node scripts/validate-lockfile.mjs",
+    "docs:check": "node scripts/check-repository-docs.mjs && node scripts/check-documentation.mjs",
+    "docs:links": "node scripts/check-repository-docs.mjs",
+    "docs:test": "node --test scripts/test-repository-docs.mjs",
+    "docs:generate": "node scripts/generate-documentation.mjs",
+    "clean:local": "node scripts/clean-local.mjs",
+    "clean:local:test": "node --test scripts/test-clean-local.mjs",
+    "tls:check": "node scripts/check-tls-endpoint.mjs",
+    "dashboard:build": "npm --workspace @hivemagnus/magnus-ui run build",
+    "dashboard:test": "npm --workspace @hivemagnus/magnus-ui test",
+    "contracts:build": "npm --workspace @hivemagnus/magnus-contracts run build",
+    "control-api:build": "npm --workspace @hivemagnus/magnus-server run build",
+    "control-api:test": "npm --workspace @hivemagnus/magnus-server test",
+    "agent:build": "npm --workspace @hivemagnus/magnus-agent run build",
+    "agent:test": "npm --workspace @hivemagnus/magnus-agent test",
+    "skills:build": "npm --workspace @hivemagnus/magnus-skills run build",
+    "skills:check": "npm --workspace @hivemagnus/magnus-skills run catalog:check",
+    "ardent:build": "npm --workspace @hivemagnus/ardent run build",
+    "ardent:typecheck": "npm --workspace @hivemagnus/ardent run typecheck",
+    "ardent:lint": "npm --workspace @hivemagnus/ardent run lint",
+    "ardent:test": "npm --workspace @hivemagnus/ardent run test",
+    "ardent:openapi:check": "npm --workspace @hivemagnus/ardent run openapi:check",
+    "ardent:openapi:write": "npm --workspace @hivemagnus/ardent run openapi:write",
+    "ardent:interop": "node packages/ardent/scripts/run-interop.mjs",
+    "ardent:pack:check": "node packages/ardent/scripts/check-package.mjs",
+    "ardent:cli:check": "npm run ardent:build && node packages/ardent/scripts/check-cli.mjs",
+    "ardent:schedule:check": "npm run ardent:build && node packages/ardent/scripts/check-schedule.mjs",
+    "audit:production": "npm audit --omit=dev --audit-level=high",
+    "scan:secrets": "bash scripts/scan-secrets.sh",
+    "check:private": "bash scripts/check-private-data.sh",
+    "check:packs": "node scripts/check-npm-packs.mjs",
+    "hooks:install": "git config core.hooksPath .githooks",
+    "verify": "npm run scan:secrets && npm run check:private && npm run build && npm run typecheck && npm run test && npm run skills:check && npm run openapi:check && npm run ardent:openapi:check && npm run ardent:pack:check && npm run check:packs && npm run docs:check && npm run docs:test && npm run clean:local:test"
+  },
+  "allowScripts": {
+    "@prisma/engines@7.9.1": true,
+    "argon2@0.44.0": true,
+    "better-sqlite3@12.11.1": true,
+    "cpu-features@0.0.10": true,
+    "esbuild@0.28.1": true,
+    "msgpackr-extract@3.0.4": true,
+    "prisma@7.9.1": true,
+    "protobufjs@7.6.6": true,
+    "ssh2@1.17.0": true,
+    "unrs-resolver@1.12.2": true
+  },
+  "devDependencies": {
+    "eslint": "9.39.5",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "typescript-eslint": "8.64.0"
+  }
+}

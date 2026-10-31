@@ -1,0 +1,65 @@
+node_modules/
+dist/
+.next/
+out/
+*.tsbuildinfo
+
+# Environment secrets
+.env
+apps/*/.env
+services/*/.env
+packages/*/.env
+
+# Local certificates and keys
+certs/
+
+# Databases and logs
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+audit-logs/
+**/audit-logs/
+**/state/
+**/prisma/*.db
+**/prisma/*.db-journal
+**/prisma/*.db-shm
+**/prisma/*.db-wal
+
+# Test output
+.pytest_cache/
+coverage/
+playwright-report/
+playwright-report-ci/
+test-results/
+blob-report/
+tests/.auth/
+output/playwright/
+output/ardent/
+.playwright-cli/
+
+# Deployment bundles
+*.tar.gz
+/artifacts/
+
+# Editor/OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.magnus/
+*.swp
+*.swo
+
+__pycache__/
+*.pyc
+
+/output/creative-requests/
+
+# Local privacy denylist and private agent notes
+.private-terms
+*.local.md
+output/
+
+# Agent worktrees
+.claude/worktrees/

@@ -1,0 +1,9 @@
+{
+  "name": "dns-manager",
+  "version": "1.0.0",
+  "description": "DNS resolution audit and management — checks resolv.conf, validates upstream resolvers, detects split-horizon mismatches, verifies DNSSEC, and alerts on resolution failures.",
+  "author": "magnus",
+  "entryPoint": "dns.sh",
+  "dependencies": ["dig", "host", "awk", "grep"],
+  "tags": ["dns", "networking", "resolution", "audit"]
+}

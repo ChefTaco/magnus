@@ -1,0 +1,9 @@
+{
+  "name": "llm-gateway-monitor",
+  "version": "1.0.0",
+  "description": "Local LLM instance monitor — checks Ollama, llama.cpp, and vLLM services. Reports GPU utilization, VRAM usage, loaded models, inference latency, and token throughput.",
+  "author": "magnus",
+  "entryPoint": "llm-monitor.sh",
+  "dependencies": ["curl", "awk", "grep"],
+  "tags": ["llm", "ai", "gpu", "ollama", "monitoring"]
+}

@@ -1,0 +1,9 @@
+{
+  "name": "git-repo-scanner",
+  "version": "1.0.0",
+  "description": "Git repository auditor — finds repos on nodes, detects uncommitted changes, large repos, dangling remotes, and scans for potential secrets in commit history using entropy analysis.",
+  "author": "magnus",
+  "entryPoint": "git-scan.sh",
+  "dependencies": ["git", "find", "awk", "du"],
+  "tags": ["git", "security", "audit", "repos", "secrets"]
+}

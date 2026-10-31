@@ -1,0 +1,14 @@
+# Example timer for the optional magnus-hermes-sync.service.
+[Unit]
+Description=Check Magnus Hermes registry every five minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=5min
+RandomizedDelaySec=45sec
+AccuracySec=15sec
+Persistent=true
+Unit=magnus-hermes-sync.service
+
+[Install]
+WantedBy=timers.target

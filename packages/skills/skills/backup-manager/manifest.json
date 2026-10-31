@@ -1,0 +1,18 @@
+{
+  "name": "backup-manager",
+  "version": "1.0.0",
+  "description": "Automated backup management with rotation protocols",
+  "author": "magnus",
+  "entryPoint": "backup.sh",
+  "dependencies": [
+    "rsync",
+    "tar",
+    "sha256sum"
+  ],
+  "tags": [
+    "backup",
+    "recovery",
+    "retention",
+    "data-protection"
+  ]
+}

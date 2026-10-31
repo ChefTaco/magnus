@@ -1,0 +1,93 @@
+# magnus-server with PostgreSQL and Redis.
+#
+# From the repository root:
+#
+#   cp services/control-api/.env.example services/control-api/docker/.env   # then fill in secrets
+#   docker compose -f services/control-api/docker/compose.yml --env-file services/control-api/docker/.env up -d --build
+#
+# Every secret is required: Compose refuses to start while one is missing.
+# Generate each with `openssl rand -hex 32`; all of them must be distinct.
+# The server listens on https://127.0.0.1:${MAGNUS_PORT:-4000}. Without a
+# mounted certificate it creates a self-signed one for evaluation
+# (MAGNUS_TLS_SELF_SIGNED=true); see README.md for using a real certificate.
+name: magnus-server
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: magnus
+      POSTGRES_USER: magnus
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U magnus -d magnus"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    security_opt: ["no-new-privileges:true"]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD is required}", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+    security_opt: ["no-new-privileges:true"]
+
+  magnus-server:
+    image: ${MAGNUS_IMAGE:-magnus-server:local}
+    build:
+      context: ../../..
+      dockerfile: services/control-api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    ports:
+      - "127.0.0.1:${MAGNUS_PORT:-4000}:4000"
+    volumes:
+      - magnus-data:/var/lib/magnus
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://magnus:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/magnus
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379
+      CONTROL_API_URL: ${CONTROL_API_URL:-https://localhost:4000}
+      CORS_ORIGIN: ${CORS_ORIGIN:-https://localhost:3000}
+      MAGNUS_TLS_SELF_SIGNED: ${MAGNUS_TLS_SELF_SIGNED:-true}
+      MAGNUS_TLS_HOSTNAMES: ${MAGNUS_TLS_HOSTNAMES:-localhost}
+      # Required secrets (32+ characters each, all different).
+      API_SECRET: ${API_SECRET:?API_SECRET is required}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      NODE_MANAGER_SECRET: ${NODE_MANAGER_SECRET:?NODE_MANAGER_SECRET is required}
+      AUDIT_HMAC_SECRET: ${AUDIT_HMAC_SECRET:?AUDIT_HMAC_SECRET is required}
+      RESULT_SIGNING_SECRET: ${RESULT_SIGNING_SECRET:?RESULT_SIGNING_SECRET is required}
+      LOG_INGEST_SIGNING_SECRET: ${LOG_INGEST_SIGNING_SECRET:?LOG_INGEST_SIGNING_SECRET is required}
+      CREDENTIAL_ROTATION_KEY: ${CREDENTIAL_ROTATION_KEY:?CREDENTIAL_ROTATION_KEY is required}
+      METRICS_TOKEN: ${METRICS_TOKEN:?METRICS_TOKEN is required}
+      WEBHOOK_ENCRYPTION_KEY: ${WEBHOOK_ENCRYPTION_KEY:?WEBHOOK_ENCRYPTION_KEY is required}
+      # Optional integrations stay off unless set (see README.md).
+      IAM_CORE_URL: ${IAM_CORE_URL:-}
+      IAM_TOKEN_ISSUER: ${IAM_TOKEN_ISSUER:-}
+      IAM_TOKEN_AUDIENCE: ${IAM_TOKEN_AUDIENCE:-}
+      MAGNUS_ROUTER_URL: ${MAGNUS_ROUTER_URL:-}
+      HIVEMEM_URL: ${HIVEMEM_URL:-}
+      HIVEMEM_TOKEN: ${HIVEMEM_TOKEN:-}
+      SECURITY_FUSION_MODE: ${SECURITY_FUSION_MODE:-off}
+      MAGNUS_SECURITY_CONSOLE_URL: ${MAGNUS_SECURITY_CONSOLE_URL:-}
+      MAGNUS_PLUGIN_API_ENABLED: ${MAGNUS_PLUGIN_API_ENABLED:-false}
+    security_opt: ["no-new-privileges:true"]
+
+volumes:
+  postgres-data:
+  redis-data:
+  magnus-data:

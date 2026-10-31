@@ -1,0 +1,9 @@
+{
+  "name": "ntp-manager",
+  "version": "1.0.0",
+  "description": "Time synchronization management — checks timedatectl status, NTP peer connectivity, chrony/systemd-timesyncd health, and clock drift.",
+  "author": "magnus",
+  "entryPoint": "timesync.sh",
+  "dependencies": ["timedatectl"],
+  "tags": ["ntp", "time", "chrony", "timesyncd", "ubuntu"]
+}

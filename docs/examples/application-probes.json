@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "applications": [
+    {
+      "id": "web-app",
+      "projectId": "example/web-app",
+      "serviceId": "web-app",
+      "nodeId": "REPLACE_WITH_INVENTORY_ID",
+      "kind": "http",
+      "baseUrl": "https://app.example.com",
+      "healthPath": "/health",
+      "readinessPath": "/api/readiness",
+      "tokenEnv": "WEB_APP_PROBE_TOKEN",
+      "restartService": "web-app.service"
+    },
+    {
+      "id": "worker",
+      "projectId": "example/worker",
+      "serviceId": "worker-api",
+      "nodeId": "REPLACE_WITH_INVENTORY_ID",
+      "kind": "workflow-queue",
+      "baseUrl": "https://worker.example.com",
+      "healthPath": "/health",
+      "readinessPath": "/api/readiness",
+      "queuePath": "/health/queue",
+      "tokenEnv": "WORKER_PROBE_TOKEN",
+      "maxQueueAgeMs": 300000,
+      "dependsOn": ["web-app"]
+    },
+    {
+      "id": "gateway",
+      "projectId": "example/gateway",
+      "serviceId": "gateway",
+      "nodeId": "REPLACE_WITH_INVENTORY_ID",
+      "kind": "backend-pool",
+      "baseUrl": "https://gateway.example.com",
+      "healthPath": "/v1/health",
+      "readinessPath": "/v1/backends",
+      "tokenEnv": "GATEWAY_PROBE_TOKEN"
+    },
+    {
+      "id": "model-router",
+      "projectId": "example/hive",
+      "serviceId": "hive-router",
+      "nodeId": "REPLACE_WITH_INVENTORY_ID",
+      "kind": "hive-router",
+      "baseUrl": "https://router.example.com",
+      "healthPath": "/health",
+      "readinessPath": "/v1/models",
+      "tokenEnv": "ROUTER_PROBE_TOKEN",
+      "canaryModel": "REPLACE_WITH_REGISTERED_MODEL"
+    }
+  ]
+}

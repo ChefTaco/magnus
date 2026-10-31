@@ -1,0 +1,9 @@
+{
+  "name": "cert-manager",
+  "version": "1.0.0",
+  "description": "TLS/SSL certificate monitoring — tracks certificate expiration dates, validates chains, and alerts before certs expire. Supports Let's Encrypt auto-renewal.",
+  "author": "magnus",
+  "entryPoint": "certs.sh",
+  "dependencies": ["openssl", "certbot"],
+  "tags": ["certificates", "tls", "ssl", "expiry", "security"]
+}

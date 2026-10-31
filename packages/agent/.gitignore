@@ -1,0 +1,27 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Environment secrets — never commit
+.env
+
+# Local TLS certs
+certs/
+
+# Logs
+*.jsonl
+audit-logs/
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+*.swp
+*.swo

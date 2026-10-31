@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "collectedAt": "2026-09-07T00:00:00.000Z",
+  "complete": true,
+  "nodes": [
+    {
+      "id": "node-a",
+      "hostname": "host.example.invalid",
+      "status": "ONLINE",
+      "lastHeartbeatAt": "2026-09-07T00:00:00.000Z",
+      "agentVersion": "1.7.0"
+    }
+  ],
+  "deployments": [
+    {
+      "id": "magnus-api-a",
+      "nodeId": "node-a",
+      "projectId": "cheftaco/magnus",
+      "serviceId": "magnus-control-api",
+      "status": "pass",
+      "observedAt": "2026-09-07T00:00:00.000Z",
+      "releaseRevision": "example-revision",
+      "dependsOn": ["cheftaco/hive/iam"]
+    }
+  ]
+}

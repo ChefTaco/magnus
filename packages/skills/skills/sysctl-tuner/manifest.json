@@ -1,0 +1,9 @@
+{
+  "name": "sysctl-tuner",
+  "version": "1.0.0",
+  "description": "Kernel parameter inspection and tuning — displays current sysctl values, checks against Ubuntu best practices, and identifies non-default settings.",
+  "author": "magnus",
+  "entryPoint": "tuner.sh",
+  "dependencies": ["sysctl"],
+  "tags": ["kernel", "sysctl", "tuning", "performance", "security", "ubuntu"]
+}

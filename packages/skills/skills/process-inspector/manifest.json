@@ -1,0 +1,9 @@
+{
+  "name": "process-inspector",
+  "version": "1.0.0",
+  "description": "Process analysis toolkit — identifies resource-hungry processes, detects zombie/orphan processes, monitors process trees, and tracks resource trends.",
+  "author": "magnus",
+  "entryPoint": "procs.sh",
+  "dependencies": ["ps", "top", "lsof"],
+  "tags": ["processes", "resources", "debugging", "performance"]
+}

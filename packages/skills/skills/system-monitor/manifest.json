@@ -1,0 +1,17 @@
+{
+  "name": "system-monitor",
+  "version": "1.0.0",
+  "description": "Real-time system monitoring and alerting",
+  "author": "magnus",
+  "entryPoint": "monitor.sh",
+  "dependencies": [
+    "procfs",
+    "sysstat"
+  ],
+  "tags": [
+    "monitoring",
+    "health",
+    "alerting",
+    "core"
+  ]
+}

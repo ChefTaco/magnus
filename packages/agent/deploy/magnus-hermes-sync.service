@@ -1,0 +1,22 @@
+# Example oneshot unit for optional Hermes Agent registry reconciliation.
+# It needs HERMES_REGISTRY_TOKEN in /opt/magnus-agent/.env and is started by
+# magnus-hermes-sync.timer. Applying desired state also needs
+# MAGNUS_HERMES_SYNC_PULL=true; append --submit-only to ExecStart to report the
+# local inventory only.
+[Unit]
+Description=Magnus Hermes registry reconciliation
+After=network-online.target magnus-agent.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/magnus-agent
+Environment=AGENT_INSTALL_DIR=/opt/magnus-agent
+EnvironmentFile=/opt/magnus-agent/.env
+ExecStart=/usr/bin/flock -n /run/magnus-hermes-sync.lock /usr/bin/node /opt/magnus-agent/node_modules/@hivemagnus/magnus-agent/dist/hermes-sync.js
+TimeoutStartSec=2h
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/home /root /run
+UMask=0077

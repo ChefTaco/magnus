@@ -1,0 +1,9 @@
+{
+  "name": "swap-manager",
+  "version": "1.0.0",
+  "description": "Swap configuration inspector — analyzes swap usage, swappiness tuning, zram/zswap status, OOM-killer history, and memory pressure indicators.",
+  "author": "magnus",
+  "entryPoint": "swap.sh",
+  "dependencies": ["swapon", "free", "awk", "grep"],
+  "tags": ["swap", "memory", "performance", "tuning"]
+}

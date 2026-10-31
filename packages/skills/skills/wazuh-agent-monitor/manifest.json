@@ -1,0 +1,9 @@
+{
+  "name": "wazuh-agent-monitor",
+  "version": "1.0.0",
+  "description": "Wazuh endpoint-security agent posture — reports installation, service health, startup state, version, and configured managers without exposing credentials.",
+  "author": "magnus",
+  "entryPoint": "wazuh-agent.sh",
+  "dependencies": ["systemctl", "dpkg-query", "awk", "grep"],
+  "tags": ["wazuh", "security", "endpoint", "monitoring", "compliance", "ubuntu"]
+}

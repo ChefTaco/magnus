@@ -1,0 +1,121 @@
+{
+  "name": "@hivemagnus/magnus-server",
+  "version": "1.0.0",
+  "description": "Magnus server: the fleet control plane API (Hono, PostgreSQL, Redis) for nodes running magnus-agent, with optional Hive IAM, Hive Router, HiveMem, Hermes Agent and external security console integrations.",
+  "keywords": [
+    "magnus",
+    "fleet",
+    "control-plane",
+    "server",
+    "api",
+    "hono",
+    "postgresql",
+    "redis",
+    "ops",
+    "hermes-agent"
+  ],
+  "license": "Apache-2.0",
+  "author": "ChefTaco",
+  "homepage": "https://github.com/ChefTaco/magnus/tree/main/services/control-api#readme",
+  "bugs": {
+    "url": "https://github.com/ChefTaco/magnus/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ChefTaco/magnus.git",
+    "directory": "services/control-api"
+  },
+  "type": "module",
+  "bin": {
+    "magnus-server": "dist/cli.js"
+  },
+  "main": "dist/index.js",
+  "files": [
+    "dist/**/*.js",
+    "dist/ai/*.md",
+    "!dist/**/*.test.*",
+    "!dist/**/*.map",
+    "!dist/**/*-test-fixture.js",
+    "prisma/schema.prisma",
+    "prisma/migrations",
+    "prisma.config.ts",
+    "agent-version.json",
+    "README.md",
+    "LICENSE",
+    ".env.example"
+  ],
+  "engines": {
+    "node": "^24.22.1 || ^26.13.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "overrides": {
+    "@prisma/config": {
+      "deepmerge-ts": "8.0.1"
+    },
+    "@prisma/dev": {
+      "@hono/node-server": "2.1.0"
+    },
+    "fast-uri": "3.1.9",
+    "mysql2": "3.24.4"
+  },
+  "scripts": {
+    "build": "tsc --build && node scripts/copy-assets.mjs",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/cli.js start",
+    "clean": "rm -rf dist tsconfig.tsbuildinfo",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "test:integration": "vitest run --config vitest.integration.config.ts --passWithNoTests --fileParallelism=false",
+    "test:ci": "vitest run --coverage",
+    "lint": "eslint src/",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
+    "webhooks:migrate-credentials": "tsx scripts/migrate-webhook-credentials.ts",
+    "db:seed": "tsx prisma/seed.ts",
+    "db:studio": "prisma studio",
+    "db:reset": "prisma migrate reset --force",
+    "engineering:recovery-exercise": "node dist/scripts/run-disposable-recovery-exercise.js",
+    "engineering:recovery-reap": "node dist/scripts/run-disposable-recovery-exercise.js --reap-orphans",
+    "check": "node dist/cli.js check",
+    "compose:check": "bash scripts/check-compose.sh",
+    "prepublishOnly": "npm run db:generate && npm run clean && npm run build"
+  },
+  "dependencies": {
+    "@hivemagnus/magnus-contracts": "1.0.0",
+    "@hono/node-server": "^2.1.0",
+    "@hono/swagger-ui": "^0.5.3",
+    "@prisma/adapter-pg": "7.8.0",
+    "@prisma/client": "^7.9.1",
+    "argon2": "^0.44.0",
+    "bullmq": "^5.30.0",
+    "dotenv": "^17.3.1",
+    "hono": "4.13.13",
+    "ioredis": "^5.4.0",
+    "jose": "^6.0.0",
+    "ky": "^1.7.5",
+    "nanoid": "^5.0.0",
+    "pg": "^8.22.0",
+    "ssh2": "^1.17.0",
+    "ws": "^8.19.0",
+    "yaml": "2.9.1",
+    "zod": "^4.6.7",
+    "@hivemagnus/magnus-skills": "1.0.0",
+    "prisma": "^7.9.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/pg": "^8.20.0",
+    "@types/ssh2": "^1.15.5",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.1"
+  },
+  "prisma": {
+    "schema": "prisma/schema.prisma",
+    "seed": "tsx prisma/seed.ts"
+  }
+}

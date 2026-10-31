@@ -1,0 +1,334 @@
+@import "tailwindcss";
+@import "highlight.js/styles/github-dark-dimmed.css";
+
+@theme {
+  --color-bg: #000000;
+  --color-surface: #06060d;
+  --color-surface-hover: #0e0e1a;
+  --color-surface-raised: #0a0a14;
+  --color-border: #1a1a2e;
+  --color-border-strong: #26264a;
+  --color-text: #e0e0ec;
+  --color-text-muted: #8a8aab;
+  --color-primary: #00e5ff;
+  --color-primary-hover: #00ffff;
+  --color-accent: #ff006e;
+  --color-accent-hover: #ff3d8f;
+  --color-success: #00ff41;
+  --color-warning: #ffb300;
+  --color-danger: #ff1744;
+  --color-info: #00b0ff;
+  --color-glow: #00e5ff26;
+  --color-glow-accent: #ff006e26;
+  --color-glow-success: #00ff4126;
+  --color-glow-warning: #ffb30026;
+  --color-glow-danger: #ff174426;
+  --color-grid: #00e5ff0d;
+
+  --font-mono: var(--font-jetbrains), "JetBrains Mono", "Fira Code", "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+
+  --radius-panel: 6px;
+  --radius-chip: 3px;
+
+  --shadow-glow-sm: 0 0 8px var(--color-glow);
+  --shadow-glow-md: 0 0 20px var(--color-glow), inset 0 0 12px #00e5ff0a;
+
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+
+  --animate-glow-pulse: glow-pulse 2.4s ease-in-out infinite;
+  --animate-flicker: flicker 4s linear infinite;
+  --animate-shimmer: shimmer 1.6s linear infinite;
+  --animate-sweep: sweep 4s linear infinite;
+  --animate-ticker: ticker 40s linear infinite;
+  --animate-toast-in: toast-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-halo: halo 2s ease-out infinite;
+
+  @keyframes glow-pulse {
+    0%, 100% { box-shadow: 0 0 8px var(--color-glow), 0 0 24px var(--color-glow); }
+    50% { box-shadow: 0 0 16px var(--color-glow), 0 0 40px var(--color-glow); }
+  }
+  @keyframes flicker {
+    0%, 100% { opacity: 1; }
+    92% { opacity: 1; }
+    93% { opacity: 0.8; }
+    94% { opacity: 1; }
+    96% { opacity: 0.9; }
+    97% { opacity: 1; }
+  }
+  @keyframes shimmer {
+    from { background-position: 200% 0; }
+    to { background-position: -200% 0; }
+  }
+  @keyframes sweep {
+    to { transform: rotate(360deg); }
+  }
+  @keyframes ticker {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
+  }
+  @keyframes toast-in {
+    from { opacity: 0; transform: translateX(24px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+  @keyframes halo {
+    0% { transform: scale(1); opacity: 0.7; }
+    100% { transform: scale(2.6); opacity: 0; }
+  }
+}
+
+:root {
+  --z-content: 0;
+  --z-shell: 50;
+  --z-fx: 60;
+  --z-modal: 100;
+  --z-toast: 110;
+}
+
+body {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+}
+
+/* Scanline overlay: above the shell, below modals and toasts. */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: var(--z-fx);
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 229, 255, 0.015) 2px,
+    rgba(0, 229, 255, 0.015) 4px
+  );
+  animation: scanline-scroll 8s linear infinite;
+  will-change: transform;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-primary);
+  border-radius: 4px;
+  opacity: 0.4;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-primary-hover);
+}
+
+/* Keyframes */
+@keyframes scanline-scroll {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(4px); }
+}
+
+@keyframes text-glow {
+  0%, 100% { text-shadow: 0 0 8px var(--color-primary), 0 0 20px var(--color-glow); }
+  50% { text-shadow: 0 0 12px var(--color-primary), 0 0 30px var(--color-glow); }
+}
+
+@keyframes cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+@keyframes scan-sweep {
+  from { background-position: 0 -100%; }
+  to { background-position: 0 200%; }
+}
+
+@keyframes glitch {
+  0%, 100% { clip-path: inset(0 0 0 0); transform: translate(0); }
+  20% { clip-path: inset(10% 0 60% 0); transform: translate(-2px, 1px); }
+  40% { clip-path: inset(50% 0 20% 0); transform: translate(2px, -1px); }
+  60% { clip-path: inset(30% 0 40% 0); transform: translate(-1px, 0); }
+  80% { clip-path: inset(70% 0 5% 0); transform: translate(1px, 1px); }
+}
+
+@keyframes toast-progress {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
+}
+
+@keyframes draw-stroke {
+  from { stroke-dashoffset: var(--stroke-length, 200); }
+  to { stroke-dashoffset: 0; }
+}
+
+/* Page item fade-in-up animation (replaces Framer Motion in page-transition.tsx).
+   Blur is kept off: staggered filter animation across long pages is costly. */
+@keyframes page-item-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-page-in {
+  animation: page-item-in 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Neon glow utilities */
+.neon-border {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 8px var(--color-glow), inset 0 0 8px var(--color-glow);
+}
+
+.neon-text {
+  text-shadow: 0 0 8px var(--color-primary), 0 0 20px var(--color-glow);
+}
+
+.accent-glow {
+  box-shadow: 0 0 8px var(--color-glow-accent), 0 0 20px var(--color-glow-accent);
+}
+
+.glow-text-primary { text-shadow: 0 0 8px var(--color-primary), 0 0 20px var(--color-glow); }
+.glow-text-accent { text-shadow: 0 0 8px var(--color-accent), 0 0 20px var(--color-glow-accent); }
+.glow-text-success { text-shadow: 0 0 8px var(--color-success), 0 0 20px var(--color-glow-success); }
+.glow-text-warning { text-shadow: 0 0 8px var(--color-warning), 0 0 20px var(--color-glow-warning); }
+.glow-text-danger { text-shadow: 0 0 8px var(--color-danger), 0 0 20px var(--color-glow-danger); }
+
+/* Tabular figures so changing numbers don't jitter. */
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Corner-bracket accent (top-left and bottom-right). */
+.panel-corners {
+  position: relative;
+}
+.panel-corners::before,
+.panel-corners::after {
+  content: '';
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  pointer-events: none;
+  border-color: var(--panel-corner-color, color-mix(in srgb, var(--color-primary) 60%, transparent));
+}
+.panel-corners::before {
+  top: -1px;
+  left: -1px;
+  border-top: 1px solid;
+  border-left: 1px solid;
+  border-top-left-radius: var(--radius-panel);
+}
+.panel-corners::after {
+  bottom: -1px;
+  right: -1px;
+  border-bottom: 1px solid;
+  border-right: 1px solid;
+  border-bottom-right-radius: var(--radius-panel);
+}
+
+/* Faint cyan grid for hero backdrops and the main canvas. */
+.grid-bg {
+  background-image:
+    linear-gradient(var(--color-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--color-grid) 1px, transparent 1px);
+  background-size: 32px 32px;
+  background-position: -1px -1px;
+}
+
+/* Main content backdrop: grid plus a soft cyan glow from the top. */
+.app-backdrop {
+  background-image:
+    radial-gradient(ellipse 80% 50% at 50% 0%, color-mix(in srgb, var(--color-primary) 7%, transparent), transparent 70%),
+    linear-gradient(var(--color-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--color-grid) 1px, transparent 1px);
+  background-size: 100% 100%, 32px 32px, 32px 32px;
+  background-position: 0 0, -1px -1px, -1px -1px;
+  background-attachment: local;
+}
+
+/* Hover glow on the compositor: fade a pre-shadowed layer instead of animating box-shadow. */
+.glow-hover {
+  position: relative;
+}
+.glow-hover::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow: 0 0 20px var(--glow-hover-color, var(--color-glow)), inset 0 0 12px var(--glow-hover-color, var(--color-glow));
+  opacity: 0;
+  transition: opacity 0.3s var(--ease-out-expo);
+}
+.glow-hover:hover::after,
+.glow-hover:focus-visible::after {
+  opacity: 1;
+}
+
+/* Skeleton shimmer. */
+.skeleton {
+  border-radius: var(--radius-chip);
+  background: linear-gradient(
+    90deg,
+    var(--color-surface-hover) 0%,
+    color-mix(in srgb, var(--color-primary) 10%, var(--color-surface-hover)) 50%,
+    var(--color-surface-hover) 100%
+  );
+  background-size: 200% 100%;
+  animation: var(--animate-shimmer);
+}
+
+/* One-shot highlight that sweeps down a row after a data refresh. */
+.scan-sweep {
+  background-image: linear-gradient(180deg, transparent 0%, var(--color-glow) 50%, transparent 100%);
+  background-size: 100% 50%;
+  background-repeat: no-repeat;
+  animation: scan-sweep 0.9s var(--ease-out-expo) 1 both;
+}
+
+.glitch {
+  animation: glitch 2.5s steps(1) infinite;
+}
+
+/* Selection highlight */
+::selection {
+  background: var(--color-primary);
+  color: #000000;
+}
+
+/* Visual effects kill switch (command palette) for weak GPUs and remote desktops. */
+html[data-fx='low'] body::after {
+  display: none;
+}
+html[data-fx='low'] .animate-glow-pulse,
+html[data-fx='low'] .animate-flicker,
+html[data-fx='low'] .animate-sweep,
+html[data-fx='low'] .animate-halo,
+html[data-fx='low'] .glitch {
+  animation: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body::after {
+    animation: none;
+  }
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .animate-page-in {
+    animation: none;
+  }
+}

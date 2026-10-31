@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Robot favicon">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#111827"/>
+      <stop offset="100%" stop-color="#1f2937"/>
+    </linearGradient>
+    <linearGradient id="face" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#22d3ee"/>
+      <stop offset="100%" stop-color="#3b82f6"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#bg)"/>
+
+  <rect x="22" y="9" width="20" height="5" rx="2.5" fill="#9ca3af"/>
+  <circle cx="32" cy="7" r="3" fill="#22d3ee"/>
+
+  <rect x="14" y="16" width="36" height="32" rx="8" fill="url(#face)"/>
+
+  <circle cx="25" cy="31" r="4.8" fill="#0f172a"/>
+  <circle cx="39" cy="31" r="4.8" fill="#0f172a"/>
+  <circle cx="25" cy="31" r="2" fill="#93c5fd"/>
+  <circle cx="39" cy="31" r="2" fill="#93c5fd"/>
+
+  <rect x="24" y="39" width="16" height="3.6" rx="1.8" fill="#0f172a"/>
+
+  <rect x="9" y="24" width="5" height="14" rx="2.5" fill="#6b7280"/>
+  <rect x="50" y="24" width="5" height="14" rx="2.5" fill="#6b7280"/>
+</svg>

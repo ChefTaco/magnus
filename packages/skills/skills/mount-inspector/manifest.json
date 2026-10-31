@@ -1,0 +1,9 @@
+{
+  "name": "mount-inspector",
+  "version": "1.0.0",
+  "description": "Filesystem mount auditor — inspects NFS, CIFS, tmpfs, overlayfs mounts. Detects stale mounts, checks security options, verifies fstab consistency, and reports mount latency.",
+  "author": "magnus",
+  "entryPoint": "mounts.sh",
+  "dependencies": ["mount", "findmnt", "df", "awk"],
+  "tags": ["mounts", "filesystem", "nfs", "audit"]
+}

@@ -1,0 +1,9 @@
+{
+  "name": "package-manager",
+  "version": "1.0.0",
+  "description": "Automated package management — checks for available updates, identifies vulnerable packages, and can perform controlled upgrades with rollback support.",
+  "author": "magnus",
+  "entryPoint": "packages.sh",
+  "dependencies": ["apt", "dnf"],
+  "tags": ["packages", "updates", "vulnerabilities", "maintenance"]
+}

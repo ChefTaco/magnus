@@ -1,0 +1,9 @@
+{
+  "name": "firewall-manager",
+  "version": "1.0.0",
+  "description": "Firewall rule management and auditing — inspects iptables/nftables/ufw rules, detects overly permissive configurations, and applies security policies.",
+  "author": "magnus",
+  "entryPoint": "firewall.sh",
+  "dependencies": ["iptables", "ufw", "nft"],
+  "tags": ["firewall", "iptables", "ufw", "security", "network"]
+}

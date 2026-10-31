@@ -1,0 +1,54 @@
+{
+  "name": "@hivemagnus/magnus-contracts",
+  "version": "1.0.0",
+  "description": "Shared Zod schemas and TypeScript types for the Magnus server, UI and node agent wire contracts.",
+  "keywords": [
+    "magnus",
+    "zod",
+    "schemas",
+    "contracts",
+    "typescript"
+  ],
+  "license": "Apache-2.0",
+  "author": "ChefTaco",
+  "homepage": "https://github.com/ChefTaco/magnus/tree/main/packages/contracts#readme",
+  "bugs": {
+    "url": "https://github.com/ChefTaco/magnus/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ChefTaco/magnus.git",
+    "directory": "packages/contracts"
+  },
+  "type": "module",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": "^24.22.1 || ^26.13.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc --build",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "openapi-fetch": "^0.17.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  }
+}

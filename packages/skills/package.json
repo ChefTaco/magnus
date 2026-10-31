@@ -1,0 +1,58 @@
+{
+  "name": "@hivemagnus/magnus-skills",
+  "version": "1.0.0",
+  "description": "Ubuntu operations skill catalogue for Magnus and Hermes Agent: package, service, network, storage and security runbooks with validated manifests.",
+  "keywords": [
+    "magnus",
+    "skills",
+    "hermes-agent",
+    "ubuntu",
+    "ops",
+    "runbooks"
+  ],
+  "license": "Apache-2.0",
+  "author": "ChefTaco",
+  "homepage": "https://github.com/ChefTaco/magnus/tree/main/packages/skills#readme",
+  "bugs": {
+    "url": "https://github.com/ChefTaco/magnus/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ChefTaco/magnus.git",
+    "directory": "packages/skills"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "skills",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": "^24.22.1 || ^26.13.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "catalog": "node scripts/build-index.mjs",
+    "catalog:check": "node scripts/build-index.mjs && git diff --exit-code -- skills",
+    "build": "node scripts/build-index.mjs && tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.15",
+    "typescript": "^5.8.3"
+  }
+}

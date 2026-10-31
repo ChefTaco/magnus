@@ -1,0 +1,26 @@
+node_modules/
+dist/
+.next/
+out/
+*.tsbuildinfo
+
+# Playwright
+playwright-report/
+test-results/
+blob-report/
+tests/.auth/
+
+# Environment secrets — never commit
+.env
+
+# Operator runtime state — control-node registry (may contain secrets)
+.magnus/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+*.swp
+*.swo

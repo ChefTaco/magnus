@@ -1,0 +1,23 @@
+# Build context filter for services/control-api/Dockerfile (context: repo root).
+# Only the root manifests, every workspace manifest (so `npm ci` can validate
+# the lockfile) and the three workspaces this image bundles are sent.
+**
+!package.json
+!package-lock.json
+!apps/*/package.json
+!packages/*/package.json
+!services/*/package.json
+!packages/contracts/**
+!packages/skills/**
+!services/control-api/**
+
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+**/.env
+**/.env.*
+!**/.env.example
+**/state
+**/certs
+**/audit-logs
+services/control-api/src/db/generated

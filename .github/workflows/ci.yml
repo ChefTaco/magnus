@@ -1,0 +1,92 @@
+name: Magnus CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: magnus-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  privacy:
+    name: Secrets and private data
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install ripgrep
+        run: sudo apt-get update -qq && sudo apt-get install -y ripgrep
+      - run: bash scripts/scan-secrets.sh
+      - run: bash scripts/check-private-data.sh
+
+  verify:
+    name: Verify (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [24.22.1, 26.13.0]
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: magnus
+          POSTGRES_PASSWORD: ci-magnus-password
+          POSTGRES_DB: magnus_ideas_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U magnus -d magnus_ideas_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 55449:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://magnus:ci-magnus-password@127.0.0.1:5432/magnus_ideas_ci
+      TEST_DATABASE_URL: postgresql://magnus:ci-magnus-password@127.0.0.1:5432/magnus_ideas_ci
+      UI_TEST_REDIS_URL: redis://127.0.0.1:55449
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+      - name: Install test tools
+        run: sudo apt-get update -qq && sudo apt-get install -y ripgrep redis-server
+      - run: npm ci
+      - run: npm run lockfile:check
+      - run: npm run audit:production
+      - name: Generate the Prisma client
+        run: npm --workspace @hivemagnus/magnus-server run db:generate
+      - name: Build, typecheck, test and check packages
+        run: npm run verify
+      - name: Apply database migrations
+        run: npm --workspace @hivemagnus/magnus-server run db:migrate:deploy
+      - name: Server integration tests
+        run: npm --workspace @hivemagnus/magnus-server run test:integration
+      - name: Browser navigation tests
+        run: |
+          npm --workspace @hivemagnus/magnus-ui exec playwright install --with-deps chromium
+          npm run verify:ui:ci
+      - name: Keep browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: browser-evidence-node-${{ matrix.node-version }}
+          path: |
+            apps/dashboard/test-results
+            apps/dashboard/playwright-report-ci
+          retention-days: 7

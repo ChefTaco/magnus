@@ -1,0 +1,33 @@
+# Example systemd unit for magnus-agent.
+#
+# Install the package below a stable directory so its private .env and
+# .magnus state survive upgrades:
+#   sudo npm install --prefix /opt/magnus-agent @hivemagnus/magnus-agent
+#   sudo install -m 0600 /opt/magnus-agent/node_modules/@hivemagnus/magnus-agent/.env.example /opt/magnus-agent/.env
+#
+# The agent runs as root because it manages system cron, systemd units, files
+# and local accounts on the host. Limit what it may do through server-side
+# policy and the agent's own allowlists. This is privileged mode
+# (MAGNUS_AGENT_PRIVILEGED=true, the default); to run without root, use
+# magnus-agent-unprivileged.service instead.
+[Unit]
+Description=Magnus Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/magnus-agent
+Environment=AGENT_INSTALL_DIR=/opt/magnus-agent
+EnvironmentFile=/opt/magnus-agent/.env
+ExecStart=/usr/bin/node /opt/magnus-agent/node_modules/@hivemagnus/magnus-agent/dist/index.js start
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

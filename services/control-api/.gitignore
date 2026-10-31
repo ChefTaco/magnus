@@ -1,0 +1,33 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Environment secrets — never commit
+.env
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+
+# Generated Prisma client
+src/db/generated/
+
+# Audit logs
+audit-logs/
+state/
+
+# Build artifacts
+.magnus-deploy.tar.gz
+
+# Local TLS certs
+certs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+*.swp
+*.swo

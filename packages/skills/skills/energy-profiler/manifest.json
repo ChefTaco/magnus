@@ -1,0 +1,9 @@
+{
+  "name": "energy-profiler",
+  "version": "1.0.0",
+  "description": "Node power consumption profiler — reads RAPL energy counters, IPMI sensors, CPU frequency scaling, and C-state residency. Reports per-package energy cost and recommends power-saving configurations.",
+  "author": "magnus",
+  "entryPoint": "energy.sh",
+  "dependencies": ["awk", "grep", "cat"],
+  "tags": ["energy", "power", "rapl", "efficiency", "green"]
+}

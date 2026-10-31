@@ -1,0 +1,9 @@
+{
+  "name": "service-watcher",
+  "version": "1.0.0",
+  "description": "Systemd service monitoring and auto-recovery — watches critical services, detects failures, performs automatic restarts, and escalates persistent issues.",
+  "author": "magnus",
+  "entryPoint": "watcher.sh",
+  "dependencies": ["systemctl", "journalctl"],
+  "tags": ["services", "systemd", "auto-restart", "availability"]
+}

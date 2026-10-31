@@ -1,0 +1,9 @@
+{
+  "name": "security-auditor",
+  "version": "1.0.0",
+  "description": "Security posture assessment — audits user accounts, SSH config, open ports, file permissions, SUID binaries, and firewall rules. Generates compliance reports.",
+  "author": "magnus",
+  "entryPoint": "audit.sh",
+  "dependencies": ["ss", "find", "awk", "grep"],
+  "tags": ["security", "audit", "compliance", "hardening"]
+}

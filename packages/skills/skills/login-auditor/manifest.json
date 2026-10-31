@@ -1,0 +1,9 @@
+{
+  "name": "login-auditor",
+  "version": "1.0.0",
+  "description": "Authentication event auditor — tracks successful/failed logins, sudo usage, session durations, concurrent sessions, and unusual login times or source IPs.",
+  "author": "magnus",
+  "entryPoint": "logins.sh",
+  "dependencies": ["last", "lastlog", "journalctl", "awk"],
+  "tags": ["auth", "login", "audit", "security", "sudo"]
+}

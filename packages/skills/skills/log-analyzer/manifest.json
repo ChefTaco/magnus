@@ -1,0 +1,9 @@
+{
+  "name": "log-analyzer",
+  "version": "1.0.0",
+  "description": "Intelligent log parsing and pattern detection for syslog, journald, and application logs. Detects anomalies, recurring errors, and security-relevant events.",
+  "author": "magnus",
+  "entryPoint": "analyze.sh",
+  "dependencies": ["journalctl", "grep", "awk"],
+  "tags": ["logs", "analysis", "anomaly-detection", "security"]
+}

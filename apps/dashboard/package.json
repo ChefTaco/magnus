@@ -1,0 +1,108 @@
+{
+  "name": "@hivemagnus/magnus-ui",
+  "version": "1.0.0",
+  "description": "Magnus UI: web console for the Magnus fleet control plane, shipped as a prebuilt Next.js server with the magnus-ui CLI",
+  "keywords": [
+    "magnus",
+    "fleet",
+    "fleet-management",
+    "dashboard",
+    "nextjs",
+    "devops",
+    "ssh",
+    "agents"
+  ],
+  "homepage": "https://github.com/ChefTaco/magnus/tree/main/apps/dashboard#readme",
+  "bugs": {
+    "url": "https://github.com/ChefTaco/magnus/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ChefTaco/magnus.git",
+    "directory": "apps/dashboard"
+  },
+  "license": "Apache-2.0",
+  "author": "ChefTaco",
+  "type": "module",
+  "bin": {
+    "magnus-ui": "bin/magnus-ui.mjs"
+  },
+  "engines": {
+    "node": "^24.22.1 || ^26.13.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "bin",
+    "dist/app",
+    "deploy",
+    ".env.example",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "next build && node scripts/stage-package.mjs",
+    "dev": "next dev --port 3000 --experimental-https --experimental-https-key ../../certs/server.key --experimental-https-cert ../../certs/server.crt",
+    "start": "node bin/magnus-ui.mjs start",
+    "clean": "rm -rf .next out",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:ui": "playwright test --ui",
+    "lint": "eslint .",
+    "test:orchestra": "playwright test tests/orchestra-fleet.spec.ts",
+    "stage": "node scripts/stage-package.mjs",
+    "prepack": "node scripts/stage-package.mjs"
+  },
+  "dependencies": {
+    "argon2": "^0.44.0",
+    "ioredis": "^5.11.1",
+    "jose": "^6.0.0",
+    "ssh2": "^1.17.0",
+    "ws": "^8.19.0"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.2.0",
+    "@hivemagnus/magnus-contracts": "1.0.0",
+    "@playwright/test": "^1.50.0",
+    "@tailwindcss/postcss": "^4.0.0",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/ssh2": "^1.15.5",
+    "@types/ws": "^8.18.1",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "clsx": "^2.1.0",
+    "dotenv": "^17.3.1",
+    "eslint": "^9.17.0",
+    "eslint-config-next": "16.4.2",
+    "ky": "^1.7.5",
+    "lucide-react": "^0.460.0",
+    "motion": "^12.34.2",
+    "nanoid": "^5.1.6",
+    "next": "16.4.2",
+    "postcss": "8.5.26",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0",
+    "recharts": "^3.7.0",
+    "rehype-highlight": "^7.0.2",
+    "remark-gfm": "^4.0.1",
+    "tailwind-merge": "^2.6.0",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.8.3",
+    "undici": "^7.30.1",
+    "vitest": "^3.2.1",
+    "yaml": "^2.9.1"
+  },
+  "overrides": {
+    "minimatch": "^10.2.1",
+    "postcss": {
+      ".": "8.5.26",
+      "nanoid": "3.3.18"
+    }
+  }
+}

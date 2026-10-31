@@ -1,0 +1,513 @@
+{
+  "schema": "https://agentskills.io/schema/v1",
+  "generatedAt": "2026-07-29T01:22:28.611Z",
+  "count": 26,
+  "skills": [
+    {
+      "name": "backup-manager",
+      "version": "1.0.0",
+      "description": "Automated backup management with rotation protocols",
+      "author": "magnus",
+      "entryPoint": "backup.sh",
+      "dependencies": [
+        "rsync",
+        "tar",
+        "sha256sum"
+      ],
+      "tags": [
+        "backup",
+        "recovery",
+        "retention",
+        "data-protection"
+      ],
+      "path": "backup-manager"
+    },
+    {
+      "name": "cert-manager",
+      "version": "1.0.0",
+      "description": "TLS/SSL certificate monitoring — tracks certificate expiration dates, validates chains, and alerts before certs expire. Supports Let's Encrypt auto-renewal.",
+      "author": "magnus",
+      "entryPoint": "certs.sh",
+      "dependencies": [
+        "openssl",
+        "certbot"
+      ],
+      "tags": [
+        "certificates",
+        "tls",
+        "ssl",
+        "expiry",
+        "security"
+      ],
+      "path": "cert-manager"
+    },
+    {
+      "name": "cron-manager",
+      "version": "1.0.0",
+      "description": "Cron job auditing and management — lists all user and system cron jobs, detects orphaned entries, shows at/systemd timers, and validates crontab syntax.",
+      "author": "magnus",
+      "entryPoint": "crontabs.sh",
+      "dependencies": [
+        "crontab",
+        "systemctl",
+        "awk"
+      ],
+      "tags": [
+        "cron",
+        "scheduling",
+        "timers",
+        "maintenance",
+        "ubuntu"
+      ],
+      "path": "cron-manager"
+    },
+    {
+      "name": "disk-cleaner",
+      "version": "1.0.0",
+      "description": "Automated disk space management — cleans temp files, rotates logs, purges package caches, and identifies large/orphaned files. Configurable usage thresholds.",
+      "author": "magnus",
+      "entryPoint": "cleaner.sh",
+      "dependencies": [
+        "find",
+        "du",
+        "df",
+        "logrotate"
+      ],
+      "tags": [
+        "disk",
+        "cleanup",
+        "maintenance",
+        "storage"
+      ],
+      "path": "disk-cleaner"
+    },
+    {
+      "name": "dns-manager",
+      "version": "1.0.0",
+      "description": "DNS resolution audit and management — checks resolv.conf, validates upstream resolvers, detects split-horizon mismatches, verifies DNSSEC, and alerts on resolution failures.",
+      "author": "magnus",
+      "entryPoint": "dns.sh",
+      "dependencies": [
+        "dig",
+        "host",
+        "awk",
+        "grep"
+      ],
+      "tags": [
+        "dns",
+        "networking",
+        "resolution",
+        "audit"
+      ],
+      "path": "dns-manager"
+    },
+    {
+      "name": "docker-manager",
+      "version": "1.0.0",
+      "description": "Docker container and image management — lists running containers, inspects resource usage, cleans dangling images/volumes, and reports disk usage by Docker.",
+      "author": "magnus",
+      "entryPoint": "containers.sh",
+      "dependencies": [
+        "docker"
+      ],
+      "tags": [
+        "docker",
+        "containers",
+        "images",
+        "cleanup",
+        "ubuntu"
+      ],
+      "path": "docker-manager"
+    },
+    {
+      "name": "energy-profiler",
+      "version": "1.0.0",
+      "description": "Node power consumption profiler — reads RAPL energy counters, IPMI sensors, CPU frequency scaling, and C-state residency. Reports per-package energy cost and recommends power-saving configurations.",
+      "author": "magnus",
+      "entryPoint": "energy.sh",
+      "dependencies": [
+        "awk",
+        "grep",
+        "cat"
+      ],
+      "tags": [
+        "energy",
+        "power",
+        "rapl",
+        "efficiency",
+        "green"
+      ],
+      "path": "energy-profiler"
+    },
+    {
+      "name": "firewall-manager",
+      "version": "1.0.0",
+      "description": "Firewall rule management and auditing — inspects iptables/nftables/ufw rules, detects overly permissive configurations, and applies security policies.",
+      "author": "magnus",
+      "entryPoint": "firewall.sh",
+      "dependencies": [
+        "iptables",
+        "ufw",
+        "nft"
+      ],
+      "tags": [
+        "firewall",
+        "iptables",
+        "ufw",
+        "security",
+        "network"
+      ],
+      "path": "firewall-manager"
+    },
+    {
+      "name": "git-repo-scanner",
+      "version": "1.0.0",
+      "description": "Git repository auditor — finds repos on nodes, detects uncommitted changes, large repos, dangling remotes, and scans for potential secrets in commit history using entropy analysis.",
+      "author": "magnus",
+      "entryPoint": "git-scan.sh",
+      "dependencies": [
+        "git",
+        "find",
+        "awk",
+        "du"
+      ],
+      "tags": [
+        "git",
+        "security",
+        "audit",
+        "repos",
+        "secrets"
+      ],
+      "path": "git-repo-scanner"
+    },
+    {
+      "name": "llm-gateway-monitor",
+      "version": "1.0.0",
+      "description": "Local LLM instance monitor — checks Ollama, llama.cpp, and vLLM services. Reports GPU utilization, VRAM usage, loaded models, inference latency, and token throughput.",
+      "author": "magnus",
+      "entryPoint": "llm-monitor.sh",
+      "dependencies": [
+        "curl",
+        "awk",
+        "grep"
+      ],
+      "tags": [
+        "llm",
+        "ai",
+        "gpu",
+        "ollama",
+        "monitoring"
+      ],
+      "path": "llm-gateway-monitor"
+    },
+    {
+      "name": "log-analyzer",
+      "version": "1.0.0",
+      "description": "Intelligent log parsing and pattern detection for syslog, journald, and application logs. Detects anomalies, recurring errors, and security-relevant events.",
+      "author": "magnus",
+      "entryPoint": "analyze.sh",
+      "dependencies": [
+        "journalctl",
+        "grep",
+        "awk"
+      ],
+      "tags": [
+        "logs",
+        "analysis",
+        "anomaly-detection",
+        "security"
+      ],
+      "path": "log-analyzer"
+    },
+    {
+      "name": "login-auditor",
+      "version": "1.0.0",
+      "description": "Authentication event auditor — tracks successful/failed logins, sudo usage, session durations, concurrent sessions, and unusual login times or source IPs.",
+      "author": "magnus",
+      "entryPoint": "logins.sh",
+      "dependencies": [
+        "last",
+        "lastlog",
+        "journalctl",
+        "awk"
+      ],
+      "tags": [
+        "auth",
+        "login",
+        "audit",
+        "security",
+        "sudo"
+      ],
+      "path": "login-auditor"
+    },
+    {
+      "name": "mount-inspector",
+      "version": "1.0.0",
+      "description": "Filesystem mount auditor — inspects NFS, CIFS, tmpfs, overlayfs mounts. Detects stale mounts, checks security options, verifies fstab consistency, and reports mount latency.",
+      "author": "magnus",
+      "entryPoint": "mounts.sh",
+      "dependencies": [
+        "mount",
+        "findmnt",
+        "df",
+        "awk"
+      ],
+      "tags": [
+        "mounts",
+        "filesystem",
+        "nfs",
+        "audit"
+      ],
+      "path": "mount-inspector"
+    },
+    {
+      "name": "network-diagnostics",
+      "version": "1.0.0",
+      "description": "Network health toolkit — connectivity tests, DNS resolution checks, port scanning, bandwidth measurement, and route tracing. Identifies network bottlenecks.",
+      "author": "magnus",
+      "entryPoint": "netdiag.sh",
+      "dependencies": [
+        "ip",
+        "ss",
+        "dig",
+        "ping",
+        "traceroute"
+      ],
+      "tags": [
+        "network",
+        "diagnostics",
+        "connectivity",
+        "dns"
+      ],
+      "path": "network-diagnostics"
+    },
+    {
+      "name": "news-reporter",
+      "version": "1.0.0",
+      "description": "Search the web for news via NewsAPI.org, filter for prompt injection, and write structured Markdown reports to an NFS output directory",
+      "author": "magnus",
+      "entryPoint": "reporter.sh",
+      "dependencies": [
+        "curl",
+        "jq"
+      ],
+      "tags": [
+        "news",
+        "web-search",
+        "reporting",
+        "prompt-injection-filter"
+      ],
+      "path": "news-reporter"
+    },
+    {
+      "name": "ntp-manager",
+      "version": "1.0.0",
+      "description": "Time synchronization management — checks timedatectl status, NTP peer connectivity, chrony/systemd-timesyncd health, and clock drift.",
+      "author": "magnus",
+      "entryPoint": "timesync.sh",
+      "dependencies": [
+        "timedatectl"
+      ],
+      "tags": [
+        "ntp",
+        "time",
+        "chrony",
+        "timesyncd",
+        "ubuntu"
+      ],
+      "path": "ntp-manager"
+    },
+    {
+      "name": "package-manager",
+      "version": "1.0.0",
+      "description": "Automated package management — checks for available updates, identifies vulnerable packages, and can perform controlled upgrades with rollback support.",
+      "author": "magnus",
+      "entryPoint": "packages.sh",
+      "dependencies": [
+        "apt",
+        "dnf"
+      ],
+      "tags": [
+        "packages",
+        "updates",
+        "vulnerabilities",
+        "maintenance"
+      ],
+      "path": "package-manager"
+    },
+    {
+      "name": "process-inspector",
+      "version": "1.0.0",
+      "description": "Process analysis toolkit — identifies resource-hungry processes, detects zombie/orphan processes, monitors process trees, and tracks resource trends.",
+      "author": "magnus",
+      "entryPoint": "procs.sh",
+      "dependencies": [
+        "ps",
+        "top",
+        "lsof"
+      ],
+      "tags": [
+        "processes",
+        "resources",
+        "debugging",
+        "performance"
+      ],
+      "path": "process-inspector"
+    },
+    {
+      "name": "security-auditor",
+      "version": "1.0.0",
+      "description": "Security posture assessment — audits user accounts, SSH config, open ports, file permissions, SUID binaries, and firewall rules. Generates compliance reports.",
+      "author": "magnus",
+      "entryPoint": "audit.sh",
+      "dependencies": [
+        "ss",
+        "find",
+        "awk",
+        "grep"
+      ],
+      "tags": [
+        "security",
+        "audit",
+        "compliance",
+        "hardening"
+      ],
+      "path": "security-auditor"
+    },
+    {
+      "name": "service-watcher",
+      "version": "1.0.0",
+      "description": "Systemd service monitoring and auto-recovery — watches critical services, detects failures, performs automatic restarts, and escalates persistent issues.",
+      "author": "magnus",
+      "entryPoint": "watcher.sh",
+      "dependencies": [
+        "systemctl",
+        "journalctl"
+      ],
+      "tags": [
+        "services",
+        "systemd",
+        "auto-restart",
+        "availability"
+      ],
+      "path": "service-watcher"
+    },
+    {
+      "name": "swap-manager",
+      "version": "1.0.0",
+      "description": "Swap configuration inspector — analyzes swap usage, swappiness tuning, zram/zswap status, OOM-killer history, and memory pressure indicators.",
+      "author": "magnus",
+      "entryPoint": "swap.sh",
+      "dependencies": [
+        "swapon",
+        "free",
+        "awk",
+        "grep"
+      ],
+      "tags": [
+        "swap",
+        "memory",
+        "performance",
+        "tuning"
+      ],
+      "path": "swap-manager"
+    },
+    {
+      "name": "sysctl-tuner",
+      "version": "1.0.0",
+      "description": "Kernel parameter inspection and tuning — displays current sysctl values, checks against Ubuntu best practices, and identifies non-default settings.",
+      "author": "magnus",
+      "entryPoint": "tuner.sh",
+      "dependencies": [
+        "sysctl"
+      ],
+      "tags": [
+        "kernel",
+        "sysctl",
+        "tuning",
+        "performance",
+        "security",
+        "ubuntu"
+      ],
+      "path": "sysctl-tuner"
+    },
+    {
+      "name": "system-monitor",
+      "version": "1.0.0",
+      "description": "Real-time system monitoring and alerting",
+      "author": "magnus",
+      "entryPoint": "monitor.sh",
+      "dependencies": [
+        "procfs",
+        "sysstat"
+      ],
+      "tags": [
+        "monitoring",
+        "health",
+        "alerting",
+        "core"
+      ],
+      "path": "system-monitor"
+    },
+    {
+      "name": "update-manager",
+      "version": "1.0.0",
+      "description": "Ubuntu update management — checks for pending updates, unattended-upgrades status, reboot-required flag, and release upgrade availability.",
+      "author": "magnus",
+      "entryPoint": "updates.sh",
+      "dependencies": [
+        "apt",
+        "unattended-upgrades"
+      ],
+      "tags": [
+        "updates",
+        "apt",
+        "unattended-upgrades",
+        "ubuntu",
+        "maintenance"
+      ],
+      "path": "update-manager"
+    },
+    {
+      "name": "user-manager",
+      "version": "1.0.0",
+      "description": "User account lifecycle management — audits active accounts, detects dormant users, manages SSH keys, and enforces password policies.",
+      "author": "magnus",
+      "entryPoint": "users.sh",
+      "dependencies": [
+        "useradd",
+        "passwd",
+        "chage"
+      ],
+      "tags": [
+        "users",
+        "accounts",
+        "ssh-keys",
+        "access-control"
+      ],
+      "path": "user-manager"
+    },
+    {
+      "name": "wazuh-agent-monitor",
+      "version": "1.0.0",
+      "description": "Wazuh endpoint-security agent posture — reports installation, service health, startup state, version, and configured managers without exposing credentials.",
+      "author": "magnus",
+      "entryPoint": "wazuh-agent.sh",
+      "dependencies": [
+        "systemctl",
+        "dpkg-query",
+        "awk",
+        "grep"
+      ],
+      "tags": [
+        "wazuh",
+        "security",
+        "endpoint",
+        "monitoring",
+        "compliance",
+        "ubuntu"
+      ],
+      "path": "wazuh-agent-monitor"
+    }
+  ]
+}

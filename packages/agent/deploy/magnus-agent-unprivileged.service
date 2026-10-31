@@ -1,0 +1,61 @@
+# Example systemd unit for magnus-agent in unprivileged mode.
+#
+# The agent runs as the dedicated magnus-agent account. Root-only features
+# (cron, local users, system updates, docker-group remediation, Ardent
+# management, credential renewal, the execution supervisor) are disabled and
+# their routes answer 403 AGENT_NOT_PRIVILEGED. See the README for the full list.
+#
+#   sudo useradd --system --home-dir /opt/magnus-agent --shell /usr/sbin/nologin magnus-agent
+#   sudo npm install --prefix /opt/magnus-agent @hivemagnus/magnus-agent
+#   sudo install -o magnus-agent -g magnus-agent -m 0600 \
+#     /opt/magnus-agent/node_modules/@hivemagnus/magnus-agent/.env.example /opt/magnus-agent/.env
+#   sudo chown -R magnus-agent:magnus-agent /opt/magnus-agent
+#
+# Use a NODE_MANAGER_PORT above 1023, and make the TLS key readable by
+# magnus-agent. Install this file as /etc/systemd/system/magnus-agent.service.
+[Unit]
+Description=Magnus Agent (unprivileged)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=magnus-agent
+Group=magnus-agent
+WorkingDirectory=/opt/magnus-agent
+Environment=AGENT_INSTALL_DIR=/opt/magnus-agent
+Environment=MAGNUS_AGENT_PRIVILEGED=false
+EnvironmentFile=/opt/magnus-agent/.env
+ExecStart=/usr/bin/node /opt/magnus-agent/node_modules/@hivemagnus/magnus-agent/dist/index.js start
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+UMask=0077
+
+# Hardening. The agent writes only below its install directory and
+# /var/lib/magnus-agent (workspace routes, created by StateDirectory).
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ReadWritePaths=/opt/magnus-agent
+StateDirectory=magnus-agent
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

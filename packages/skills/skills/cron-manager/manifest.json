@@ -1,0 +1,9 @@
+{
+  "name": "cron-manager",
+  "version": "1.0.0",
+  "description": "Cron job auditing and management — lists all user and system cron jobs, detects orphaned entries, shows at/systemd timers, and validates crontab syntax.",
+  "author": "magnus",
+  "entryPoint": "crontabs.sh",
+  "dependencies": ["crontab", "systemctl", "awk"],
+  "tags": ["cron", "scheduling", "timers", "maintenance", "ubuntu"]
+}

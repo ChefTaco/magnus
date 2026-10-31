@@ -1,0 +1,9 @@
+{
+  "name": "network-diagnostics",
+  "version": "1.0.0",
+  "description": "Network health toolkit — connectivity tests, DNS resolution checks, port scanning, bandwidth measurement, and route tracing. Identifies network bottlenecks.",
+  "author": "magnus",
+  "entryPoint": "netdiag.sh",
+  "dependencies": ["ip", "ss", "dig", "ping", "traceroute"],
+  "tags": ["network", "diagnostics", "connectivity", "dns"]
+}

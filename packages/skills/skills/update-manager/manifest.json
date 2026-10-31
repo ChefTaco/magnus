@@ -1,0 +1,9 @@
+{
+  "name": "update-manager",
+  "version": "1.0.0",
+  "description": "Ubuntu update management — checks for pending updates, unattended-upgrades status, reboot-required flag, and release upgrade availability.",
+  "author": "magnus",
+  "entryPoint": "updates.sh",
+  "dependencies": ["apt", "unattended-upgrades"],
+  "tags": ["updates", "apt", "unattended-upgrades", "ubuntu", "maintenance"]
+}
