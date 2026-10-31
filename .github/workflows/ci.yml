@@ -23,7 +23,7 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y ripgrep
       - run: bash scripts/scan-secrets.sh
       - run: bash scripts/check-private-data.sh
-      - run: node --test scripts/test-privacy-policy.mjs scripts/test-publish-environment.mjs
+      - run: node --test scripts/test-privacy-policy.mjs scripts/test-publish-environment.mjs scripts/test-publish-packages.mjs
 
   verify:
     name: Verify (Node ${{ matrix.node-version }})

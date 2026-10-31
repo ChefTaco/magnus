@@ -21,6 +21,9 @@ Everything is strict TypeScript on Node.js 24 or 26.
 
 ## Packages on npm
 
+These are the release package names. See the [publication guide](docs/PUBLISHING.md)
+for registry setup and release verification.
+
 | Path | Package | Description |
 |---|---|---|
 | `apps/dashboard` | [`@hivemagnus/magnus-ui`](https://www.npmjs.com/package/@hivemagnus/magnus-ui) | The web console (`magnus-ui start`), shipped as a prebuilt Next.js standalone server |

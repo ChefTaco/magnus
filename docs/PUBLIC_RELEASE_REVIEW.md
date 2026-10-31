@@ -17,6 +17,8 @@ boundaries, retained SSH code, and the GitHub publication configuration.
 | Retired deployment implementations still shipped unsafe shell and broad source-transfer code | Remove the unused deployment and migration services and their obsolete tests. Test that legacy deployment routes still require authentication and return 410 even for administrators. |
 | Production and development dependencies had known advisories | Update the HTTP adapter, test runner, worker pool, lint tooling and affected transitive dependencies. Remove unused lint dependencies. Verify the clean installed tarballs independently of monorepo overrides. |
 | Publishing omitted repository gates and relied on an unprotected environment | Generate the Prisma client, check the lockfile and run the full verification before publishing. Pin GitHub actions to verified release commits. Refuse real publication unless the GitHub environment has an actual required reviewer. |
+| Manual publication could use a branch, and registry failures looked like unpublished versions | Require the matching version tag for every real publication. Complete all registry lookups before publishing, accept only an explicit 404 as an absent version, and test authentication failures, outages and malformed registry responses. Dry runs inspect every package. |
+| Bundled agent metadata reported an obsolete version | Align the metadata with the release and reject inconsistent package, internal dependency or bundled agent versions before publication. |
 
 ## Privacy evidence
 
@@ -54,15 +56,21 @@ intentionally not suppressed.
 
 ## Release state
 
-- The existing `npm-publish` GitHub environment had **no required reviewers**
-  when inspected. Configure a trusted reviewer before real publication. The
-  new workflow check rejects that unprotected configuration; dry runs remain
-  available.
+- The publication workflow is enabled. The `npm-publish` GitHub environment
+  still needs a required reviewer: GitHub rejected the requested protection
+  rule because the current plan does not support it for this private repository.
+  Make the repository public or use a plan supporting private environment
+  reviewers, then configure the reviewer before real publication. The workflow
+  rejects an unprotected configuration; dry runs remain available.
 - The existing `v1.0.0` tag points to the original release snapshot, before
   these fixes. Release from a commit containing this review's changes. Do not
   publish the unchanged old tag.
-- Repository visibility and npm publication remain maintainer release actions.
-  This review does not publish packages or rewrite existing tags.
+- Version `1.0.1` contains the review fixes and aligned package metadata. Preserve
+  the original tag and use `v1.0.1` for the corrected release.
+- Repository visibility and npm authentication remain maintainer release actions.
+  The packages are not publicly available on npm yet. Follow the
+  [publication guide](PUBLISHING.md) for first-publication authentication and
+  per-package trusted publisher configuration.
 
 ## Validation
 

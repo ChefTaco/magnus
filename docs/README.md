@@ -26,6 +26,8 @@ README is the reference for its installation, configuration and environment vari
 
 - [Public-release privacy and security review](PUBLIC_RELEASE_REVIEW.md): fixes, validation and
   publication prerequisites from the pre-release review.
+- [Publishing packages](PUBLISHING.md): required review, npm authentication,
+  dry runs and version-tag releases.
 - [Observability](OBSERVABILITY.md): metrics, suggested objectives and alerts, data retention,
   application probes and Hermes proxy security events.
 - [Example application probes](examples/application-probes.json).

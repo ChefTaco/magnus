@@ -4,7 +4,7 @@ All notable changes to this project are documented in this file. The format is b
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.0.1] - 2026-10-31
 
 ### Security
 
@@ -22,10 +22,17 @@ All notable changes to this project are documented in this file. The format is b
 - Run the full repository verification before npm publication.
 - Refuse real npm publication when the GitHub environment has no required
   reviewer, and pin workflow actions to immutable release commits.
+- Require a matching release tag for real publication, including manual runs.
+  Stop on registry errors before publishing any packages, validate internal
+  dependency versions, and inspect every package during dry runs.
+
+### Fixed
+
+- Align the server's bundled agent version metadata with the package release.
 
 ## [1.0.0] - 2026-10-31
 
-The first public release.
+The initial release snapshot.
 
 ### Added
 
@@ -94,4 +101,5 @@ The first public release.
   Pass them to `npm install -g` with `--allow-scripts=...`, or list them under `allowScripts` in
   your project's `package.json`.
 
+[1.0.1]: https://github.com/ChefTaco/magnus/releases/tag/v1.0.1
 [1.0.0]: https://github.com/ChefTaco/magnus/releases/tag/v1.0.0

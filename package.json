@@ -1,6 +1,6 @@
 {
   "name": "magnus",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Magnus: self-hosted fleet management for Linux hosts and AI agents (UI, server, node agent, Ardent runtime)",
   "license": "Apache-2.0",
@@ -77,7 +77,7 @@
     "scan:secrets": "bash scripts/scan-secrets.sh",
     "check:private": "bash scripts/check-private-data.sh",
     "check:packs": "node scripts/check-npm-packs.mjs",
-    "privacy:test": "node --test scripts/test-privacy-policy.mjs scripts/test-publish-environment.mjs",
+    "privacy:test": "node --test scripts/test-privacy-policy.mjs scripts/test-publish-environment.mjs scripts/test-publish-packages.mjs",
     "hooks:install": "git config core.hooksPath .githooks",
     "verify": "npm run privacy:test && npm run scan:secrets && npm run check:private && npm run build && npm run typecheck && npm run test && npm run skills:check && npm run openapi:check && npm run ardent:openapi:check && npm run ardent:pack:check && npm run check:packs && npm run docs:check && npm run docs:test && npm run clean:local:test"
   },

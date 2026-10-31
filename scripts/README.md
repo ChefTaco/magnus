@@ -7,7 +7,7 @@ catalogue; each package README lists its own build and test commands.
 | --- | --- | --- |
 | Everything CI runs | `npm run verify` | Secret and private-data scans, build, typecheck, tests, skills catalogue, OpenAPI, Ardent package, npm packs, documentation and cleanup tests |
 | Secret scan | `npm run scan:secrets` | `scan-secrets.sh`: provider tokens, literal credentials and private infrastructure in working files and the Git index; findings redact values |
-| Publication safety tests | `npm run privacy:test` | Scanner, staged-content, npm-content, clean-build and publication-environment regressions |
+| Publication safety tests | `npm run privacy:test` | Scanner, staged-content, npm-content, clean-build, publication-environment, release-tag and registry-failure regressions |
 | Private-data scan | `npm run check:private` | `check-private-data.sh`: forbidden files plus the patterns in the optional, gitignored `.private-terms` file. `--staged` checks only staged files (used by the pre-commit hook). |
 | Install git hooks | `npm run hooks:install` | Points `core.hooksPath` at `.githooks/` |
 | OpenAPI contract | `npm run openapi:check` | `check-openapi-contract.mjs`: the server's OpenAPI document is valid 3.1 and every operation has a summary, tags and responses. Needs a server build. |
@@ -31,6 +31,12 @@ catalogue; each package README lists its own build and test commands.
 `GITHUB_REPOSITORY` and a read-only `GH_TOKEN`, it verifies that the
 `npm-publish` environment has an actual required reviewer. A missing rule or
 an unreadable environment blocks publication. It does not publish anything.
+
+`publish-packages.mjs` is the final workflow step. `DRY_RUN=true` inspects all
+six built packages. `DRY_RUN=false` requires a matching `GITHUB_REF` version
+tag, aligned release metadata and successful registry checks before it calls
+`npm publish --provenance`. See [publication setup](../docs/PUBLISHING.md) for
+review and authentication prerequisites.
 
 ## Local cleanup
 
