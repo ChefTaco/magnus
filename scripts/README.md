@@ -6,11 +6,12 @@ catalogue; each package README lists its own build and test commands.
 | Task | Command | Script |
 | --- | --- | --- |
 | Everything CI runs | `npm run verify` | Secret and private-data scans, build, typecheck, tests, skills catalogue, OpenAPI, Ardent package, npm packs, documentation and cleanup tests |
-| Secret scan | `npm run scan:secrets` | `scan-secrets.sh` |
+| Secret scan | `npm run scan:secrets` | `scan-secrets.sh`: provider tokens, literal credentials and private infrastructure in working files and the Git index; findings redact values |
+| Publication safety tests | `npm run privacy:test` | Scanner, staged-content, npm-content, clean-build and publication-environment regressions |
 | Private-data scan | `npm run check:private` | `check-private-data.sh`: forbidden files plus the patterns in the optional, gitignored `.private-terms` file. `--staged` checks only staged files (used by the pre-commit hook). |
 | Install git hooks | `npm run hooks:install` | Points `core.hooksPath` at `.githooks/` |
 | OpenAPI contract | `npm run openapi:check` | `check-openapi-contract.mjs`: the server's OpenAPI document is valid 3.1 and every operation has a summary, tags and responses. Needs a server build. |
-| npm package contents | `npm run check:packs` | `check-npm-packs.mjs`: dry-runs `npm pack` for every published package and checks that its entry points, README and LICENSE are included and that nothing resembling secrets or local state is |
+| npm package contents | `npm run check:packs` | `check-npm-packs.mjs`: dry-runs `npm pack` for every published package, checks required files, and scans file names and contents for credentials, private infrastructure and local state |
 | Lockfile | `npm run lockfile:check` | `validate-lockfile.mjs`: `package-lock.json` agrees with every workspace manifest and each registry package has an integrity hash |
 | Documentation | `npm run docs:check` | `check-repository-docs.mjs` and `check-documentation.mjs`. Needs a console build (`npm run dashboard:build`). |
 | Documentation, no build | `npm run docs:links` | `check-repository-docs.mjs`: package guides, package maps and local Markdown links |
@@ -25,6 +26,11 @@ catalogue; each package README lists its own build and test commands.
 
 `start-ui-ci.mjs` starts the console for the Playwright CI configuration
 (`npm run verify:ui:ci`).
+
+`check-publish-environment.mjs` is used by the npm publication workflow. With
+`GITHUB_REPOSITORY` and a read-only `GH_TOKEN`, it verifies that the
+`npm-publish` environment has an actual required reviewer. A missing rule or
+an unreadable environment blocks publication. It does not publish anything.
 
 ## Local cleanup
 

@@ -61,10 +61,10 @@
     "mysql2": "3.24.4"
   },
   "scripts": {
-    "build": "tsc --build && node scripts/copy-assets.mjs",
+    "build": "npm run clean && tsc --build && node scripts/copy-assets.mjs",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/cli.js start",
-    "clean": "rm -rf dist tsconfig.tsbuildinfo",
+    "clean": "node -e \"const fs=require('node:fs');fs.rmSync('dist',{recursive:true,force:true});fs.rmSync('tsconfig.tsbuildinfo',{force:true})\"",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
     "test:integration": "vitest run --config vitest.integration.config.ts --passWithNoTests --fileParallelism=false",
@@ -85,7 +85,7 @@
   },
   "dependencies": {
     "@hivemagnus/magnus-contracts": "1.0.0",
-    "@hono/node-server": "^2.1.0",
+    "@hono/node-server": "^2.1.5",
     "@hono/swagger-ui": "^0.5.3",
     "@prisma/adapter-pg": "7.8.0",
     "@prisma/client": "^7.9.1",
@@ -112,7 +112,7 @@
     "@types/ws": "^8.18.1",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3",
-    "vitest": "^3.2.1"
+    "vitest": "^4.1.12"
   },
   "prisma": {
     "schema": "prisma/schema.prisma",

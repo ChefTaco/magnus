@@ -11,14 +11,14 @@ import { argon2id, hash } from 'argon2';
 
 // Mock jose before importing auth
 vi.mock('jose', () => ({
-  SignJWT: vi.fn().mockImplementation(() => ({
+  SignJWT: vi.fn().mockImplementation(function () { return {
     setProtectedHeader: vi.fn().mockReturnThis(),
     setIssuer: vi.fn().mockReturnThis(),
     setAudience: vi.fn().mockReturnThis(),
     setIssuedAt: vi.fn().mockReturnThis(),
     setExpirationTime: vi.fn().mockReturnThis(),
     sign: vi.fn().mockResolvedValue('mock.jwt.token'),
-  })),
+  }; }),
   jwtVerify: vi.fn().mockResolvedValue({
     payload: {
       username: 'testuser',

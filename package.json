@@ -15,7 +15,7 @@
     "packages/*"
   ],
   "overrides": {
-    "@hono/node-server": "2.1.0",
+    "@hono/node-server": "2.1.5",
     "@prisma/config": {
       "deepmerge-ts": "8.0.1"
     },
@@ -25,13 +25,19 @@
       "nanoid": "3.3.18"
     },
     "npm": {
-      "brace-expansion": "5.0.9",
+      "brace-expansion": "5.0.12",
       "ip-address": "10.4.0",
       "tar": "7.5.22",
-      "undici": "7.29.1"
+      "undici": "7.30.1"
     },
     "sharp": "0.35.5",
-    "mysql2": "3.24.4"
+    "mysql2": "3.24.4",
+    "tinypool": "2.2.0",
+    "minimatch": "11.0.3",
+    "@redocly/openapi-core": {
+      ".": "1.34.22",
+      "minimatch": "5.1.9"
+    }
   },
   "scripts": {
     "build": "npm run build -w @hivemagnus/magnus-contracts -w @hivemagnus/magnus-skills -w @hivemagnus/ardent -w @hivemagnus/magnus-agent -w @hivemagnus/magnus-server -w @hivemagnus/magnus-ui",
@@ -71,8 +77,9 @@
     "scan:secrets": "bash scripts/scan-secrets.sh",
     "check:private": "bash scripts/check-private-data.sh",
     "check:packs": "node scripts/check-npm-packs.mjs",
+    "privacy:test": "node --test scripts/test-privacy-policy.mjs scripts/test-publish-environment.mjs",
     "hooks:install": "git config core.hooksPath .githooks",
-    "verify": "npm run scan:secrets && npm run check:private && npm run build && npm run typecheck && npm run test && npm run skills:check && npm run openapi:check && npm run ardent:openapi:check && npm run ardent:pack:check && npm run check:packs && npm run docs:check && npm run docs:test && npm run clean:local:test"
+    "verify": "npm run privacy:test && npm run scan:secrets && npm run check:private && npm run build && npm run typecheck && npm run test && npm run skills:check && npm run openapi:check && npm run ardent:openapi:check && npm run ardent:pack:check && npm run check:packs && npm run docs:check && npm run docs:test && npm run clean:local:test"
   },
   "allowScripts": {
     "@prisma/engines@7.9.1": true,
@@ -87,7 +94,7 @@
     "unrs-resolver@1.12.2": true
   },
   "devDependencies": {
-    "eslint": "9.39.5",
+    "eslint": "10.14.0",
     "eslint-plugin-react-hooks": "7.1.1",
     "typescript-eslint": "8.64.0"
   }

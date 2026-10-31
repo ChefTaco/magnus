@@ -47,7 +47,7 @@
   "scripts": {
     "catalog": "node scripts/build-index.mjs",
     "catalog:check": "node scripts/build-index.mjs && git diff --exit-code -- skills",
-    "build": "node scripts/build-index.mjs && tsc",
+    "build": "node scripts/build-index.mjs && node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc",
     "typecheck": "tsc --noEmit",
     "test": "node --test test/*.test.mjs"
   },

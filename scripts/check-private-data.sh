@@ -15,6 +15,7 @@
 #      Lines starting with # and blank lines are ignored. The file is local so
 #      the denylist itself never becomes public.
 set -euo pipefail
+shopt -s nocasematch
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT_DIR"
@@ -34,7 +35,15 @@ if [[ -f "$TERMS_FILE" ]]; then
   TERMS_PATTERN="$(grep -vE '^[[:space:]]*(#|$)' "$TERMS_FILE" | paste -sd '|' - || true)"
 fi
 
-FORBIDDEN_PATHS='(^|/)\.env($|\.)|(^|/)\.npmrc$|\.(pem|key|crt|p12|pfx|db|sqlite|sqlite3|bundle)$|(^|/)certs/|(^|/)backups/|(^|/)\.hive-dev/|(^|/)[^/]+\.local\.md$|(^|/)\.private-terms$|(^|/)\.vscode/mcp\.json$'
+if [[ -n "$TERMS_PATTERN" ]]; then
+  if grep -qiE -- "$TERMS_PATTERN" </dev/null; then :
+  elif [[ "$?" -gt 1 ]]; then
+    echo 'private-data check: invalid regular expression in .private-terms' >&2
+    exit 2
+  fi
+fi
+
+FORBIDDEN_PATHS='(^|/)\.env($|\.)|(^|/)\.npmrc$|\.(pem|key|crt|p12|pfx|db|sqlite|sqlite3|bundle)(-(wal|shm|journal))?$|(^|/)(certs|backups|state|artifacts|\.magnus|\.hive-dev|\.ssh|audit-logs|terminal-audit)/|(^|/)[^/]+\.local\.md$|(^|/)\.private-terms$|(^|/)\.vscode/mcp\.json$'
 ALLOWED_PATHS='\.env\.example$'
 
 failures=0
@@ -52,9 +61,9 @@ if [[ "$MODE" == "message" ]]; then
 fi
 
 if [[ "$MODE" == "staged" ]]; then
-  mapfile -t files < <(git diff --cached --name-only --diff-filter=ACMR)
+  mapfile -d '' -t files < <(git diff --cached --name-only --diff-filter=ACMR -z)
 else
-  mapfile -t files < <(git ls-files)
+  mapfile -d '' -t files < <(git ls-files -z)
 fi
 
 for file in "${files[@]}"; do
@@ -65,17 +74,20 @@ for file in "${files[@]}"; do
 done
 
 if [[ -n "$TERMS_PATTERN" && "${#files[@]}" -gt 0 ]]; then
+  index_file="$(mktemp)"
+  trap 'rm -f "$index_file"' EXIT
   for file in "${files[@]}"; do
     [[ -n "$file" ]] || continue
     if [[ "$MODE" == "staged" ]]; then
-      content="$(git show ":$file" 2>/dev/null || true)"
+      git show ":$file" > "$index_file"
+      content_file="$index_file"
     else
       [[ -f "$file" ]] || continue
-      content="$(cat -- "$file")"
+      content_file="$file"
     fi
-    if matches="$(grep -niE -- "$TERMS_PATTERN" <<< "$content" | cut -c1-120)"; then
+    if matches="$(grep -naiE -- "$TERMS_PATTERN" "$content_file" | cut -d: -f1)"; then
       while IFS= read -r line; do
-        fail "private term in $file:$line"
+        fail "private term in $file:$line [redacted]"
       done <<< "$matches"
     fi
     if grep -qiE -- "$TERMS_PATTERN" <<< "$file"; then

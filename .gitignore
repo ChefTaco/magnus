@@ -6,15 +6,29 @@ out/
 
 # Environment secrets
 .env
+.env.*
+!.env.example
+.npmrc
+.ssh/
 apps/*/.env
 services/*/.env
 packages/*/.env
 
 # Local certificates and keys
 certs/
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
 
 # Databases and logs
 *.db
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.sqlite3-*
+backups/
 *.db-journal
 *.db-shm
 *.db-wal
@@ -40,6 +54,8 @@ output/ardent/
 
 # Deployment bundles
 *.tar.gz
+*.tgz
+*.bundle
 /artifacts/
 
 # Editor/OS

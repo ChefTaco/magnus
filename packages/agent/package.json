@@ -45,15 +45,16 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsc --build",
+    "build": "npm run clean && tsc --build",
     "dev": "tsx watch src/index.ts start",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
-    "test:ci": "vitest run --passWithNoTests --coverage"
+    "test:ci": "vitest run --passWithNoTests --coverage",
+    "clean": "node -e \"const fs=require('node:fs');fs.rmSync('dist',{recursive:true,force:true});fs.rmSync('tsconfig.tsbuildinfo',{force:true})\""
   },
   "dependencies": {
-    "@hono/node-server": "^1.19.15",
+    "@hono/node-server": "^2.1.5",
     "dotenv": "^17.3.1",
     "hono": "^4.13.7",
     "ky": "^1.7.5",
@@ -68,6 +69,6 @@
     "@types/tar-stream": "^3.1.4",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3",
-    "vitest": "^3.2.1"
+    "vitest": "^4.1.12"
   }
 }

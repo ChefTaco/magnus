@@ -27,7 +27,7 @@ async function run(id: string) {
   return new Promise<{ code: number | string; stdout: string; stderr: string }>(resolveResult => {
     execFile(process.execPath, [runner, 'trigger', id, '1'], { timeout: 10_000, maxBuffer: 64 * 1024,
       env: { PATH: '/usr/bin:/bin', MAGNUS_EXECUTION_SUPERVISOR_ENABLED: 'true', CONTROL_API_URL: 'https://must-not-contact.invalid',
-        AGENT_INSTALL_DIR: '/must-not-write', NODE_MANAGER_SECRET: 'stale-inherited-credential' } },
+        AGENT_INSTALL_DIR: '/must-not-write', NODE_MANAGER_SECRET: 'fixture-stale-inherited-credential' } },
     (error, stdout, stderr) => resolveResult({ code: error?.code ?? 0, stdout, stderr }));
   });
 }

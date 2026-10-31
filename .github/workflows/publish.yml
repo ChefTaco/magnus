@@ -34,18 +34,25 @@ jobs:
     environment: npm-publish
     permissions:
       contents: read
+      actions: read # read environment protection before any publication
       id-token: write # trusted publishing and provenance
     env:
       DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'true' || 'false' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Require protected publication environment
+        if: env.DRY_RUN != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/check-publish-environment.mjs
 
       - name: Install repository check tools
         run: sudo apt-get update -qq && sudo apt-get install -y ripgrep
 
       - name: Setup Node
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.22.1
           registry-url: https://registry.npmjs.org
@@ -53,7 +60,7 @@ jobs:
       - name: Check npm supports provenance and trusted publishing
         run: |
           npm --version
-          node -e 'const [a,b]=process.argv[1].split(".").map(Number); if (a<11||(a===11&&b<5)) { console.error("npm >= 11.5.1 is required"); process.exit(1) }' "$(npm --version)"
+          node -e 'const [a,b,c]=process.argv[1].split(".").map(Number); if (a<11||(a===11&&(b<5||(b===5&&c<1)))) { console.error("npm >= 11.5.1 is required"); process.exit(1) }' "$(npm --version)"
 
       - name: Check the tag matches every package version
         if: github.event_name == 'push'
@@ -69,13 +76,10 @@ jobs:
 
       - name: Gates
         run: |
-          npm run scan:secrets
-          npm run check:private
+          npm run lockfile:check
+          npm --workspace @hivemagnus/magnus-server run db:generate
           npm run audit:production
-          npm run build
-          npm run typecheck
-          npm test
-          npm run check:packs
+          npm run verify
 
       - name: Publish
         run: |

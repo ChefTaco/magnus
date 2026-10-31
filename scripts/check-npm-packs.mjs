@@ -8,6 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { forbiddenPath, privateInfrastructureFindings, secretFindings } from './privacy-policy.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -26,7 +27,7 @@ const EXTRA_REQUIRED = {
   'apps/dashboard': ['dist/app/apps/dashboard/server-tls.mjs', 'dist/app/apps/dashboard/server.js'],
 };
 
-const FORBIDDEN = /(^|\/)\.env($|\.(?!example$))|(^|\/)\.npmrc$|\.(pem|key|crt|p12|pfx|db|sqlite|sqlite3)$|(^|\/)[^/]+\.local\.md$|(^|\/)\.private-terms$|^(?!dist\/app\/)(.*\/)?node_modules\/|(^|\/)(certs|backups|state|artifacts|\.magnus)\//u;
+const UNEXPECTED_MODULES = /^(?!dist\/app\/)(.*\/)?node_modules\//u;
 
 function exportTargets(value) {
   if (typeof value === 'string') return value.includes('*') ? [] : [value];
@@ -64,7 +65,14 @@ for (const directory of PUBLISHABLE) {
   const listed = new Set(files);
   if (files.length > 0) {
     for (const file of [...requiredFiles(manifest), ...(EXTRA_REQUIRED[directory] ?? [])]) if (!listed.has(file)) problems.push(`missing ${file} (run npm run build first)`);
-    for (const file of files) if (FORBIDDEN.test(file)) problems.push(`must not publish ${file}`);
+    for (const file of files) {
+      if (forbiddenPath(file) || UNEXPECTED_MODULES.test(file)) problems.push(`must not publish ${file}`);
+      // Generated JavaScript, prerendered HTML and traced dependencies can carry secrets too.
+      const content = readFileSync(join(cwd, file));
+      for (const finding of [...secretFindings(content.toString()), ...privateInfrastructureFindings(content.toString())]) {
+        problems.push(`${file}:${finding.line}: ${finding.rule} [redacted]`);
+      }
+    }
   }
   if (problems.length === 0) {
     console.log(`ok    ${manifest.name}@${manifest.version} (${directory}, ${files.length} files)`);

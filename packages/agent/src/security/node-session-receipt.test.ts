@@ -2,7 +2,7 @@ import { randomUUID, createHmac } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 
 const fixture = vi.hoisted(() => ({ fetch: vi.fn() }));
-vi.mock('../env.js', () => ({ CONTROL_API_URL: 'https://control.fixture', NODE_MANAGER_SECRET: 'node-auth-secret',
+vi.mock('../env.js', () => ({ CONTROL_API_URL: 'https://control.fixture', NODE_MANAGER_SECRET: 'fixture-node-auth-secret',
   RESULT_SIGNING_SECRET: 'independent-session-result-signing-secret-at-least-32' }));
 vi.mock('../tls.js', () => ({ controlApiFetch: fixture.fetch }));
 const receipt = await import('./node-session-receipt.js');
