@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file. The format is b
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
+## [1.0.2] - 2026-10-31
+
+### Changed
+
+- Update runtime dependencies, including ky 2, dotenv 18, Prisma 7.10, argon2 0.45, Hono
+  4.13.14, Express 5.3, the A2A SDK 1.3 and Next.js 16.4.3. When installing a server
+  package with npm 12, allow the install scripts of `argon2@0.45.1`, `prisma@7.10.1` and
+  `@prisma/engines@7.10.1`.
+- Update the console's UI libraries (tailwind-merge 3, motion 14, React 19.3, Recharts 3.10).
+- Port the console and server HTTP clients to ky 2. Ky 2 reads error bodies before it throws,
+  so the console takes API error messages from the error itself and keeps showing them.
+
 ## [1.0.1] - 2026-10-31
 
 ### Security
@@ -104,5 +116,6 @@ The initial release snapshot.
   Pass them to `npm install -g` with `--allow-scripts=...`, or list them under `allowScripts` in
   your project's `package.json`.
 
+[1.0.2]: https://github.com/ChefTaco/magnus/releases/tag/v1.0.2
 [1.0.1]: https://github.com/ChefTaco/magnus/releases/tag/v1.0.1
 [1.0.0]: https://github.com/ChefTaco/magnus/releases/tag/v1.0.0

@@ -1,6 +1,6 @@
 {
   "name": "@hivemagnus/magnus-agent",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Magnus node agent: a small daemon that enrolls a Linux host with a magnus-server and runs authenticated health, command, cron, file and skill management, with optional Hermes Agent, Codex and Ardent management.",
   "keywords": [
     "magnus",
