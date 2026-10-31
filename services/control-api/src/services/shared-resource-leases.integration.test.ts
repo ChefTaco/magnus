@@ -183,24 +183,26 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('global shared-resource owner
 
   it('retains expired ownership and refuses to start or admit a successor', async () => {
     const now = Math.floor(Date.now() / 1000);
+    // Deadlines are whole seconds; leave a full second of margin before the request is admitted.
     const key = `repo:${prefix}/expired`;
-    const request = operation([key], { deadline: now + 1 });
+    const request = operation([key], { deadline: now + 2 });
     const lease = await leases.reserveSharedResources(request, actor);
-    const clock = vi.spyOn(Date, 'now').mockReturnValue((now + 2) * 1000);
-    await expect(leases.startSharedResourceLease(lease.leaseId, identity(lease), actor))
-      .rejects.toMatchObject({ code: 'SHARED_RESOURCE_DEADLINE_INVALID' });
-    await expect(leases.reserveSharedResources(operation([key]), actor))
-      .rejects.toMatchObject({ code: 'SHARED_RESOURCE_BUSY' });
-    expect((await leases.inspectSharedResourceLease(lease.leaseId, actor)).state).toBe('reserved');
-    clock.mockRestore();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue((now + 3) * 1000);
+    try {
+      await expect(leases.startSharedResourceLease(lease.leaseId, identity(lease), actor))
+        .rejects.toMatchObject({ code: 'SHARED_RESOURCE_DEADLINE_INVALID' });
+      await expect(leases.reserveSharedResources(operation([key]), actor))
+        .rejects.toMatchObject({ code: 'SHARED_RESOURCE_BUSY' });
+      expect((await leases.inspectSharedResourceLease(lease.leaseId, actor)).state).toBe('reserved');
+    } finally { clock.mockRestore(); }
   });
 
   it('returns exact running start replay and operation recovery after the deadline', async () => {
     const now = Math.floor(Date.now() / 1000);
-    const request = operation([`repo:${prefix}/late-start`], { deadline: now + 1 });
+    const request = operation([`repo:${prefix}/late-start`], { deadline: now + 2 });
     const reserved = await leases.reserveSharedResources(request, actor);
     const running = await leases.startSharedResourceLease(reserved.leaseId, identity(reserved), actor);
-    const clock = vi.spyOn(Date, 'now').mockReturnValue((now + 2) * 1000);
+    const clock = vi.spyOn(Date, 'now').mockReturnValue((now + 3) * 1000);
     try {
       expect(await leases.startSharedResourceLease(running.leaseId, identity(running), actor)).toEqual(running);
       expect(await leases.recoverSharedResourceLease(request.operationId, actor)).toEqual(running);
@@ -209,10 +211,10 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('global shared-resource owner
 
   it('returns exact reserve replay after assertion and operation deadlines without admitting new work', async () => {
     const now = Math.floor(Date.now() / 1000);
-    const request = operation([`repo:${prefix}/late-reserve-replay`], { deadline: now + 1 });
+    const request = operation([`repo:${prefix}/late-reserve-replay`], { deadline: now + 2 });
     const first = await leases.reserveSharedResources(request, actor);
-    const neverAdmitted = operation([`repo:${prefix}/late-new-reserve`], { deadline: now + 1 });
-    const clock = vi.spyOn(Date, 'now').mockReturnValue((now + 2) * 1000);
+    const neverAdmitted = operation([`repo:${prefix}/late-new-reserve`], { deadline: now + 2 });
+    const clock = vi.spyOn(Date, 'now').mockReturnValue((now + 3) * 1000);
     try {
       await expect(leases.reserveSharedResources(neverAdmitted, actor))
         .rejects.toMatchObject({ code: 'SHARED_RESOURCE_DEADLINE_INVALID' });
