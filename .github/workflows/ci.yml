@@ -66,6 +66,9 @@ jobs:
           cache: npm
       - name: Install test tools
         run: sudo apt-get update -qq && sudo apt-get install -y ripgrep redis-server
+      - name: Put node on the system PATH
+        # Ardent starts Codex and its test fixtures with a minimal system PATH.
+        run: sudo ln -sf "$(command -v node)" /usr/bin/node && /usr/bin/node --version
       - run: npm ci
       - run: npm run lockfile:check
       - run: npm run audit:production
