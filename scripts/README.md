@@ -36,7 +36,9 @@ an unreadable environment blocks publication. It does not publish anything.
 six built packages. `DRY_RUN=false` requires a matching `GITHUB_REF` version
 tag, aligned release metadata and successful registry checks before it calls
 `npm publish --provenance`. See [publication setup](../docs/PUBLISHING.md) for
-review and authentication prerequisites.
+review and authentication prerequisites. The workflow's explicit bootstrap
+mode supplies its temporary environment credential only to that final step;
+tag pushes and dry runs use no bootstrap credential.
 
 ## Local cleanup
 

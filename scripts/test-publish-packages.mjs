@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { PACKAGE_DIRECTORIES, publishedVersionExists, publishPackages } from './publish-packages.mjs';
+import { parse } from 'yaml';
+import { PACKAGE_DIRECTORIES, assertBootstrapMode, publishedVersionExists, publishPackages } from './publish-packages.mjs';
 
 function releaseFixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'magnus-release-'));
@@ -34,6 +35,38 @@ test('only an explicit 404 means a version is absent; other registry failures st
   }
   await assert.rejects(publishedVersionExists('@example/package', '1.0.1', async () => Response.json({})), /Unexpected npm metadata/);
   await assert.rejects(publishedVersionExists('@example/package', '1.0.1', async () => { throw new Error('connection failed'); }), /connection failed/);
+});
+
+test('bootstrap requires explicit real publication and an environment credential without exposing its value', () => {
+  const credential = 'fixture-bootstrap-credential';
+  assert.throws(() => assertBootstrapMode(true, true, credential), error => {
+    assert.match(error.message, /disable dry_run explicitly/);
+    assert.ok(!error.message.includes(credential));
+    return true;
+  });
+  assert.throws(() => assertBootstrapMode(false, true, ''), /NPM_BOOTSTRAP_TOKEN/);
+  assert.doesNotThrow(() => assertBootstrapMode(false, true, credential));
+  assert.doesNotThrow(() => assertBootstrapMode(false, false, undefined));
+  assert.doesNotThrow(() => assertBootstrapMode(true, false, undefined));
+});
+
+test('the workflow exposes a bootstrap credential only to the final, explicitly selected publication step', () => {
+  const workflow = parse(readFileSync(new URL('../.github/workflows/publish.yml', import.meta.url), 'utf8'));
+  const job = workflow.jobs.publish;
+  assert.equal(job.environment, 'npm-publish');
+  assert.equal(workflow.on.workflow_dispatch.inputs.bootstrap.default, false);
+  const steps = job.steps;
+  const publication = steps.at(-1);
+  assert.equal(publication.run, 'node scripts/publish-packages.mjs');
+  assert.ok(steps.some(step => step.run === 'node scripts/check-publish-environment.mjs' && step.if === "env.DRY_RUN != 'true'"));
+  assert.match(publication.env.NODE_AUTH_TOKEN, /github.event_name == 'workflow_dispatch' && inputs.bootstrap && !inputs.dry_run && secrets.NPM_BOOTSTRAP_TOKEN/);
+  const credentialPaths = [];
+  function visit(value, path = []) {
+    if (typeof value === 'string' && value.includes('secrets.NPM_BOOTSTRAP_TOKEN')) credentialPaths.push(path.join('.'));
+    else if (value && typeof value === 'object') for (const [key, child] of Object.entries(value)) visit(child, [...path, key]);
+  }
+  visit(workflow);
+  assert.deepEqual(credentialPaths, [`jobs.publish.steps.${steps.length - 1}.env.NODE_AUTH_TOKEN`]);
 });
 
 test('real publication requires the version tag and checks all packages before any mutation', async t => {

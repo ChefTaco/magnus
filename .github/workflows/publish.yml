@@ -16,6 +16,10 @@ on:
         description: Pack and validate only; publish nothing
         type: boolean
         default: true
+      bootstrap:
+        description: First publication using a temporary npm-publish environment credential
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -34,6 +38,7 @@ jobs:
       id-token: write # trusted publishing and provenance
     env:
       DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'true' || 'false' }}
+      NPM_BOOTSTRAP: ${{ github.event_name == 'workflow_dispatch' && inputs.bootstrap && 'true' || 'false' }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -74,4 +79,7 @@ jobs:
           npm run verify
 
       - name: Publish
+        env:
+          # Never expose the bootstrap credential to installation, builds or tests.
+          NODE_AUTH_TOKEN: ${{ github.event_name == 'workflow_dispatch' && inputs.bootstrap && !inputs.dry_run && secrets.NPM_BOOTSTRAP_TOKEN || '' }}
         run: node scripts/publish-packages.mjs

@@ -13,8 +13,8 @@ the applications that depend on them. A dry run publishes nothing.
    allow that person to review their own deployment.
 2. Verify npm ownership of the `@hivemagnus` scope and enable account 2FA.
    Authenticate interactively with `npm login` on a trusted machine when first
-   publishing new packages. Never commit npm credentials or put an npm write
-   token in this workflow.
+   publishing new packages or configuring trusted publishing. Never commit
+   npm credentials.
 3. For each existing package, configure its npm trusted publisher to match the
    GitHub owner and repository in `repository.url`, workflow filename
    `publish.yml`, and environment `npm-publish`. Enable the `npm publish`
@@ -27,11 +27,9 @@ The workflow refuses real publication if the required reviewer is missing.
 The current npm CLI requires a package to exist before configuring trust;
 see [npm trust prerequisites](https://docs.npmjs.com/cli/v11/commands/npm-trust/#prerequisites)
 and [trusted publishing](https://docs.npmjs.com/trusted-publishers/).
-For the initial publication, an authenticated maintainer must publish the
-reviewed package payloads from a supported CI provenance provider, then
-configure trust for subsequent versions. An OIDC-only workflow cannot
-bootstrap names that do not exist yet. First-publication authentication must
-be arranged before starting a real release.
+For the initial publication, use the explicit bootstrap procedure below, then
+configure trust for subsequent versions. OIDC alone cannot bootstrap package
+names that do not exist yet.
 An unauthenticated dry run cannot prove npm ownership or OIDC configuration.
 
 ## Release procedure
@@ -52,10 +50,30 @@ An unauthenticated dry run cannot prove npm ownership or OIDC configuration.
    already published. Registry failures stop publication; a publication failure
    stops subsequent packages and may leave earlier packages published.
 
-First publication with provenance needs a supported cloud CI runner and a
-temporary, narrowly scoped npm credential. Keep that credential available
-only to the final publish step behind the environment's required review,
-then revoke it and use trusted publishing for subsequent releases. The
-current workflow has no token fallback. `--provenance` cannot work from an
-ordinary local shell; see
+## First publication
+
+1. Complete the public-repository setup, required reviewer configuration,
+   gates and dry run. Push the verified release tag. Its automatic OIDC run
+   will not succeed for package names that have no trusted publisher yet;
+   cancel that run before starting bootstrap if it is waiting for review.
+2. Create a short-lived npm granular access token with publish access only
+   to the required scope/packages: choose **Read and write (publish and stage)**
+   and enable **Bypass two-factor authentication** for this noninteractive
+   publication. Use the shortest practical expiration and no organization
+   administration permissions. See [npm token configuration](https://docs.npmjs.com/creating-and-viewing-access-tokens/).
+   Store it as `NPM_BOOTSTRAP_TOKEN` in the protected
+   `npm-publish` GitHub environment. Never paste it into workflow inputs,
+   source files, issues or logs.
+3. Run **Publish to npm** manually from the verified release tag, set
+   `dry_run=false` and `bootstrap=true`, then review and approve the GitHub
+   environment deployment. The temporary credential is supplied only to the
+   final publishing step; installation, builds and tests do not receive it.
+   Every package is published with provenance.
+4. Verify the six registry versions and provenance. Configure their trusted
+   publishers, revoke the temporary npm token and delete the GitHub environment
+   secret. Leave `bootstrap=false` for subsequent releases.
+
+The workflow has no automatic token fallback: bootstrap must be selected
+explicitly. Ordinary tag pushes and dry runs do not receive the credential.
+`--provenance` cannot work from an ordinary local shell; see
 [npm provenance requirements](https://docs.npmjs.com/generating-provenance-statements/).

@@ -9,6 +9,11 @@ export const PACKAGE_DIRECTORIES = [
   'services/control-api', 'apps/dashboard',
 ];
 
+export function assertBootstrapMode(dryRun, bootstrap, credential) {
+  if (bootstrap && dryRun) throw new Error('Bootstrap requires a real publication from the release tag; disable dry_run explicitly');
+  if (bootstrap && !credential) throw new Error('Configure the temporary NPM_BOOTSTRAP_TOKEN secret in the npm-publish environment before bootstrap publication');
+}
+
 export function readReleasePackages(root) {
   const packages = PACKAGE_DIRECTORIES.map(directory => ({
     ...JSON.parse(readFileSync(join(root, directory, 'package.json'), 'utf8')), directory,
@@ -63,6 +68,8 @@ export async function publishPackages({ root, dryRun, ref, fetcher = fetch, run 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     if (!['true', 'false'].includes(process.env.DRY_RUN)) throw new Error('DRY_RUN must be true or false');
+    if (process.env.NPM_BOOTSTRAP && !['true', 'false'].includes(process.env.NPM_BOOTSTRAP)) throw new Error('NPM_BOOTSTRAP must be true or false');
+    assertBootstrapMode(process.env.DRY_RUN === 'true', process.env.NPM_BOOTSTRAP === 'true', process.env.NODE_AUTH_TOKEN);
     await publishPackages({ root: resolve(import.meta.dirname, '..'), dryRun: process.env.DRY_RUN === 'true', ref: process.env.GITHUB_REF });
   } catch (error) { console.error(error.message); process.exitCode = 1; }
 }

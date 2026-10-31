@@ -29,6 +29,9 @@ All notable changes to this project are documented in this file. The format is b
 ### Fixed
 
 - Align the server's bundled agent version metadata with the package release.
+- Support first publication with an explicitly selected, reviewed bootstrap
+  run. Its temporary npm credential is available only to the final publish
+  step; subsequent releases use trusted publishing.
 
 ## [1.0.0] - 2026-10-31
 
