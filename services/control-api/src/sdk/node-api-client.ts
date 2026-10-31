@@ -7,7 +7,7 @@ import { admitResourceCommand, markResourceDispatched, failResourceCommand, sett
 import { commandFenceSchema, commandResultSchema } from '../schemas/node-responses.js';
 import type { CronEnrollmentStage, ManagedCronIdentity, ManagedCronSpec, SchedulerSourceSettlement } from '../schemas/managed-cron.js';
 import { commandRequestDigest, type CommandRequest } from '../security/command-request.js';
-import ky, { type KyInstance } from 'ky';
+import ky, { type AfterResponseState, type KyInstance } from 'ky';
 import { HttpError } from '../middleware/error-handler.js';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
@@ -99,7 +99,7 @@ export interface ManagedMutationResult<T> {
  */
 export const AGENT_NOT_PRIVILEGED = 'AGENT_NOT_PRIVILEGED';
 
-async function rejectUnprivilegedAgent(_request: Request, _options: unknown, response: Response): Promise<void> {
+async function rejectUnprivilegedAgent({ response }: AfterResponseState): Promise<void> {
   if (response.status !== 403) return;
   type Denial = { error?: { code?: unknown; feature?: unknown } };
   let body: Denial;
@@ -128,7 +128,7 @@ export class NodeApiClient {
       actorId: options.resourceActorId ?? 'system:control-api', baseUrl: options.baseUrl,
       ...(options.resourceScope ? { scope: options.resourceScope } : {}) };
     this.api = ky.create({
-      prefixUrl: `${options.baseUrl}/api/v1`,
+      prefix: `${options.baseUrl}/api/v1`,
       timeout: options.timeout ?? 15_000,
       headers: {
         'x-node-token': options.nodeToken,

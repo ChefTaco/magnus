@@ -21,7 +21,7 @@
     },
     "fast-uri": "3.1.9",
     "postcss": {
-      ".": "8.5.26",
+      ".": "8.5.32",
       "nanoid": "3.3.18"
     },
     "npm": {
@@ -82,21 +82,20 @@
     "verify": "npm run privacy:test && npm run scan:secrets && npm run check:private && npm run build && npm run typecheck && npm run test && npm run skills:check && npm run openapi:check && npm run ardent:openapi:check && npm run ardent:pack:check && npm run check:packs && npm run docs:check && npm run docs:test && npm run clean:local:test"
   },
   "allowScripts": {
-    "@prisma/engines@7.9.1": true,
-    "argon2@0.44.0": true,
+    "@prisma/engines@7.10.1": true,
+    "argon2@0.45.1": true,
     "better-sqlite3@12.11.1": true,
     "cpu-features@0.0.10": true,
     "esbuild@0.28.1": true,
     "msgpackr-extract@3.0.4": true,
-    "prisma@7.9.1": true,
+    "prisma@7.10.1": true,
     "protobufjs@7.6.6": true,
-    "ssh2@1.17.0": true,
-    "unrs-resolver@1.12.2": true
+    "ssh2@1.17.0": true
   },
   "devDependencies": {
     "eslint": "10.14.0",
     "eslint-plugin-react-hooks": "7.1.1",
-    "typescript-eslint": "8.64.0",
+    "typescript-eslint": "8.72.1",
     "yaml": "2.9.1"
   }
 }

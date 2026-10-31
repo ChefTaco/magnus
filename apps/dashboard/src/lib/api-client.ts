@@ -1,4 +1,4 @@
-import ky, { type KyInstance } from 'ky';
+import ky, { HTTPError, type KyInstance } from 'ky';
 import { currentTraceId } from './trace';
 import type {
   ApiResponse,
@@ -81,11 +81,11 @@ class DashboardApiClient {
     // The browser sends only the selected target. The proxy resolves credentials
     // from protected server state and ignores client auth headers.
     return ky.create({
-      prefixUrl: '/api/proxy',
+      prefix: '/api/proxy',
       timeout: 180_000,
       hooks: {
         beforeRequest: [
-          (request) => {
+          ({ request }) => {
             // Tell the proxy which control node to forward to
             if (baseUrl) request.headers.set('x-proxy-target', baseUrl); else request.headers.delete('x-proxy-target');
 
@@ -97,11 +97,10 @@ class DashboardApiClient {
           },
         ],
         beforeError: [
-          async (error) => {
+          async ({ error }) => {
             // Features disabled on an unprivileged node agent are not failures.
-            if (error.response?.status === 403) {
-              const body: unknown = await error.response.clone().json().catch(() => null);
-              const message = agentDisabledMessage(body);
+            if (error instanceof HTTPError && error.response.status === 403) {
+              const message = agentDisabledMessage(error.data);
               if (message) {
                 error.name = 'AgentNotPrivilegedError';
                 error.message = message;

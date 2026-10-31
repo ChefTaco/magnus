@@ -1,5 +1,6 @@
 'use client';
 
+import { apiErrorMessage, httpErrorBody } from '@/lib/http-error-body';
 import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   Server,
@@ -146,8 +147,8 @@ export function ControlNodeBar(): React.ReactElement {
       let message = 'Failed to check for updates';
       if (err && typeof err === 'object' && 'response' in err) {
         try {
-          const body = await (err as { response: Response }).response.json() as { error?: { message?: string } };
-          if (body?.error?.message) message = body.error.message;
+          const apiMessage = apiErrorMessage(await httpErrorBody(err));
+          if (apiMessage) message = apiMessage;
         } catch { /* ignore parse errors */ }
       } else if (err instanceof Error) {
         message = err.message;

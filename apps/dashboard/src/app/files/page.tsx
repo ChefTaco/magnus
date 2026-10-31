@@ -1,5 +1,6 @@
 'use client';
 
+import { httpErrorBody } from '@/lib/http-error-body';
 import { useState } from 'react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -28,7 +29,7 @@ export default function FilesPage(): React.ReactElement {
   const extractErrorMessage = async (err: unknown, fallback: string): Promise<string> => {
     if (err && typeof err === 'object' && 'response' in err) {
       try {
-        const body = await (err as { response: Response }).response.json();
+        const body = await httpErrorBody(err);
         // Try body.error.message (API error shape)
         const apiMsg: string | undefined =
           (body as Record<string, unknown>)?.['error'] &&

@@ -1,13 +1,14 @@
 'use client';
 
+import { httpErrorBody } from '@/lib/http-error-body';
 import { agentDisabledMessage } from '@/lib/agent-privilege';
 import { useState } from 'react';
 import { api } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
 
 export async function ardentError(reason: unknown): Promise<string> {
-  if (reason && typeof reason === 'object' && 'response' in reason && reason.response instanceof Response) {
-    const body: unknown = await reason.response.clone().json().catch(() => null);
+  if (reason && typeof reason === 'object' && 'response' in reason) {
+    const body = await httpErrorBody(reason);
     const disabled = agentDisabledMessage(body);
     if (disabled) return disabled;
     if (body && typeof body === 'object') {
