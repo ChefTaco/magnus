@@ -56,19 +56,20 @@ intentionally not suppressed.
 
 ## Release state
 
-- The publication workflow is enabled. The `npm-publish` GitHub environment
-  still needs a required reviewer: GitHub rejected the requested protection
-  rule because the current plan does not support it for this private repository.
-  Make the repository public or use a plan supporting private environment
-  reviewers, then configure the reviewer before real publication. The workflow
-  rejects an unprotected configuration; dry runs remain available.
+- The repository is public and the publication workflow is enabled. The
+  `npm-publish` GitHub environment requires maintainer review, disables
+  administrator bypass, and allows only the `main` branch and `v*` tags.
+  Release dry runs also wait for environment review. The workflow independently
+  rejects real publication if the required reviewer is removed.
 - The existing `v1.0.0` tag points to the original release snapshot, before
   these fixes. Release from a commit containing this review's changes. Do not
   publish the unchanged old tag.
-- Version `1.0.1` contains the review fixes and aligned package metadata. Preserve
-  the original tag and use `v1.0.1` for the corrected release.
-- Repository visibility and npm authentication remain maintainer release actions.
-  The packages are not publicly available on npm yet. Follow the
+- The published `v1.0.1` Git tag contains the review fixes and aligned package
+  metadata. Its CI passed on both supported Node versions, and the hosted
+  publication dry run passed for all six packages. The original tag is unchanged.
+- Initial npm authentication remains a maintainer release action. No npm
+  bootstrap credential is configured and no packages have been published by
+  this review. Follow the
   [publication guide](PUBLISHING.md) for first-publication authentication and
   per-package trusted publisher configuration.
 

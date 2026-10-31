@@ -69,9 +69,12 @@ An unauthenticated dry run cannot prove npm ownership or OIDC configuration.
    environment deployment. The temporary credential is supplied only to the
    final publishing step; installation, builds and tests do not receive it.
    Every package is published with provenance.
-4. Verify the six registry versions and provenance. Configure their trusted
-   publishers, revoke the temporary npm token and delete the GitHub environment
-   secret. Leave `bootstrap=false` for subsequent releases.
+4. Verify the six registry versions and provenance, revoke the temporary npm
+   token and delete the GitHub environment secret. Configure trusted publishers
+   when the next OIDC release is ready, so their first successful publish falls
+   within npm's two-day setup window. A retry that skips already published
+   versions does not complete that first publish. Leave `bootstrap=false` for
+   subsequent releases.
 
 The workflow has no automatic token fallback: bootstrap must be selected
 explicitly. Ordinary tag pushes and dry runs do not receive the credential.
