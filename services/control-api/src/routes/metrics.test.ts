@@ -1,4 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+// Route authentication and label tests must not connect to an operator's databases
+// or wait for Redis retries when running the package's unit suite offline.
+vi.mock('../db/index.js', () => ({ getDb: () => { throw new Error('fixture database unavailable'); } }));
+vi.mock('../queue/redis.js', () => ({ getRedis: () => { throw new Error('fixture Redis unavailable'); } }));
+vi.mock('../services/heartbeat-stream.js', () => ({
+  getHeartbeatStreamStats: async () => { throw new Error('fixture heartbeat stream unavailable'); },
+}));
+
 import { buildHistogram } from './metrics.js';
 
 function samples(text: string): Map<string, number> {
