@@ -20,6 +20,8 @@ const { securityFusionLocal, securityFusionMode, startSecurityExporter, stopSecu
 const { featureFlags } = await import('./config/features.js');
 const { serve } = await import('@hono/node-server');
 const { app } = await import('./server.js');
+const { parseRouteAliases, withRouteAliases } = await import('./config/route-aliases.js');
+const handler = withRouteAliases(app.fetch, parseRouteAliases(process.env['MAGNUS_ROUTE_ALIASES_JSON']));
 const { startRolloutReconciler, stopRolloutReconciler } = await import('./services/rollout-service.js');
 const { startApplicationProbes, stopApplicationProbes } = await import('./services/application-probes.js');
 const { startNodeIssueMonitor } = await import('./services/node-issue-monitor.js');
@@ -104,7 +106,7 @@ const listener = resolveListenerSecurity({
 const server = listener.useTls
   ? serve(
     {
-      fetch: app.fetch,
+      fetch: handler,
       port,
       hostname: listener.hostname,
       createServer,
@@ -118,7 +120,7 @@ const server = listener.useTls
       startBackgroundServices();
     },
   )
-  : serve({ fetch: app.fetch, port, hostname: listener.hostname }, (info) => {
+  : serve({ fetch: handler, port, hostname: listener.hostname }, (info) => {
     console.log(`🚀 Magnus server listening on http://${listener.hostname}:${info.port} (development opt-in)`);
     startBackgroundServices();
   });

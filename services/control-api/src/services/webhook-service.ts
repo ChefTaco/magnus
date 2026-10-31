@@ -1,4 +1,5 @@
 import { recordMonitorPulse } from './monitor-pulse.js';
+import { WEBHOOK_FORMATS, webhookFormat } from './webhook-types.js';
 import { redactUnknown } from '../utils/redact.js';
 import { createHmac, randomBytes, createCipheriv } from 'node:crypto';
 import { nanoid } from 'nanoid';
@@ -84,7 +85,7 @@ export async function reconcileWebhookDeliveries(): Promise<void> {
     // replaced; failed jobs are finalized by the worker's failure bookkeeping.
     await addDurableJob(getWebhookQueue(), 'deliver', createWebhookJobPayload(delivery.endpointId), {
       jobId: delivery.id,
-      attempts: delivery.endpoint.type === 'mattermost' ? 1 : Math.max(1, Math.min(11, delivery.endpoint.retries + 1)),
+      attempts: webhookFormat(delivery.endpoint.type) === 'mattermost' ? 1 : Math.max(1, Math.min(11, delivery.endpoint.retries + 1)),
       backoff: { type: 'exponential', delay: 1000 },
       removeOnComplete: { age: 86400, count: 10000 }, removeOnFail: { age: 604800, count: 10000 },
     }, ['completed']);
@@ -283,10 +284,10 @@ export function startWebhookWorker(): Worker<WebhookJobPayload> {
       const shouldEncrypt = extraHeaders['x-magnus-encrypt'] === 'true';
       delete extraHeaders['x-magnus-encrypt'];
 
-      const { body: rawBody, contentType } = formatPayload(endpoint.type, delivery.event, delivery.payload);
+      const { body: rawBody, contentType } = formatPayload(webhookFormat(endpoint.type), delivery.event, delivery.payload);
 
       // Optionally encrypt the payload with AES-256-GCM
-      const encrypted = shouldEncrypt && secret !== null && endpoint.type === 'generic';
+      const encrypted = shouldEncrypt && secret !== null && webhookFormat(endpoint.type) === 'generic';
       const body = encrypted ? encryptPayload(rawBody, secret) : rawBody;
 
       const headers: Record<string, string> = {
@@ -302,7 +303,7 @@ export function startWebhookWorker(): Worker<WebhookJobPayload> {
         headers['X-Magnus-Signature'] = `sha256=${signPayload(body, secret)}`;
       }
 
-      if (endpoint.type === 'mattermost' && !(await claimMattermostAttempt(deliveryId))) return;
+      if (webhookFormat(endpoint.type) === 'mattermost' && !(await claimMattermostAttempt(deliveryId))) return;
       try {
         const res = await postWebhook(webhookUrl(endpoint), { headers, body, timeoutMs: endpoint.timeoutMs });
         const attempt = job.attemptsMade + 1;
@@ -398,7 +399,8 @@ export async function createWebhookEndpoint(data: {
 }): Promise<unknown> {
   const db = getDb();
   const id = nanoid();
-  if (!['generic','slack','discord','mattermost'].includes(data.type ?? 'generic')) throw new Error('Unsupported webhook format');
+  const type = webhookFormat(data.type ?? 'generic');
+  if (!(WEBHOOK_FORMATS as readonly string[]).includes(type)) throw new Error('Unsupported webhook format');
   await validateWebhookTarget(data.url);
   const headers = normalizeHeaders(data.headers ?? {});
   const { retries, timeoutMs } = normalizeDeliveryOptions(data.retries, data.timeoutMs);
@@ -407,7 +409,7 @@ export async function createWebhookEndpoint(data: {
       id,
       name: data.name,
       url: encryptWebhookCredential(data.url, id, 'url'),
-      type: data.type ?? 'generic',
+      type,
       secret: data.secret === undefined ? null : encryptWebhookCredential(data.secret, id, 'secret'),
       events: JSON.stringify(data.events ?? []),
       headers: encryptWebhookCredential(JSON.stringify(headers), id, 'headers'),
@@ -444,8 +446,9 @@ export async function updateWebhookEndpoint(
     updateData['url'] = encryptWebhookCredential(data.url, id, 'url');
   }
   if (data.type !== undefined) {
-    if (!['generic','slack','discord','mattermost'].includes(data.type)) throw new Error('Unsupported webhook format');
-    updateData['type'] = data.type;
+    const type = webhookFormat(data.type);
+    if (!(WEBHOOK_FORMATS as readonly string[]).includes(type)) throw new Error('Unsupported webhook format');
+    updateData['type'] = type;
   }
   if (data.secret !== undefined) {
     updateData['secret'] = data.secret === null ? null : encryptWebhookCredential(data.secret, id, 'secret');
@@ -504,12 +507,12 @@ export async function testWebhookEndpoint(id: string): Promise<{ success: boolea
       timestamp: new Date().toISOString(),
     };
 
-    const { body: rawBody, contentType } = formatPayload(endpoint.type, 'webhook.test', JSON.stringify(testPayload));
+    const { body: rawBody, contentType } = formatPayload(webhookFormat(endpoint.type), 'webhook.test', JSON.stringify(testPayload));
     const secret = encryptedSecret(endpoint);
     const extraHeaders = parseStoredHeaders(endpoint.id, endpoint.headers);
     const shouldEncrypt = extraHeaders['x-magnus-encrypt'] === 'true';
     delete extraHeaders['x-magnus-encrypt'];
-    const encrypted = shouldEncrypt && secret !== null && endpoint.type === 'generic';
+    const encrypted = shouldEncrypt && secret !== null && webhookFormat(endpoint.type) === 'generic';
     const body = encrypted ? encryptPayload(rawBody, secret) : rawBody;
 
     const headers: Record<string, string> = {

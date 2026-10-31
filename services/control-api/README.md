@@ -132,6 +132,21 @@ Unknown destinations and changed keys fail before authentication. Multiple
 pins permit a reviewed host-key rotation; remove the old pin afterward.
 This setting does not enable the retired browser deployment routes.
 
+## Interoperating with older components
+
+Every switch below is off or set to current behaviour by default. Set them only
+while older clients, signers or scripts still talk to this server.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `MAGNUS_APPROVAL_ASSERTION_DOMAINS` | `magnus.approval-assertion` | Comma-separated signature domain prefixes accepted for signed approval decisions (the signed message starts with `<prefix>.v<N>`). Add a legacy signer domain, for example `magnus.approval-assertion,legacy.approval`. The first entry is preferred. Allowed characters: `a-z`, `0-9`, `.` and `-`. |
+| `MAGNUS_ROUTE_ALIASES_JSON` | unset | JSON object mapping legacy `/api/v1` path prefixes to current ones, for example `{"/api/v1/resource-leases/old-name/admission": "/api/v1/resource-leases/admission"}`. Requests are rewritten before routing, so authentication, endpoint scopes, rate limits and audit see the current path. Aliases cannot chain or contain `.`/`..` segments. |
+| `MAGNUS_WEBHOOK_TYPE_ALIASES` | unset | Comma-separated `legacy=format` pairs, for example `legacy-chat=mattermost`, so webhook endpoints stored or submitted under an older type name keep their delivery format. New and edited endpoints store the current format. |
+
+Older Hermes Agent plugins also need `MAGNUS_PLUGIN_API_ENABLED=true`, and an
+older approval bridge needs `MAGNUS_APPROVAL_BRIDGE_CONSUMER`. See the
+[changelog](../../CHANGELOG.md) for renamed variables.
+
 ## Develop
 
 From the repository root:

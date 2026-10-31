@@ -150,7 +150,7 @@ and `magnus-agent env-schema` prints them as JSON.
 | `SKILLS_DIR` / `SKILLS_EXTRA_DIRS` | Skill directories |
 | `HERMES_USER`, `HERMES_REGISTRY_TOKEN`, `MAGNUS_HERMES_SYNC_PULL` | Hermes Agent management and registry sync |
 | `CODEX_USER`, `CODEX_BIN`, `CODEX_HOME` | Codex CLI management |
-| `ARDENT_OWNER_USER`, `ARDENT_STAGED_PACKAGE` | Ardent management |
+| `ARDENT_OWNER_USER`, `ARDENT_STAGED_PACKAGE`, `MAGNUS_AGENT_ARDENT_PACKAGES` | Ardent management |
 | `MAGNUS_AGENT_RENEWAL_*` | HiveMem credential renewal allowlists (empty by default) |
 | `MAGNUS_AGENT_TLS_RENEWAL=tailscale` | Renew a Tailscale listener certificate |
 | `MAGNUS_AGENT_PRIVILEGED` | Privileged (root, default `true`) or unprivileged mode |
@@ -174,6 +174,17 @@ every five minutes. Without `HERMES_REGISTRY_TOKEN` the job does nothing.
 With `--submit-only` it only reports the local Hermes inventory. Applying the
 server's desired skills, plugins and MCP releases also needs
 `MAGNUS_HERMES_SYNC_PULL=true`.
+
+## Interoperating with older components
+
+`MAGNUS_AGENT_ARDENT_PACKAGES` (default `@hivemagnus/ardent`) lists the scoped
+npm package names the agent accepts as the Ardent runtime, in preference order.
+It applies to the staged `ardent-package.json` sidecar, the install path
+`node_modules/<name>`, the install receipt and the managed `ardent@<profile>`
+user unit. To keep managing an Ardent build published under another scope, add
+its name, for example `MAGNUS_AGENT_ARDENT_PACKAGES=@hivemagnus/ardent,@legacy-scope/ardent`.
+Older sidecars with the `{name, version, sha256}` shape are accepted unchanged.
+Profile channel maps accept any channel key that matches `[a-z][a-z0-9_-]{0,31}`.
 
 ## Development
 

@@ -27,6 +27,8 @@ export const ENV_CATALOG: readonly EnvVariable[] = [
   // ── Core ──
   { name: 'NODE_ENV', group: 'core', default: 'development', description: 'development, production or test. Production enforces TLS, DATABASE_URL and strict CORS.' },
   { name: 'LOG_LEVEL', group: 'core', default: 'info', description: 'debug, info, warn, error or fatal.' },
+  { name: 'MAGNUS_ROUTE_ALIASES_JSON', group: 'core', description: 'Optional JSON object mapping legacy /api/v1 path prefixes to current ones, for clients built against older route names. Requests are rewritten before routing, so auth and audit see the current path. Unset means no aliases.' },
+  { name: 'MAGNUS_WEBHOOK_TYPE_ALIASES', group: 'core', description: 'Optional comma-separated legacy=format pairs (format: generic, slack, discord or mattermost) so webhook endpoints stored or submitted under an older type name keep their delivery format.' },
   { name: 'MAGNUS_HOME', group: 'paths', default: '~/.magnus', description: 'Base directory for server-owned data (audit logs, credential rotation state, backups).' },
   { name: 'MAGNUS_ENV_FILE', group: 'paths', description: 'Env file loaded at startup (set by `--env-file`). Variables already in the environment win.' },
   { name: 'AUDIT_LOG_DIR', group: 'paths', default: '$MAGNUS_HOME/audit-logs', description: 'Directory for the append-only audit log files.' },

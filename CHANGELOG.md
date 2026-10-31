@@ -4,6 +4,23 @@ All notable changes to this project are documented in this file. The format is b
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Configuration switches for interoperating with older components. Every default keeps the
+  current behaviour.
+  - `MAGNUS_AGENT_ARDENT_PACKAGES` (agent, default `@hivemagnus/ardent`): scoped npm names
+    accepted as the Ardent runtime for the staged sidecar, install path, receipt and managed
+    unit. Ardent state now also reports the installed `packageName`.
+  - `MAGNUS_APPROVAL_ASSERTION_DOMAINS` (server, default `magnus.approval-assertion`): signature
+    domain prefixes accepted for signed approval decisions, so older signers keep working.
+  - `MAGNUS_ROUTE_ALIASES_JSON` (server, unset): legacy `/api/v1` path prefixes rewritten to
+    current routes before routing, for example the renamed resource-lease admission and
+    transfer authority snapshot routes.
+  - `MAGNUS_WEBHOOK_TYPE_ALIASES` (server, unset): legacy webhook type names mapped to a
+    current delivery format.
+
 ## [1.0.2] - 2026-10-31
 
 ### Changed

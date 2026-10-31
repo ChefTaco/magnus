@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import path from 'node:path';
+import { parseRouteAliases } from './route-aliases.js';
+import { webhookTypeAliases } from '../services/webhook-types.js';
 
 // ─── Shared environment schema — validated with Zod ───
 
@@ -174,7 +176,22 @@ export const envSchema = z.object({
   HERMES_HIVEMEM_WORKSPACE_ID: z.string().optional(),
   HERMES_HIVEMEM_DEFAULT_SCOPE: z.enum(['private', 'shared']).optional(),
   HERMES_OPENAI_RUNTIME: z.enum(['auto', 'codex_app_server']).optional(),
+  // Optional legacy-path -> current-path prefix map for older clients (see config/route-aliases.ts).
+  MAGNUS_ROUTE_ALIASES_JSON: z.string().optional(),
+  // Optional legacy webhook type names: comma-separated legacy=format pairs.
+  MAGNUS_WEBHOOK_TYPE_ALIASES: z.string()
+    .regex(/^\s*(?:[a-z][a-z0-9_-]{0,31}\s*=\s*(?:generic|slack|discord|mattermost)\s*(?:,\s*|$))*$/,
+      'must list legacy=format pairs, where format is generic, slack, discord or mattermost')
+    .optional(),
 }).superRefine((env, ctx) => {
+  try { webhookTypeAliases(env.MAGNUS_WEBHOOK_TYPE_ALIASES); } catch (error: unknown) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['MAGNUS_WEBHOOK_TYPE_ALIASES'],
+      message: error instanceof Error ? error.message : 'MAGNUS_WEBHOOK_TYPE_ALIASES is invalid' });
+  }
+  try { parseRouteAliases(env.MAGNUS_ROUTE_ALIASES_JSON); } catch (error: unknown) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['MAGNUS_ROUTE_ALIASES_JSON'],
+      message: error instanceof Error ? error.message : 'MAGNUS_ROUTE_ALIASES_JSON is invalid' });
+  }
   if (env.HEALTH_SNAPSHOT_FULL_FIDELITY_HOURS > env.HEALTH_SNAPSHOT_RETENTION_DAYS * 24) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
