@@ -100,6 +100,8 @@ sudo cp "$PROJECT/config/tls/server.crt" "$AGENT_DIR/tls/control-api-ca.crt"
 sudo sh -c "cat '$PROJECT/config/tls/server.crt' '$WORK/agent.crt' > '$PROJECT/config/tls/trusted-agents.crt'"
 sudo mkdir -p /etc/systemd/system/magnus-server.service.d
 printf '[Service]\nEnvironment=NODE_EXTRA_CA_CERTS=%s\n' "$PROJECT/config/tls/trusted-agents.crt" | sudo tee /etc/systemd/system/magnus-server.service.d/e2e-agent-ca.conf >/dev/null
+# `magnus-server agents` reads it from the env file (init wrote the self-signed certificate there).
+sudo sed -i "s#^NODE_EXTRA_CA_CERTS=.*#NODE_EXTRA_CA_CERTS=$PROJECT/config/tls/trusted-agents.crt#" "$PROJECT/config/magnus-server.env"
 sudo systemctl daemon-reload && sudo systemctl restart magnus-server
 "${SUDO[@]}" npm install --prefix "$AGENT_DIR" --omit=dev --no-audit --no-fund --loglevel=error \
   "$PACKS/hivemagnus-magnus-contracts-$VERSION.tgz" "$PACKS/hivemagnus-magnus-agent-$VERSION.tgz"

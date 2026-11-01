@@ -12,7 +12,10 @@ Options:
   --to X.Y.Z            Agent version (default: the one bundled with this server)
   --integrity sha512-…  npm integrity of that version (default: read from the registry)
   --nodes a,b           Only these nodes (names, host names or ids)
-  --dry-run             Show which agents would be upgraded, and why others would not`;
+  --dry-run             Show which agents would be upgraded, and why others would not
+
+Agents are called over TLS. NODE_EXTRA_CA_CERTS from --env-file is honoured, so
+the command trusts the same CA as the service.`;
 
 interface AgentsOptions {
   to?: string;

@@ -10,6 +10,8 @@ import { parseArgs, USAGE, UsageError, type CliOptions } from './cli/args.js';
 import { buildEnvSchemaDocument, renderEnvTable } from './cli/env-catalog.js';
 
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+/** Node reads NODE_EXTRA_CA_CERTS only at startup; an env file that sets it needs a fresh process. */
+const STARTUP_EXTRA_CA = process.env['NODE_EXTRA_CA_CERTS'];
 const MIGRATIONS_DIR = join(PACKAGE_ROOT, 'prisma', 'migrations');
 const PRISMA_CONFIG = join(PACKAGE_ROOT, 'prisma.config.ts');
 
@@ -237,6 +239,14 @@ async function run(argv: readonly string[]): Promise<number> {
     }
     case 'agents': {
       loadEnvFiles(options.envFiles);
+      // The command calls agents over TLS: trust the same extra CA as the service.
+      if (process.env['NODE_EXTRA_CA_CERTS'] && process.env['NODE_EXTRA_CA_CERTS'] !== STARTUP_EXTRA_CA) {
+        return new Promise<number>((resolvePromise, reject) => {
+          const child = spawn(process.execPath, process.argv.slice(1), { stdio: 'inherit', env: process.env });
+          child.on('error', reject);
+          child.on('close', code => resolvePromise(code ?? 1));
+        });
+      }
       const { commandAgents } = await import('./cli/agents.js');
       return commandAgents(options.passthrough);
     }
