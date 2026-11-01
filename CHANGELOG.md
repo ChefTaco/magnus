@@ -4,6 +4,65 @@ All notable changes to this project are documented in this file. The format is b
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
+## [1.1.0] - 2026-11-01
+
+### Added
+
+- `@hivemagnus/magnus`, a new installer and upgrade tool. `npx @hivemagnus/magnus init` creates a
+  managed single-node project (server and console, systemd units, generated secrets and TLS, and
+  optionally PostgreSQL and Redis through docker compose). It pins exact, tested versions of every
+  component. See [UPGRADING.md](UPGRADING.md).
+- `magnus upgrade [--to X.Y.Z] [--dry-run]` (or `magnus-server upgrade`) checks the registry and the
+  Node.js engines and dumps PostgreSQL before migrating. It installs the new release beside the running
+  one, migrates, checks, switches `./current` and restarts. If the new version does not become healthy
+  it switches back automatically and prints the exact database restore command. It never crosses a
+  major version without `--allow-major`. `magnus rollback [--restore-db]` and `magnus status` complete
+  it, and `magnus adopt` turns an existing npm install into a managed project.
+- Startup auto-migrate (`MAGNUS_AUTO_MIGRATE=true`): pending migrations are applied before the server
+  listens, under a PostgreSQL advisory lock and after a `pg_dump`. Slow or one-way migrations stop
+  startup unless they are explicitly allowed.
+- Update notices: a daily, opt-out registry check shows newer releases with their notes, new required
+  settings and slow or one-way migrations in the console and in `magnus-server check`. Agents that run
+  a different version than the server log a loud warning with the exact fix command.
+- Server-driven agent upgrades: the **Upgrade agents** action on the Nodes page and
+  `magnus-server agents upgrade`. One canary goes first, then a few agents at a time. Each agent
+  installs the exact version and npm integrity into `versions/<X>` beside the running one and switches
+  back by itself if the new version does not report an accepted heartbeat within
+  `MAGNUS_AGENT_UPGRADE_CONFIRM_SECONDS`. Agents that cannot upgrade themselves are greyed out with
+  the reason. Run `sudo magnus-agent install-service` once per node to enable it; the agent never uses
+  sudo for upgrades.
+- New server commands `magnus-server migrations` and `magnus-server backup`, and
+  `magnus-server check --format json`.
+- Per-release manifests (`magnusRelease`) with migration impact notes
+  (`prisma/migrations/<name>/magnus-impact.json`), checked by `npm run release:manifest:check`.
+
+### Changed
+
+- The git-checkout self-update endpoints (`/api/v1/self-update/check`, `/apply` and `/restart`) are
+  off by default and answer 410 with the upgrade command. Set `MAGNUS_LEGACY_GIT_SELF_UPDATE=true` to
+  keep using them from a source checkout.
+- The heartbeat's `updateAvailable` compares versions by semver, and agents now report their Node.js
+  version and self-upgrade status.
+- The native completion registry adds the agent self-upgrade mutation, so its digest changes. A
+  managed mutation admitted by a 1.0.x server and settled by 1.1.0 is refused with
+  `RESOURCE_EVIDENCE_INVALID`, so upgrade the server while no managed mutation is running.
+- The console shows its own release version in the sidebar.
+
+### New environment variables
+
+All are optional, and each automatic behaviour has its own switch.
+
+- Server: `MAGNUS_AUTO_MIGRATE`, `MAGNUS_AUTO_MIGRATE_BACKUP`, `MAGNUS_AUTO_MIGRATE_ALLOW_SLOW`,
+  `MAGNUS_BACKUP_DIR`, `MAGNUS_PG_DUMP`, `MAGNUS_RUNTIME_FILE`, `MAGNUS_UPDATE_CHECK`,
+  `MAGNUS_UPDATE_REGISTRY`, `MAGNUS_AGENT_UPGRADES`, `MAGNUS_AGENT_UPGRADE_CONCURRENCY`,
+  `MAGNUS_LEGACY_GIT_SELF_UPDATE`, `MAGNUS_PROJECT_DIR`.
+- Agent: `MAGNUS_AGENT_SELF_UPGRADE`, `MAGNUS_AGENT_UPGRADE_CONFIRM_SECONDS`,
+  `MAGNUS_AGENT_UPGRADE_REQUIRE_PROVENANCE`, `MAGNUS_AGENT_UPGRADE_SOURCE_DIR`, `MAGNUS_AGENT_NPM`.
+
+### Migration impact
+
+- None: 1.1.0 adds no database migrations.
+
 ## [1.0.3] - 2026-10-31
 
 ### Added
@@ -133,6 +192,7 @@ The initial release snapshot.
   Pass them to `npm install -g` with `--allow-scripts=...`, or list them under `allowScripts` in
   your project's `package.json`.
 
+[1.1.0]: https://github.com/ChefTaco/magnus/releases/tag/v1.1.0
 [1.0.3]: https://github.com/ChefTaco/magnus/releases/tag/v1.0.3
 [1.0.2]: https://github.com/ChefTaco/magnus/releases/tag/v1.0.2
 [1.0.1]: https://github.com/ChefTaco/magnus/releases/tag/v1.0.1

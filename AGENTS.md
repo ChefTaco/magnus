@@ -67,6 +67,7 @@ change.
 | `packages/ardent` | `@hivemagnus/ardent` | Headless TypeScript agent runtime with A2A, jobs, skills and channel adapters |
 | `packages/contracts` | `@hivemagnus/magnus-contracts` | Zod schemas shared by the server, UI and agent |
 | `packages/skills` | `@hivemagnus/magnus-skills` | Ubuntu operations skill catalogue (Hermes Agent compatible) |
+| `packages/magnus` | `@hivemagnus/magnus` | Installer and upgrade tool (`magnus init`, `magnus upgrade`, `magnus rollback`) |
 | `scripts/` | | Repository checks |
 | `docs/` | | Architecture and integration notes |
 

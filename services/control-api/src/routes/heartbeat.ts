@@ -1,4 +1,6 @@
 import { enqueueSecurityObservations, securityFusionLocal } from '../services/security-export.js';
+import { warnOnAgentVersionMismatch } from '../services/agent-version-warnings.js';
+import { recordSelfUpgradeReport } from '../services/agent-upgrade-service.js';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { nanoid } from 'nanoid';
@@ -77,6 +79,8 @@ interface HeartbeatRequestBody {
   health?: HeartbeatHealthPayload;
   hermes?: unknown;
   securityCapabilities?: { isolation?: boolean; serviceRestart?: boolean };
+  selfUpgrade?: unknown;
+  nodeVersion?: unknown;
 }
 
 /**
@@ -424,6 +428,12 @@ heartbeatRouter.post('/', async (c) => {
     });
   }
 
+  if (existing && body.selfUpgrade !== undefined) {
+    await recordSelfUpgradeReport({ id: nodeId, name: existing.name }, body).catch((err: unknown) => {
+      console.error(`[agent-upgrade] could not record the self-upgrade report of ${existing.name}:`, err instanceof Error ? err.message : err);
+    });
+  }
+
   if (!fqdn && existing) {
     // If the node's hostname already contains a dot it's likely an FQDN — skip lookup
     if (!existing.hostname.includes('.')) {
@@ -635,7 +645,7 @@ heartbeatRouter.post('/', async (c) => {
   }
 
   const expectedVersion = AGENT_VERSION;
-  const updateAvailable = body.agentVersion && body.agentVersion !== expectedVersion
+  const { updateAvailable } = warnOnAgentVersionMismatch({ id: nodeId, name: existing?.name ?? fqdn ?? nodeId }, body.agentVersion, expectedVersion);
 
   return c.json({ success: true, data: { accepted: true, expectedVersion, updateAvailable } });
 });

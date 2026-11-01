@@ -15,6 +15,7 @@ function releaseFixture(t) {
     writeFileSync(join(root, directory, 'package.json'), JSON.stringify({
       name: `@example/package-${index}`, version: '1.0.1', publishConfig: { access: 'public' },
       ...(index ? { dependencies: { '@example/package-0': '1.0.1' } } : {}),
+      ...(directory === 'packages/magnus' ? { magnusRelease: { version: '1.0.1', components: { '@example/package-0': '1.0.1' } } } : {}),
     }));
   }
   writeFileSync(join(root, 'services/control-api/agent-version.json'), '{"version":"1.0.1"}');
@@ -79,9 +80,9 @@ test('real publication requires the version tag and checks all packages before a
   await assert.rejects(publishPackages({ ...options, ref: 'refs/tags/v1.0.0', run }), /matching release tag/);
   await assert.rejects(publishPackages({ ...options, run, fetcher: async () => {
     lookups++;
-    return new Response('', { status: lookups === 6 ? 503 : 404 });
+    return new Response('', { status: lookups === PACKAGE_DIRECTORIES.length ? 503 : 404 });
   } }), /HTTP 503/);
-  assert.equal(lookups, 6);
+  assert.equal(lookups, PACKAGE_DIRECTORIES.length);
   assert.equal(publications, 0);
 });
 
@@ -90,7 +91,8 @@ test('dry runs validate all packages without registry access or provenance publi
   const calls = [];
   await publishPackages({ root, dryRun: true, ref: 'refs/heads/main', fetcher: () => { throw new Error('unexpected registry lookup'); },
     run: (...args) => calls.push(args) });
-  assert.equal(calls.length, 6);
+  assert.equal(calls.length, PACKAGE_DIRECTORIES.length);
+  assert.equal(PACKAGE_DIRECTORIES.at(-1), 'packages/magnus');
   assert.deepEqual(calls[0][1], ['publish', '--dry-run', '--ignore-scripts', '--access', 'public', '--registry', 'https://registry.npmjs.org/']);
   assert.equal(calls[0][2].cwd, join(root, PACKAGE_DIRECTORIES[0]));
 });

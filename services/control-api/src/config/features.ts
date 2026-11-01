@@ -42,3 +42,48 @@ export function featureFlags(env: NodeJS.ProcessEnv = process.env): FeatureFlags
     agentDiscovery: truthy(env['ENABLE_AGENT_DISCOVERY']),
   };
 }
+
+/** Boolean switch with an explicit default: only `true`/`false` (any case) override it. */
+export function envSwitch(value: string | undefined, fallback: boolean): boolean {
+  const normalized = (value ?? '').trim().toLowerCase();
+  if (normalized === 'true') return true;
+  if (normalized === 'false') return false;
+  return fallback;
+}
+
+/**
+ * Automatic upgrade behaviour. Every switch is independent so an operator who
+ * runs their own release process can turn each automatic path off.
+ */
+export interface UpgradeSettings {
+  /** Apply pending migrations at startup, before listening. */
+  autoMigrate: boolean;
+  /** Dump the database before an automatic migration (refuses to migrate if the dump fails). */
+  autoMigrateBackup: boolean;
+  /** Let auto-migrate apply migrations marked slow or one-way. */
+  autoMigrateAllowSlow: boolean;
+  /** Daily registry check for newer releases. */
+  updateCheck: boolean;
+  /** npm registry used by the update check. */
+  updateRegistry: string;
+  /** Server-driven agent upgrades (API, UI action and CLI). */
+  agentUpgrades: boolean;
+  /** Agents upgraded at once after the first (canary) agent confirms. */
+  agentUpgradeConcurrency: number;
+  /** The retired git-checkout self-update endpoints. */
+  legacyGitSelfUpdate: boolean;
+}
+
+export function upgradeSettings(env: NodeJS.ProcessEnv = process.env): UpgradeSettings {
+  const concurrency = Number.parseInt(env['MAGNUS_AGENT_UPGRADE_CONCURRENCY'] ?? '', 10);
+  return {
+    autoMigrate: envSwitch(env['MAGNUS_AUTO_MIGRATE'], false),
+    autoMigrateBackup: envSwitch(env['MAGNUS_AUTO_MIGRATE_BACKUP'], true),
+    autoMigrateAllowSlow: envSwitch(env['MAGNUS_AUTO_MIGRATE_ALLOW_SLOW'], false),
+    updateCheck: envSwitch(env['MAGNUS_UPDATE_CHECK'], true),
+    updateRegistry: (env['MAGNUS_UPDATE_REGISTRY']?.trim() || 'https://registry.npmjs.org').replace(/\/+$/, ''),
+    agentUpgrades: envSwitch(env['MAGNUS_AGENT_UPGRADES'], true),
+    agentUpgradeConcurrency: Number.isInteger(concurrency) && concurrency > 0 ? Math.min(concurrency, 50) : 5,
+    legacyGitSelfUpdate: envSwitch(env['MAGNUS_LEGACY_GIT_SELF_UPDATE'], false),
+  };
+}

@@ -139,7 +139,7 @@ export function Sidebar({ integrations }: { integrations: IntegrationFlags }): R
 
       {/* Footer */}
       <div className="flex items-center justify-between border-t border-border/30 p-4 text-[10px] uppercase tracking-widest text-primary/40">
-        <span>Magnus v{process.env['NEXT_PUBLIC_AGENT_VERSION'] ?? '0.0.0'}</span>
+        <span>Magnus v{process.env['NEXT_PUBLIC_MAGNUS_VERSION'] ?? '0.0.0'}</span>
         <LiveLed />
       </div>
     </aside>

@@ -11,6 +11,8 @@ interface UpdateStatus {
   gitCommit: string | null;
   lastChecked: string | null;
   isGitRepo: boolean;
+  legacyGitSelfUpdate?: boolean;
+  upgradeCommand?: string;
 }
 
 interface UpdateCheck {
@@ -45,6 +47,7 @@ export function UpdatePanel({
   onRestart,
   onBack,
 }: UpdatePanelProps): React.ReactElement {
+  const gitSelfUpdate = updateStatus?.isGitRepo !== false && updateStatus?.legacyGitSelfUpdate === true;
   return (
     <div className="space-y-4">
       {/* Current status */}
@@ -83,13 +86,13 @@ export function UpdatePanel({
         </div>
       )}
 
-      {/* Tarball notice */}
-      {updateStatus && updateStatus.isGitRepo === false && (
-        <div className="rounded border border-primary/30 bg-primary/10 px-3 py-2 text-[11px] text-text-muted">
-          <span className="font-bold text-primary">Tarball deployment</span>
+      {/* npm installs upgrade on the host; the git pull path is opt-in (MAGNUS_LEGACY_GIT_SELF_UPDATE) */}
+      {updateStatus && !gitSelfUpdate && (
+        <div className="rounded border border-primary/30 bg-primary/10 px-3 py-2 text-[11px] text-text-muted" data-testid="npm-upgrade-notice">
+          <span className="font-bold text-primary">Upgrade on the server host</span>
           <span className="ml-1">
-            — Git-based self-update is not available. Use <strong>Deploy</strong> from another
-            control node to push updates.
+            with <code className="rounded bg-surface px-1 text-text">{updateStatus.upgradeCommand ?? 'magnus upgrade'}</code>: it backs up the
+            database, migrates, restarts and switches back automatically if the new version is unhealthy. See UPGRADING.md.
           </span>
         </div>
       )}
@@ -114,7 +117,7 @@ export function UpdatePanel({
 
       {/* Action buttons */}
       <div className="flex flex-wrap gap-2">
-        {updateStatus?.isGitRepo !== false && (
+        {gitSelfUpdate && (
           <Button
             variant="secondary"
             size="md"
@@ -132,7 +135,7 @@ export function UpdatePanel({
           </Button>
         )}
 
-        {updateCheck?.available && (
+        {gitSelfUpdate && updateCheck?.available && (
           <>
             <Button
               variant="primary"
@@ -168,7 +171,7 @@ export function UpdatePanel({
           </>
         )}
 
-        <Button
+        {gitSelfUpdate && <Button
           variant="ghost"
           size="md"
           onClick={onRestart}
@@ -182,7 +185,7 @@ export function UpdatePanel({
           }
         >
           {updateLoading === 'restarting' ? 'Restarting…' : 'Restart Only'}
-        </Button>
+        </Button>}
       </div>
 
       <div className="flex justify-start pt-2 border-t border-border">

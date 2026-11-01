@@ -8,7 +8,7 @@
  */
 export type EnvGroup =
   | 'core' | 'database' | 'redis' | 'listener' | 'secrets' | 'paths' | 'agents'
-  | 'iam' | 'router' | 'hivemem' | 'security' | 'plugins' | 'hermes' | 'ai' | 'retention';
+  | 'iam' | 'router' | 'hivemem' | 'security' | 'plugins' | 'hermes' | 'ai' | 'retention' | 'upgrades';
 
 export interface EnvVariable {
   name: string;
@@ -132,6 +132,20 @@ export const ENV_CATALOG: readonly EnvVariable[] = [
   { name: 'OPENAI_API_KEY', group: 'ai', secret: true, description: 'Optional OpenAI provider key.' },
   { name: 'OPENROUTER_API_KEY', group: 'ai', secret: true, description: 'Optional OpenRouter provider key.' },
   { name: 'ANTHROPIC_API_KEY', group: 'ai', secret: true, description: 'Optional Anthropic provider key.' },
+
+  // ── Upgrades ── (every automatic behaviour has its own switch; set them false to run your own release process)
+  { name: 'MAGNUS_AUTO_MIGRATE', group: 'upgrades', default: 'false', description: 'true: apply pending migrations at startup, before listening, under an advisory lock and after a pg_dump. `magnus init` projects and the container images set it to true.' },
+  { name: 'MAGNUS_AUTO_MIGRATE_BACKUP', group: 'upgrades', default: 'true', description: 'Dump the database (pg_dump -Fc into MAGNUS_BACKUP_DIR) before an automatic migration. A failed dump stops startup. Set false only if you back up another way.' },
+  { name: 'MAGNUS_AUTO_MIGRATE_ALLOW_SLOW', group: 'upgrades', default: 'false', description: 'Let auto-migrate apply migrations marked slow or one-way; otherwise startup stops and asks for `magnus upgrade`.' },
+  { name: 'MAGNUS_BACKUP_DIR', group: 'upgrades', default: '$MAGNUS_HOME/backups', description: 'Directory for pre-migration database dumps (0700; dumps are 0600).' },
+  { name: 'MAGNUS_PG_DUMP', group: 'upgrades', default: 'pg_dump', description: 'pg_dump binary used for pre-migration backups. Its major version must be at least the server\'s.' },
+  { name: 'MAGNUS_RUNTIME_FILE', group: 'upgrades', default: '$MAGNUS_HOME/run/server-runtime.json', description: 'File the server writes after it starts listening ({version, pid, port}); upgrade tooling reads it to confirm the new version is serving.' },
+  { name: 'MAGNUS_UPDATE_CHECK', group: 'upgrades', default: 'true', description: 'Daily check of the npm registry for newer Magnus releases, shown in the console and `magnus-server check`. Sends no data beyond a registry GET. Set false to opt out.' },
+  { name: 'MAGNUS_UPDATE_REGISTRY', group: 'upgrades', default: 'https://registry.npmjs.org', description: 'npm registry used by the update check.' },
+  { name: 'MAGNUS_AGENT_UPGRADES', group: 'upgrades', default: 'true', description: 'Allow server-driven agent upgrades (console action, API and `magnus-server agents upgrade`). Agents must also allow it (MAGNUS_AGENT_SELF_UPGRADE).' },
+  { name: 'MAGNUS_AGENT_UPGRADE_CONCURRENCY', group: 'upgrades', default: '5', description: 'Agents upgraded in parallel after the first (canary) agent confirms. Maximum 50.' },
+  { name: 'MAGNUS_LEGACY_GIT_SELF_UPDATE', group: 'upgrades', default: 'false', description: 'true: keep the retired git-checkout self-update endpoints (/api/v1/self-update/apply and /restart) for source installs. npm installs use `magnus upgrade`.' },
+  { name: 'MAGNUS_PROJECT_DIR', group: 'upgrades', description: 'Managed project created by `magnus init` (holds magnus-project.json). `magnus-server upgrade` finds it from the install path when unset.' },
 
   // ── Retention ──
   { name: 'LOG_RETENTION_DAYS', group: 'retention', default: '30', description: 'Days to keep ingested node logs.' },

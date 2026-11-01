@@ -2106,36 +2106,6 @@ const paths: Record<string, Record<string, unknown>> = {
       },
     },
   },
-  '/deploy/upgrade/{nodeId}': {
-    post: {
-      tags: ['Deploy'],
-      summary: 'Upgrade agent',
-      description: 'Upgrade the agent on a node to the current expected version. Runs asynchronously.',
-      security: apiSecretAuth,
-      parameters: [pp('nodeId', 'Node ID')],
-      responses: {
-        202: success('Upgrade started'),
-        401: err401,
-        403: err403,
-        404: err404,
-      },
-    },
-  },
-  '/deploy/version': {
-    get: {
-      tags: ['Deploy'],
-      summary: 'Expected agent version',
-      description: 'Returns the expected agent version and deploy username.',
-      security: apiSecretAuth,
-      responses: {
-        200: success('Version info', {
-          type: 'object',
-          properties: { agentVersion: { type: 'string' }, deployUsername: { type: 'string' } },
-        }),
-        401: err401,
-      },
-    },
-  },
   '/deploy/control-node': {
     post: {
       tags: ['Deploy'],
@@ -2256,6 +2226,77 @@ const paths: Record<string, Record<string, unknown>> = {
   },
 
   // ──────────────── Self-Update ────────────────
+  '/system/updates': {
+    get: {
+      tags: ['Updates'],
+      summary: 'Available releases and agent version skew',
+      description: 'Result of the daily npm registry check (MAGNUS_UPDATE_CHECK): the newest release of the running major, a newer major if any, release notes, new required settings and slow or one-way migrations. Also lists agents that run a different version than this server ships with, and the command that fixes it.',
+      security: apiSecretAuth,
+      responses: { 200: success('Update status', { type: 'object', properties: {
+        version: { type: 'string' },
+        server: { type: 'object', properties: { enabled: { type: 'boolean' }, current: { type: 'string' }, latest: { type: ['string', 'null'] },
+          latestMajor: { type: ['string', 'null'] }, updateAvailable: { type: 'boolean' }, command: { type: 'string' } } },
+        agents: { type: 'object', properties: { expected: { type: 'string' }, current: { type: 'integer' },
+          behind: { type: 'array', items: { type: 'object' } }, ahead: { type: 'array', items: { type: 'object' } },
+          upgradesEnabled: { type: 'boolean' }, fixCommand: { type: ['string', 'null'] } } },
+      } }), 401: err401 },
+    },
+  },
+  '/system/updates/check': {
+    post: {
+      tags: ['Updates'],
+      summary: 'Check the registry now',
+      description: 'Refreshes the update check immediately (ADMIN or OPERATOR).',
+      security: apiSecretAuth,
+      responses: { 200: success('Update status'), 401: err401, 403: err403 },
+    },
+  },
+  '/agents/upgrade/eligibility': {
+    get: {
+      tags: ['Agent upgrades'],
+      summary: 'Which agents can take a version',
+      description: 'For every node: its agent version and whether it can upgrade itself to `version` (default: the agent version this server ships with) now, or why not (offline, not set up with `magnus-agent install-service`, MAGNUS_AGENT_SELF_UPGRADE=false, another major version, already current).',
+      security: apiSecretAuth,
+      parameters: [qp('version', 'Target agent version (X.Y.Z)')],
+      responses: { 200: success('Eligibility', { type: 'object', properties: {
+        version: { type: 'string' }, upgradesEnabled: { type: 'boolean' }, disabledReason: { type: ['string', 'null'] },
+        nodes: { type: 'array', items: { type: 'object', properties: { nodeId: { type: 'string' }, name: { type: 'string' },
+          version: { type: 'string' }, eligible: { type: 'boolean' }, reason: { type: ['string', 'null'] } } } },
+      } }), 400: err400, 401: err401 },
+    },
+  },
+  '/agents/upgrade': {
+    post: {
+      tags: ['Agent upgrades'],
+      summary: 'Upgrade agents',
+      description: 'Starts an upgrade run (ADMIN, MAGNUS_AGENT_UPGRADES=true): one canary, then MAGNUS_AGENT_UPGRADE_CONCURRENCY agents at a time, stopping at the first agent that does not confirm. Each agent installs the exact version and npm integrity and switches back by itself if the new version does not report a heartbeat in time.',
+      security: apiSecretAuth,
+      requestBody: { required: false, content: { 'application/json': { schema: { type: 'object', properties: {
+        version: { type: 'string', description: 'Agent version (default: the one this server ships with)' },
+        integrity: { type: 'string', description: 'npm sha512 integrity (default: read from the registry)' },
+        nodeIds: { type: 'array', items: { type: 'string' }, description: 'Only these nodes' },
+      } } } } },
+      responses: { 202: success('Run started'), 400: err400, 401: err401, 403: err403, 409: err409 },
+    },
+  },
+  '/agents/upgrade/runs/latest': {
+    get: {
+      tags: ['Agent upgrades'],
+      summary: 'Latest upgrade run',
+      security: apiSecretAuth,
+      responses: { 200: success('Run (or null)'), 401: err401 },
+    },
+  },
+  '/agents/upgrade/runs/{id}': {
+    get: {
+      tags: ['Agent upgrades'],
+      summary: 'Upgrade run status',
+      description: 'Per-node state of a run: pending, requested, confirmed, reverted, failed or skipped.',
+      security: apiSecretAuth,
+      parameters: [pp('id', 'Run ID')],
+      responses: { 200: success('Run'), 401: err401, 404: err404 },
+    },
+  },
   '/self-update/status': {
     get: {
       tags: ['Self-Update'],
@@ -2313,7 +2354,7 @@ const paths: Record<string, Record<string, unknown>> = {
     post: {
       tags: ['Self-Update'],
       summary: 'Apply update',
-      description: 'Pull latest code, run `npm ci`, build, and optionally restart the process. Requires ADMIN role.',
+      description: 'Source checkouts only, and only with MAGNUS_LEGACY_GIT_SELF_UPDATE=true (otherwise 410 SELF_UPDATE_RETIRED): pull latest code, run `npm ci`, build, and optionally restart the process. npm installs upgrade with `magnus upgrade`. Requires ADMIN role.',
       security: apiSecretAuth,
       requestBody: {
         required: false,

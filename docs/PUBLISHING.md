@@ -1,8 +1,10 @@
 # Publishing Magnus packages
 
 The release workflow is [`.github/workflows/publish.yml`](../.github/workflows/publish.yml).
-It builds, tests and scans all six payloads, then publishes libraries before
-the applications that depend on them. A dry run publishes nothing.
+It builds, tests and scans all seven payloads, then publishes libraries before
+the applications that depend on them, and the `@hivemagnus/magnus` installer
+last. After npm, it publishes the container images to GHCR. A dry run publishes
+nothing.
 
 ## Required setup
 
@@ -34,9 +36,16 @@ An unauthenticated dry run cannot prove npm ownership or OIDC configuration.
 
 ## Release procedure
 
-1. Bump the root and all six workspace versions together. Update exact internal
-   dependency versions, `package-lock.json`, the server's `agent-version.json`,
-   and [the changelog](../CHANGELOG.md).
+1. Run `npm run release:bump X.Y.Z`. It sets the root and every workspace
+   version, the exact internal dependency pins, the server's
+   `agent-version.json`, the Ardent OpenAPI version, `package-lock.json` and
+   the release manifest, and adds a CHANGELOG stub. Then write
+   `release/X.Y.Z.json`: the summary, `breaking`, `minUpgradeFrom`, new
+   required and optional settings, removed settings, and the migrations this
+   release adds. Mark slow or one-way migrations with
+   `prisma/migrations/<name>/magnus-impact.json`. Fill in the changelog,
+   including **New environment variables** and **Migration impact**, and run
+   `npm run release:manifest`. See [UPGRADING.md](../UPGRADING.md#release-notes-for-maintainers).
 2. Run `npm run lockfile:check`, `npm run audit:production` and `npm run verify`.
    Commit and push, and wait for CI to pass on that exact commit.
 3. Run **Publish to npm** manually with `dry_run` enabled on that commit's ref.
@@ -46,7 +55,8 @@ An unauthenticated dry run cannot prove npm ownership or OIDC configuration.
 5. Review and approve the `npm-publish` deployment in GitHub Actions. Real
    publication requires the matching release tag, including manual retries.
    The npm publisher must already be configured before approving an OIDC run.
-6. Verify all six package versions and provenance on npm. A retry skips versions
+6. Verify all seven package versions and provenance on npm, and the image tags
+   on GHCR (see [Container images](#container-images)). A retry skips versions
    already published. Registry failures stop publication; a publication failure
    stops subsequent packages and may leave earlier packages published.
 
@@ -69,7 +79,7 @@ An unauthenticated dry run cannot prove npm ownership or OIDC configuration.
    environment deployment. The temporary credential is supplied only to the
    final publishing step; installation, builds and tests do not receive it.
    Every package is published with provenance.
-4. Verify the six registry versions and provenance, revoke the temporary npm
+4. Verify the registry versions and provenance, revoke the temporary npm
    token and delete the GitHub environment secret. Configure trusted publishers
    when the next OIDC release is ready, so their first successful publish falls
    within npm's two-day setup window. A retry that skips already published
@@ -80,3 +90,25 @@ The workflow has no automatic token fallback: bootstrap must be selected
 explicitly. Ordinary tag pushes and dry runs do not receive the credential.
 `--provenance` cannot work from an ordinary local shell; see
 [npm provenance requirements](https://docs.npmjs.com/generating-provenance-statements/).
+
+## Adding a package
+
+A new package name (for example `@hivemagnus/magnus` in 1.1.0) has no trusted
+publisher yet, so the release that introduces it uses the bootstrap
+procedure above: one bootstrap run publishes every package of that version
+with the temporary token. Afterwards, configure the trusted publisher for the
+new name as well. Later releases use OIDC again.
+
+## Container images
+
+After the npm packages are published, the `images` job builds
+`ghcr.io/cheftaco/magnus-server`, `magnus-ui` and `magnus-agent` from
+`npm pack` tarballs of the same commit (the bytes that were published), for `linux/amd64` and `linux/arm64`, with provenance and
+an SBOM. It tags them `X.Y.Z`, `X.Y` and `X`, never `latest`, and skips
+prereleases. It uses the workflow's `GITHUB_TOKEN` (`packages: write`), with
+no extra secret.
+
+- **First push:** GHCR creates the packages as private. Make each one public
+  under the repository's **Packages** and link it to the repository. The
+  `org.opencontainers.image.source` label links it on push.
+- **Dry run:** a `dry_run` dispatch builds the images without pushing them.

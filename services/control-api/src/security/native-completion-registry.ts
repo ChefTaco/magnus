@@ -21,6 +21,8 @@ export const NATIVE_COMPLETION_REGISTRY = {
       completionMode: 'buffered-synchronous-http', timeoutCeilingSeconds: 3600, resourceClassifier: 'node-scheduler' },
     { id: 'ardent-action', method: 'POST', pathMatcher: { kind: 'exact', path: '/ardent/action' },
       completionMode: 'buffered-synchronous-http', timeoutCeilingSeconds: 900, resourceClassifier: 'node-ardent' },
+    { id: 'agent-self-upgrade', method: 'POST', pathMatcher: { kind: 'exact', path: '/agent-upgrade' },
+      completionMode: 'buffered-synchronous-http', timeoutCeilingSeconds: 900, resourceClassifier: 'node-filesystem' },
   ],
 } as const;
 

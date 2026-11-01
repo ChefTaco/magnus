@@ -1,7 +1,7 @@
 #!/bin/sh
 # Container entry point for magnus-server.
 #
-#   magnus-server-entrypoint [magnus-server args...]   run the CLI (default: start --migrate)
+#   magnus-server-entrypoint [magnus-server args...]   run the CLI (default: start; MAGNUS_AUTO_MIGRATE=true migrates first)
 #   magnus-server-entrypoint healthcheck               probe the HTTPS listener
 #
 # Production requires TLS. When TLS_CERT_PATH/TLS_KEY_PATH are unset and
@@ -38,6 +38,13 @@ if [ "${MAGNUS_TLS_SELF_SIGNED:-false}" = "true" ] && [ "${TLS_CERT_PATH:-}" = "
     -subj "/CN=${TLS_HOSTNAMES%%,*}" -addext "subjectAltName=$san,IP:127.0.0.1" \
     -keyout "$TLS_KEY_PATH" -out "$TLS_CERT_PATH" >/dev/null 2>&1
   echo "magnus-server: generated a self-signed certificate in $TLS_DIR (evaluation only)"
+fi
+
+# Publish only the certificate (never the key) for clients such as the console
+# container, which verifies the server against it.
+if [ -n "${MAGNUS_TLS_EXPORT_DIR:-}" ] && [ -n "${TLS_CERT_PATH:-}" ] && [ -s "$TLS_CERT_PATH" ]; then
+  cp "$TLS_CERT_PATH" "$MAGNUS_TLS_EXPORT_DIR/server.crt.tmp" && chmod 0644 "$MAGNUS_TLS_EXPORT_DIR/server.crt.tmp" \
+    && mv "$MAGNUS_TLS_EXPORT_DIR/server.crt.tmp" "$MAGNUS_TLS_EXPORT_DIR/server.crt"
 fi
 
 exec magnus-server "$@"

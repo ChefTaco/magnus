@@ -121,6 +121,34 @@ verification is never disabled.
 | HiveMem credential and certificate renewal | **yes** | not started |
 | Execution supervisor (`MAGNUS_EXECUTION_SUPERVISOR_ENABLED`) | **yes** | configuration error if enabled |
 
+## Upgrades
+
+Run `sudo magnus-agent install-service` (add `--unprivileged` for the ordinary-account mode) once
+per node. It does four things:
+
+- moves the install into `/opt/magnus-agent/versions/<X>`
+- links `./current`
+- installs the upgrade launcher (`launcher/launcher.mjs`)
+- writes the systemd unit
+
+`--dry-run` prints the steps first.
+
+After that, the server can upgrade the agent from the console's **Upgrade agents** action or with
+`magnus-server agents upgrade`, in four steps:
+
+1. The agent downloads the exact version the server names and checks its npm `sha512` integrity. It
+   also runs `npm audit signatures` (`MAGNUS_AGENT_UPGRADE_REQUIRE_PROVENANCE`).
+2. It installs that version beside the running one, points `./current` at it and exits.
+3. The launcher starts the new version on trial.
+4. If the new version does not report an accepted heartbeat within
+   `MAGNUS_AGENT_UPGRADE_CONFIRM_SECONDS` (default 180), or crashes twice, the launcher switches back
+   to the previous version.
+
+The agent writes only inside its install directory and never uses sudo. Set
+`MAGNUS_AGENT_SELF_UPGRADE=false` to refuse upgrade requests on a node. Offline nodes can install from
+local tarballs with `MAGNUS_AGENT_UPGRADE_SOURCE_DIR`. See
+[UPGRADING.md](../../UPGRADING.md#agents).
+
 ## CLI
 
 ```text

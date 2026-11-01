@@ -94,9 +94,9 @@ test('npm package checking scans generated file contents as well as names', () =
     for (const file of ['check-npm-packs.mjs', 'privacy-policy.mjs']) {
       cpSync(resolve(import.meta.dirname, file), join(root, 'scripts', file));
     }
-    const directories = ['packages/contracts', 'packages/skills', 'packages/ardent', 'packages/agent', 'services/control-api', 'apps/dashboard'];
+    const directories = ['packages/contracts', 'packages/skills', 'packages/ardent', 'packages/agent', 'services/control-api', 'apps/dashboard', 'packages/magnus'];
     const files = ['package.json', 'README.md', 'LICENSE', 'dist/index.js',
-      'dist/app/apps/dashboard/server-tls.mjs', 'dist/app/apps/dashboard/server.js'];
+      'dist/app/apps/dashboard/server-tls.mjs', 'dist/app/apps/dashboard/server.js', 'launcher/launcher.mjs'];
     for (const directory of directories) {
       for (const file of files) {
         const target = join(root, directory, file);

@@ -19,12 +19,14 @@ export const PUBLISHABLE = [
   'packages/agent',
   'services/control-api',
   'apps/dashboard',
+  'packages/magnus',
 ];
 
 // The UI ships Next.js standalone output, whose traced dependencies live in dist/app/node_modules.
 // Runtime files a package needs beyond its bin, main, types and exports.
 const EXTRA_REQUIRED = {
   'apps/dashboard': ['dist/app/apps/dashboard/server-tls.mjs', 'dist/app/apps/dashboard/server.js'],
+  'packages/agent': ['launcher/launcher.mjs'],
 };
 
 const UNEXPECTED_MODULES = /^(?!dist\/app\/)(.*\/)?node_modules\//u;

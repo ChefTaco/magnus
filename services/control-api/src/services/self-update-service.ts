@@ -45,22 +45,24 @@ export interface UpdateStatus {
   gitCommit: string | null;
   lastChecked: string | null;
   isGitRepo: boolean;
+  /** Whether the git pull/rebuild endpoints are enabled (MAGNUS_LEGACY_GIT_SELF_UPDATE). */
+  legacyGitSelfUpdate: boolean;
+  /** How to upgrade this install. */
+  upgradeCommand: string;
 }
 
 let lastChecked: string | null = null;
 
-/** Read the current version directly from the version.ts source file on disk. */
+/** Read the versions from the package files on disk (they change after a pull and rebuild). */
 async function readVersionFromDisk(): Promise<{ agent: string; controlApi: string }> {
-  const versionFile = path.join(REPO_ROOT, 'src/config/version.ts');
-  const content = await readFile(versionFile, 'utf-8');
-
-  const agentMatch = content.match(/AGENT_VERSION\s*=\s*'([^']+)'/);
-  const controlMatch = content.match(/CONTROL_API_VERSION\s*=\s*'([^']+)'/);
-
-  return {
-    agent: agentMatch?.[1] ?? 'unknown',
-    controlApi: controlMatch?.[1] ?? 'unknown',
+  const read = async (file: string) => {
+    try {
+      return (JSON.parse(await readFile(path.join(REPO_ROOT, file), 'utf-8')) as { version?: string }).version ?? 'unknown';
+    } catch {
+      return 'unknown';
+    }
   };
+  return { agent: await read('agent-version.json'), controlApi: await read('package.json') };
 }
 
 /** Run a git command in the repo root. */
@@ -237,5 +239,7 @@ export async function getUpdateStatus(): Promise<UpdateStatus> {
     gitCommit: commit,
     lastChecked,
     isGitRepo: gitRepo,
+    legacyGitSelfUpdate: (await import('../config/features.js')).upgradeSettings().legacyGitSelfUpdate,
+    upgradeCommand: 'magnus upgrade',
   };
 }

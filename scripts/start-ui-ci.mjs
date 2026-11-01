@@ -44,6 +44,8 @@ const testEnv = {
   AUDIT_LOG_DIR: join(scratch, 'audit'),
   UI_SECURITY_LOG_PATH: join(scratch, 'ui-security/events.jsonl'),
   CORS_ORIGIN: 'http://localhost:55442',
+  // Hermetic: no npm registry reads from the browser suite.
+  MAGNUS_UPDATE_CHECK: 'false',
   AUTH_TRUST_PROXY: 'false',
   HOSTNAME: '127.0.0.1',
   PORT: '55442',
@@ -83,6 +85,27 @@ await db.node.upsert({
     arch: 'x64',
     status: 'ONLINE',
     lastHeartbeatAt: new Date(),
+  },
+  update: { lastHeartbeatAt: new Date() },
+});
+// A node whose agent reports that it can upgrade itself, one release behind.
+await db.node.upsert({
+  where: { id: 'browser-ci-upgradable' },
+  create: {
+    id: 'browser-ci-upgradable',
+    name: 'Browser CI upgradable',
+    hostname: 'browser-ci-upgradable.invalid',
+    // Distinct from browser-ci-node, so address-based lookups stay unambiguous.
+    ipAddress: '127.0.0.2',
+    port: 9,
+    token: 'ci-only-inert-upgradable-token',
+    os: 'linux',
+    arch: 'x64',
+    status: 'ONLINE',
+    lastHeartbeatAt: new Date(),
+    metadata: JSON.stringify({ agentSelfUpgrade: { protocol: 1, launcherProtocol: 1, layout: 'versioned', enabled: true, reason: null,
+      upgrade: { state: 'idle', from: null, to: '1.0.0' }, nodeVersion: 'v24.22.1', observedAt: new Date().toISOString() } }),
+    agent: { create: { version: '1.0.0', status: 'RUNNING', capabilities: '[]' } },
   },
   update: { lastHeartbeatAt: new Date() },
 });

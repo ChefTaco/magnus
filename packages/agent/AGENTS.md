@@ -73,6 +73,13 @@ deploy/                 example systemd units
   processes never inherit agent credentials (`utils/child-env.ts`).
 - `src/security/native-completion-registry.ts` must stay byte-identical with
   the server's copy. The server pins its SHA-256 in a test.
+- `launcher/launcher.mjs` is copied onto nodes by `install-service` and is not
+  replaced by self-upgrades. Keep it dependency-free and backwards compatible
+  with older agent versions; bump `LAUNCHER_PROTOCOL` (and `minLauncher` in the
+  release manifest) when a newer agent needs launcher changes.
+- Self-upgrades write only inside the install directory and verify the exact
+  integrity the server sent. Never add a path that installs an unpinned
+  version or escalates privileges.
 - Signed proof domains and route paths are wire contracts with the server.
   Change both sides together.
 - Do not reintroduce the retired IAM collector, PAM gate, sudo event shipper

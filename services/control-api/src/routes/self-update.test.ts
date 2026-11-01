@@ -15,6 +15,7 @@ vi.mock('../utils/env.js', async original => ({ ...await original<object>(),
   JWT_SECRET: 'self-update-route-jwt-fixture-at-least-32-characters',
   API_SECRET: 'self-update-route-api-fixture-at-least-32-characters',
   IAM_CORE_URL: '', IAM_TOKEN_ISSUER: '', IAM_TOKEN_AUDIENCE: '' }));
+process.env['MAGNUS_LEGACY_GIT_SELF_UPDATE'] = 'true';
 const { selfUpdateRouter } = await import('./self-update.js');
 const { ApiLocalWorkError } = await import('../services/api-local-work.js');
 const { signUserToken } = await import('../middleware/auth.js');
@@ -24,6 +25,22 @@ async function request(path: string, body = {}, role: 'ADMIN' | 'OPERATOR' | 'VI
   return app.request('/self-update/' + path, { method: 'POST', headers: { authorization: `Bearer ${token}`,
     'content-type': 'application/json' }, body: JSON.stringify(body) });
 }
+
+describe('git self-update switch', () => {
+  it('answers 410 with the upgrade command unless MAGNUS_LEGACY_GIT_SELF_UPDATE=true', async () => {
+    process.env['MAGNUS_LEGACY_GIT_SELF_UPDATE'] = 'false';
+    try {
+      for (const path of ['check', 'apply', 'restart']) {
+        const response = await request(path);
+        expect(response.status).toBe(410);
+        expect((await response.json()).error).toMatchObject({ code: 'SELF_UPDATE_RETIRED', upgradeCommand: 'magnus upgrade' });
+      }
+      expect(calls.apply).not.toHaveBeenCalled();
+    } finally {
+      process.env['MAGNUS_LEGACY_GIT_SELF_UPDATE'] = 'true';
+    }
+  });
+});
 
 describe('self-update durable recovery responses', () => {
   beforeEach(() => { vi.resetAllMocks(); });

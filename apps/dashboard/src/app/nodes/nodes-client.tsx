@@ -21,6 +21,7 @@ import {
   RefreshCcwDot,
   Power,
   Server,
+  ArrowUpCircle,
 } from 'lucide-react';
 import type { DiskInfo, SystemUpdateInfo, TailscaleExpirySummary } from '@/types/contracts';
 import { getUserDiskSeverity, getWorstPersistentDisk } from '@/lib/user-disk';
@@ -35,6 +36,7 @@ import { MeterBar } from '@/components/ui/meter-bar';
 import { StatusDot } from '@/components/ui/status-dot';
 import { EmptyState } from '@/components/ui/empty-state';
 import { SkeletonTable } from '@/components/ui/skeleton';
+import { AgentUpgradeModal } from '@/components/nodes/agent-upgrade-modal';
 
 export interface NodeRow {
   id: string;
@@ -105,6 +107,11 @@ export default function NodesPageClient({
   const [loading, setLoading] = useState(!initialNodes.length && initialNodes !== undefined ? false : false);
   const [error, setError] = useState<string | null>(null);
   const [registerModalOpen, setRegisterModalOpen] = useState(false);
+  const [upgradeModalOpen, setUpgradeModalOpen] = useState(false);
+  // The update banner links here with ?upgrade=agents.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('upgrade') === 'agents') setUpgradeModalOpen(true);
+  }, []);
   const [editNode, setEditNode] = useState<NodeRow | null>(null);
   const [assignRoleNode, setAssignRoleNode] = useState<NodeRow | null>(null);
   const [scanning, setScanning] = useState(false);
@@ -299,6 +306,15 @@ export default function NodesPageClient({
             onClick={() => void fetchNodes()}
           >
             Refresh
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<ArrowUpCircle className="h-3.5 w-3.5" />}
+            onClick={() => setUpgradeModalOpen(true)}
+            data-testid="open-agent-upgrade"
+          >
+            Upgrade Agents
           </Button>
           <Button
             variant="secondary"
@@ -689,6 +705,12 @@ export default function NodesPageClient({
         )}
       </Card>
       </PageItem>
+
+      <AgentUpgradeModal
+        open={upgradeModalOpen}
+        onClose={() => setUpgradeModalOpen(false)}
+        onFinished={() => void fetchNodes()}
+      />
 
       <RegisterNodeModal
         open={registerModalOpen}

@@ -1,0 +1,19 @@
+# Build context filter for apps/dashboard/Dockerfile (context: repo root).
+**
+!package.json
+!package-lock.json
+!apps/*/package.json
+!packages/*/package.json
+!services/*/package.json
+!packages/contracts/**
+!apps/dashboard/**
+
+**/node_modules
+**/dist
+**/.next
+**/*.tsbuildinfo
+**/.env
+**/.env.*
+!**/.env.example
+**/test-results
+**/playwright-report*

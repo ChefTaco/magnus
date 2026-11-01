@@ -18,6 +18,13 @@ describe('magnus-server argument parsing', () => {
     expect(parseArgs(['-v']).command).toBe('version');
   });
 
+  it('passes upgrade, rollback and agents arguments through untouched', () => {
+    expect(parseArgs(['upgrade', '--to', '1.1.0', '--dry-run', '--help'])).toMatchObject({ command: 'upgrade', passthrough: ['--to', '1.1.0', '--dry-run', '--help'] });
+    expect(parseArgs(['agents', 'upgrade', '--nodes', 'a,b', '--env-file', 'x.env'])).toMatchObject({ command: 'agents', passthrough: ['upgrade', '--nodes', 'a,b'], envFiles: ['x.env'] });
+    expect(parseArgs(['backup', '--label', 'before-test'])).toMatchObject({ command: 'backup', label: 'before-test' });
+    expect(parseArgs(['check', '--format', 'json'])).toMatchObject({ command: 'check', format: 'json', formatGiven: true });
+  });
+
   it('rejects unknown commands, options and formats', () => {
     expect(() => parseArgs(['serve'])).toThrow(UsageError);
     expect(() => parseArgs(['--port', '1'])).toThrow(UsageError);
@@ -46,5 +53,31 @@ describe('documented environment', () => {
   it('redacts passwords from connection URLs', () => {
     expect(redactUrl('postgresql://magnus:hunter2@db.example.com:5432/magnus')).toBe('postgresql://magnus:***@db.example.com:5432/magnus');
     expect(redactUrl('not a url')).toBe('<invalid URL>');
+  });
+});
+
+describe('agents subcommand', async () => {
+  const { parseAgentsArgs } = await import('./agents.js');
+  it('parses upgrade options', () => {
+    expect(parseAgentsArgs(['upgrade', '--to=1.1.1', '--nodes', 'node-1, node-2', '--dry-run'])).toEqual({ to: '1.1.1', nodes: ['node-1', 'node-2'], dryRun: true });
+    expect(parseAgentsArgs([])).toBe('help');
+    expect(() => parseAgentsArgs(['downgrade'])).toThrow(UsageError);
+    expect(() => parseAgentsArgs(['upgrade', '--to'])).toThrow(UsageError);
+  });
+});
+
+describe('project discovery for magnus-server upgrade', async () => {
+  const { locateProject } = await import('./upgrade.js');
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  it('finds magnus-project.json above the installed package', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'magnus-project-'));
+    writeFileSync(join(dir, 'magnus-project.json'), '{}');
+    const pkg = join(dir, 'versions', '1.1.0', 'node_modules', '@hivemagnus', 'magnus-server');
+    mkdirSync(pkg, { recursive: true });
+    expect(locateProject(pkg, {})).toBe(dir);
+    expect(locateProject(tmpdir(), { MAGNUS_PROJECT_DIR: dir })).toBe(dir);
+    expect(locateProject(join(tmpdir(), 'nowhere'), {})).toBeNull();
   });
 });
