@@ -145,6 +145,7 @@ export const ENV_CATALOG: readonly EnvVariable[] = [
   { name: 'MAGNUS_AGENT_UPGRADES', group: 'upgrades', default: 'true', description: 'Allow server-driven agent upgrades (console action, API and `magnus-server agents upgrade`). Agents must also allow it (MAGNUS_AGENT_SELF_UPGRADE).' },
   { name: 'MAGNUS_AGENT_UPGRADE_CONCURRENCY', group: 'upgrades', default: '5', description: 'Agents upgraded in parallel after the first (canary) agent confirms. Maximum 50.' },
   { name: 'MAGNUS_LEGACY_GIT_SELF_UPDATE', group: 'upgrades', default: 'false', description: 'true: keep the retired git-checkout self-update endpoints (/api/v1/self-update/apply and /restart) for source installs. npm installs use `magnus upgrade`.' },
+  { name: 'NODE_EXTRA_CA_CERTS', group: 'upgrades', description: 'Extra CA bundle (PEM) trusted when the server calls agents, for agent certificates from a private CA. Node reads it at process start: set it in the unit; `magnus-server agents` also honours it from --env-file.' },
   { name: 'MAGNUS_PROJECT_DIR', group: 'upgrades', description: 'Managed project created by `magnus init` (holds magnus-project.json). `magnus-server upgrade` finds it from the install path when unset.' },
 
   // ── Retention ──

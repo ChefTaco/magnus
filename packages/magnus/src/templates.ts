@@ -159,6 +159,8 @@ export interface ServerEnvSettings {
   tlsKey: string;
   home: string;
   backupDir: string;
+  /** Trusted when the server (or `magnus-server agents`) calls agents. */
+  extraCaFile?: string;
   autoMigrate: boolean;
 }
 
@@ -180,6 +182,7 @@ export function serverEnv(settings: ServerEnvSettings, secrets: Record<string, s
       { name: 'DASHBOARD_PUBLIC_ORIGIN', value: settings.uiOrigin },
       { name: 'TLS_CERT_PATH', value: settings.tlsCert },
       { name: 'TLS_KEY_PATH', value: settings.tlsKey },
+      ...(settings.extraCaFile ? [{ name: 'NODE_EXTRA_CA_CERTS', value: settings.extraCaFile, comment: 'Agent certificates the server trusts (this host\'s self-signed one; append your CA).' }] : []),
     ] },
     { title: 'Secrets (generated; each one distinct)', entries: entries(SERVER_SECRET_NAMES) },
     { title: 'Upgrades (set any of these to false to run your own release process)', entries: [
