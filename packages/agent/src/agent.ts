@@ -7,6 +7,7 @@ import { controlApiFetch } from './tls.js';
 import { startSpan, formatTraceparent } from './collectors/otel-collector.js';
 import { collectHermesState } from './executors/hermes-manager.js';
 import { existsSync } from 'node:fs';
+import { confirmTrial, selfUpgradeStatus } from './upgrade/self-upgrade.js';
 const HEARTBEAT_INTERVAL_MS = 30_000; // 30s
 const HEARTBEAT_BACKOFF_MAX_MS = 5 * 60_000; // 5 min max backoff
 const HERMES_DISCOVERY_INTERVAL_MS = Number(process.env['HERMES_DISCOVERY_INTERVAL_MS'] ?? 3 * 60 * 60 * 1000);
@@ -124,6 +125,8 @@ export function startHeartbeatLoop(): void {
             serviceRestart: existsSync('/etc/magnus/security-restart-services'),
           },
           ...(hermes ? { hermes } : {}),
+          nodeVersion: process.version,
+          selfUpgrade: selfUpgradeStatus(AGENT_VERSION),
         },
         headers: {
           'x-node-token': NODE_TOKEN,
@@ -131,9 +134,11 @@ export function startHeartbeatLoop(): void {
         },
         timeout: 10_000,
         fetch: controlApiFetch,
-      }).json<{ data?: { expectedVersion?: string; updateAvailable?: boolean } }>().then((resp) => {
+      }).json<{ data?: { accepted?: boolean; expectedVersion?: string; updateAvailable?: boolean } }>().then((resp) => {
+        // The first accepted heartbeat from a version on trial confirms the upgrade.
+        if (resp.data?.accepted && confirmTrial(AGENT_VERSION)) logger.info(`Self-upgrade to ${AGENT_VERSION} confirmed`);
         if (resp.data?.updateAvailable && resp.data.expectedVersion) {
-          logger.info(`Agent update available: ${AGENT_VERSION} → ${resp.data.expectedVersion}`);
+          logger.info(`Agent update available: ${AGENT_VERSION} → ${resp.data.expectedVersion} (upgrade from the console's Nodes page or with \`magnus-server agents upgrade\`)`);
         }
       });
 

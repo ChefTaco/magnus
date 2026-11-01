@@ -44,6 +44,8 @@ export type AuditAction =
   | 'skill.delete'
   | 'skill.file.update'
   | 'agent.update'
+  | 'agent.upgrade'
+  | 'agent.upgrade_reverted'
   | 'application.canary'
   | 'storage.investigate'
   | 'maintenance.create'

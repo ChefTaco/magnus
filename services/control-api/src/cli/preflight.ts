@@ -1,8 +1,8 @@
 /** Reachability and configuration checks behind `magnus-server check`. */
-import { existsSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync } from 'node:fs';
 import pg from 'pg';
 import { Redis } from 'ioredis';
+import { describeMigration, migrationsNeedingAttention, readMigrationState } from './migrations.js';
 
 export type CheckStatus = 'pass' | 'warn' | 'fail';
 export interface CheckResult { name: string; status: CheckStatus; message: string }
@@ -34,22 +34,11 @@ export async function checkDatabase(url: string, migrationsDir: string): Promise
   }
   const results: CheckResult[] = [{ name: 'database', status: 'pass', message: `connected to ${redactUrl(url)}` }];
   try {
-    const packaged = existsSync(migrationsDir)
-      ? readdirSync(migrationsDir, { withFileTypes: true })
-        .filter(entry => entry.isDirectory() && existsSync(join(migrationsDir, entry.name, 'migration.sql')))
-        .map(entry => entry.name)
-      : [];
-    const table = await client.query<{ exists: boolean }>(
-      `SELECT to_regclass('public._prisma_migrations') IS NOT NULL AS exists`);
-    const applied = table.rows[0]?.exists
-      ? new Set((await client.query<{ migration_name: string }>(
-        'SELECT migration_name FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL')).rows
-        .map(row => row.migration_name))
-      : new Set<string>();
-    const pending = packaged.filter(name => !applied.has(name));
+    const { packaged, pending } = await readMigrationState(client, migrationsDir);
+    const attention = migrationsNeedingAttention(pending);
     results.push(pending.length === 0
       ? { name: 'migrations', status: 'pass', message: `${packaged.length} applied` }
-      : { name: 'migrations', status: 'warn', message: `${pending.length} pending; run \`magnus-server migrate\`` });
+      : { name: 'migrations', status: 'warn', message: `${pending.length} pending${attention.length ? ` (needs attention: ${attention.map(describeMigration).join('; ')})` : ''}; run \`magnus-server migrate\`` });
   } catch (error) {
     results.push({ name: 'migrations', status: 'warn', message: `cannot read migration state: ${errorMessage(error)}` });
   } finally {

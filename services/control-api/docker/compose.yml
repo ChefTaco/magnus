@@ -65,6 +65,9 @@ services:
       CORS_ORIGIN: ${CORS_ORIGIN:-https://localhost:3000}
       MAGNUS_TLS_SELF_SIGNED: ${MAGNUS_TLS_SELF_SIGNED:-true}
       MAGNUS_TLS_HOSTNAMES: ${MAGNUS_TLS_HOSTNAMES:-localhost}
+      # The image backs up and migrates at startup; see UPGRADING.md to turn it off.
+      MAGNUS_AUTO_MIGRATE: ${MAGNUS_AUTO_MIGRATE:-true}
+      MAGNUS_UPDATE_CHECK: ${MAGNUS_UPDATE_CHECK:-true}
       # Required secrets (32+ characters each, all different).
       API_SECRET: ${API_SECRET:?API_SECRET is required}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}

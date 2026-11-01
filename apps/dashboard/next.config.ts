@@ -12,6 +12,9 @@ try {
   // Fallback when the agent package isn't available (CI, standalone deploy)
 }
 
+// The console's own release (server, console and agent are released in lockstep)
+const MAGNUS_VERSION = (JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf-8')) as { version: string }).version;
+
 // Load .env so NEXT_PUBLIC_* vars are available to the client bundle
 config({ path: resolve(__dirname, '.env') });
 
@@ -31,6 +34,7 @@ const nextConfig: NextConfig = {
   env: {
     NEXT_PUBLIC_API_URL: process.env['NEXT_PUBLIC_API_URL'] ?? 'https://localhost:4000',
     NEXT_PUBLIC_AGENT_VERSION: AGENT_VERSION,
+    NEXT_PUBLIC_MAGNUS_VERSION: MAGNUS_VERSION,
   },
   async headers() {
     return [

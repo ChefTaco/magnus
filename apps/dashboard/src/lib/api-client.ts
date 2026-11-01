@@ -45,6 +45,7 @@ import type {
 import type { HermesConfigFile, HermesInstallation, HermesOperationJob, HermesProfile } from '../types/orchestra';
 import type { CodexDeviceAuthSession, CodexInstallation } from '../types/codex';
 import type { ArdentFleetInstallation, ArdentProfileSummary } from '@hivemagnus/magnus-contracts';
+import type { AgentUpgradeEligibility, AgentUpgradeRun, SystemUpdates } from '../types/upgrades';
 import { normalizeProxyTarget, proxyTargetHeaders } from './proxy-target';
 import { agentDisabledMessage } from './agent-privilege';
 
@@ -650,6 +651,8 @@ class DashboardApiClient {
         gitCommit: string | null;
         lastChecked: string | null;
         isGitRepo: boolean;
+        legacyGitSelfUpdate?: boolean;
+        upgradeCommand?: string;
       }>('self-update/status'),
     version: () =>
       this.get<{ controlApiVersion: string; agentVersion: string }>('self-update/version'),
@@ -674,6 +677,21 @@ class DashboardApiClient {
       }>('self-update/apply', { restart }),
     restart: () =>
       this.post<{ message: string; scheduled: boolean; method: string }>('self-update/restart'),
+  };
+
+  // ── Upgrades ──
+
+  systemUpdates = {
+    get: () => this.get<SystemUpdates>('system/updates').then((r) => r.data!),
+    refresh: () => this.post<SystemUpdates>('system/updates/check').then((r) => r.data!),
+  };
+
+  agentUpgrades = {
+    eligibility: (version?: string) =>
+      this.get<AgentUpgradeEligibility>(`agents/upgrade/eligibility${version ? `?version=${encodeURIComponent(version)}` : ''}`).then((r) => r.data!),
+    start: (data: { nodeIds?: string[]; version?: string }) =>
+      this.post<AgentUpgradeRun>('agents/upgrade', data).then((r) => r.data!),
+    run: (id: string) => this.get<AgentUpgradeRun>(`agents/upgrade/runs/${encodeURIComponent(id)}`).then((r) => r.data!),
   };
 
   libraryDeploy = {

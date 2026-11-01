@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { ApiLocalWorkError, apiLocalWorkStatus } from '../services/api-local-work.js';
-import { Hono } from 'hono';
+import { Hono, type Context, type Next } from 'hono';
 import type { AppVariables } from '../types/index.js';
 import { AGENT_VERSION, CONTROL_API_VERSION } from '../config/index.js';
 import { authMiddleware, getUser, requireRole } from '../middleware/auth.js';
@@ -12,6 +12,7 @@ import {
   getUpdateStatus,
 } from '../services/self-update-service.js';
 import { HttpError } from '../middleware/error-handler.js';
+import { upgradeSettings } from '../config/features.js';
 
 export const selfUpdateRouter = new Hono<AppVariables>();
 
@@ -24,6 +25,25 @@ selfUpdateRouter.use('*', async (c, next) => {
     c.header(c.res.headers.has('X-Magnus-Work-Id') ? 'X-Magnus-Restart-Work-Id' : 'X-Magnus-Work-Id', c.error.workId);
   }
 });
+
+/**
+ * The git-checkout update path (`git pull`, rebuild, restart) only works for
+ * source installs. npm installs upgrade with `magnus upgrade`, which backs up
+ * the database and reverts on failure; the old endpoints stay behind
+ * MAGNUS_LEGACY_GIT_SELF_UPDATE=true.
+ */
+const legacyGitSelfUpdate = async (c: Context, next: Next) => {
+  if (!upgradeSettings().legacyGitSelfUpdate) {
+    return c.json({ success: false, error: { code: 'SELF_UPDATE_RETIRED',
+      message: 'In-place git self-update is off. Upgrade with `magnus upgrade` (or `magnus-server upgrade`) on the server host; '
+        + 'set MAGNUS_LEGACY_GIT_SELF_UPDATE=true to re-enable this endpoint for a source checkout.',
+      upgradeCommand: 'magnus upgrade' } }, 410);
+  }
+  await next();
+};
+selfUpdateRouter.use('/check', legacyGitSelfUpdate);
+selfUpdateRouter.use('/apply', legacyGitSelfUpdate);
+selfUpdateRouter.use('/restart', legacyGitSelfUpdate);
 
 selfUpdateRouter.get('/work/:workId', requireRole('ADMIN', 'OPERATOR'), async c => {
   const id = z.string().guid().safeParse(c.req.param('workId'));

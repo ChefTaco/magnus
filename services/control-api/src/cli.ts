@@ -4,7 +4,6 @@
 // named on the command line have been applied.
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs, USAGE, UsageError, type CliOptions } from './cli/args.js';
@@ -47,10 +46,10 @@ async function version(): Promise<string> {
 async function migrate(): Promise<void> {
   if (!process.env['DATABASE_URL'] && process.env['NODE_ENV'] === 'production')
     fatal('Configuration error: DATABASE_URL is required to run migrations in production.');
+  const { prismaCliPath } = await import('./cli/migrations.js');
   let prismaCli: string;
   try {
-    const require = createRequire(import.meta.url);
-    prismaCli = join(dirname(require.resolve('prisma/package.json')), 'build', 'index.js');
+    prismaCli = prismaCliPath();
   } catch {
     return fatal('Migration error: the prisma CLI package is not installed next to magnus-server.');
   }
@@ -73,7 +72,7 @@ async function migrate(): Promise<void> {
   }
 }
 
-async function commandCheck(): Promise<number> {
+async function commandCheck(format: 'json' | 'table'): Promise<number> {
   const { listMissingSecrets } = await import('./utils/env.js');
   const { loadEnv } = await import('./config/env.js');
   const { featureFlags } = await import('./config/features.js');
@@ -99,12 +98,20 @@ async function commandCheck(): Promise<number> {
   }
   if (databaseUrl) results.push(...await checkDatabase(databaseUrl, MIGRATIONS_DIR));
   results.push(await checkRedis(process.env['REDIS_URL'] ?? 'redis://127.0.0.1:6379'));
+  const { checkForUpdate, updateResult } = await import('./services/update-check-service.js');
+  const update = await checkForUpdate();
+  results.push(updateResult(update));
 
+  const features = featureFlags();
+  const failures = results.filter(result => result.status === 'fail').length;
+  if (format === 'json') {
+    console.log(JSON.stringify({ version: await version(), ok: failures === 0, results, integrations: features, update }, null, 2));
+    return failures === 0 ? 0 : 1;
+  }
   const symbol = { pass: '✓', warn: '!', fail: '✗' } as const;
   console.log(`magnus-server ${await version()} configuration check`);
   for (const result of results) console.log(`  ${symbol[result.status]} ${result.name.padEnd(12)} ${result.message}`);
 
-  const features = featureFlags();
   const onOff = (value: boolean) => (value ? 'on' : 'off');
   console.log('Integrations:');
   console.log(`  Hive IAM           ${onOff(features.iam)}`);
@@ -116,13 +123,87 @@ async function commandCheck(): Promise<number> {
   console.log(`  Resource leases    ${onOff(features.resourceLeases)}`);
   console.log(`  Agent discovery    ${onOff(features.agentDiscovery)}`);
 
-  const failures = results.filter(result => result.status === 'fail').length;
   console.log(failures === 0 ? 'Result: OK' : `Result: ${failures} problem(s) found`);
   return failures === 0 ? 0 : 1;
 }
 
+/** Applied and pending migrations, with impact notes (`--format json` for tooling). */
+async function commandMigrations(format: 'json' | 'table'): Promise<number> {
+  const { resolveDatabaseUrl } = await import('./db/client.js');
+  const { readMigrationState } = await import('./cli/migrations.js');
+  const pg = (await import('pg')).default;
+  const client = new pg.Client({ connectionString: resolveDatabaseUrl(), connectionTimeoutMillis: 10_000 });
+  await client.connect();
+  try {
+    const state = await readMigrationState(client, MIGRATIONS_DIR);
+    if (format === 'json') {
+      console.log(JSON.stringify({ version: await version(), packaged: state.packaged, applied: [...state.applied].sort(), pending: state.pending, fresh: state.fresh }, null, 2));
+    } else {
+      for (const name of state.packaged) {
+        const pending = state.pending.find(migration => migration.name === name);
+        console.log(`  ${pending ? '…' : '✓'} ${name}${pending ? ` (pending, ${pending.impact}${pending.note ? `: ${pending.note}` : ''})` : ''}`);
+      }
+      console.log(state.pending.length === 0 ? 'All migrations applied.' : `${state.pending.length} pending; run \`magnus-server migrate\`.`);
+    }
+    return 0;
+  } finally {
+    await client.end().catch(() => undefined);
+  }
+}
+
+/** `pg_dump -Fc` into MAGNUS_BACKUP_DIR; prints JSON with the file and restore command. */
+async function commandBackup(label: string | undefined): Promise<number> {
+  const { resolveDatabaseUrl } = await import('./db/client.js');
+  const { backupDatabase } = await import('./cli/migrations.js');
+  const { defaultBackupDir } = await import('./cli/auto-migrate.js');
+  const { magnusHome } = await import('./utils/magnus-home.js');
+  const pg = (await import('pg')).default;
+  const databaseUrl = resolveDatabaseUrl();
+  const client = new pg.Client({ connectionString: databaseUrl, connectionTimeoutMillis: 10_000 });
+  await client.connect();
+  try {
+    const result = await backupDatabase({
+      databaseUrl, client, backupDir: defaultBackupDir(process.env, magnusHome()),
+      label: label ?? `manual-${await version()}`, pgDump: process.env['MAGNUS_PG_DUMP'],
+    });
+    console.log(JSON.stringify(result));
+    return 0;
+  } finally {
+    await client.end().catch(() => undefined);
+  }
+}
+
+/** `MAGNUS_AUTO_MIGRATE=true`: back up and migrate under an advisory lock before listening. */
+async function startupAutoMigrate(): Promise<void> {
+  const { upgradeSettings } = await import('./config/features.js');
+  const settings = upgradeSettings();
+  if (!settings.autoMigrate) return;
+  const { resolveDatabaseUrl } = await import('./db/client.js');
+  const { autoMigrate, defaultBackupDir } = await import('./cli/auto-migrate.js');
+  const { magnusHome } = await import('./utils/magnus-home.js');
+  try {
+    await autoMigrate({
+      databaseUrl: resolveDatabaseUrl(),
+      migrationsDir: MIGRATIONS_DIR,
+      backupDir: defaultBackupDir(process.env, magnusHome()),
+      version: await version(),
+      settings,
+      pgDump: process.env['MAGNUS_PG_DUMP'],
+      migrate,
+    });
+  } catch (error) {
+    if (error instanceof FatalError) throw error;
+    fatal(error instanceof Error ? error.message : String(error));
+  }
+}
+
 async function commandStart(options: CliOptions): Promise<void> {
+  // Without --env-file the server reads its package-level .env; apply it here
+  // too so startup switches such as MAGNUS_AUTO_MIGRATE see the same values.
+  const packageEnv = join(PACKAGE_ROOT, '.env');
+  if (!process.env['MAGNUS_ENV_FILE'] && existsSync(packageEnv)) { process.loadEnvFile(packageEnv); dropEmptyValues(); }
   if (options.migrate) await migrate();
+  else await startupAutoMigrate();
   await import('./index.js');
 }
 
@@ -142,7 +223,23 @@ async function run(argv: readonly string[]): Promise<number> {
       return 0;
     case 'check':
       loadEnvFiles(options.envFiles);
-      return commandCheck();
+      return commandCheck(options.formatGiven ? options.format : 'table');
+    case 'migrations':
+      loadEnvFiles(options.envFiles);
+      return commandMigrations(options.formatGiven ? options.format : 'table');
+    case 'backup':
+      loadEnvFiles(options.envFiles);
+      return commandBackup(options.label);
+    case 'upgrade':
+    case 'rollback': {
+      const { delegateToProject } = await import('./cli/upgrade.js');
+      return delegateToProject(options.command, options.passthrough, PACKAGE_ROOT);
+    }
+    case 'agents': {
+      loadEnvFiles(options.envFiles);
+      const { commandAgents } = await import('./cli/agents.js');
+      return commandAgents(options.passthrough);
+    }
     case 'migrate':
       loadEnvFiles(options.envFiles);
       await migrate();

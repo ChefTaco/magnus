@@ -59,14 +59,18 @@ under `MAGNUS_HOME`, default `~/.magnus`.
 ```bash
 magnus-server check   --env-file ~/.magnus/server.env   # validate env, reach PostgreSQL and Redis, list integrations
 magnus-server migrate --env-file ~/.magnus/server.env   # apply migrations and base data
-magnus-server start   --env-file ~/.magnus/server.env   # or: start --migrate
+magnus-server start   --env-file ~/.magnus/server.env   # MAGNUS_AUTO_MIGRATE=true: back up and migrate first
 ```
 
 | Command | Purpose |
 | --- | --- |
-| `start` (default) | Start the API server. `--migrate` applies pending migrations first. |
-| `check` | Validate configuration, connect to PostgreSQL and Redis, report pending migrations and enabled integrations. Exits non-zero on a problem. |
+| `start` (default) | Start the API server. With `MAGNUS_AUTO_MIGRATE=true` it first dumps the database and applies pending migrations under an advisory lock. `--migrate` applies them without a dump. |
+| `check` | Validate configuration, connect to PostgreSQL and Redis, report pending migrations, available updates and enabled integrations (`--format json` for tooling). Exits non-zero on a problem. |
 | `migrate` | Run `prisma migrate deploy` with the packaged schema and migrations, then create the base rows (system actor, sentinel nodes, starter library). Idempotent. |
+| `migrations` | List applied and pending migrations with their impact (`fast`, `slow`, `one-way`). |
+| `backup` | Dump PostgreSQL (`pg_dump -Fc`) into `MAGNUS_BACKUP_DIR` and print the restore command. |
+| `upgrade`, `rollback` | Upgrade or roll back the `magnus init` project this server was installed into (runs `magnus upgrade`; see [UPGRADING.md](../../UPGRADING.md)). |
+| `agents upgrade` | Upgrade agents to the version this server ships (`--to`, `--nodes`, `--dry-run`). |
 | `env-schema` | Print the documented environment variables (`--format json` or `table`). |
 | `version`, `help` | Print the version or usage. |
 

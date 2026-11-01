@@ -37,6 +37,13 @@ interface UpdateStatus {
   gitCommit: string | null;
   lastChecked: string | null;
   isGitRepo: boolean;
+  legacyGitSelfUpdate?: boolean;
+  upgradeCommand?: string;
+}
+
+/** The git pull/rebuild path is a source-checkout opt-in (MAGNUS_LEGACY_GIT_SELF_UPDATE). */
+function gitSelfUpdateEnabled(status: UpdateStatus | null | undefined): boolean {
+  return status?.isGitRepo !== false && status?.legacyGitSelfUpdate === true;
 }
 
 interface UpdateCheckResult {
@@ -295,12 +302,12 @@ export function ControlNodeBar(): React.ReactElement {
                       const statusRes = await api.selfUpdate.status();
                       if (statusRes.success) {
                         setUpdateStatus(statusRes.data ?? null);
-                        if (statusRes.data?.isGitRepo) {
+                        if (gitSelfUpdateEnabled(statusRes.data)) {
                           void handleCheckUpdates();
                         }
                       }
                     } catch {
-                      void handleCheckUpdates();
+                      // Status unavailable: show the panel without checking.
                     }
                   })();
                 } else {
@@ -372,12 +379,13 @@ export function ControlNodeBar(): React.ReactElement {
               </div>
             )}
 
-            {/* Non-git deployment notice */}
-            {updateStatus && updateStatus.isGitRepo === false && (
+            {/* npm installs upgrade on the host */}
+            {updateStatus && !gitSelfUpdateEnabled(updateStatus) && (
               <div className="rounded border border-primary/30 bg-primary/10 p-3 text-xs text-text-muted">
-                <span className="font-bold text-primary">Tarball deployment</span>
+                <span className="font-bold text-primary">Upgrade on the server host</span>
                 <span className="ml-1">
-                  — Git-based self-update is not available. Use Deploy from another control node to push updates.
+                  with <code className="rounded bg-surface px-1 text-text">{updateStatus.upgradeCommand ?? 'magnus upgrade'}</code>: it backs up the database,
+                  migrates, restarts and switches back automatically if the new version is unhealthy.
                 </span>
               </div>
             )}
@@ -395,7 +403,7 @@ export function ControlNodeBar(): React.ReactElement {
 
             {/* Action buttons */}
             <div className="flex flex-wrap gap-2">
-              {updateStatus?.isGitRepo !== false && (
+              {gitSelfUpdateEnabled(updateStatus) && (
                 <Button
                   variant="secondary"
                   size="sm"
@@ -411,7 +419,7 @@ export function ControlNodeBar(): React.ReactElement {
                 </Button>
               )}
 
-              {updateCheck?.available && (
+              {gitSelfUpdateEnabled(updateStatus) && updateCheck?.available && (
                 <>
                   <Button
                     variant="primary"
@@ -443,7 +451,7 @@ export function ControlNodeBar(): React.ReactElement {
                 </>
               )}
 
-              <Button
+              {gitSelfUpdateEnabled(updateStatus) && <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => void handleRestart()}
@@ -455,7 +463,7 @@ export function ControlNodeBar(): React.ReactElement {
                 }
               >
                 {updateLoading === 'restarting' ? 'Restarting…' : 'Restart Only'}
-              </Button>
+              </Button>}
 
               <div className="ml-auto">
                 <Button

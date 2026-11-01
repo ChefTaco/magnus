@@ -480,14 +480,13 @@ export class NodeApiClient {
     return this.mutate('DELETE', `skills/${encodeURIComponent(skillName)}`);
   }
 
-  // ── Self-update ──
+  // ── Agent self-upgrade ──
 
-  async triggerUpdate(payload: {
-    targetVersion: string;
-    downloadUrl: string;
-    checksum: string;
-  }): Promise<ApiResponse<{ accepted: boolean }>> {
-    return this.mutate('POST', 'update', payload);
+  /** Stage an exact agent version; the agent restarts into it through its launcher. */
+  async upgradeAgent(request: { version: string; integrity: string; requestId: string; packageName: string }): Promise<ApiResponse<{
+    accepted: boolean; from: string; to: string; integrity: string; requestId: string; restartInSeconds: number;
+  }>> {
+    return this.mutate('POST', 'agent-upgrade', request, 15 * 60_000);
   }
 
   // ── Ping ──

@@ -194,6 +194,7 @@ export async function createApp(): Promise<Hono> {
       { hermesRoutes },
       { codexRoutes },
       { ardentRoutes },
+      { agentUpgradeRoutes },
     ] = await Promise.all([
       import('./collectors/health-routes.js'),
       import('./executors/command-executor.js'),
@@ -210,6 +211,7 @@ export async function createApp(): Promise<Hono> {
       import('./executors/hermes-manager.js'),
       import('./executors/codex-manager.js'),
       import('./executors/ardent-manager.js'),
+      import('./upgrade/routes.js'),
     ]);
     const v1 = new Hono();
     v1.use('*', nodeAuthMiddleware);
@@ -237,6 +239,7 @@ export async function createApp(): Promise<Hono> {
     v1.route('/hermes', hermesRoutes);
     v1.route('/codex', codexRoutes);
     v1.route('/ardent', ardentRoutes);
+    v1.route('/agent-upgrade', agentUpgradeRoutes);
 
     // User management (provision, password, listing)
     const { userRoutes } = await import('./routes/user-manager.js');

@@ -38,6 +38,7 @@ const {
   stopSecurityFusionOutboxDispatcher,
 } = await import('./services/security-fusion-outbox.js');
 const { startCommandWorker, closeCommandQueue } = await import('./queue/workers.js');
+const { startUpdateCheck, stopUpdateCheck } = await import('./services/update-check-service.js');
 const { startWebhookWorker, closeWebhookQueue } = await import('./services/webhook-service.js');
 const { setupTerminalWebSocket } = await import('./routes/terminal.js');
 const { disconnectRedis } = await import('./queue/redis.js');
@@ -62,8 +63,12 @@ if (securityFusionLocal()) {
   );
 }
 
+const { writeRuntimeFile } = await import('./utils/runtime-file.js');
+const { CONTROL_API_VERSION } = await import('./config/version.js');
+
 /** Background services shared by the TLS and development listeners. */
-function startBackgroundServices(): void {
+function startBackgroundServices(listenPort: number): void {
+  writeRuntimeFile({ version: CONTROL_API_VERSION, port: listenPort });
   startNodeIssueMonitor();
   startApplicationProbes();
   startLogRetention();
@@ -78,6 +83,7 @@ function startBackgroundServices(): void {
   startRolloutReconciler();
   startWebhookWorker();
   startCodexFleetMonitor();
+  startUpdateCheck();
   if (features.hermesRegistry) {
     startExtensionSourceMonitor();
     void importPackageSkills().then(result => console.log(`[hermes-registry] catalog import: ${JSON.stringify(result)}`))
@@ -117,12 +123,12 @@ const server = listener.useTls
     },
     (info) => {
       console.log(`🚀 Magnus server listening on https://${listener.hostname}:${info.port}`);
-      startBackgroundServices();
+      startBackgroundServices(info.port);
     },
   )
   : serve({ fetch: handler, port, hostname: listener.hostname }, (info) => {
     console.log(`🚀 Magnus server listening on http://${listener.hostname}:${info.port} (development opt-in)`);
-    startBackgroundServices();
+    startBackgroundServices(info.port);
   });
 const terminalWss = setupTerminalWebSocket(server);
 
@@ -150,6 +156,7 @@ async function shutdown(signal: string) {
       stopSecurityExporter();
       stopSecurityFusionOutboxDispatcher();
       stopCodexFleetMonitor();
+      stopUpdateCheck();
       stopExtensionSourceMonitor();
       for (const client of terminalWss.clients) client.terminate();
       const httpClosed = new Promise<void>((resolvePromise) => server.close(() => resolvePromise()));

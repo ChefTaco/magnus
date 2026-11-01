@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { Sidebar } from '@/components/layout/sidebar';
 import { Header } from '@/components/layout/header';
 import { CommandPalette } from '@/components/command-palette';
+import { UpdateBanner } from '@/components/layout/update-banner';
 import { useEventStream } from '@/hooks/use-event-stream';
 import type { IntegrationFlags } from '@/lib/routes';
 
@@ -53,6 +54,7 @@ export function DashboardShell({ children, integrations }: { children: ReactNode
       <div className="flex flex-1 flex-col overflow-hidden">
         <Header onMenuToggle={toggleSidebar} />
         <main className="app-backdrop relative flex-1 overflow-y-auto p-3 md:p-6">
+          <UpdateBanner />
           {children}
         </main>
       </div>

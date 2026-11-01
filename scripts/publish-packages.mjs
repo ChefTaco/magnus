@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url';
 export const PACKAGE_DIRECTORIES = [
   'packages/contracts', 'packages/skills', 'packages/ardent', 'packages/agent',
   'services/control-api', 'apps/dashboard',
+  // Last: the installer pins every component above at this exact version.
+  'packages/magnus',
 ];
 
 export function assertBootstrapMode(dryRun, bootstrap, credential) {
@@ -34,6 +36,11 @@ export function readReleasePackages(root) {
   }
   const agentVersion = JSON.parse(readFileSync(join(root, 'services/control-api/agent-version.json'), 'utf8')).version;
   if (agentVersion !== version) throw new Error(`The server's bundled agent version must be ${version}`);
+  const meta = packages.find(pkg => pkg.directory === 'packages/magnus');
+  const release = meta?.magnusRelease;
+  if (!release || release.version !== version || Object.values(release.components ?? {}).some(pinned => pinned !== version)) {
+    throw new Error(`packages/magnus magnusRelease must describe ${version} and pin every component at ${version} (npm run release:manifest)`);
+  }
   return packages;
 }
 

@@ -13,6 +13,7 @@ Usage:
   magnus-agent [start] [--env-file <path>]          Start the agent (default)
   magnus-agent check [--json] [--env-file <path>]   Validate configuration without starting
   magnus-agent env-schema                           Print the configuration schema as JSON
+  magnus-agent install-service [--unprivileged]     (root, once) Versioned layout, upgrade launcher and systemd unit
   magnus-agent --help | --version
 
 Options:
@@ -83,6 +84,10 @@ export async function main(argv: string[]): Promise<number | null> {
         console.log(report.ok ? 'Configuration OK' : errors.map(error => `  - ${error}`).join('\n'));
       }
       return report.ok ? 0 : 1;
+    }
+    case 'install-service': {
+      const { installService } = await import('./upgrade/install-service.js');
+      return installService(cli.rest);
     }
     default:
       return fail(`unknown command: ${cli.command}. Run "magnus-agent --help".`);

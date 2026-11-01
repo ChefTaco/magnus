@@ -95,3 +95,83 @@ jobs:
             apps/dashboard/test-results
             apps/dashboard/playwright-report-ci
           retention-days: 7
+
+  upgrade-e2e:
+    # Install the published 1.0.3 with `magnus init`, upgrade to this commit's packed release,
+    # then exercise agent self-upgrade and self-revert, a broken release's automatic revert, and rollback.
+    name: Upgrade end to end (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [24.22.1, 26.13.0]
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: magnus
+          POSTGRES_PASSWORD: ci-magnus-password
+          POSTGRES_DB: magnus_ideas_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U magnus -d magnus_ideas_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-retries 10
+    env:
+      E2E_DATABASE_ADMIN_URL: postgresql://magnus:ci-magnus-password@127.0.0.1:5432/magnus_ideas_ci
+      E2E_REDIS_URL: redis://127.0.0.1:6379
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+      - name: PostgreSQL 17 client tools (pg_dump and pg_restore for backups)
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -qq && sudo apt-get install -y postgresql-client-17
+          pg_dump --version
+      - run: npm ci
+      - name: Generate the Prisma client
+        run: npm --workspace @hivemagnus/magnus-server run db:generate
+      - name: Build
+        run: npm run build
+      - name: Upgrade end to end
+        run: bash scripts/e2e/upgrade-e2e.sh
+      - name: Service logs
+        if: failure()
+        run: sudo journalctl -u magnus-server -u magnus-ui -u magnus-agent-e2e -n 300 --no-pager || true
+
+  images:
+    # The container images build, and the Compose upgrade path works with them:
+    # `docker compose pull && up -d` replaced by local tags of this commit.
+    name: Container images and Compose
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build the server, console and agent images
+        run: |
+          version=$(node -p 'require("./package.json").version')
+          docker build -f services/control-api/Dockerfile --build-arg MAGNUS_VERSION="$version" -t local/magnus-server:1 -t magnus-server:local .
+          docker build -f apps/dashboard/Dockerfile --build-arg MAGNUS_VERSION="$version" -t local/magnus-ui:1 .
+          docker build -f packages/agent/Dockerfile --build-arg MAGNUS_VERSION="$version" -t local/magnus-agent:1 .
+          docker run --rm --entrypoint magnus-agent local/magnus-agent:1 --version
+          docker run --rm --entrypoint pg_dump local/magnus-server:1 --version
+      - name: Server Compose check
+        run: npm --prefix services/control-api run compose:check -- --no-build
+      - name: Full stack from docker/compose.yml
+        run: bash scripts/e2e/compose-e2e.sh local

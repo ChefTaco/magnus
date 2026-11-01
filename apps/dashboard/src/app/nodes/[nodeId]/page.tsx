@@ -10,6 +10,7 @@ import { StatusDot } from '@/components/ui/status-dot';
 import { EmptyState } from '@/components/ui/empty-state';
 import { SkeletonStatGrid } from '@/components/ui/skeleton';
 import { NodeMetricsChart } from '@/components/nodes/node-metrics-chart';
+import { AgentSelfUpgradeBadge } from '@/components/nodes/agent-self-upgrade-badge';
 import { Badge, statusVariant } from '@/components/ui/badge';
 import { HiveMemTokenStatus } from '@/components/orchestra/hivemem-token-status';
 import { Button } from '@/components/ui/button';
@@ -594,6 +595,7 @@ export default function NodeDetailPage(): React.ReactElement {
               Upgrading…
             </Badge>
           )}
+          <AgentSelfUpgradeBadge metadata={node.metadata} />
           <Button
             variant="secondary"
             size="sm"

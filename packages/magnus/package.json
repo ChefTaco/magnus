@@ -1,0 +1,186 @@
+{
+  "name": "@hivemagnus/magnus",
+  "version": "1.1.0",
+  "description": "Install, upgrade and roll back a Magnus server and console with one command: `npx @hivemagnus/magnus init`, then `magnus upgrade`. Pins exact, tested component versions, backs up PostgreSQL before every migration and reverts automatically when the new version fails its health check.",
+  "keywords": [
+    "magnus",
+    "fleet",
+    "installer",
+    "upgrade",
+    "self-hosted",
+    "systemd"
+  ],
+  "license": "Apache-2.0",
+  "author": "ChefTaco",
+  "homepage": "https://github.com/ChefTaco/magnus/tree/main/packages/magnus#readme",
+  "bugs": {
+    "url": "https://github.com/ChefTaco/magnus/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ChefTaco/magnus.git",
+    "directory": "packages/magnus"
+  },
+  "type": "module",
+  "bin": {
+    "magnus": "dist/cli.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "!dist/**/*.test.*",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": "^24.22.1 || ^26.13.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "npm run clean && tsc --build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "clean": "node -e \"const fs=require('node:fs');fs.rmSync('dist',{recursive:true,force:true});fs.rmSync('tsconfig.tsbuildinfo',{force:true})\""
+  },
+  "dependencies": {
+    "@hivemagnus/magnus-contracts": "1.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.12"
+  },
+  "magnusRelease": {
+    "schema": 1,
+    "version": "1.1.0",
+    "engines": {
+      "node": "^24.22.1 || ^26.13.0"
+    },
+    "components": {
+      "@hivemagnus/magnus-server": "1.1.0",
+      "@hivemagnus/magnus-ui": "1.1.0",
+      "@hivemagnus/magnus-contracts": "1.1.0",
+      "@hivemagnus/magnus-agent": "1.1.0"
+    },
+    "breaking": false,
+    "minUpgradeFrom": "1.0.0",
+    "engineProtocol": 1,
+    "newRequiredEnv": [],
+    "newOptionalEnv": [
+      {
+        "name": "MAGNUS_AUTO_MIGRATE",
+        "component": "server",
+        "secret": false,
+        "description": "Apply pending migrations at startup, after a pg_dump, under an advisory lock (default false; true in `magnus init` projects and the images)."
+      },
+      {
+        "name": "MAGNUS_AUTO_MIGRATE_BACKUP",
+        "component": "server",
+        "secret": false,
+        "description": "Dump the database before an automatic migration (default true)."
+      },
+      {
+        "name": "MAGNUS_AUTO_MIGRATE_ALLOW_SLOW",
+        "component": "server",
+        "secret": false,
+        "description": "Let auto-migrate apply migrations marked slow or one-way (default false)."
+      },
+      {
+        "name": "MAGNUS_BACKUP_DIR",
+        "component": "server",
+        "secret": false,
+        "description": "Directory for pre-migration dumps (default $MAGNUS_HOME/backups)."
+      },
+      {
+        "name": "MAGNUS_PG_DUMP",
+        "component": "server",
+        "secret": false,
+        "description": "pg_dump binary for pre-migration dumps."
+      },
+      {
+        "name": "MAGNUS_RUNTIME_FILE",
+        "component": "server",
+        "secret": false,
+        "description": "File the server writes after it starts listening, read by upgrade tooling."
+      },
+      {
+        "name": "MAGNUS_UPDATE_CHECK",
+        "component": "server",
+        "secret": false,
+        "description": "Daily npm registry check for new releases (default true; set false to opt out)."
+      },
+      {
+        "name": "MAGNUS_UPDATE_REGISTRY",
+        "component": "server",
+        "secret": false,
+        "description": "npm registry for the update check and agent release lookups."
+      },
+      {
+        "name": "MAGNUS_AGENT_UPGRADES",
+        "component": "server",
+        "secret": false,
+        "description": "Allow server-driven agent upgrades (default true)."
+      },
+      {
+        "name": "MAGNUS_AGENT_UPGRADE_CONCURRENCY",
+        "component": "server",
+        "secret": false,
+        "description": "Agents upgraded in parallel after the canary (default 5)."
+      },
+      {
+        "name": "MAGNUS_LEGACY_GIT_SELF_UPDATE",
+        "component": "server",
+        "secret": false,
+        "description": "Keep the git-checkout self-update endpoints (default false)."
+      },
+      {
+        "name": "MAGNUS_PROJECT_DIR",
+        "component": "server",
+        "secret": false,
+        "description": "Managed project used by `magnus-server upgrade`."
+      },
+      {
+        "name": "MAGNUS_AGENT_SELF_UPGRADE",
+        "component": "agent",
+        "secret": false,
+        "description": "Accept server-driven upgrades to an exact version and integrity (default true)."
+      },
+      {
+        "name": "MAGNUS_AGENT_UPGRADE_CONFIRM_SECONDS",
+        "component": "agent",
+        "secret": false,
+        "description": "Seconds a new version has to report an accepted heartbeat before the launcher reverts it (default 180)."
+      },
+      {
+        "name": "MAGNUS_AGENT_UPGRADE_REQUIRE_PROVENANCE",
+        "component": "agent",
+        "secret": false,
+        "description": "Refuse a staged upgrade unless `npm audit signatures` passes (default true)."
+      },
+      {
+        "name": "MAGNUS_AGENT_UPGRADE_SOURCE_DIR",
+        "component": "agent",
+        "secret": false,
+        "description": "Install self-upgrades from local tarballs instead of the registry."
+      },
+      {
+        "name": "MAGNUS_AGENT_NPM",
+        "component": "agent",
+        "secret": false,
+        "description": "npm executable used for self-upgrades."
+      }
+    ],
+    "removedEnv": [],
+    "migrations": [],
+    "agent": {
+      "selfUpgradeProtocol": 1,
+      "minLauncher": 1
+    },
+    "summary": "Easy upgrades: `npx @hivemagnus/magnus init`, `magnus upgrade` with backup and automatic revert, startup auto-migrate, update notices, and server-driven agent upgrades with self-revert.",
+    "notesUrl": "https://github.com/ChefTaco/magnus/releases/tag/v1.1.0"
+  }
+}

@@ -83,3 +83,71 @@ jobs:
           # Never expose the bootstrap credential to installation, builds or tests.
           NODE_AUTH_TOKEN: ${{ github.event_name == 'workflow_dispatch' && inputs.bootstrap && !inputs.dry_run && secrets.NPM_BOOTSTRAP_TOKEN || '' }}
         run: node scripts/publish-packages.mjs
+
+  images:
+    # Container images of the same commit, after the npm packages: server, console and agent.
+    # Tags X.Y.Z, X.Y and X (never `latest`, and only X.Y.Z for prereleases). Dry runs build without pushing.
+    name: Image ${{ matrix.image.name }}
+    needs: publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write # push to ghcr.io with the workflow token
+      id-token: write # build provenance attestation
+    env:
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'true' || 'false' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - { name: magnus-server, dockerfile: services/control-api/Dockerfile }
+          - { name: magnus-ui, dockerfile: apps/dashboard/Dockerfile }
+          - { name: magnus-agent, dockerfile: packages/agent/Dockerfile }
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Read the release version
+        id: release
+        run: echo "version=$(node -p 'require("./package.json").version')" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GHCR
+        if: env.DRY_RUN != 'true'
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image tags
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/cheftaco/${{ matrix.image.name }}
+          flavor: latest=false
+          tags: |
+            type=semver,pattern={{version}},value=v${{ steps.release.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=v${{ steps.release.outputs.version }}
+            type=semver,pattern={{major}},value=v${{ steps.release.outputs.version }}
+
+      - name: Build and push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ${{ matrix.image.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: ${{ env.DRY_RUN != 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: MAGNUS_VERSION=${{ steps.release.outputs.version }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha,scope=${{ matrix.image.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}

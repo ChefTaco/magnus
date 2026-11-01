@@ -167,3 +167,20 @@ test('named operator attribution survives the proxy and logout revokes delegated
   await context.addCookies([{name:'magnus_session',value:session,url:'http://localhost:55442',httpOnly:true}]);
   expect((await page.request.get('/api/proxy/nodes')).ok()).toBe(false);
 });
+test('agent upgrade dialog greys out agents that cannot upgrade themselves', async ({ page }) => {
+  await page.goto('/login');
+  await page.getByLabel('Username').fill('ci-admin');
+  await page.getByLabel('Password', { exact: true }).fill('ci-only-browser-password');
+  await page.getByRole('button', { name: 'Sign In', exact: true }).click();
+  await expect(page).toHaveURL('/');
+  // The fixture agent runs 1.0.0, behind the version this server ships with.
+  await expect(page.getByTestId('update-banner')).toContainText(/agents? behind the server/);
+  await page.goto('/nodes');
+  await page.getByRole('main').getByRole('button', { name: 'Upgrade Agents', exact: true }).click();
+  const candidates = page.getByTestId('agent-upgrade-candidates');
+  await expect(candidates.getByLabel('Upgrade Browser CI upgradable')).toBeEnabled();
+  await expect(candidates.getByLabel('Upgrade Browser CI upgradable')).toBeChecked();
+  await expect(candidates.getByLabel('Upgrade Browser CI node', { exact: true })).toBeDisabled();
+  await expect(candidates).toContainText('agent version unknown');
+  await expect(page.getByTestId('agent-upgrade-start')).toBeEnabled();
+});

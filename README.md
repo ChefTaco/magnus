@@ -32,6 +32,7 @@ for registry setup and release verification.
 | `packages/ardent` | [`@hivemagnus/ardent`](https://www.npmjs.com/package/@hivemagnus/ardent) | The Ardent agent runtime (`ardent init`, `ardent chat`, `ardent gateway run`) |
 | `packages/contracts` | [`@hivemagnus/magnus-contracts`](https://www.npmjs.com/package/@hivemagnus/magnus-contracts) | Zod schemas and types shared by the server, the console and the agent |
 | `packages/skills` | [`@hivemagnus/magnus-skills`](https://www.npmjs.com/package/@hivemagnus/magnus-skills) | The skills catalogue, with a small API to list and locate the bundled skills |
+| `packages/magnus` | [`@hivemagnus/magnus`](https://www.npmjs.com/package/@hivemagnus/magnus) | The installer and upgrade tool (`magnus init`, `magnus upgrade`, `magnus rollback`), which pins tested versions of every component |
 
 ## Requirements
 
@@ -43,6 +44,18 @@ for registry setup and release verification.
   development option.
 
 ## Quick start
+
+**One command, for a single host.** This installs the server and the console, generates secrets and
+a self-signed certificate, runs PostgreSQL and Redis through docker compose (or uses
+`--database-url`/`--redis-url`), and starts everything as systemd user services. Upgrades then take
+one command as well (see [Upgrading](#upgrading)).
+
+```bash
+npx @hivemagnus/magnus init        # project in ~/.magnus; prints the console URL and login
+```
+
+`npx @hivemagnus/magnus init --help` lists the options. `--system --service-user magnus` installs
+system units under `/opt/magnus` instead. To set things up yourself, follow the steps below.
 
 ### 1. Start the server
 
@@ -121,6 +134,26 @@ The host shows as online within one heartbeat interval (30 seconds). By default 
 root (`MAGNUS_AGENT_PRIVILEGED=true`); it can also run as an ordinary account with fewer features.
 See the [agent README](packages/agent) for both modes.
 
+## Upgrading
+
+Server, console and agent are released together. Within a major version, an upgrade is one command
+or one click:
+
+- **Managed install** (`magnus init` or `magnus adopt`): `magnus upgrade`, or `magnus-server upgrade`.
+  It backs up PostgreSQL, installs the new release beside the running one, migrates, checks, switches
+  over and restarts. If the new version is not healthy, it switches back automatically and prints the
+  restore command. `magnus rollback` goes back one step.
+- **Docker Compose:** `docker compose pull && docker compose up -d`. The images migrate at startup,
+  after a dump.
+- **Agents:** **Upgrade agents** on the Nodes page, or `magnus-server agents upgrade`. Each agent
+  switches back by itself if the new version does not report a heartbeat. Run
+  `sudo magnus-agent install-service` once per node first.
+
+Nothing crosses a major version by itself, and every automatic behaviour has an off switch. The
+console and `magnus-server check` show when a new release is available
+(`MAGNUS_UPDATE_CHECK=false` turns that off). See [UPGRADING.md](UPGRADING.md) for every path, the
+switches, and how to run your own release process instead.
+
 ## Optional integrations
 
 Every integration is off when its variables are unset. Magnus starts and works without any of
@@ -156,6 +189,7 @@ PostgreSQL database; see the [server README](services/control-api).
 - [Documentation index](docs/README.md)
 - [Architecture](docs/APP_ARCHITECTURE.md)
 - [Script guide](scripts/README.md)
+- [Upgrading](UPGRADING.md)
 - [Changelog](CHANGELOG.md)
 - The README and `AGENTS.md` in each package
 

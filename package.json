@@ -1,6 +1,6 @@
 {
   "name": "magnus",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "private": true,
   "description": "Magnus: self-hosted fleet management for Linux hosts and AI agents (UI, server, node agent, Ardent runtime)",
   "license": "Apache-2.0",
@@ -40,7 +40,7 @@
     }
   },
   "scripts": {
-    "build": "npm run build -w @hivemagnus/magnus-contracts -w @hivemagnus/magnus-skills -w @hivemagnus/ardent -w @hivemagnus/magnus-agent -w @hivemagnus/magnus-server -w @hivemagnus/magnus-ui",
+    "build": "npm run build -w @hivemagnus/magnus-contracts -w @hivemagnus/magnus-skills -w @hivemagnus/ardent -w @hivemagnus/magnus-agent -w @hivemagnus/magnus-server -w @hivemagnus/magnus-ui -w @hivemagnus/magnus",
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "verify:ui": "npm --workspace @hivemagnus/magnus-ui run test:e2e -- --project=chromium tests/navigation.spec.ts",
@@ -78,8 +78,12 @@
     "check:private": "bash scripts/check-private-data.sh",
     "check:packs": "node scripts/check-npm-packs.mjs",
     "privacy:test": "node --test scripts/test-privacy-policy.mjs scripts/test-publish-environment.mjs scripts/test-publish-packages.mjs",
+    "release:manifest": "node scripts/check-release-manifest.mjs --write",
+    "release:manifest:check": "node scripts/check-release-manifest.mjs",
+    "release:bump": "node scripts/bump-version.mjs",
+    "release:test": "node --test scripts/test-release-tooling.mjs",
     "hooks:install": "git config core.hooksPath .githooks",
-    "verify": "npm run privacy:test && npm run scan:secrets && npm run check:private && npm run build && npm run typecheck && npm run test && npm run skills:check && npm run openapi:check && npm run ardent:openapi:check && npm run ardent:pack:check && npm run check:packs && npm run docs:check && npm run docs:test && npm run clean:local:test"
+    "verify": "npm run privacy:test && npm run scan:secrets && npm run check:private && npm run build && npm run typecheck && npm run test && npm run skills:check && npm run openapi:check && npm run ardent:openapi:check && npm run ardent:pack:check && npm run check:packs && npm run release:manifest:check && npm run release:test && npm run docs:check && npm run docs:test && npm run clean:local:test"
   },
   "allowScripts": {
     "@prisma/engines@7.10.1": true,

@@ -1,0 +1,27 @@
+{
+  "summary": "Easy upgrades: `npx @hivemagnus/magnus init`, `magnus upgrade` with backup and automatic revert, startup auto-migrate, update notices, and server-driven agent upgrades with self-revert.",
+  "breaking": false,
+  "minUpgradeFrom": "1.0.0",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [
+    { "name": "MAGNUS_AUTO_MIGRATE", "component": "server", "description": "Apply pending migrations at startup, after a pg_dump, under an advisory lock (default false; true in `magnus init` projects and the images)." },
+    { "name": "MAGNUS_AUTO_MIGRATE_BACKUP", "component": "server", "description": "Dump the database before an automatic migration (default true)." },
+    { "name": "MAGNUS_AUTO_MIGRATE_ALLOW_SLOW", "component": "server", "description": "Let auto-migrate apply migrations marked slow or one-way (default false)." },
+    { "name": "MAGNUS_BACKUP_DIR", "component": "server", "description": "Directory for pre-migration dumps (default $MAGNUS_HOME/backups)." },
+    { "name": "MAGNUS_PG_DUMP", "component": "server", "description": "pg_dump binary for pre-migration dumps." },
+    { "name": "MAGNUS_RUNTIME_FILE", "component": "server", "description": "File the server writes after it starts listening, read by upgrade tooling." },
+    { "name": "MAGNUS_UPDATE_CHECK", "component": "server", "description": "Daily npm registry check for new releases (default true; set false to opt out)." },
+    { "name": "MAGNUS_UPDATE_REGISTRY", "component": "server", "description": "npm registry for the update check and agent release lookups." },
+    { "name": "MAGNUS_AGENT_UPGRADES", "component": "server", "description": "Allow server-driven agent upgrades (default true)." },
+    { "name": "MAGNUS_AGENT_UPGRADE_CONCURRENCY", "component": "server", "description": "Agents upgraded in parallel after the canary (default 5)." },
+    { "name": "MAGNUS_LEGACY_GIT_SELF_UPDATE", "component": "server", "description": "Keep the git-checkout self-update endpoints (default false)." },
+    { "name": "MAGNUS_PROJECT_DIR", "component": "server", "description": "Managed project used by `magnus-server upgrade`." },
+    { "name": "MAGNUS_AGENT_SELF_UPGRADE", "component": "agent", "description": "Accept server-driven upgrades to an exact version and integrity (default true)." },
+    { "name": "MAGNUS_AGENT_UPGRADE_CONFIRM_SECONDS", "component": "agent", "description": "Seconds a new version has to report an accepted heartbeat before the launcher reverts it (default 180)." },
+    { "name": "MAGNUS_AGENT_UPGRADE_REQUIRE_PROVENANCE", "component": "agent", "description": "Refuse a staged upgrade unless `npm audit signatures` passes (default true)." },
+    { "name": "MAGNUS_AGENT_UPGRADE_SOURCE_DIR", "component": "agent", "description": "Install self-upgrades from local tarballs instead of the registry." },
+    { "name": "MAGNUS_AGENT_NPM", "component": "agent", "description": "npm executable used for self-upgrades." }
+  ],
+  "removedEnv": [],
+  "migrations": []
+}

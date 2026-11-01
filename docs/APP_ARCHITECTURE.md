@@ -30,6 +30,7 @@ the server publishes to hosts.
 | `packages/ardent` | `@hivemagnus/ardent`: headless agent runtime, management API on `127.0.0.1:9910` by default |
 | `packages/contracts` | `@hivemagnus/magnus-contracts`: Zod schemas shared by the server, the console and the agent |
 | `packages/skills` | `@hivemagnus/magnus-skills`: Ubuntu operations skills in the Hermes Agent skill format |
+| `packages/magnus` | `@hivemagnus/magnus`: installer and upgrade tool for managed server and console projects; see [UPGRADING.md](../UPGRADING.md) |
 | `scripts` | Repository checks (secrets, private data, OpenAPI, documentation, package contents) |
 
 ## Console
