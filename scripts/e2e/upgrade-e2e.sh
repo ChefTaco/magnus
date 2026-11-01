@@ -17,6 +17,11 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 FROM=${MAGNUS_E2E_FROM:-1.0.3}
 VERSION=$(node -p "require('$ROOT/package.json').version")
+# Synthetic releases must sort above VERSION (a -ci prerelease of VERSION itself would be a downgrade).
+IFS=. read -r V_MAJOR V_MINOR V_PATCH <<<"${VERSION%%-*}"
+AGENT_OK="$V_MAJOR.$V_MINOR.$((V_PATCH + 1))-ci"
+AGENT_SILENT="$V_MAJOR.$V_MINOR.$((V_PATCH + 2))-ci"
+SERVER_BROKEN="$V_MAJOR.$V_MINOR.$((V_PATCH + 3))-ci"
 WORK=$(mktemp -d)
 PACKS=$WORK/packs
 PROJECT=/opt/magnus-e2e
@@ -128,44 +133,44 @@ wait_for() { # description, seconds, command...
   for ((i = 0; i < seconds; i += 3)); do "$@" >/dev/null 2>&1 && return 0; sleep 3; done
   fail "timed out waiting for $description"
 }
-agent_ready() { server_cli agents upgrade --to 1.1.1-ci --integrity "sha512-$(printf 'A%.0s' {1..86})==" --dry-run 2>/dev/null | grep -q "will upgrade"; }
+agent_ready() { server_cli agents upgrade --to $AGENT_OK --integrity "sha512-$(printf 'A%.0s' {1..86})==" --dry-run 2>/dev/null | grep -q "will upgrade"; }
 wait_for "the agent to enroll with the launcher layout" 120 agent_ready
 
 synthetic() { node "$ROOT/scripts/e2e/synthetic-release.mjs" --from "$PACKS" --out "$SYNTH" "$@" >/dev/null; chmod -R a+rX "$SYNTH"; }
 integrity() { node -e "const c=require('node:crypto');console.log('sha512-'+c.createHash('sha512').update(require('node:fs').readFileSync(process.argv[1])).digest('base64'))" "$1"; }
 
-step "Agent upgrade $VERSION -> 1.1.1-ci (confirms)"
+step "Agent upgrade $VERSION -> $AGENT_OK (confirms)"
 # The unpublished $VERSION contracts come from the source directory as well.
 cp "$PACKS/hivemagnus-magnus-contracts-$VERSION.tgz" "$SYNTH/"
-synthetic --version 1.1.1-ci --only magnus-agent
-server_cli agents upgrade --to 1.1.1-ci --integrity "$(integrity "$SYNTH/hivemagnus-magnus-agent-1.1.1-ci.tgz")" \
-  | tee "$WORK/agents-1.log" || fail "agent upgrade to 1.1.1-ci"
+synthetic --version $AGENT_OK --only magnus-agent
+server_cli agents upgrade --to $AGENT_OK --integrity "$(integrity "$SYNTH/hivemagnus-magnus-agent-$AGENT_OK.tgz")" \
+  | tee "$WORK/agents-1.log" || fail "agent upgrade to $AGENT_OK"
 grep -q "confirmed" "$WORK/agents-1.log" || fail "agent upgrade was not confirmed"
-[[ $(sudo readlink "$AGENT_DIR/current") == versions/1.1.1-ci ]] || fail "agent ./current is not 1.1.1-ci"
+[[ $(sudo readlink "$AGENT_DIR/current") == versions/$AGENT_OK ]] || fail "agent ./current is not $AGENT_OK"
 
-step "Agent upgrade 1.1.1-ci -> 1.1.2-ci (never heartbeats: the launcher reverts it)"
-synthetic --version 1.1.2-ci --only magnus-agent --agent-never-heartbeats
+step "Agent upgrade $AGENT_OK -> $AGENT_SILENT (never heartbeats: the launcher reverts it)"
+synthetic --version $AGENT_SILENT --only magnus-agent --agent-never-heartbeats
 set +e
-server_cli agents upgrade --to 1.1.2-ci --integrity "$(integrity "$SYNTH/hivemagnus-magnus-agent-1.1.2-ci.tgz")" | tee "$WORK/agents-2.log"
+server_cli agents upgrade --to $AGENT_SILENT --integrity "$(integrity "$SYNTH/hivemagnus-magnus-agent-$AGENT_SILENT.tgz")" | tee "$WORK/agents-2.log"
 rc=${PIPESTATUS[0]}
 set -e
 (( rc != 0 )) || fail "a never-heartbeating agent upgrade reported success"
 grep -q "reverted" "$WORK/agents-2.log" || fail "the agent did not report the revert"
-[[ $(sudo readlink "$AGENT_DIR/current") == versions/1.1.1-ci ]] || fail "agent ./current was not reverted"
+[[ $(sudo readlink "$AGENT_DIR/current") == versions/$AGENT_OK ]] || fail "agent ./current was not reverted"
 sudo grep -q '"state": "reverted"' "$AGENT_DIR/upgrade-state.json" || fail "agent upgrade state is not reverted"
 
-step "Server upgrade $VERSION -> 1.1.3-ci (broken, with a migration: reverts)"
+step "Server upgrade $VERSION -> $SERVER_BROKEN (broken, with a migration: reverts)"
 mkdir -p "$WORK/broken"
-node "$ROOT/scripts/e2e/synthetic-release.mjs" --from "$PACKS" --out "$WORK/broken" --version 1.1.3-ci --broken-server \
+node "$ROOT/scripts/e2e/synthetic-release.mjs" --from "$PACKS" --out "$WORK/broken" --version $SERVER_BROKEN --broken-server \
   --migration 20991231000000_e2e_probe >/dev/null
 set +e
-magnus upgrade --dir "$PROJECT" --source "$WORK/broken" --to 1.1.3-ci --yes --health-timeout 60 2>&1 | tee "$WORK/broken.log"
+magnus upgrade --dir "$PROJECT" --source "$WORK/broken" --to $SERVER_BROKEN --yes --health-timeout 60 2>&1 | tee "$WORK/broken.log"
 rc=${PIPESTATUS[0]}
 set -e
 (( rc == 1 )) || fail "a broken release did not fail the upgrade (exit $rc)"
 grep -q "switching back to $VERSION" "$WORK/broken.log" || fail "no automatic switch back"
 grep -q 'pg_restore --clean --if-exists --no-owner -d "$DATABASE_URL"' "$WORK/broken.log" || fail "no restore command printed"
-sudo sh -c "ls '$PROJECT'/backups/*pre-upgrade-$VERSION-to-1.1.3-ci*.dump" >/dev/null || fail "no pre-upgrade dump"
+sudo sh -c "ls '$PROJECT'/backups/*pre-upgrade-$VERSION-to-$SERVER_BROKEN*.dump" >/dev/null || fail "no pre-upgrade dump"
 STATUS=$(magnus status --json --offline)
 [[ $(json 'v.current' <<<"$STATUS") == "$VERSION" && $(json 'v.serving.version' <<<"$STATUS") == "$VERSION" ]] || fail "$VERSION is not serving again"
 [[ $(json 'v.history.at(-1).result' <<<"$STATUS") == reverted ]] || fail "history does not record the revert"
