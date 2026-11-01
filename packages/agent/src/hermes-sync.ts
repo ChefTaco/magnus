@@ -2,7 +2,7 @@
 import { config } from 'dotenv';
 import { createHash, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { constants, createReadStream } from 'node:fs';
+import { constants, createReadStream, realpathSync } from 'node:fs';
 import { access, chown, chmod, lstat, mkdir, mkdtemp, readFile, readlink, readdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -10,7 +10,14 @@ import { fileURLToPath } from 'node:url';
 import { childEnvironment } from './utils/child-env.js';
 import { armChildTimeout } from './utils/child-timeout.js';
 
-const invokedAsService = Boolean(process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url));
+// Compare real paths: the service may start this file through a link (node_modules -> current/node_modules).
+const invokedAsService = (() => {
+  try {
+    return Boolean(process.argv[1] && realpathSync(resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url)));
+  } catch {
+    return false;
+  }
+})();
 if (invokedAsService) config({ path: join(process.env['AGENT_INSTALL_DIR'] ?? '/opt/magnus-agent', '.env'), quiet: true });
 const api = new URL('/api/v1/hermes-registry/', process.env['CONTROL_API_URL'] ?? 'https://localhost:4000');
 const token = process.env['HERMES_REGISTRY_TOKEN'] ?? '';

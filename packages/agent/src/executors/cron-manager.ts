@@ -14,6 +14,7 @@ import { hash } from './execution-supervisor-state.js';
 import { HOST_FQDN, NODE_MANAGER_SECRET, RESULT_SIGNING_SECRET } from '../env.js';
 import { readdir, readFile } from 'node:fs/promises';
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { stableCodePath } from '../upgrade/stable-path.js';
 
 export const cronRoutes = new Hono();
 
@@ -52,7 +53,7 @@ export function removeCronEntry(raw: string, name: string): string {
   return result.join('\n');
 }
 export function managedCronLine(job: ManagedCronJob, nodePath = process.execPath,
-  runnerPath = fileURLToPath(new URL('./scheduler-runner.js', import.meta.url))): string {
+  runnerPath = stableCodePath(fileURLToPath(new URL('./scheduler-runner.js', import.meta.url)))): string {
   for (const path of [nodePath, runnerPath]) if (!path.startsWith('/') || /[\x00-\x1f\x7f%]/.test(path)) throw new Error('Unsafe fixed cron runner path');
   const quote = (value: string) => "'" + value.replaceAll("'", "'\"'\"'") + "'";
   // Wake every minute; the runner verifies the explicit UTC schedule itself.

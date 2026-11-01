@@ -14,7 +14,7 @@
  * `magnus-agent install-service` replaces it. It never escalates privileges.
  */
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync, openSync, fsyncSync, closeSync } from 'node:fs';
+import { closeSync, existsSync, fsyncSync, lchownSync, openSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -61,12 +61,20 @@ export function readState(dir) {
   }
 }
 
+/** Running as root in a directory another account owns: hand what we write to that owner. */
+function adoptOwner(dir, path) {
+  if (process.getuid?.() !== 0) return;
+  const owner = statSync(dir);
+  if (owner.uid !== 0) lchownSync(path, owner.uid, owner.gid);
+}
+
 export function writeState(dir, state) {
   const path = join(dir, STATE_FILE);
   const temporary = `${path}.${process.pid}.tmp`;
   writeFileSync(temporary, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
   const fd = openSync(temporary, 'r');
   try { fsyncSync(fd); } finally { closeSync(fd); }
+  adoptOwner(dir, temporary);
   renameSync(temporary, path);
 }
 
@@ -74,6 +82,7 @@ export function pointCurrentAt(dir, version) {
   const temporary = join(dir, `current.${process.pid}.tmp`);
   rmSync(temporary, { force: true });
   symlinkSync(join('versions', version), temporary, 'dir');
+  adoptOwner(dir, temporary);
   renameSync(temporary, join(dir, 'current'));
 }
 

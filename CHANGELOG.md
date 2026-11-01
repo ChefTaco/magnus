@@ -4,6 +4,28 @@ All notable changes to this project are documented in this file. The format is b
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
+## [1.1.1] - 2026-11-01
+
+### Fixed
+
+- Agent self-upgrade when the agent runs as root inside an install directory another account owns
+  (for example one a deploy user installs releases into). The new `versions/<X>` tree, `./current`,
+  the upgrade state and the npm cache now get that directory's owner, so the owner can still replace
+  or remove them.
+- Managed cron lines no longer name `versions/<X>`. Under the launcher they go through the install
+  directory, so they survive later self-upgrades and pruning. `magnus-agent install-service` leaves
+  `node_modules` as a link to `current/node_modules`, so lines written before the versioned layout
+  keep their exact text.
+- `hermes-sync` recognises that it runs as a service when it is started through a linked path.
+
+### New environment variables
+
+- None.
+
+### Migration impact
+
+- None: 1.1.1 adds no database migrations.
+
 ## [1.1.0] - 2026-11-01
 
 ### Added
@@ -192,6 +214,7 @@ The initial release snapshot.
   Pass them to `npm install -g` with `--allow-scripts=...`, or list them under `allowScripts` in
   your project's `package.json`.
 
+[1.1.1]: https://github.com/ChefTaco/magnus/releases/tag/v1.1.1
 [1.1.0]: https://github.com/ChefTaco/magnus/releases/tag/v1.1.0
 [1.0.3]: https://github.com/ChefTaco/magnus/releases/tag/v1.0.3
 [1.0.2]: https://github.com/ChefTaco/magnus/releases/tag/v1.0.2
