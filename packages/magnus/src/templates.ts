@@ -158,6 +158,7 @@ export interface ServerEnvSettings {
   tlsCert: string;
   tlsKey: string;
   home: string;
+  backupDir: string;
   autoMigrate: boolean;
 }
 
@@ -167,7 +168,8 @@ export function serverEnv(settings: ServerEnvSettings, secrets: Record<string, s
     + 'Every variable: `magnus-server env-schema --format table`.', [
     { title: 'Core', entries: [
       { name: 'NODE_ENV', value: 'production' },
-      { name: 'MAGNUS_HOME', value: settings.home },
+      { name: 'MAGNUS_HOME', value: settings.home, comment: 'Server data: audit logs, credential rotation state.' },
+      { name: 'MAGNUS_BACKUP_DIR', value: settings.backupDir, comment: 'Pre-migration database dumps.' },
       { name: 'DATABASE_URL', value: settings.databaseUrl },
       { name: 'REDIS_URL', value: settings.redisUrl },
     ] },

@@ -26,6 +26,7 @@ them.
   config/magnus-server.env       generated secrets (0600)
   config/magnus-ui.env
   config/tls/                    self-signed certificate (unless --tls-cert/--tls-key)
+  data/                          server data (MAGNUS_HOME: audit logs, rotation state)
   versions/1.1.0/                one npm install per release
   current -> versions/1.1.0      what the services run
   backups/                       pre-migration database dumps

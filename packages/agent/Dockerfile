@@ -16,7 +16,7 @@ ARG NODE_IMAGE=node:24.22.1-slim
 
 # JavaScript builds and packs are platform independent: build once on the runner.
 FROM --platform=$BUILDPLATFORM ${NODE_IMAGE} AS builder
-WORKDIR /src
+WORKDIR /opt/magnus-build
 COPY . .
 RUN npm ci --no-audit --no-fund --ignore-scripts \
       --workspace @hivemagnus/magnus-contracts \

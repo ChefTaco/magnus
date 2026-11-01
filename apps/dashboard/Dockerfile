@@ -13,10 +13,11 @@ ARG NODE_IMAGE=node:24.22.1-slim
 
 # JavaScript builds and packs are platform independent: build once on the runner.
 FROM --platform=$BUILDPLATFORM ${NODE_IMAGE} AS builder
+# Not /src: the staging step rejects files that mention the build root, and "/src" is too common a substring.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 make g++ \
   && rm -rf /var/lib/apt/lists/*
-WORKDIR /src
+WORKDIR /opt/magnus-build
 COPY . .
 RUN npm ci --no-audit --no-fund --ignore-scripts \
       --workspace @hivemagnus/magnus-contracts \
