@@ -12,7 +12,7 @@
  * root for it and never calls sudo.
  */
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AGENT_PACKAGE, pointCurrentAt } from './self-upgrade.js';
@@ -179,6 +179,10 @@ export async function installService(argv: readonly string[]): Promise<number> {
     }
     act(`point ${current} at versions/${version}`, () => pointCurrentAt(dir, version));
   }
+  // Paths written before the versioned layout (cron lines, other units) keep working.
+  if (!existsSync(join(dir, 'node_modules')) && !isSymlink(join(dir, 'node_modules'))) {
+    act(`link ${join(dir, 'node_modules')} to current/node_modules`, () => symlinkSync(join('current', 'node_modules'), join(dir, 'node_modules'), 'dir'));
+  }
   // The launcher is copied from the release that runs install-service, not linked:
   // self-upgrades never replace it.
   act(`install ${join(dir, 'launcher', 'launcher.mjs')}`, () => {
@@ -197,6 +201,7 @@ export async function installService(argv: readonly string[]): Promise<number> {
       execFileSync('chown', [`${user}:${user}`, dir]);
       execFileSync('chown', ['-R', `${user}:${user}`, join(dir, 'versions'), join(dir, '.npm')]);
       execFileSync('chown', ['-h', `${user}:${user}`, current]);
+      if (isSymlink(join(dir, 'node_modules'))) execFileSync('chown', ['-h', `${user}:${user}`, join(dir, 'node_modules')]);
     });
   }
   act(`write ${options.unitPath}${existsSync(options.unitPath) ? ` (previous unit kept as ${options.unitPath}.pre-launcher)` : ''}`, () => {

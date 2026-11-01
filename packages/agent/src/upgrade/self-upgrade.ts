@@ -9,8 +9,8 @@
  */
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { accessSync, constants, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync,
-  symlinkSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, existsSync, lchownSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync,
+  statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import {
   AGENT_SELF_UPGRADE_PROTOCOL,
@@ -48,10 +48,28 @@ export function readUpgradeState(dir: string): UpgradeState | null {
   }
 }
 
+/**
+ * An agent running as root inside a directory another account owns (a deploy
+ * user that installs releases there) gives what it writes to that owner, so
+ * the owner can still replace or remove it. Otherwise this does nothing.
+ */
+export function adoptInstallOwner(dir: string, path: string, uid = process.getuid?.()): void {
+  if (uid !== 0) return;
+  const owner = statSync(dir);
+  if (owner.uid === 0) return;
+  const walk = (entry: string) => {
+    const info = lstatSync(entry);
+    lchownSync(entry, owner.uid, owner.gid);
+    if (info.isDirectory()) for (const child of readdirSync(entry)) walk(join(entry, child));
+  };
+  if (lstatSync(path, { throwIfNoEntry: false })) walk(path);
+}
+
 export function writeUpgradeState(dir: string, state: UpgradeState): void {
   const path = join(dir, STATE_FILE);
   const temporary = `${path}.${process.pid}.tmp`;
   writeFileSync(temporary, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+  adoptInstallOwner(dir, temporary);
   renameSync(temporary, path);
 }
 
@@ -59,6 +77,7 @@ export function pointCurrentAt(dir: string, version: string): void {
   const temporary = join(dir, `current.${process.pid}.tmp`);
   rmSync(temporary, { force: true });
   symlinkSync(join('versions', version), temporary, 'dir');
+  adoptInstallOwner(dir, temporary);
   renameSync(temporary, join(dir, 'current'));
 }
 
@@ -263,6 +282,8 @@ export async function stageUpgrade(options: StageOptions): Promise<StageResult> 
     }
     rmSync(target, { recursive: true, force: true });
     mkdirSync(join(dir, 'versions'), { recursive: true });
+    adoptInstallOwner(dir, join(dir, 'versions'));
+    adoptInstallOwner(dir, install);
     renameSync(install, target);
     const now = (options.now ?? new Date()).toISOString();
     writeUpgradeState(dir, { state: 'staged', from, to: request.version, requestId: request.requestId, attempt: 0, maxAttempts: 2, reason: null, updatedAt: now });
@@ -270,6 +291,8 @@ export async function stageUpgrade(options: StageOptions): Promise<StageResult> 
     return { from, to: request.version, integrity, requestId: request.requestId };
   } finally {
     rmSync(work, { recursive: true, force: true });
+    adoptInstallOwner(dir, join(dir, 'staging'));
+    adoptInstallOwner(dir, join(dir, '.npm'));
     staging = false;
   }
 }

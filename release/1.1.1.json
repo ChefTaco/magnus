@@ -1,0 +1,9 @@
+{
+  "summary": "Agent self-upgrade fixes: agents that run as root inside a directory another account owns, cron lines and hermes-sync that keep working through the versioned layout.",
+  "breaking": false,
+  "minUpgradeFrom": "1.0.0",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}

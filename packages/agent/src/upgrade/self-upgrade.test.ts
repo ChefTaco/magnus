@@ -6,7 +6,8 @@ import { describe, expect, it } from 'vitest';
 // The launcher is plain JavaScript so it runs without dependencies.
 import { confirmSeconds, decideLaunch } from '../../launcher/launcher.mjs';
 import { parseInstallServiceArgs, renderUnit } from './install-service.js';
-import { confirmTrial, readUpgradeState, selfUpgradeStatus, stageUpgrade, tarballName, writeUpgradeState, type Runner } from './self-upgrade.js';
+import { adoptInstallOwner, confirmTrial, readUpgradeState, selfUpgradeStatus, stageUpgrade, tarballName, writeUpgradeState, type Runner } from './self-upgrade.js';
+import { stableCodePath } from './stable-path.js';
 
 const minute = 60_000;
 
@@ -154,5 +155,36 @@ describe('offline source directory', async () => {
     for (const file of ['hivemagnus-magnus-agent-1.1.1-ci.tgz', 'hivemagnus-magnus-contracts-1.1.0.tgz', 'notes.txt']) writeFileSync(join(dir, file), '');
     expect(sourceOverrides(dir, join(dir, 'hivemagnus-magnus-agent-1.1.1-ci.tgz')))
       .toEqual({ '@hivemagnus/magnus-contracts': `file:${join(dir, 'hivemagnus-magnus-contracts-1.1.0.tgz')}` });
+  });
+});
+
+describe('stable code paths and install ownership', () => {
+  function layout(withLink: boolean) {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-stable-'));
+    mkdirSync(join(dir, 'versions', '1.1.0', 'node_modules', 'pkg', 'dist'), { recursive: true });
+    symlinkSync(join('versions', '1.1.0'), join(dir, 'current'), 'dir');
+    if (withLink) symlinkSync(join('current', 'node_modules'), join(dir, 'node_modules'), 'dir');
+    return dir;
+  }
+  const code = (dir: string) => join(dir, 'versions', '1.1.0', 'node_modules', 'pkg', 'dist', 'runner.js');
+
+  it('keeps the pre-launcher node_modules path when the compatibility link exists', () => {
+    const dir = layout(true);
+    expect(stableCodePath(code(dir), { MAGNUS_AGENT_LAUNCHER: '1', AGENT_INSTALL_DIR: dir }))
+      .toBe(join(dir, 'node_modules', 'pkg', 'dist', 'runner.js'));
+  });
+  it('goes through ./current without the link, and leaves other paths alone', () => {
+    const dir = layout(false);
+    expect(stableCodePath(code(dir), { MAGNUS_AGENT_LAUNCHER: '1', AGENT_INSTALL_DIR: dir }))
+      .toBe(join(dir, 'current', 'node_modules', 'pkg', 'dist', 'runner.js'));
+    expect(stableCodePath(code(dir), { AGENT_INSTALL_DIR: dir })).toBe(code(dir));
+    expect(stableCodePath('/usr/lib/x.js', { MAGNUS_AGENT_LAUNCHER: '1', AGENT_INSTALL_DIR: dir })).toBe('/usr/lib/x.js');
+  });
+  it('hands written files to the install owner only when running as root', () => {
+    const dir = layout(false);
+    // As "root" in a directory this (non-root) account owns, chown to that owner is a permitted no-op change.
+    expect(() => adoptInstallOwner(dir, join(dir, 'versions'), 0)).not.toThrow();
+    expect(() => adoptInstallOwner(dir, join(dir, 'missing'), 0)).not.toThrow();
+    expect(() => adoptInstallOwner(dir, join(dir, 'versions'), 1000)).not.toThrow();
   });
 });
