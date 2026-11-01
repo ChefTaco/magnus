@@ -131,6 +131,8 @@ jobs:
     env:
       E2E_DATABASE_ADMIN_URL: postgresql://magnus:ci-magnus-password@127.0.0.1:5432/magnus_ideas_ci
       E2E_REDIS_URL: redis://127.0.0.1:6379
+      # The runner's default pg_dump is older than the PostgreSQL 17 service.
+      MAGNUS_PG_DUMP: /usr/lib/postgresql/17/bin/pg_dump
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0

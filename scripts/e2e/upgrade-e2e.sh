@@ -26,7 +26,7 @@ SYNTH=/opt/magnus-e2e-synthetic
 SERVER_PORT=4610
 UI_PORT=3610
 NODE_BIN=$(command -v node)
-SUDO=(sudo env "PATH=$PATH" "HOME=/root")
+SUDO=(sudo env "PATH=$PATH" "HOME=/root" ${MAGNUS_PG_DUMP:+"MAGNUS_PG_DUMP=$MAGNUS_PG_DUMP"})
 : "${E2E_DATABASE_ADMIN_URL:?}" "${E2E_REDIS_URL:?}"
 
 step() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
