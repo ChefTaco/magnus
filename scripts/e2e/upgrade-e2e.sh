@@ -35,7 +35,7 @@ dump() {
   sudo journalctl -u magnus-server -u magnus-ui -u magnus-agent-e2e -n 80 --no-pager 2>/dev/null | tail -120 || true
 }
 json() { node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const v=JSON.parse(s);console.log($1)})"; }
-magnus() { "${SUDO[@]}" "$NODE_BIN" "$PROJECT/current/node_modules/@hivemagnus/magnus/dist/cli.js" "$@"; }
+magnus() { "${SUDO[@]}" "MAGNUS_PROJECT_DIR=$PROJECT" "$NODE_BIN" "$PROJECT/current/node_modules/@hivemagnus/magnus/dist/cli.js" "$@"; }
 # The services run as this user, which owns the project's env files.
 server_cli() { "$NODE_BIN" "$PROJECT/current/node_modules/@hivemagnus/magnus-server/dist/cli.js" "$@" --env-file "$PROJECT/config/magnus-server.env"; }
 psql_admin() { node -e "const pg=require('$ROOT/node_modules/pg');const c=new pg.Client({connectionString:process.env.E2E_DATABASE_ADMIN_URL});c.connect().then(()=>c.query(process.argv[1])).then(r=>{console.log(JSON.stringify(r.rows));return c.end()}).catch(e=>{console.error(e.message);process.exit(1)})" "$1"; }
@@ -68,6 +68,7 @@ mkdir -p "$WORK/tool"
   --server-port $SERVER_PORT --ui-port $UI_PORT --admin-password ci-only-e2e-password --health-timeout 240 || fail "init $FROM"
 [[ $(magnus status --json --offline | json 'v.current') == "$FROM" ]] || fail "init did not record $FROM"
 curl -fsk "https://127.0.0.1:$SERVER_PORT/api/v1/health" >/dev/null || fail "$FROM server is not healthy"
+sudo journalctl -u magnus-server --no-pager | grep -q EACCES && fail "the server cannot write its data directory"
 
 step "Dry run and upgrade $FROM -> $VERSION"
 magnus upgrade --dir "$PROJECT" --source "$PACKS" --to "$VERSION" --dry-run | tee "$WORK/dry-run.log"

@@ -4,6 +4,7 @@
  *   magnus-project.json          this state file
  *   package.json, package-lock.json   pins of the version that is serving
  *   config/magnus-server.env, config/magnus-ui.env   0600
+ *   data/                        the server's MAGNUS_HOME
  *   versions/<X.Y.Z>/            one npm install per version
  *   current -> versions/<X.Y.Z>  what the services run
  *   backups/                     pre-migration database dumps

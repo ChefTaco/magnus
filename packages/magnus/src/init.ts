@@ -114,7 +114,7 @@ export async function init(io: Io, options: InitOptions): Promise<number> {
   const project = new Project(dir, state);
   const release = acquireLock(project.path('run', 'upgrade.lock'));
   try {
-    for (const sub of ['config', 'backups', 'run', 'versions', 'units', 'ui-data']) {
+    for (const sub of ['config', 'data', 'backups', 'run', 'versions', 'units', 'ui-data']) {
       mkdirSync(project.path(sub), { recursive: true, mode: sub === 'versions' || sub === 'units' ? 0o755 : 0o700 });
     }
     io.log(`Creating a Magnus ${version} project in ${dir}`);
@@ -140,7 +140,7 @@ export async function init(io: Io, options: InitOptions): Promise<number> {
     const uiOrigin = `https://${host}:${options.uiPort}`;
     writeFileSync(project.envFile('server'), serverEnv({
       databaseUrl: databaseUrl!, redisUrl: redisUrl!, port: options.serverPort, publicUrl: `https://${host}:${options.serverPort}`,
-      uiOrigin, tlsCert: tls.cert, tlsKey: tls.key, home: dir, autoMigrate: options.autoMigrate,
+      uiOrigin, tlsCert: tls.cert, tlsKey: tls.key, home: project.path('data'), backupDir: project.path('backups'), autoMigrate: options.autoMigrate,
     }, {}), { mode: 0o600 });
     const password = options.adminPassword ?? randomBytes(12).toString('base64url');
     if (options.ui) {
@@ -162,7 +162,7 @@ export async function init(io: Io, options: InitOptions): Promise<number> {
 
     if (options.system && options.serviceUser) {
       await chownForService(io, options.serviceUser, [
-        project.path('config'), project.envFile('server'), project.envFile('ui'), project.path('backups'), project.path('run'),
+        project.path('config'), project.envFile('server'), project.envFile('ui'), project.path('data'), project.path('backups'), project.path('run'),
         project.path('ui-data'), ...(tls.selfSigned ? [project.path('config', 'tls'), tls.cert, tls.key] : []),
       ]);
     }

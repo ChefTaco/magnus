@@ -21,7 +21,7 @@ FROM --platform=$BUILDPLATFORM ${NODE_IMAGE} AS builder
 RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 make g++ \
   && rm -rf /var/lib/apt/lists/*
-WORKDIR /src
+WORKDIR /opt/magnus-build
 COPY . .
 RUN npm ci --no-audit --no-fund --ignore-scripts \
       --workspace @hivemagnus/magnus-contracts \
