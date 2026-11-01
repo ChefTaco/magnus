@@ -136,7 +136,7 @@ export async function backupDatabase(options: BackupOptions): Promise<BackupResu
   const clientMajor = majorOf(client.stdout);
   if (client.code !== 0 || clientMajor === null) throw new Error(`${pgDump} --version failed: ${client.stderr.trim() || client.stdout.trim()}`);
   if (serverMajor !== null && clientMajor < serverMajor) {
-    throw new Error(`${pgDump} is PostgreSQL ${clientMajor} but the server is PostgreSQL ${serverMajor}; install a matching client (or set MAGNUS_PG_DUMP).`);
+    throw new Error(`${pgDump} is PostgreSQL ${clientMajor} but the server is PostgreSQL ${serverMajor}; install the PostgreSQL ${serverMajor} client and set MAGNUS_PG_DUMP to it (on Debian and Ubuntu: /usr/lib/postgresql/${serverMajor}/bin/pg_dump).`);
   }
 
   mkdirSync(options.backupDir, { recursive: true, mode: 0o700 });
