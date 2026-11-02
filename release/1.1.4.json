@@ -1,0 +1,9 @@
+{
+  "summary": "Restore safety: the original schema is put back when pg_restore cannot be started after the swap, a schema left aside by an interrupted restore blocks a new restore, and a committed restore is not reported as failed when only the cleanup fails. No migrations and no new settings.",
+  "breaking": false,
+  "minUpgradeFrom": "1.0.0",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}

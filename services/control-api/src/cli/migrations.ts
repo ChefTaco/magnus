@@ -309,17 +309,38 @@ export async function restoreDatabase(options: RestoreOptions): Promise<void> {
     throw new Error(`${pgRestore} could not be started (install the PostgreSQL client tools or set MAGNUS_PG_DUMP): ${error instanceof Error ? error.message : String(error)}`);
   });
   if (listed.code !== 0) throw new Error(`${options.file} is not a readable dump: ${(listed.stderr || listed.stdout).trim().split('\n').slice(-2).join(' ')}`);
+  // A schema left aside by an earlier restore means that restore was interrupted (or could not drop
+  // it): the original data may only exist there, so never swap again on top of it.
+  const leftover = await options.client.query<{ nspname: string }>(
+    "SELECT nspname FROM pg_namespace WHERE nspname LIKE 'magnus\\_pre\\_restore\\_%' ORDER BY nspname");
+  if (leftover.rows.length) {
+    const names = leftover.rows.map(row => row.nspname).join(', ');
+    throw new Error(`an earlier restore left the schema ${names} behind, which may hold the original data. Check what \`public\` holds; `
+      + `to put the set-aside schema back run \`${restoreRevertSql(leftover.rows.at(-1)!.nspname)}\`, or drop it once you are sure it is not needed, then restore again.`);
+  }
   const aside = restoreAsideSchema(options.now ?? new Date());
   await options.client.query(restoreSwapSql(aside));
   log(`  moved the current schema aside as ${aside}`);
+  // From here on every failure must put the original schema back before it is reported.
+  const putBack = async (reason: string): Promise<never> => {
+    try {
+      await options.client.query(restoreRevertSql(aside));
+    } catch (error) {
+      throw new Error(`${reason}, and putting the original schema back failed too; it is kept as ${aside}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    throw new Error(`${reason}; the database is unchanged`);
+  };
   const { url, env } = splitPassword(options.databaseUrl);
-  const result = await run(pgRestore, ['--single-transaction', '--exit-on-error', '--no-owner', '--dbname', url, options.file],
-    { capture: true, env: { ...process.env, ...env } });
-  if (result.code !== 0) {
-    await options.client.query(restoreRevertSql(aside)).catch((error: unknown) => {
-      throw new Error(`pg_restore failed and putting the original schema back failed too; it is kept as ${aside}: ${error instanceof Error ? error.message : String(error)}`);
-    });
-    throw new Error(`pg_restore failed (exit ${result.code}); the database is unchanged: ${result.stderr.trim().split('\n').slice(-3).join(' ')}`);
+  let result: Awaited<ReturnType<CommandRunner>>;
+  try {
+    result = await run(pgRestore, ['--single-transaction', '--exit-on-error', '--no-owner', '--dbname', url, options.file],
+      { capture: true, env: { ...process.env, ...env } });
+  } catch (error) {
+    return putBack(`${pgRestore} could not be run (${error instanceof Error ? error.message : String(error)})`);
   }
-  await options.client.query(restoreFinishSql(aside));
+  if (result.code !== 0) return putBack(`pg_restore failed (exit ${result.code}): ${result.stderr.trim().split('\n').slice(-3).join(' ')}`);
+  // The restore committed; failing to drop the old copy must not report the restore as failed.
+  await options.client.query(restoreFinishSql(aside)).catch((error: unknown) => {
+    log(`  warning: the restore succeeded but the previous schema ${aside} could not be dropped (${error instanceof Error ? error.message : String(error)}); drop it with \`${restoreFinishSql(aside)}\` once you have checked the restored data`);
+  });
 }
