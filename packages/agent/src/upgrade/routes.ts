@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { agentUpgradeRequestSchema } from '@hivemagnus/magnus-contracts';
+import { managedExecution } from '../security/managed-context.js';
 import { logger } from '../utils/logger.js';
 import { AGENT_VERSION } from '../version.js';
 import { upgradePreflight } from './preflight.js';
@@ -29,9 +30,15 @@ agentUpgradeRoutes.post('/', async c => {
     if (result.repeated) return c.json({ success: true, data: { accepted: true, ...result } });
     logger.info(`Self-upgrade staged: ${result.from} -> ${result.to}; restarting through the launcher`);
     // Reply first; the launcher starts versions/<to> on trial after this process exits.
-    setTimeout(() => process.kill(process.pid, 'SIGTERM'), RESTART_DELAY_MS).unref();
-    // Backstop: a shutdown that hangs must not keep the old version running on the new ./current.
-    setTimeout(() => process.exit(0), EXIT_BACKSTOP_MS).unref();
+    const restart = () => {
+      setTimeout(() => process.kill(process.pid, 'SIGTERM'), RESTART_DELAY_MS).unref();
+      // Backstop: a shutdown that hangs must not keep the old version running on the new ./current.
+      setTimeout(() => process.exit(0), EXIT_BACKSTOP_MS).unref();
+    };
+    // A managed request's terminal receipt is written after this handler returns: the clock starts when it is durable.
+    const managed = managedExecution.getStore();
+    if (managed?.afterSettled) managed.afterSettled.push(restart);
+    else restart();
     return c.json({ success: true, data: { accepted: true, ...result, restartInSeconds: RESTART_DELAY_MS / 1000 } });
   } catch (error) {
     if (error instanceof SelfUpgradeError) {

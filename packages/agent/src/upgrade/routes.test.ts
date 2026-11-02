@@ -17,6 +17,22 @@ describe('agent upgrade route', () => {
     expect(await response.json()).toMatchObject({ success: true, data: { preflightProtocol: 1, target: '1.1.8', engines: { range: '^24.0.0' }, ledger: { readable: true } } });
   });
 
+  it('inside a managed request, starts the exit timers only once the ledger is done', async () => {
+    vi.useFakeTimers();
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    stageUpgrade.mockResolvedValue({ from: '1.1.2', to: '1.1.3', integrity: body.integrity, requestId: 'req-1' });
+    const { managedExecution } = await import('../security/managed-context.js');
+    const afterSettled: Array<() => void | Promise<void>> = [];
+    const response = await managedExecution.run({ claim: {} as never, commandId: 'c', requestSha256: 'x', afterSettled }, () => post());
+    expect(response.status).toBe(200);
+    vi.advanceTimersByTime(RESTART_DELAY_MS * 10);
+    expect(kill).not.toHaveBeenCalled();
+    expect(afterSettled).toHaveLength(1);
+    await afterSettled[0]!();
+    vi.advanceTimersByTime(RESTART_DELAY_MS);
+    expect(kill).toHaveBeenCalledTimes(1);
+  });
+
   it('answers a repeated request with the current state and does not restart', async () => {
     vi.useFakeTimers();
     const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);

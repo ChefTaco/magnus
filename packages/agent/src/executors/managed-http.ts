@@ -186,6 +186,10 @@ export function registerManagedHttp(app: Hono): void {
         throw new CommandAdmissionError('RESOURCE_CLAIM_INVALID', 'The server did not confirm the exact resource owner; nothing ran', { notStarted: !prior });
       }
       let response: { status: number; body: string } | undefined;
+      const afterSettled: Array<() => void | Promise<void>> = [];
+      const settled = async () => {
+        for (const task of afterSettled.splice(0)) await Promise.resolve().then(task).catch((error: unknown) => logger.warn(`After ${value.commandId} settled: ${error instanceof Error ? error.message : String(error)}`));
+      };
       const receipt = await commandLedger.execute(identity, async digest => {
         const start = Date.now();
         // Durable fence/enrollment/receipt writes may outlast the authority
@@ -202,7 +206,7 @@ export function registerManagedHttp(app: Hono): void {
             code: 'LEASE_EXPIRED', message: 'Native mutation lease expired before handler start; no handler executed',
           } }), { status: 409, headers: { 'content-type': 'application/json' } });
         } else result = await managedExecution.run({ claim: value.claim, commandId: value.commandId, requestSha256: digest,
-            coordination: value.coordination, signal: c.req.raw.signal }, () => app.request(`http://localhost/api/v1${value.path}`, {
+            coordination: value.coordination, signal: c.req.raw.signal, afterSettled }, () => app.request(`http://localhost/api/v1${value.path}`, {
           method: value.method, headers: { 'content-type': 'application/json', 'x-node-token': NODE_MANAGER_SECRET },
           signal: c.req.raw.signal,
           ...(value.body ? { body: value.body } : {}),
@@ -228,7 +232,7 @@ export function registerManagedHttp(app: Hono): void {
           durationMs: Date.now() - start, truncated: false,
           coordination: { ...value.coordination, requestSha256: digest } };
         return { ...signed, signature: signCommandResult(signed, RESULT_SIGNING_SECRET) };
-      }, value.claim);
+      }, value.claim).finally(settled);
       if (!response) return c.json({ success: false, error: { code: 'RESULT_ALREADY_RECORDED', message: 'Read the existing signed receipt without replay' } }, 409);
       return c.json({ success: true, data: { response, receipt } });
     } catch (error) {
