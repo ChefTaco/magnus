@@ -11,6 +11,8 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { SkeletonStatGrid } from '@/components/ui/skeleton';
 import { NodeMetricsChart } from '@/components/nodes/node-metrics-chart';
 import { AgentSelfUpgradeBadge } from '@/components/nodes/agent-self-upgrade-badge';
+import { UpgradeReadinessBadge, UpgradeReadinessPanel } from '@/components/nodes/upgrade-readiness-badge';
+import type { UpgradeReadiness } from '@/types/upgrades';
 import { Badge, statusVariant } from '@/components/ui/badge';
 import { HiveMemTokenStatus } from '@/components/orchestra/hivemem-token-status';
 import { Button } from '@/components/ui/button';
@@ -57,6 +59,7 @@ interface NodeDetail {
   agent?: { version: string; status: string } | null;
   role?: { id: string; name: string } | null;
   roleId?: string | null;
+  upgradeReadiness?: UpgradeReadiness | null;
 }
 
 interface RoleApplicationStep {
@@ -596,6 +599,7 @@ export default function NodeDetailPage(): React.ReactElement {
             </Badge>
           )}
           <AgentSelfUpgradeBadge metadata={node.metadata} />
+          <UpgradeReadinessBadge readiness={node.upgradeReadiness} />
           <Button
             variant="secondary"
             size="sm"
@@ -614,6 +618,7 @@ export default function NodeDetailPage(): React.ReactElement {
           </Button>
         </div>
         </div>
+        {node.upgradeReadiness?.status === 'not-ready' && <div className="mt-4"><UpgradeReadinessPanel readiness={node.upgradeReadiness} /></div>}
         <div className="mt-6 grid gap-6 xl:grid-cols-[auto_minmax(0,1fr)]">
           <div className="flex flex-wrap justify-center gap-4 sm:justify-start">
             <Gauge value={health?.cpuUsagePercent ?? null} label="CPU Usage" size={128} testId="node-gauge-cpu" />

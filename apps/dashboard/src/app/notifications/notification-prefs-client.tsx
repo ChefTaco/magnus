@@ -7,6 +7,7 @@ const CATEGORIES = [
   { id: 'node.offline', label: 'Node Offline', group: 'Fleet' },
   { id: 'node.degraded', label: 'Node Degraded', group: 'Fleet' },
   { id: 'node.recovered', label: 'Node Recovered', group: 'Fleet' },
+  { id: 'node.upgrade_not_ready', label: 'Agent Upgrade Blocked', group: 'Fleet' },
   { id: 'command.failed', label: 'Command Failed', group: 'Operations' },
   { id: 'deploy.failed', label: 'Deploy Failed', group: 'Operations' },
   { id: 'deploy.success', label: 'Deploy Success', group: 'Operations' },

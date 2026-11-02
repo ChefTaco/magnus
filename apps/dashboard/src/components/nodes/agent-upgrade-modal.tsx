@@ -1,19 +1,21 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowUpCircle, CheckCircle2, Loader2, OctagonX, RotateCcw, XCircle } from 'lucide-react';
+import { AlertTriangle, ArrowUpCircle, CheckCircle2, ClipboardCheck, Loader2, OctagonX, RotateCcw, XCircle } from 'lucide-react';
 import { Modal } from '@/components/ui/modal';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { api } from '@/lib/api-client';
-import { isNotFound, nodeDetail, retryable, targetDescription, upgradeErrorMessage } from '@/lib/agent-upgrade-view';
-import type { AgentUpgradeEligibility, AgentUpgradeRun, NodeRunState } from '@/types/upgrades';
+import { isNotFound, nodeDetail, remedyText, retryCount, retryable, runHeadline, targetDescription, upgradeErrorMessage } from '@/lib/agent-upgrade-view';
+import type { AgentUpgradeCheck, AgentUpgradeEligibility, AgentUpgradeRun, NodeRunState } from '@/types/upgrades';
 
 const RUN_POLL_MS = 5_000;
 
 const stateBadge: Record<NodeRunState, { label: string; variant: 'default' | 'success' | 'warning' | 'danger' | 'info' }> = {
   pending: { label: 'Queued', variant: 'default' },
   requested: { label: 'Installing', variant: 'info' },
+  watching: { label: 'Watching', variant: 'info' },
+  ambiguous: { label: 'Unknown', variant: 'warning' },
   confirmed: { label: 'Upgraded', variant: 'success' },
   reverted: { label: 'Reverted', variant: 'danger' },
   failed: { label: 'Failed', variant: 'danger' },
@@ -27,7 +29,9 @@ const stateBadge: Record<NodeRunState, { label: string; variant: 'default' | 'su
  * `magnus-agent install-service`, self-upgrade switched off, another major,
  * enrollment blockers) are greyed out with the reason. One canary goes first;
  * each agent reverts itself if the new version does not report a heartbeat in
- * time. Reopening shows the last run, with Retry for the nodes it left over.
+ * time. Check shows every node's full report before anything starts. A problem
+ * of one node never stops the run; reopening shows the last run, each node needing
+ * attention with what to do, and Retry for those nodes.
  */
 export function AgentUpgradeModal({ open, onClose, onFinished }: { open: boolean; onClose: () => void; onFinished?: () => void }): React.ReactElement {
   const [eligibility, setEligibility] = useState<AgentUpgradeEligibility | null>(null);
@@ -35,6 +39,9 @@ export function AgentUpgradeModal({ open, onClose, onFinished }: { open: boolean
   const [run, setRun] = useState<AgentUpgradeRun | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [check, setCheck] = useState<AgentUpgradeCheck | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [maxFailures, setMaxFailures] = useState('');
 
   const fail = async (cause: unknown) => setError(await upgradeErrorMessage(cause));
 
@@ -50,7 +57,7 @@ export function AgentUpgradeModal({ open, onClose, onFinished }: { open: boolean
     }
   }, []);
 
-  useEffect(() => { if (open) { setRun(null); void load(); } }, [open, load]);
+  useEffect(() => { if (open) { setRun(null); setCheck(null); void load(); } }, [open, load]);
 
   useEffect(() => {
     if (!run || run.status !== 'running') return;
@@ -81,8 +88,20 @@ export function AgentUpgradeModal({ open, onClose, onFinished }: { open: boolean
       setBusy(false);
     }
   };
+  const budget = /^[1-9][0-9]{0,2}$/.test(maxFailures) ? { maxFailures: Number(maxFailures) } : {};
   const start = () => act(() => api.agentUpgrades.start({ nodeIds: [...selected], version: eligibility?.version,
-    ...(eligibility?.prerelease ? { allowPrerelease: true } : {}) }));
+    ...(eligibility?.prerelease ? { allowPrerelease: true } : {}), ...budget }));
+  const runCheck = async () => {
+    setChecking(true);
+    setError(null);
+    try {
+      setCheck(await api.agentUpgrades.check({ version: eligibility?.version, ...(selected.size ? { nodeIds: [...selected] } : {}) }));
+    } catch (cause) {
+      await fail(cause);
+    } finally {
+      setChecking(false);
+    }
+  };
   const stop = () => run && act(() => api.agentUpgrades.stop(run.id));
   const retry = () => run && act(() => api.agentUpgrades.retry(run.id));
 
@@ -110,10 +129,11 @@ export function AgentUpgradeModal({ open, onClose, onFinished }: { open: boolean
             <p className="flex items-center gap-2">
               {run.status === 'running' && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
               {run.status === 'succeeded' && <CheckCircle2 className="h-4 w-4 text-success" />}
+              {run.status === 'partial' && <AlertTriangle className="h-4 w-4 text-warning" />}
               {(run.status === 'failed' || run.status === 'interrupted') && <XCircle className="h-4 w-4 text-danger" />}
               {run.status === 'stopped' && <OctagonX className="h-4 w-4 text-warning" />}
               <span className="font-bold uppercase tracking-wider">
-                {run.status === 'running' ? `Upgrading to ${run.version}${run.stopRequestedBy ? ' (stopping after the nodes in progress)' : ''}` : `Last run: ${run.status}`}
+                {run.status === 'running' ? `Upgrading to ${run.version}${run.stopRequestedBy ? ' (stopping after the nodes in progress)' : ''}` : runHeadline(run)}
               </span>
             </p>
             {run.status !== 'running' && run.message && <p className="text-text-muted" data-testid="agent-upgrade-run-message">{run.message}</p>}
@@ -127,6 +147,7 @@ export function AgentUpgradeModal({ open, onClose, onFinished }: { open: boolean
                     {node.state === 'reverted' && <RotateCcw className="mr-1 inline h-3 w-3" />}
                     {stateBadge[node.state]?.label ?? node.state}
                   </Badge>
+                  {(node.attempts ?? 1) > 1 && <span className="num text-text-muted">try {node.attempts}</span>}
                   {nodeDetail(node) && <span className="min-w-0 flex-1 truncate text-text-muted" title={nodeDetail(node) ?? undefined}>{nodeDetail(node)}</span>}
                 </li>
               ))}
@@ -135,6 +156,46 @@ export function AgentUpgradeModal({ open, onClose, onFinished }: { open: boolean
                   <span className="w-40 truncate font-medium text-text">{node.name}</span>
                   <Badge variant="default">Not included</Badge>
                   <span className="min-w-0 flex-1 truncate text-text-muted">{node.reason}</span>
+                </li>
+              ))}
+            </ul>
+            {run.status !== 'running' && (run.attention?.length ?? 0) > 0 && (
+              <div className="space-y-2 rounded border border-warning/40 bg-warning/10 px-3 py-2" data-testid="agent-upgrade-attention">
+                <p className="font-bold uppercase tracking-wider text-warning">Needs attention</p>
+                <ul className="max-h-48 space-y-2 overflow-y-auto">
+                  {run.attention!.map((item) => (
+                    <li key={`${item.nodeId}-${item.code}`}>
+                      <p className="font-medium text-text">{item.name}: <span className="num">{item.code}</span>{item.failureClass === 'release' ? ' (points at the release)' : ''}</p>
+                      {item.detail && <p className="text-text-muted">{item.detail}</p>}
+                      <p className="text-text">{item.remedy}</p>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+
+        {check && (
+          <div className="space-y-2" data-testid="agent-upgrade-check">
+            <p className="font-bold uppercase tracking-wider">
+              Check: {check.eligible} ready, {check.blocked} blocked{check.release.verified ? '' : `; target not verified: ${check.release.reason ?? 'unknown'}`}
+            </p>
+            <ul className="max-h-64 divide-y divide-border/40 overflow-y-auto rounded border border-border">
+              {check.nodes.map((node) => (
+                <li key={node.nodeId} className="space-y-1 px-3 py-2">
+                  <p className="flex items-center gap-2">
+                    <span className="w-40 truncate font-medium text-text">{node.name}</span>
+                    <Badge variant={node.eligible ? 'success' : node.preflight?.status === 'blocked' ? 'danger' : 'default'}>{node.eligible ? 'Ready' : node.code ?? 'Not eligible'}</Badge>
+                    <span className="text-text-muted">preflight {node.preflight?.status ?? 'not run'}</span>
+                  </p>
+                  {!node.eligible && node.reason && <p className="text-text-muted">{node.reason}</p>}
+                  {!node.eligible && node.remedy && <p className="text-text">{node.remedy}</p>}
+                  {node.preflight?.problems.filter((problem) => problem.code !== node.code).map((problem) => (
+                    <p key={`${problem.code}-${problem.detail}`} className="text-text-muted">
+                      <span className="num">{problem.code}</span>: {problem.detail}. {remedyText(problem.code)}
+                    </p>
+                  ))}
                 </li>
               ))}
             </ul>
@@ -151,6 +212,9 @@ export function AgentUpgradeModal({ open, onClose, onFinished }: { open: boolean
                 <span className="w-40 truncate font-medium text-text">{node.name}</span>
                 <span className="num w-20 text-text-muted">{node.version}</span>
                 <span className="min-w-0 flex-1 truncate text-text-muted">{node.eligible ? `→ ${eligibility.version}` : node.reason}</span>
+                {node.preflight && node.preflight.status !== 'ok' && (
+                  <Badge variant={node.preflight.status === 'blocked' ? 'danger' : 'default'}>preflight {node.preflight.status}</Badge>
+                )}
               </li>
             ))}
             {eligibility.nodes.length === 0 && <li className="px-3 py-2 text-text-muted">No nodes registered.</li>}
@@ -159,8 +223,16 @@ export function AgentUpgradeModal({ open, onClose, onFinished }: { open: boolean
 
         <div className="flex items-center justify-between gap-2">
           <p className="text-text-muted">
-            The first agent is a canary. Each agent switches back by itself if the new version does not report a heartbeat in time. A revert or failure stops the run; an agent that refuses before changing anything is skipped over.
+            The first agent is a canary. Each agent switches back by itself if the new version does not report a heartbeat in time. Only evidence about the release stops the run: a failure on the canary, an integrity mismatch, or too many reverts. A problem of one node is recorded and the run goes on.
           </p>
+          {showCandidates && (
+            <label className="flex shrink-0 items-center gap-1 text-text-muted" title="Reverts or failed installs that stop the run after its canary. Empty: the server's setting.">
+              Stop after
+              <input className="w-12 rounded border border-border bg-transparent px-1 py-0.5 text-text" inputMode="numeric" aria-label="Release failures that stop the run"
+                value={maxFailures} onChange={(event) => setMaxFailures(event.target.value)} data-testid="agent-upgrade-max-failures" />
+              failures
+            </label>
+          )}
           <div className="flex shrink-0 gap-2">
             <Button variant="secondary" size="sm" onClick={onClose}>Close</Button>
             {run?.status === 'running' && (
@@ -169,7 +241,11 @@ export function AgentUpgradeModal({ open, onClose, onFinished }: { open: boolean
             )}
             {retryable(run) && eligibility?.upgradesEnabled && (
               <Button variant="secondary" size="sm" onClick={() => void retry()} data-testid="agent-upgrade-retry" disabled={busy}
-                icon={<RotateCcw className="h-3.5 w-3.5" />}>Retry the rest</Button>
+                icon={<RotateCcw className="h-3.5 w-3.5" />}>Retry {retryCount(run)} node{retryCount(run) === 1 ? '' : 's'}</Button>
+            )}
+            {showCandidates && (
+              <Button variant="secondary" size="sm" onClick={() => void runCheck()} data-testid="agent-upgrade-check-button" disabled={busy || checking}
+                icon={checking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ClipboardCheck className="h-3.5 w-3.5" />}>Check</Button>
             )}
             {showCandidates && (
               <Button variant="primary" size="sm" onClick={() => void start()} data-testid="agent-upgrade-start"

@@ -1,6 +1,8 @@
 // Minimal contract types used by magnus-ui
 // These are kept in sync with magnus-api/src/types/api.ts
 
+import type { UpgradeReadiness } from './upgrades';
+
 export interface ApiResponse<T = unknown> {
   success: boolean;
   data?: T;
@@ -37,6 +39,8 @@ export interface Node {
   lastHeartbeatAt: string | null;
   createdAt: string;
   updatedAt: string;
+  /** From 1.1.8 servers: whether this node could take an agent upgrade now. */
+  upgradeReadiness?: UpgradeReadiness | null;
 }
 
 // ─── Health ───
@@ -471,6 +475,7 @@ export interface LibraryFile {
 
 export type NotificationType =
   | 'node.offline'
+  | 'node.upgrade_not_ready'
   | 'node.degraded'
   | 'node.recovered'
   | 'command.failed'

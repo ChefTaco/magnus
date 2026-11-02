@@ -45,7 +45,7 @@ import type {
 import type { HermesConfigFile, HermesInstallation, HermesOperationJob, HermesProfile } from '../types/orchestra';
 import type { CodexDeviceAuthSession, CodexInstallation } from '../types/codex';
 import type { ArdentFleetInstallation, ArdentProfileSummary } from '@hivemagnus/magnus-contracts';
-import type { AgentUpgradeEligibility, AgentUpgradeRun, SystemUpdates } from '../types/upgrades';
+import type { AgentUpgradeCheck, AgentUpgradeEligibility, AgentUpgradeRun, SystemUpdates } from '../types/upgrades';
 import { normalizeProxyTarget, proxyTargetHeaders } from './proxy-target';
 import { agentDisabledMessage } from './agent-privilege';
 
@@ -689,8 +689,10 @@ class DashboardApiClient {
   agentUpgrades = {
     eligibility: (version?: string) =>
       this.get<AgentUpgradeEligibility>(`agents/upgrade/eligibility${version ? `?version=${encodeURIComponent(version)}` : ''}`).then((r) => r.data!),
-    start: (data: { nodeIds?: string[]; version?: string; canaryNodeId?: string; allowPrerelease?: boolean; allowRetryReverted?: boolean }) =>
+    start: (data: { nodeIds?: string[]; version?: string; canaryNodeId?: string; allowPrerelease?: boolean; allowRetryReverted?: boolean; maxFailures?: number }) =>
       this.post<AgentUpgradeRun>('agents/upgrade', data).then((r) => r.data!),
+    check: (data: { nodeIds?: string[]; version?: string; allowRetryReverted?: boolean }) =>
+      this.post<AgentUpgradeCheck>('agents/upgrade', { ...data, dryRun: true }).then((r) => r.data!),
     run: (id: string) => this.get<AgentUpgradeRun>(`agents/upgrade/runs/${encodeURIComponent(id)}`).then((r) => r.data!),
     stop: (id: string) => this.post<AgentUpgradeRun>(`agents/upgrade/runs/${encodeURIComponent(id)}/stop`).then((r) => r.data!),
     retry: (id: string, data: { allowRetryReverted?: boolean } = {}) =>

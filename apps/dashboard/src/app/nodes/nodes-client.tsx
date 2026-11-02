@@ -37,6 +37,8 @@ import { StatusDot } from '@/components/ui/status-dot';
 import { EmptyState } from '@/components/ui/empty-state';
 import { SkeletonTable } from '@/components/ui/skeleton';
 import { AgentUpgradeModal } from '@/components/nodes/agent-upgrade-modal';
+import { UpgradeReadinessBadge } from '@/components/nodes/upgrade-readiness-badge';
+import type { UpgradeReadiness } from '@/types/upgrades';
 
 export interface NodeRow {
   id: string;
@@ -49,6 +51,7 @@ export interface NodeRow {
   arch: string;
   tags: string;
   metadata: string;
+  upgradeReadiness?: UpgradeReadiness | null;
   lastHeartbeatAt: string | null;
   agent?: { version: string; status: string } | null;
   role?: { id: string; name: string } | null;
@@ -478,6 +481,7 @@ export default function NodesPageClient({
                           {node.status === 'PROVISIONING' && (
                             <Loader2 className="h-3.5 w-3.5 text-info animate-spin" />
                           )}
+                          <UpgradeReadinessBadge readiness={node.upgradeReadiness} />
                         </div>
                       </td>
                       <td className="py-3 pr-4 text-text-muted">

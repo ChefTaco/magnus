@@ -6,7 +6,7 @@ import { api, type WebhookEndpoint, type WebhookCreateInput, type WebhookUpdateI
 import { Save, X, Plus, Trash2 } from 'lucide-react';
 
 const EVENT_OPTIONS = [
-  'node.offline', 'node.degraded', 'node.recovered',
+  'node.offline', 'node.degraded', 'node.recovered', 'node.upgrade_not_ready',
   'command.failed', 'deploy.failed', 'upgrade.failed',
   'ai.heartbeat', 'ai.anomaly',
 ];
