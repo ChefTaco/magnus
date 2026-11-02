@@ -26,6 +26,7 @@ const { startRolloutReconciler, stopRolloutReconciler } = await import('./servic
 const { startApplicationProbes, stopApplicationProbes } = await import('./services/application-probes.js');
 const { startNodeIssueMonitor } = await import('./services/node-issue-monitor.js');
 const { stopNodeIssueMonitor } = await import('./services/node-issue-monitor.js');
+const { startUpgradeReadinessMonitor, stopUpgradeReadinessMonitor } = await import('./services/agent-upgrade-readiness.js');
 const { startLogRetention } = await import('./services/log-retention.js');
 const { stopLogRetention } = await import('./services/log-retention.js');
 const { startHealthRetention } = await import('./services/health-retention.js');
@@ -70,6 +71,7 @@ const { CONTROL_API_VERSION } = await import('./config/version.js');
 function startBackgroundServices(listenPort: number): void {
   writeRuntimeFile({ version: CONTROL_API_VERSION, port: listenPort, host: listener.hostname });
   startNodeIssueMonitor();
+  startUpgradeReadinessMonitor();
   startApplicationProbes();
   startLogRetention();
   startHealthRetention();
@@ -148,6 +150,7 @@ async function shutdown(signal: string) {
     await Promise.race([(async () => {
       stopRolloutReconciler();
       stopNodeIssueMonitor();
+      stopUpgradeReadinessMonitor();
       stopApplicationProbes();
       stopLogRetention();
       stopHealthRetention();

@@ -2,6 +2,7 @@
 
 export type NotificationType =
   | 'node.offline'
+  | 'node.upgrade_not_ready'
   | 'node.degraded'
   | 'node.recovered'
   | 'command.failed'
