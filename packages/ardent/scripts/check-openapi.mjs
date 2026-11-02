@@ -1,4 +1,5 @@
 import { readFile, writeFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
@@ -10,6 +11,15 @@ const target = resolve(import.meta.dirname, '../openapi/ardent.json');
 const generatedTypes = resolve(import.meta.dirname, '../../../packages/contracts/src/ardent-openapi.ts');
 const generator = resolve(import.meta.dirname, '../../../node_modules/.bin/openapi-typescript');
 const exec = promisify(execFile);
+// openapi-typescript 7 runs on the archived @redocly/openapi-core 1.x, which only calls
+// minimatch (as minimatch 5's callable export) to match resolve.http.headers from a Redocly
+// config. The repo pins minimatch 11 everywhere (GHSA-g3hv-75wg-m249), so there must be no
+// Redocly config next to the generator.
+for (const name of ['redocly.yaml', '.redocly.yaml', 'redocly.yml', '.redocly.yml']) {
+  for (const dir of [resolve(import.meta.dirname, '..'), resolve(import.meta.dirname, '../../..')]) {
+    if (existsSync(resolve(dir, name))) throw new Error(`${resolve(dir, name)}: a Redocly config is not supported by the pinned openapi-typescript toolchain`);
+  }
+}
 const document = ardentOpenApi();
 await SwaggerParser.validate(document);
 const operations = new Set();
