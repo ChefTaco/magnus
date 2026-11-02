@@ -13,6 +13,50 @@ export interface SchedulerInventoryOptions {
   discovery?: DiscoveryOptions; expectedBarrier?: SchedulerDrainIdentity; atSpools?: string[];
   wrapper?: (job: Awaited<ReturnType<ManagedScheduler['job']>> & {}) => string;
 }
+/** Per-job fields Hermes rewrites while running or finishing a job. They are
+ * run state, not schedule definition: excluding them keeps one remembered source
+ * per jobs.json definition instead of one per run. Every other field, including
+ * fields this list does not know, is part of the definition. */
+const HERMES_RUN_STATE_FIELDS = new Set(['next_run_at', 'updated_at', 'run_count', 'runs', 'failure_count',
+  'consecutive_failures', 'fire_claim', 'run_claim']);
+const hermesRunStateField = (key: string) => key.startsWith('last_') || HERMES_RUN_STATE_FIELDS.has(key);
+function canonicalJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalJson);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.keys(value).sort().map(key => [key, canonicalJson((value as Record<string, unknown>)[key])]));
+}
+function hermesJobDefinition(job: Record<string, unknown>): unknown {
+  const definition: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(job)) if (!hermesRunStateField(key)) definition[key] = value;
+  // `repeat.times` is configuration; `repeat.completed` is a run counter.
+  if (definition['repeat'] && typeof definition['repeat'] === 'object' && !Array.isArray(definition['repeat'])) {
+    const { completed: _completed, ...repeat } = definition['repeat'] as Record<string, unknown>; definition['repeat'] = repeat;
+  }
+  return canonicalJson(definition);
+}
+export const hermesJobClaimed = (job: Record<string, unknown>) =>
+  Boolean(job['fire_claim'] || job['run_claim'] || ['running', 'working'].includes(job['last_status'] as string));
+/** Path-scoped identity of one Hermes cron/jobs.json. Schedules: the canonical
+ * job definitions, so adding, editing or enabling a job is a new source while a
+ * run-state rewrite is not. Claims: the set of jobs currently holding a claim. */
+export function hermesJobsIdentity(path: string, value: unknown) {
+  const document = Array.isArray(value) ? undefined : value && typeof value === 'object' ? value as Record<string, unknown> : undefined;
+  const jobs = Array.isArray(value) ? value : document?.['jobs'];
+  if (!Array.isArray(jobs) || jobs.length > 1000 || jobs.some(job => !job || typeof job !== 'object' || Array.isArray(job)
+    || job.enabled !== undefined && typeof job.enabled !== 'boolean' || job.paused !== undefined && typeof job.paused !== 'boolean')) throw new Error('Invalid native jobs');
+  const rows = jobs as Array<Record<string, unknown>>;
+  const definitions = rows.map(job => JSON.stringify(hermesJobDefinition(job))).sort();
+  // Top-level document fields other than the job list are kept, except its rewrite stamp.
+  const envelope = document ? canonicalJson(Object.fromEntries(Object.entries(document).filter(([key]) => key !== 'jobs' && key !== 'updated_at'))) : null;
+  const claimed = rows.filter(hermesJobClaimed).map(job => ['string', 'number'].includes(typeof job['id']) && String(job['id'])
+    ? 'id:' + String(job['id']) : 'definition:' + hash(JSON.stringify(hermesJobDefinition(job)))).sort();
+  return {
+    schedulesSha256: schedulerContentDigest(JSON.stringify({ domain: 'magnus.hermes-schedules.v1', source: hash(path), envelope, definitions })),
+    claimsSha256: schedulerContentDigest(JSON.stringify({ domain: 'magnus.hermes-claims.v1', source: hash(path), claimed })),
+    enabled: rows.filter(job => job['enabled'] !== false && job['paused'] !== true).length,
+    claims: claimed.length,
+  };
+}
 export async function schedulerInventory(options: SchedulerInventoryOptions = {}) {
   const blockers: DiscoveryBlockerInput[] = [];
   const issues: string[] = []; const sources: Record<string, string> = {};
@@ -86,13 +130,14 @@ export async function schedulerInventory(options: SchedulerInventoryOptions = {}
   for (const root of roots) {
     const path = join(root, 'cron/jobs.json'); const raw = await read(path); if (raw === undefined) continue;
     try {
-      const value = JSON.parse(raw); const jobs = Array.isArray(value) ? value : value.jobs;
-      if (!Array.isArray(jobs) || jobs.length > 1000 || jobs.some(job => !job || typeof job !== 'object'
-        || job.enabled !== undefined && typeof job.enabled !== 'boolean' || job.paused !== undefined && typeof job.paused !== 'boolean')) throw new Error('Invalid native jobs');
-      blockContent('NATIVE_HERMES_SCHEDULES', raw, jobs.filter(job => job.enabled !== false && job.paused !== true).length);
-      // Native claim TTL/PID liveness cannot prove descendants stopped. A paused
-      // schedule with any unresolved claim remains uncertain until its owner proves completion.
-      blockContent('NATIVE_HERMES_UNSETTLED_CLAIMS', raw, jobs.filter(job => job.fire_claim || job.run_claim || ['running', 'working'].includes(job.last_status)).length);
+      const identity = hermesJobsIdentity(path, JSON.parse(raw));
+      // Hermes rewrites jobs.json on every run. Evidence and remembered identity
+      // follow the job definitions and the set of claimed jobs, not run state.
+      sources[hash(path)] = schedulerContentDigest(JSON.stringify({ schedules: identity.schedulesSha256, claims: identity.claimsSha256 }));
+      blockers.push(...[{ kind: 'NATIVE_HERMES_SCHEDULES', sourceSha256: identity.schedulesSha256, count: identity.enabled },
+        // Native claim TTL/PID liveness cannot prove descendants stopped. A paused
+        // schedule with any unresolved claim remains uncertain until its owner proves completion.
+        { kind: 'NATIVE_HERMES_UNSETTLED_CLAIMS', sourceSha256: identity.claimsSha256, count: identity.claims }].filter(row => row.count));
     } catch { issues.push('HERMES_SCHEDULE_INVENTORY_INVALID:' + hash(path)); }
   }
   for (const directory of options.atSpools ?? (options.homes !== undefined ? [] : ['/var/spool/at', '/var/spool/atjobs', '/var/spool/cron/atjobs', '/var/spool/cron/atspool'])) {

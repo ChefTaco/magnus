@@ -121,30 +121,51 @@ export function stableServiceProperties(raw: string): string {
 export function stableTimerUnitList(raw: string): string {
   return raw.split('\n').map(line => line.trim().split(/\s+/).slice(0, 3).join(' ')).join('\n');
 }
-const HERMES_RUNTIME_TEXT = /(?:hermes|run_gateway\.py)/i;
 const SCRIPT_INTERPRETER = /^(?:python(?:[23](?:\.\d+)?)?|pypy3?|node|bun|deno|bash|sh|dash|zsh)$/;
+/** Interpreter options whose next argument is a value (a preloaded module, a
+ * warning filter), never the script being run. */
+const INTERPRETER_VALUE_OPTIONS = new Set(['-r', '--require', '--import', '--loader', '--experimental-loader', '-C',
+  '--conditions', '--env-file', '--input-type', '-W', '-X', '--check-hash-based-pycs', '-o']);
+const basenameOf = (path: string) => path.slice(path.lastIndexOf('/') + 1);
 /**
- * A process is a possible Hermes runtime when what it executes is Hermes: its
- * executable, the script or module an interpreter runs, or an explicit Hermes
- * home option. Other argument text is data, not identity: an operator's
- * `grep hermes`, a report filter naming a Hermes kind, or a shell whose inline
- * code mentions Hermes is not a runtime (any Hermes it starts is a separate
- * process observed on its own).
+ * Whether a program or script file name is Hermes: the `hermes` CLI and its
+ * `hermes-*`/`hermes_*` shims, or the gateway runner. Only the final path
+ * component counts; a `.hermes` or `hermes` directory is where unrelated
+ * software can live too, so it never identifies a runtime by itself.
+ */
+export function hermesProgramName(path: string): boolean {
+  const name = basenameOf(path).replace(/\.(?:py|pyc|js|mjs|cjs|ts|sh|exe)$/i, '');
+  return /^hermes(?:[-_][A-Za-z0-9_.-]*)?$/i.test(name) || /^run_gateway$/i.test(name);
+}
+/** Whether a Python module (`-m`) is Hermes: `hermes`, `hermes_cli`, `hermes_cli.main`, `hermes_agent`... */
+export function hermesModuleName(module: string): boolean {
+  return /^hermes(?:_[A-Za-z0-9_]*)?(?:\.[A-Za-z0-9_.]*)?$/i.test(module) || /^run_gateway$/i.test(module);
+}
+/**
+ * A process is a possible Hermes runtime when what it executes is Hermes: the
+ * basename of its executable, the basename of the script or the module an
+ * interpreter runs, or an explicit `--hermes-home` option. Other argument text
+ * is data, not identity: an operator's `grep hermes`, a report filter naming a
+ * Hermes kind, a shell whose inline code mentions Hermes, or unrelated software
+ * installed under a `.hermes` directory is not a runtime (any Hermes it starts
+ * is a separate process observed on its own). Every command the dashboard
+ * recogniser accepts (hermes-dashboard-discovery.ts) is recognised here too.
  */
 export function hermesRuntimeCommand(args: string[]): boolean {
   const executable = args[0] ?? '';
-  if (HERMES_RUNTIME_TEXT.test(executable)) return true;
+  if (hermesProgramName(executable)) return true;
   if (args.some(arg => /^--hermes-home(?:=|$)/.test(arg))) return true;
-  if (!SCRIPT_INTERPRETER.test(executable.split('/').pop() ?? '')) return false;
+  if (!SCRIPT_INTERPRETER.test(basenameOf(executable))) return false;
   for (let index = 1; index < args.length; index++) {
     const arg = args[index]!;
-    if (arg === '-m') return HERMES_RUNTIME_TEXT.test(args[index + 1] ?? '');
-    if (/^-m./.test(arg)) return HERMES_RUNTIME_TEXT.test(arg.slice(2));
+    if (arg === '-m') return hermesModuleName(args[index + 1] ?? '');
+    if (/^-m./.test(arg)) return hermesModuleName(arg.slice(2));
     // Inline code is not a script identity.
     if (/^-[a-zA-Z]*[ce]$/.test(arg) || ['--command', '--eval', '--print'].includes(arg)) return false;
-    if (arg === '--') return HERMES_RUNTIME_TEXT.test(args[index + 1] ?? '');
+    if (arg === '--') return hermesProgramName(args[index + 1] ?? '');
+    if (INTERPRETER_VALUE_OPTIONS.has(arg)) { index++; continue; }
     if (arg.startsWith('-')) continue;
-    return HERMES_RUNTIME_TEXT.test(arg);
+    return hermesProgramName(arg);
   }
   return false;
 }
