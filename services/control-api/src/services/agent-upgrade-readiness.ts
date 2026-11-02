@@ -7,7 +7,8 @@
 import { compareVersions, isVersion, upgradeRemedy } from '@hivemagnus/magnus-contracts';
 import { getDb } from '../db/index.js';
 import { SENTINEL_NODE_IDS } from '../utils/sentinel-nodes.js';
-import { recoverNodeLeases } from './agent-upgrade-preflight.js';
+import { upgradeSettings } from '../config/features.js';
+import { CERTAIN_REFUSALS_SINCE, recoverNodeLeases, selfUpgradeOffCode } from './agent-upgrade-preflight.js';
 import { storedSelfUpgrade } from './agent-upgrade-service.js';
 import { checkReportedFence, fenceIsAhead, isOwnFenceKey } from './command-fence-repair.js';
 import { ABSENT_RECEIPT_MARGIN_MS, HELD_RESOURCE_STATES } from './command-resource-leases.js';
@@ -66,10 +67,16 @@ export function computeUpgradeReadiness(input: ReadinessInput): UpgradeReadiness
   if (ledger && !ledger.readable) problems.push(problem('LEDGER_UNAVAILABLE', ledger.error ?? 'the agent cannot read its command ledger'));
   else if (ledger?.unresolvedReceipts) problems.push(problem('LEDGER_UNRESOLVED', `${ledger.unresolvedReceipts} receipt(s) in the agent ledger have no terminal outcome${ledger.activeLock ? `; active.lock is held by ${ledger.activeLock.commandId}` : ''}`));
   if (input.heldLeases) problems.push(problem('LEASE_HELD', `${input.heldLeases} command lease(s) are reserved, running or unknown`));
-  if (report?.disk?.low) problems.push(problem('PREFLIGHT_DISK_LOW', `${Math.floor(report.disk.freeBytes / (1024 * 1024))} MiB free in the install directory; an upgrade needs ${Math.floor(report.disk.requiredBytes / (1024 * 1024))} MiB`));
-  if (report?.npm && (!report.npm.present || report.npm.problem)) problems.push(problem('PREFLIGHT_NPM', report.npm.problem ?? 'npm is missing on this node'));
+  // Only a node that could upgrade itself needs npm and disk for it. One that is off because of a problem says which.
+  const canSelfUpgrade = report?.layout === 'versioned' && report.enabled;
+  if (report && !report.enabled && report.layout === 'versioned') {
+    const code = selfUpgradeOffCode(report);
+    if (!upgradeRemedy(code).informational) problems.push(problem(code, report.reason ?? 'self-upgrade is unavailable on this node'));
+  }
+  if (canSelfUpgrade && report?.disk?.low) problems.push(problem('PREFLIGHT_DISK_LOW', `${Math.floor(report.disk.freeBytes / (1024 * 1024))} MiB free in the install directory; an upgrade needs ${Math.floor(report.disk.requiredBytes / (1024 * 1024))} MiB`));
+  if (canSelfUpgrade && report?.npm && (!report.npm.present || report.npm.problem)) problems.push(problem('PREFLIGHT_NPM', report.npm.problem ?? 'npm is missing on this node'));
   const reportsDrift = Boolean(report && (report.ledger || report.disk || report.npm));
-  return { status: problems.length ? 'not-ready' : reportsDrift ? 'ok' : 'unknown', problems, observedAt: report?.observedAt ?? null };
+  return { status: problems.length ? 'not-ready' : reportsDrift && report?.enabled ? 'ok' : 'unknown', problems, observedAt: report?.observedAt ?? null };
 }
 
 /** Readiness of many nodes at once, for list pages: one query per kind of server state. Never fails a page. */
@@ -102,8 +109,6 @@ let timer: ReturnType<typeof setInterval> | null = null;
 
 /** How often one node is asked about its stuck leases. */
 export const LEASE_RECOVERY_INTERVAL_MS = 60 * 60_000;
-/** The first version whose agents answer the signed trace. Older ones keep their leases until reconciled. */
-const TRACE_ROUTE_SINCE = '1.1.8';
 const lastLeaseRecovery = new Map<string, number>();
 export function resetLeaseRecoveryLimits(): void { lastLeaseRecovery.clear(); }
 
@@ -120,7 +125,7 @@ async function recoverStuckLeases(now: number): Promise<void> {
   const nodes = await db.node.findMany({ where: { id: { in: stuck.map(row => row.nodeId) }, status: { in: ['ONLINE', 'DEGRADED'] } }, select: { id: true, name: true, agent: { select: { version: true } } } });
   for (const node of nodes) {
     const version = node.agent?.version ?? '';
-    if (!isVersion(version) || compareVersions(version, TRACE_ROUTE_SINCE) < 0) continue;
+    if (!isVersion(version) || compareVersions(version, CERTAIN_REFUSALS_SINCE) < 0) continue;
     if (now - (lastLeaseRecovery.get(node.id) ?? -Infinity) < LEASE_RECOVERY_INTERVAL_MS) continue;
     lastLeaseRecovery.set(node.id, now);
     const results = await recoverNodeLeases(node.id, 'system:upgrade-readiness', now).catch((error: unknown) => {
@@ -136,35 +141,45 @@ export async function checkUpgradeReadiness(now = Date.now()): Promise<void> {
   await recoverStuckLeases(now).catch((error: unknown) => console.warn(`[upgrade-readiness] lease recovery failed: ${error instanceof Error ? error.message : String(error)}`));
   const nodes = await db.node.findMany({ where: { id: { notIn: SENTINEL_NODE_IDS }, status: { in: ['ONLINE', 'DEGRADED'] } }, select: { id: true, name: true, hostname: true, metadata: true } });
   const readiness = await readinessOfNodes(nodes, now);
+  // Lease recovery above runs regardless: leases settle whether or not this server drives upgrades.
+  const notify = upgradeSettings().agentUpgrades;
   for (const node of nodes) {
     const state = readiness.get(node.id);
     if (!state) continue;
-    const metadata = parseMetadata(node.metadata);
-    const since = typeof metadata['upgradeNotReadySince'] === 'string' ? metadata['upgradeNotReadySince'] : null;
-    // Read again right before writing: heartbeats keep their report in the same column.
-    const patch = async (change: (current: Record<string, unknown>) => Record<string, unknown>) => {
-      const row = await db.node.findUnique({ where: { id: node.id }, select: { metadata: true } });
-      await db.node.update({ where: { id: node.id }, data: { metadata: JSON.stringify(change(parseMetadata(row?.metadata))) } });
-    };
-    if (state.status !== 'not-ready') {
-      if (since) await patch(withoutEpisode);
-      continue;
-    }
-    if (!since) {
-      await patch(current => ({ ...current, upgradeNotReadySince: new Date(now).toISOString() }));
-      continue;
-    }
-    if (metadata['upgradeNotReadyNotifiedAt'] || now - Date.parse(since) < NOT_READY_NOTIFY_MS) continue;
-    const maintenance = await matchingMaintenance(node.id);
-    await db.$transaction(async tx => {
-      await createNotificationInTransaction(tx, {
-        type: 'node.upgrade_not_ready', severity: 'warning', title: `${node.name} could not take an agent upgrade`,
-        message: `Not ready since ${since}: ${state.problems.map(item => `${item.code}: ${item.detail}. ${item.remedy}`).join(' ')}`.slice(0, 2000),
-        nodeId: node.id, nodeName: node.name, metadata: { since, codes: state.problems.map(item => item.code) },
-      }, maintenance?.id ?? null);
-    });
-    await patch(current => ({ ...current, upgradeNotReadyNotifiedAt: new Date(now).toISOString() }));
+    // One node's failure is that node's: the rest of the tick still runs.
+    await checkOneNode(node, state, notify, now).catch((error: unknown) => console.warn(`[upgrade-readiness] ${node.name}: ${error instanceof Error ? error.message : String(error)}`));
   }
+}
+
+async function checkOneNode(node: { id: string; name: string; metadata: string | null }, state: UpgradeReadiness, notify: boolean, now: number): Promise<void> {
+  const db = getDb();
+  const metadata = parseMetadata(node.metadata);
+  const since = typeof metadata['upgradeNotReadySince'] === 'string' ? metadata['upgradeNotReadySince'] : null;
+  // Read again right before writing: heartbeats keep their report in the same column.
+  const patch = async (change: (current: Record<string, unknown>) => Record<string, unknown>) => {
+    const row = await db.node.findUnique({ where: { id: node.id }, select: { metadata: true } });
+    await db.node.update({ where: { id: node.id }, data: { metadata: JSON.stringify(change(parseMetadata(row?.metadata))) } });
+  };
+  if (state.status !== 'not-ready') {
+    if (since) await patch(withoutEpisode);
+    return;
+  }
+  if (!since) return patch(current => ({ ...current, upgradeNotReadySince: new Date(now).toISOString() }));
+  if (!notify || metadata['upgradeNotReadyNotifiedAt'] || now - Date.parse(since) < NOT_READY_NOTIFY_MS) return;
+  const maintenance = await matchingMaintenance(node.id);
+  await db.$transaction(async tx => {
+    // Several servers may run this monitor: the lock and a fresh read make one of them the one that notifies.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`upgrade-not-ready:${node.id}`}, 0))`;
+    const row = await tx.node.findUnique({ where: { id: node.id }, select: { metadata: true } });
+    const current = parseMetadata(row?.metadata);
+    if (current['upgradeNotReadyNotifiedAt']) return;
+    await createNotificationInTransaction(tx, {
+      type: 'node.upgrade_not_ready', severity: 'warning', title: `${node.name} could not take an agent upgrade`,
+      message: `Not ready since ${since}: ${state.problems.map(item => `${item.code}: ${item.detail}. ${item.remedy}`).join(' ')}`.slice(0, 2000),
+      nodeId: node.id, nodeName: node.name, metadata: { since, codes: state.problems.map(item => item.code) },
+    }, maintenance?.id ?? null);
+    await tx.node.update({ where: { id: node.id }, data: { metadata: JSON.stringify({ ...current, upgradeNotReadyNotifiedAt: new Date(now).toISOString() }) } });
+  });
 }
 
 function parseMetadata(raw: string | null | undefined): Record<string, unknown> {
