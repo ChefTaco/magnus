@@ -31,7 +31,8 @@ export interface SystemUpdates {
 }
 
 export interface AgentUpgradeReport {
-  state: 'idle' | 'staged' | 'trial' | 'confirmed' | 'reverted' | 'failed';
+  /** Known states; newer agents may report others. */
+  state: 'idle' | 'staged' | 'trial' | 'confirmed' | 'reverted' | 'failed' | (string & {});
   from?: string | null;
   to?: string | null;
   requestId?: string | null;
@@ -47,6 +48,8 @@ export interface AgentSelfUpgrade {
   enabled: boolean;
   reason?: string | null;
   upgrade?: AgentUpgradeReport | null;
+  confirmSeconds?: number;
+  managedEnrollment?: { nodeId: string; nodeFqdn: string } | null;
   nodeVersion?: string | null;
   observedAt?: string;
 }
@@ -61,17 +64,32 @@ export interface UpgradeCandidate {
   layout: AgentSelfUpgrade['layout'] | null;
 }
 
-export type NodeRunState = 'pending' | 'requested' | 'confirmed' | 'reverted' | 'failed' | 'skipped';
+export type NodeRunState = 'pending' | 'requested' | 'confirmed' | 'reverted' | 'failed' | 'refused' | 'skipped';
+
+export interface AgentUpgradeRunNode {
+  nodeId: string;
+  name: string;
+  from: string;
+  state: NodeRunState;
+  detail: string | null;
+  code?: string | null;
+  awaitingReport?: boolean;
+}
 
 export interface AgentUpgradeRun {
   id: string;
   version: string;
-  status: 'running' | 'succeeded' | 'failed' | 'stopped';
+  status: 'running' | 'succeeded' | 'failed' | 'stopped' | 'interrupted';
   startedAt: string;
   finishedAt: string | null;
   concurrency: number;
   message: string | null;
-  nodes: Array<{ nodeId: string; name: string; from: string; state: NodeRunState; detail: string | null }>;
+  summary?: string | null;
+  canaryNodeId?: string | null;
+  stopRequestedBy?: string | null;
+  retryOf?: string | null;
+  excluded?: Array<{ nodeId: string; name: string; reason: string }>;
+  nodes: AgentUpgradeRunNode[];
 }
 
 export interface AgentUpgradeEligibility {
@@ -79,6 +97,8 @@ export interface AgentUpgradeEligibility {
   serverVersion: string;
   upgradesEnabled: boolean;
   disabledReason: string | null;
+  prerelease?: boolean;
+  release?: { verified: boolean; integrity: string | null; reason: string | null };
   nodes: UpgradeCandidate[];
   latestRun: AgentUpgradeRun | null;
 }

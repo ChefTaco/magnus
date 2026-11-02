@@ -56,6 +56,8 @@ async function checkStaleNodes(): Promise<void> {
       },
       }, maintenance?.id ?? null);
     });
+    // An agent that went silent mid-upgrade must not stay UPDATING.
+    await import('./agent-upgrade-service.js').then(service => service.clearAgentUpdating(node.id)).catch(() => undefined);
   }
   recordMonitorPulse('nodes');
 }

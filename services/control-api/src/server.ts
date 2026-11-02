@@ -114,6 +114,7 @@ const v1 = new Hono<AppVariables>();
 v1.use('/auth/*', rateLimitMiddleware({ windowMs: 60_000, max: 20, keyPrefix: 'rl:auth', failClosed: true }));
 v1.use('/deploy/*', rateLimitMiddleware({ windowMs: 60_000, max: 10, keyPrefix: 'rl:deploy', failClosed: true }));
 v1.use('/agents/upgrade', rateLimitMiddleware({ windowMs: 60_000, max: 10, keyPrefix: 'rl:agent-upgrade', failClosed: true }));
+v1.use('/agents/upgrade/runs/:id/retry', rateLimitMiddleware({ windowMs: 60_000, max: 10, keyPrefix: 'rl:agent-upgrade', failClosed: true }));
 v1.use('/self-update/*', rateLimitMiddleware({ windowMs: 60_000, max: 10, keyPrefix: 'rl:selfupdate', failClosed: true }));
 v1.use('/commands/*', rateLimitMiddleware({ windowMs: 60_000, max: 60, keyPrefix: 'rl:commands' }));
 v1.use('/quick-command/*', rateLimitMiddleware({ windowMs: 60_000, max: 30, keyPrefix: 'rl:quickcmd' }));

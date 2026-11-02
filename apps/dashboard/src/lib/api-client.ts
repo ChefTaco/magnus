@@ -689,9 +689,12 @@ class DashboardApiClient {
   agentUpgrades = {
     eligibility: (version?: string) =>
       this.get<AgentUpgradeEligibility>(`agents/upgrade/eligibility${version ? `?version=${encodeURIComponent(version)}` : ''}`).then((r) => r.data!),
-    start: (data: { nodeIds?: string[]; version?: string }) =>
+    start: (data: { nodeIds?: string[]; version?: string; canaryNodeId?: string; allowPrerelease?: boolean; allowRetryReverted?: boolean }) =>
       this.post<AgentUpgradeRun>('agents/upgrade', data).then((r) => r.data!),
     run: (id: string) => this.get<AgentUpgradeRun>(`agents/upgrade/runs/${encodeURIComponent(id)}`).then((r) => r.data!),
+    stop: (id: string) => this.post<AgentUpgradeRun>(`agents/upgrade/runs/${encodeURIComponent(id)}/stop`).then((r) => r.data!),
+    retry: (id: string, data: { allowRetryReverted?: boolean } = {}) =>
+      this.post<AgentUpgradeRun>(`agents/upgrade/runs/${encodeURIComponent(id)}/retry`, data).then((r) => r.data!),
   };
 
   libraryDeploy = {

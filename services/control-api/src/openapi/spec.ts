@@ -2255,13 +2255,16 @@ const paths: Record<string, Record<string, unknown>> = {
     get: {
       tags: ['Agent upgrades'],
       summary: 'Which agents can take a version',
-      description: 'For every node: its agent version and whether it can upgrade itself to `version` (default: the agent version this server ships with) now, or why not (offline, not set up with `magnus-agent install-service`, MAGNUS_AGENT_SELF_UPGRADE=false, another major version, already current).',
+      description: 'For every node: its agent version and whether it can upgrade itself to `version` (default: the agent version bundled with this server) now, or why not: offline, not set up with `magnus-agent install-service`, MAGNUS_AGENT_SELF_UPGRADE=false, another major version, already current, already reverted this version, a closed release admission fence, a resource enrollment that is not complete (for example "stuck in draining since <date>"), held participant work or command leases, or an agent whose sticky managed-enrollment marker the server does not share. `release.verified` is false when the registry does not have the version.',
       security: apiSecretAuth,
-      parameters: [qp('version', 'Target agent version (X.Y.Z)')],
+      parameters: [qp('version', 'Target agent version (X.Y.Z)'), qp('allowRetryReverted', '`true` to offer nodes that already reverted this version')],
       responses: { 200: success('Eligibility', { type: 'object', properties: {
-        version: { type: 'string' }, upgradesEnabled: { type: 'boolean' }, disabledReason: { type: ['string', 'null'] },
+        version: { type: 'string' }, serverVersion: { type: 'string' }, upgradesEnabled: { type: 'boolean' }, disabledReason: { type: ['string', 'null'] },
+        prerelease: { type: 'boolean' },
+        release: { type: 'object', properties: { verified: { type: 'boolean' }, integrity: { type: ['string', 'null'] }, reason: { type: ['string', 'null'] } } },
         nodes: { type: 'array', items: { type: 'object', properties: { nodeId: { type: 'string' }, name: { type: 'string' },
           version: { type: 'string' }, eligible: { type: 'boolean' }, reason: { type: ['string', 'null'] } } } },
+        latestRun: { type: ['object', 'null'] },
       } }), 400: err400, 401: err401 },
     },
   },
@@ -2269,12 +2272,15 @@ const paths: Record<string, Record<string, unknown>> = {
     post: {
       tags: ['Agent upgrades'],
       summary: 'Upgrade agents',
-      description: 'Starts an upgrade run (ADMIN, MAGNUS_AGENT_UPGRADES=true): one canary, then MAGNUS_AGENT_UPGRADE_CONCURRENCY agents at a time, stopping at the first agent that does not confirm. Each agent installs the exact version and npm integrity and switches back by itself if the new version does not report a heartbeat in time.',
+      description: 'Starts an upgrade run (ADMIN, MAGNUS_AGENT_UPGRADES=true): one canary, then MAGNUS_AGENT_UPGRADE_CONCURRENCY agents at a time. Each agent installs the exact version and npm integrity and switches back by itself if the new version does not report a heartbeat in time. A revert, a release problem (integrity, install failure) or an agent that goes silent after the request stops the run. An agent that refuses before changing anything is recorded as `refused` and the run goes on; a refused canary hands the role to the next node. Only one run at a time. Selected nodes that are not eligible are listed in `excluded`; unknown node ids are a 400.',
       security: apiSecretAuth,
       requestBody: { required: false, content: { 'application/json': { schema: { type: 'object', properties: {
-        version: { type: 'string', description: 'Agent version (default: the one this server ships with)' },
+        version: { type: 'string', description: 'Agent version (default: the one bundled with this server)' },
         integrity: { type: 'string', description: 'npm sha512 integrity (default: read from the registry)' },
-        nodeIds: { type: 'array', items: { type: 'string' }, description: 'Only these nodes' },
+        nodeIds: { type: 'array', minItems: 1, items: { type: 'string' }, description: 'Only these nodes (leave out for every eligible agent)' },
+        canaryNodeId: { type: 'string', description: 'Upgrade this node first' },
+        allowPrerelease: { type: 'boolean', description: 'Required for a prerelease version' },
+        allowRetryReverted: { type: 'boolean', description: 'Also upgrade nodes that already reverted this version' },
       } } } } },
       responses: { 202: success('Run started'), 400: err400, 401: err401, 403: err403, 409: err409 },
     },
@@ -2291,10 +2297,33 @@ const paths: Record<string, Record<string, unknown>> = {
     get: {
       tags: ['Agent upgrades'],
       summary: 'Upgrade run status',
-      description: 'Per-node state of a run: pending, requested, confirmed, reverted, failed or skipped.',
+      description: 'Run status (running, succeeded, failed, stopped or interrupted) and per-node state: pending, requested, confirmed, reverted, failed, refused or skipped, with the agent error code and message. A run whose server stopped renewing its lease (restart, interrupted CLI) is shown as interrupted; its requested nodes are settled from their heartbeat reports.',
       security: apiSecretAuth,
       parameters: [pp('id', 'Run ID')],
       responses: { 200: success('Run'), 401: err401, 404: err404 },
+    },
+  },
+  '/agents/upgrade/runs/{id}/stop': {
+    post: {
+      tags: ['Agent upgrades'],
+      summary: 'Stop an upgrade run',
+      description: 'ADMIN. The run stops before its next batch; nodes already asked to upgrade finish their trial.',
+      security: apiSecretAuth,
+      parameters: [pp('id', 'Run ID')],
+      responses: { 202: success('Stop requested'), 401: err401, 403: err403, 404: err404, 409: err409 },
+    },
+  },
+  '/agents/upgrade/runs/{id}/retry': {
+    post: {
+      tags: ['Agent upgrades'],
+      summary: 'Retry an upgrade run',
+      description: 'ADMIN. Starts a new run with the same version and integrity for the failed, refused, skipped and interrupted nodes of a finished run (reverted nodes only with allowRetryReverted).',
+      security: apiSecretAuth,
+      parameters: [pp('id', 'Run ID')],
+      requestBody: { required: false, content: { 'application/json': { schema: { type: 'object', properties: {
+        canaryNodeId: { type: 'string' }, allowRetryReverted: { type: 'boolean' },
+      } } } } },
+      responses: { 202: success('Run started'), 400: err400, 401: err401, 403: err403, 404: err404, 409: err409 },
     },
   },
   '/self-update/status': {

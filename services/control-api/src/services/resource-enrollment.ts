@@ -26,9 +26,13 @@ export function canonical(value: unknown): string {
 }
 export function enrollmentSigningPayload(value: unknown): string { return 'magnus.resource-enrollment.v1\n' + canonical(value); }
 function fail(code: string, message: string): never { throw new HttpError(409, code, message); }
+/** Read-only predicate shared with upgrade eligibility: the enrollment row admits resource execution. */
+export function enrollmentIsComplete(row: { state: string; nodeFqdn: string } | null | undefined, nodeFqdn: string): boolean {
+  return Boolean(row) && row!.state === 'enrolled' && row!.nodeFqdn === nodeFqdn;
+}
 export async function assertEnrollmentComplete(tx: Tx, nodeId: string, nodeFqdn: string): Promise<void> {
   const row = await tx.resourceEnrollment.findUnique({ where: { nodeId } });
-  if (!row || row.state !== 'enrolled' || row.nodeFqdn !== nodeFqdn)
+  if (!enrollmentIsComplete(row, nodeFqdn))
     fail('RESOURCE_ENROLLMENT_REQUIRED', 'Verified participant drain enrollment is required before resource execution');
 }
 export function dashboardEnrollmentSecret(): string {

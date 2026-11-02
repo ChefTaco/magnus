@@ -28,6 +28,17 @@ export class ResourceLeaseConflict extends HttpError {
 export interface ResourceCommandContext { nodeId: string; actorId: string; baseUrl: string; scope?: 'ardent-managed-http' }
 export interface ResourceAdmission { leaseId: string; commandId: string; nodeId: string; nodeFqdn: string; payload: CommandRequest }
 export function resourceLeasesRequested(): boolean { return process.env['MAGNUS_RESOURCE_LEASES_ENABLED'] === 'true'; }
+/** Online with a heartbeat at most this old: the freshness admission requires. */
+export const RESOURCE_HEARTBEAT_FRESH_MS = 120_000;
+/** Read-only predicates shared with upgrade eligibility, so it cannot drift from admission. */
+export function hasFreshOnlineHealth(node: { status: string; lastHeartbeatAt: Date | null }, now = Date.now()): boolean {
+  return node.status === 'ONLINE' && Boolean(node.lastHeartbeatAt) && now - node.lastHeartbeatAt!.getTime() <= RESOURCE_HEARTBEAT_FRESH_MS;
+}
+/** Legacy unleased dispatch stays possible only while this holds AND the node has no lease history. */
+export function legacyAdmissionPossible(enrollment: { state: string } | null | undefined, leasesRequested = resourceLeasesRequested()): boolean {
+  return !leasesRequested && (!enrollment || enrollment.state === 'legacy');
+}
+export const HELD_RESOURCE_STATES: readonly string[] = HELD;
 
 function canonicalServiceUnit(value: unknown): string {
   // A narrow scope is granted only to the exact allowlisted immutable runbook.
@@ -104,13 +115,13 @@ export async function admitResourceCommand(context: ResourceCommandContext, raw:
       throw new HttpError(409, 'RESOURCE_TARGET_INVALID', 'Canonical command target differs from inventory');
     await assertNodeAdmissionOpen(tx, node.id);
     const enrollment = await tx.resourceEnrollment.findUnique({ where: { nodeId: node.id } });
-    if (!scopedArdent && !resourceLeasesRequested() && (!enrollment || enrollment.state === 'legacy')
+    if (!scopedArdent && legacyAdmissionPossible(enrollment)
       && !await tx.commandResourceLease.findFirst({ where: { nodeId: node.id }, select: { id: true } })) return null;
     if (scopedArdent) await assertArdentScope(tx, node.id, node.hostname);
     else await assertEnrollmentComplete(tx, node.id, node.hostname);
     if (await tx.resourceParticipantWork.findFirst({ where: { nodeId: node.id,
       ...(scopedArdent ? { participant: { in: ['agent', 'api', 'dashboard'] } } : {}), state: { in: HELD } } })) throw new ResourceLeaseConflict();
-    if (node.status !== 'ONLINE' || !node.lastHeartbeatAt || Date.now() - node.lastHeartbeatAt.getTime() > 120_000)
+    if (!hasFreshOnlineHealth(node))
       throw new HttpError(409, 'RESOURCE_TARGET_INVALID', 'Canonical command target lacks fresh online health');
     if (await tx.commandResourceLease.findUnique({ where: { commandId: payload.commandId } }))
       throw new HttpError(409, 'COMMAND_ALREADY_OWNED', 'Command already has a durable resource owner; inspect its receipt without replaying');
