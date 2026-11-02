@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -66,5 +66,37 @@ while [ $# -gt 0 ]; do if [ "$1" = "--file" ]; then printf PGDMP > "$2"; fi; shi
     expect(migrations).toBe(1);
     expect(results.map(result => result.decision.action).sort()).toEqual(['migrate', 'skip']);
     expect(readdirSync(backupDir).filter(file => file.endsWith('.dump'))).toHaveLength(1);
+  });
+
+  it('refuses a database with a failed migration without dumping again', async () => {
+    mkdirSync(join(migrationsDir, '3_broken'), { recursive: true });
+    writeFileSync(join(migrationsDir, '3_broken', 'migration.sql'), 'SELECT 1;');
+    const db = new pg.Client({ connectionString: target.toString() });
+    await db.connect();
+    await db.query(`INSERT INTO _prisma_migrations VALUES ('3_broken', NULL, NULL)`);
+    await db.end();
+    const backupDir = join(work, 'backups-failed');
+    let migrations = 0;
+    await expect(autoMigrate({
+      databaseUrl: target.toString(), migrationsDir, backupDir, version: '1.1.1', pgDump: fakePgDump, log: () => undefined,
+      migrate: async () => { migrations++; }, settings: { autoMigrateBackup: true, autoMigrateAllowSlow: false },
+    })).rejects.toThrow(/3_broken failed earlier.*prisma migrate resolve/s);
+    expect(migrations).toBe(0);
+    expect(existsSync(backupDir)).toBe(false);
+  });
+
+  it('gives up waiting for the migrate lock at the deadline', async () => {
+    const holder = new pg.Client({ connectionString: target.toString() });
+    await holder.connect();
+    await holder.query('SELECT pg_advisory_lock(hashtextextended($1, 0))', ['magnus:migrate']);
+    try {
+      await expect(autoMigrate({
+        databaseUrl: target.toString(), migrationsDir, backupDir: join(work, 'b3'), version: '1.1.1', pgDump: fakePgDump, log: () => undefined,
+        migrate: async () => undefined, settings: { autoMigrateBackup: true, autoMigrateAllowSlow: false },
+        limits: { lockTimeoutMs: 300 }, sleep: ms => new Promise(resolve => setTimeout(resolve, Math.min(ms, 50))),
+      })).rejects.toThrow(/gave up after/);
+    } finally {
+      await holder.end();
+    }
   });
 });

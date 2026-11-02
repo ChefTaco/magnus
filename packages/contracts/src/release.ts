@@ -140,7 +140,8 @@ export const migrationImpactSchema = z.enum(['fast', 'slow', 'one-way']);
 
 export const releaseMigrationSchema = z.object({
   name: z.string().min(1),
-  impact: migrationImpactSchema,
+  // An impact a newer release introduces is treated as the most cautious one.
+  impact: migrationImpactSchema.catch('one-way'),
   note: z.string().default(''),
 });
 
@@ -160,7 +161,11 @@ export const releaseManifestSchema = z.object({
   agent: z.object({ selfUpgradeProtocol: z.number().int().nonnegative(), minLauncher: z.number().int().nonnegative() }),
   summary: z.string().default(''),
   notesUrl: z.string().url().optional(),
+  /** npm install scripts the release's dependency tree needs (`allowScripts` of the version install). */
+  allowScripts: z.record(z.string(), z.boolean()).optional(),
 });
+// Unknown extra fields are stripped, not rejected, so older engines keep
+// reading manifests that newer releases extend.
 
 export type ReleaseManifest = z.infer<typeof releaseManifestSchema>;
 export type ReleaseEnvChange = z.infer<typeof releaseEnvChangeSchema>;
@@ -222,15 +227,34 @@ export function summarizeUpgradePath(manifests: Iterable<ReleaseManifest>, from:
   };
 }
 
+export interface PackumentReleases {
+  manifests: ReleaseManifest[];
+  /** Versions that carry a `magnusRelease` this code cannot parse (a newer schema). */
+  unparsable: string[];
+  /** Versions npm marks deprecated. */
+  deprecated: string[];
+  /** `dist-tags.latest`, when present. */
+  latest: string | null;
+}
+
 /** Reads the manifests embedded as `magnusRelease` in a full npm packument. */
-export function manifestsFromPackument(packument: unknown): ReleaseManifest[] {
-  const versions = (packument as { versions?: Record<string, { magnusRelease?: unknown }> } | null)?.versions ?? {};
-  const manifests: ReleaseManifest[] = [];
-  for (const entry of Object.values(versions)) {
-    const parsed = releaseManifestSchema.safeParse(entry?.magnusRelease);
-    if (parsed.success) manifests.push(parsed.data);
+export function readPackument(packument: unknown): PackumentReleases {
+  const doc = packument as { versions?: Record<string, { magnusRelease?: unknown; deprecated?: unknown }>; 'dist-tags'?: Record<string, unknown> } | null;
+  const result: PackumentReleases = { manifests: [], unparsable: [], deprecated: [], latest: null };
+  for (const [version, entry] of Object.entries(doc?.versions ?? {})) {
+    if (typeof entry?.deprecated === 'string' && entry.deprecated) result.deprecated.push(version);
+    if (entry?.magnusRelease === undefined) continue;
+    const parsed = releaseManifestSchema.safeParse(entry.magnusRelease);
+    if (parsed.success) result.manifests.push(parsed.data);
+    else result.unparsable.push(version);
   }
-  return manifests;
+  const latest = doc?.['dist-tags']?.['latest'];
+  if (typeof latest === 'string' && isVersion(latest)) result.latest = latest;
+  return result;
+}
+
+export function manifestsFromPackument(packument: unknown): ReleaseManifest[] {
+  return readPackument(packument).manifests;
 }
 
 // Agent self-upgrade wire contract.
@@ -273,3 +297,39 @@ export type AgentUpgradeState = z.infer<typeof agentUpgradeStateSchema>;
 export type AgentUpgradeReport = z.infer<typeof agentUpgradeReportSchema>;
 export type AgentSelfUpgradeStatus = z.infer<typeof agentSelfUpgradeStatusSchema>;
 export type AgentUpgradeRequest = z.infer<typeof agentUpgradeRequestSchema>;
+
+// Database restore. A dump is restored into an empty `public` schema so that
+// tables a newer release created do not survive next to the restored ones:
+// the live schema is renamed aside, a new one with the same owner and grants
+// takes its place, `pg_restore --single-transaction` fills it, and the old
+// schema is dropped only after the restore committed (or renamed back if it
+// failed). Each step is one transaction.
+
+/** Name for the schema kept aside during a restore. */
+export function restoreAsideSchema(now: Date): string {
+  return `magnus_pre_restore_${now.toISOString().replace(/\D/g, '').slice(0, 14)}`;
+}
+
+/** Moves `public` aside and recreates it with the same owner and privileges. */
+export function restoreSwapSql(aside: string): string {
+  return `DO $magnus$ DECLARE owner_name text; grant_row record; BEGIN
+  SELECT pg_get_userbyid(nspowner) INTO owner_name FROM pg_namespace WHERE nspname = 'public';
+  IF owner_name IS NULL THEN RAISE EXCEPTION 'schema public does not exist'; END IF;
+  EXECUTE format('ALTER SCHEMA public RENAME TO %I', '${aside}');
+  EXECUTE format('CREATE SCHEMA public AUTHORIZATION %I', owner_name);
+  FOR grant_row IN SELECT CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE quote_ident(pg_get_userbyid(a.grantee)) END AS grantee, a.privilege_type
+    FROM pg_namespace n, aclexplode(n.nspacl) a WHERE n.nspname = '${aside}' LOOP
+    EXECUTE format('GRANT %s ON SCHEMA public TO %s', grant_row.privilege_type, grant_row.grantee);
+  END LOOP;
+END $magnus$;`;
+}
+
+/** After a failed restore: drop the partial schema and put the original back. */
+export function restoreRevertSql(aside: string): string {
+  return `BEGIN; DROP SCHEMA public CASCADE; ALTER SCHEMA "${aside}" RENAME TO public; COMMIT;`;
+}
+
+/** After a successful restore: drop the schema kept aside. */
+export function restoreFinishSql(aside: string): string {
+  return `DROP SCHEMA "${aside}" CASCADE;`;
+}

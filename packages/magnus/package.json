@@ -68,7 +68,7 @@
     },
     "breaking": false,
     "minUpgradeFrom": "1.0.0",
-    "engineProtocol": 1,
+    "engineProtocol": 2,
     "newRequiredEnv": [],
     "newOptionalEnv": [],
     "removedEnv": [],
@@ -78,6 +78,16 @@
       "minLauncher": 1
     },
     "summary": "Dependency refresh: bullmq 6, ioredis 6, undici 8, better-sqlite3 13 and TypeScript 6, and the minimatch advisory (GHSA-g3hv-75wg-m249) resolved. No migrations and no new settings.",
-    "notesUrl": "https://github.com/ChefTaco/magnus/releases/tag/v1.1.2"
+    "notesUrl": "https://github.com/ChefTaco/magnus/releases/tag/v1.1.2",
+    "allowScripts": {
+      "@prisma/engines": true,
+      "argon2": true,
+      "better-sqlite3": true,
+      "cpu-features": true,
+      "msgpackr-extract": true,
+      "prisma": true,
+      "sharp": true,
+      "ssh2": true
+    }
   }
 }

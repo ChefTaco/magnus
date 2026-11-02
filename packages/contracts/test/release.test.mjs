@@ -6,6 +6,7 @@ import {
   compareVersions,
   latestVersion,
   manifestsFromPackument,
+  readPackument,
   releaseManifestSchema,
   satisfiesRange,
   summarizeUpgradePath,
@@ -82,4 +83,31 @@ test('manifests are read from a full packument and invalid entries are ignored',
     '1.1.1': { magnusRelease: { schema: 99 } },
   } });
   assert.deepEqual(found.map((m) => m.version), ['1.1.0']);
+});
+
+test('a manifest that is present but unparsable is reported, not dropped silently', () => {
+  const found = readPackument({
+    'dist-tags': { latest: '1.1.0' },
+    versions: {
+      '1.0.3': {},
+      '1.1.0': { magnusRelease: manifest('1.1.0') },
+      '1.1.1': { magnusRelease: { schema: 2 }, deprecated: 'broken build' },
+    },
+  });
+  assert.deepEqual(found.manifests.map((m) => m.version), ['1.1.0']);
+  assert.deepEqual(found.unparsable, ['1.1.1']);
+  assert.deepEqual(found.deprecated, ['1.1.1']);
+  assert.equal(found.latest, '1.1.0');
+});
+
+test('manifests tolerate fields and migration impacts added by newer releases', () => {
+  const parsed = releaseManifestSchema.parse({
+    ...manifest('1.2.0'),
+    futureField: { anything: true },
+    allowScripts: { argon2: true },
+    migrations: [{ name: 'x', impact: 'online-rewrite' }],
+  });
+  assert.equal(parsed.migrations[0].impact, 'one-way');
+  assert.deepEqual(parsed.allowScripts, { argon2: true });
+  assert.equal('futureField' in parsed, false);
 });

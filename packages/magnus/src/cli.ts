@@ -1,7 +1,15 @@
 #!/usr/bin/env node
 /** Entry point of the `magnus` command; see main.ts for the commands. */
+import { spawnSync } from 'node:child_process';
 import { systemIo } from './io.js';
 import { ArgsError, run } from './main.js';
+
+// Node.js fetch ignores HTTP(S)_PROXY unless NODE_USE_ENV_PROXY is set at startup.
+const proxy = process.env['HTTPS_PROXY'] || process.env['https_proxy'] || process.env['HTTP_PROXY'] || process.env['http_proxy'];
+if (proxy && !process.env['NODE_USE_ENV_PROXY']) {
+  const child = spawnSync(process.execPath, process.argv.slice(1), { stdio: 'inherit', env: { ...process.env, NODE_USE_ENV_PROXY: '1' } });
+  process.exit(child.status ?? 1);
+}
 
 run(systemIo(), process.argv.slice(2)).then(
   (code) => process.exit(code),

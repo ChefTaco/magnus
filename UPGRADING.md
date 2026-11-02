@@ -34,18 +34,47 @@ magnus upgrade --to 1.2.0     # a specific release
 Each upgrade goes through these steps:
 
 1. Takes the project lock, then resolves the target release from the npm registry (or from
-   `--source DIR` with packed tarballs, for offline hosts).
-2. Refuses a downgrade (use `rollback`) and a major-version change (unless `--allow-major`).
-3. Checks Node.js against the release's `engines` (`^24.22.1 || ^26.13.0`).
+   `--source DIR` with packed tarballs, for offline hosts). Without `--to` it never picks a
+   deprecated release or one newer than the registry's `latest` tag. The registry is `--registry`,
+   then `MAGNUS_UPDATE_REGISTRY`, then the one npm is configured with (`.npmrc`). With
+   `HTTPS_PROXY` set, magnus runs Node.js with `NODE_USE_ENV_PROXY=1` so the proxy is used.
+2. Refuses a downgrade (use `rollback`) and a major-version change (unless `--allow-major`). A
+   release that needs a stepping stone (`minUpgradeFrom`) names the `--to` version to take first.
+3. Checks the Node.js **the services run** (recorded in the project, from the unit's `ExecStart`)
+   against the release's `engines`. `--node /path/to/node` switches it and rewrites the units.
 4. Checks that your env files set every new required setting. Missing secrets can be generated with
    `--generate-secrets`; anything else must be added by hand first.
-5. Installs the release into `versions/<X.Y.Z>`. The running version keeps serving.
-6. If the database has pending migrations, dumps it into `backups/` with `pg_dump -Fc` and then
-   migrates.
-7. Runs the new version's `magnus-server check`, switches `./current`, restarts the services and
-   waits until the new version answers health checks and reports itself as running.
-8. If the new version is not healthy in time (`--health-timeout`, default 180 s), it switches
-   `./current` back, restarts the previous version and prints the restore command for the dump.
+5. Checks the prerequisites before it changes anything: free disk space for the install and the
+   dump, the systemd session bus (user units), and with `--dry-run` also `pg_dump` and npm.
+6. Installs the release into `versions/<X.Y.Z>` with the npm that belongs to the services' Node.js,
+   allowing the install scripts the release's manifest lists. The running version keeps serving.
+7. Runs the new version's `magnus-server check` and a start-up test (`--version`, native modules)
+   **before** the database is touched. A failing or crashing check stops the upgrade here.
+8. If the database has pending migrations, dumps it into `backups/` with `pg_dump -Fc`, checks the
+   dump with `pg_restore --list`, and migrates. Old dumps are pruned to the newest five
+   (`keepBackups` in `magnus-project.json`); the newest dump of each upgrade step always stays.
+9. Switches `./current`, restarts the services and waits until the new version answers health
+   checks and reports itself as running.
+10. If the new version is not healthy in time (`--health-timeout`, default 180 s), or the restart
+    fails, it switches `./current` back, restarts the previous version and prints the restore
+    command for the dump. When the upgrade applied a **one-way** migration, the previous version is
+    not started (it cannot run on that schema): restore the dump with `magnus restore`, which starts
+    it afterwards, or pass `--force` to start it anyway.
+
+From the backup on, `magnus-project.json` records the upgrade in progress. If the upgrade is killed
+or the host goes down midway, the next `magnus upgrade` or `magnus rollback` says so:
+
+```bash
+magnus upgrade --resume       # finish the interrupted upgrade (runs the remaining steps again)
+magnus rollback               # or go back to the version that served before it
+```
+
+Ctrl-C, a closed terminal (SIGHUP) or SIGTERM stop the upgrade at the next safe step. A running
+migration always finishes first; after the switch, an interrupted upgrade switches back. Run long
+upgrades in `tmux` or `screen` anyway.
+
+A lock in `run/upgrade.lock` keeps two commands from running at once. A lock left by a process that
+no longer runs (also after a reboot) is taken over by itself; `--break-lock` removes one by hand.
 
 The previous version stays installed (the newest three are kept), so going back takes seconds:
 
@@ -57,7 +86,22 @@ magnus status                 # installed and serving versions, history, availab
 
 Migrations within a major version only add to the schema, so the previous version normally runs
 against the migrated database. Restore the dump only if it does not, or when a release marks a
-migration `one-way`.
+migration `one-way`. `rollback` asks the previous version which applied migrations it does not know,
+and refuses to start it over a one-way one unless you pass `--restore-db` (or `--force`).
+`--restore-db` fails when there is no dump to restore, and when a restore fails the services start
+again on the unchanged database.
+
+### Restoring a dump
+
+```bash
+magnus restore ~/.magnus/backups/<file>.dump     # stops the services, restores, starts them again
+```
+
+The restore never mixes old and new tables: the live `public` schema is renamed aside, a new one
+with the same owner and grants takes its place, `pg_restore --single-transaction` fills it, and the
+old one is dropped only after the restore committed. If `pg_restore` fails, the original schema is
+put back and the database is unchanged. Without a managed project, stop the server and run
+`magnus-server restore <file> --env-file server.env`.
 
 ### Adopting an existing npm install
 
@@ -70,14 +114,22 @@ npx @hivemagnus/magnus adopt --server-env-file /etc/magnus/server.env --ui-env-f
 
 Your env files stay where they are. `adopt` installs the same version under `versions/` and writes
 new systemd units that point at `./current`, then prints how to switch from your old units. It
-replaces your units itself only with `--install-units`.
+replaces your units itself only with `--install-units`. The first `magnus upgrade` adds
+`MAGNUS_PROJECT_DIR` and `MAGNUS_RUNTIME_FILE` to the server env file (with a `.bak` of the old
+one), so a server you start yourself (`--supervisor none`) reports which version is serving.
+
+User units belong to the account that owns the project: run `magnus` as that account, not with
+`sudo`. Without a login session (for example over `su`), enable lingering
+(`loginctl enable-linger <account>`) and use `machinectl shell <account>@`. On macOS and other
+systems without systemd, use `--supervisor none`.
 
 ## Manual npm install
 
 Without a managed project, follow these steps in order:
 
 1. Read the release notes. Add any new required settings to your env files.
-2. Back up: `magnus-server backup --env-file server.env` (prints the dump file and the restore command).
+2. Back up: `magnus-server backup --env-file server.env` (prints the dump file and the restore command,
+   `magnus-server restore <file> --env-file server.env`, to run with the server stopped).
 3. Install the exact versions together:
    `npm install -g @hivemagnus/magnus-server@X.Y.Z @hivemagnus/magnus-ui@X.Y.Z`
    (npm 12: pass the `--allow-scripts=...` list from the README).
@@ -104,7 +156,20 @@ docker compose pull && docker compose up -d
 - `1.1.0` pins one release.
 
 To go back, set the previous version and run `docker compose up -d`. If the newer version migrated
-the database and the old one does not start, restore the dump from the backups volume.
+the database and the old one does not start, restore the dump from the backups volume with the
+server and console stopped:
+
+```bash
+c="docker compose -f docker/compose.yml --env-file docker/.env"
+$c stop magnus-ui magnus-server
+$c run --rm --no-deps --entrypoint magnus-server magnus-server restore /var/lib/magnus/backups/<file>.dump --yes
+$c up -d
+```
+
+`$c run --rm --no-deps --entrypoint sh magnus-server -c 'ls -l /var/lib/magnus/backups'` lists the
+dumps. Startup auto-migrate keeps the newest five (`MAGNUS_BACKUP_KEEP`), and a server that keeps
+restarting reuses the dump of its last attempt instead of writing a new one each time. A database
+with a migration that failed halfway is refused before any dump, with the way out.
 
 ### Automatic pulls
 
@@ -127,7 +192,15 @@ Upgrades through pulls are safe to automate as long as the tag stays on one majo
   `docker compose pull && docker compose up -d` from cron or a systemd timer.
 
 Slow or one-way migrations still stop at startup until you set `MAGNUS_AUTO_MIGRATE_ALLOW_SLOW=true`
-for that one upgrade, so an unattended pull never applies one by surprise.
+for that one upgrade, so an unattended pull never applies one by surprise. **That stop takes the
+server down:** the new container exits at startup and restarts until you act, and the console waits
+for it. Watch for it (the container's health status, or `docker compose ps`), then either allow the
+migration for one start or set `MAGNUS_VERSION` back. A large database can take a while to dump
+before the server listens; the server's health check allows ten minutes for startup.
+
+Instances that share one database take turns: each waits up to `MAGNUS_AUTO_MIGRATE_LOCK_TIMEOUT`
+seconds (default 600) for the one that migrates. Behind PgBouncer in transaction mode, the migrate
+lock does not hold: set `MAGNUS_MIGRATE_DATABASE_URL` to a direct connection.
 
 ## Agents
 
@@ -188,6 +261,10 @@ If you run your own release process, set each switch you do not want:
 | `MAGNUS_AGENT_UPGRADES` | server | `true` | the console action and `magnus-server agents upgrade` are refused |
 | `MAGNUS_AGENT_SELF_UPGRADE` | agent | `true` (`false` in the agent image) | the agent refuses upgrade requests |
 | `MAGNUS_LEGACY_GIT_SELF_UPDATE` | server | `false` | already off: the git pull/rebuild endpoints answer 410 |
+
+Related settings: `MAGNUS_BACKUP_KEEP` (dumps kept, default 5), `MAGNUS_AUTO_MIGRATE_LOCK_TIMEOUT`
+(seconds to wait for another instance's migration, default 600) and `MAGNUS_MIGRATE_DATABASE_URL`
+(a direct connection for migrations, dumps and restores).
 
 Do not run Watchtower or a scheduled pull against hosts you upgrade by hand.
 

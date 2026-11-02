@@ -60,6 +60,25 @@ An unauthenticated dry run cannot prove npm ownership or OIDC configuration.
    already published. Registry failures stop publication; a publication failure
    stops subsequent packages and may leave earlier packages published.
 
+## Reproducible installs
+
+`magnus upgrade` installs a release into `versions/<X>` with the exact
+`@hivemagnus` pins from the release manifest, and with the npm install scripts
+that manifest lists (`magnusRelease.allowScripts`, generated from
+`ALLOW_SCRIPTS` in `packages/magnus/src/templates.ts`). Keep that list in step
+with the root `allowScripts` when a dependency gains or loses an install script:
+an older engine that installs the new release uses the release's list, not its
+own.
+
+The packages do not ship an `npm-shrinkwrap.json`. A shrinkwrap has to be
+generated from an isolated install of the published package, but the internal
+`@hivemagnus` dependencies of a release are not on the registry until that
+release is published, and the workspace lockfile cannot be reused (it describes
+the whole monorepo, including development dependencies and workspace links).
+Third-party dependencies therefore resolve within their semver ranges at install
+time. `npm run audit:production` and the registry smoke install cover that
+window.
+
 ## First publication
 
 1. Complete the public-repository setup, required reviewer configuration,
