@@ -167,6 +167,10 @@ describe('magnus upgrade', () => {
     const order = host.calls.filter((call) => call.startsWith('server 1.1.0') || call.startsWith('systemctl --user restart'));
     expect(order).toEqual(['server 1.1.0 migrations', 'server 1.1.0 --version', 'server 1.1.0 check', 'server 1.1.0 backup', 'server 1.1.0 migrate',
       'systemctl --user restart magnus-server.service', 'systemctl --user restart magnus-ui.service']);
+    // A deliberate restart clears the unit's start limit first, so a quick revert or restore is not refused.
+    const unitCalls = host.calls.filter((call) => /^systemctl --user (reset-failed|restart) /.test(call));
+    expect(unitCalls).toEqual(['systemctl --user reset-failed magnus-server.service', 'systemctl --user restart magnus-server.service',
+      'systemctl --user reset-failed magnus-ui.service', 'systemctl --user restart magnus-ui.service']);
     const saved = Project.load(project.dir);
     expect(saved.state).toMatchObject({ current: '1.1.0', previous: '1.0.3' });
     expect(saved.state.inProgress).toBeUndefined();

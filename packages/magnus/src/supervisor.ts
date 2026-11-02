@@ -81,7 +81,12 @@ export async function restartServices(io: Io, project: Project): Promise<void> {
   switch (project.state.supervisor) {
     case 'systemd':
       await systemctl(io, project, 'daemon-reload');
-      for (const unit of unitNames(project)) await systemctl(io, project, 'restart', unit);
+      for (const unit of unitNames(project)) {
+        // StartLimitBurst guards unattended crash loops; an operator's upgrade, revert or restore
+        // restarts deliberately, so clear the counter first or a quick revert-then-restore is refused.
+        await systemctl(io, project, 'reset-failed', unit);
+        await systemctl(io, project, 'restart', unit);
+      }
       return;
     case 'none':
       io.log(`Restart the Magnus server and console now so they run ./current: ${manualRestartHint(project)}. Waiting for them…`);
