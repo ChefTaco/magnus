@@ -1,0 +1,43 @@
+name: Bootstrap Emberfold packages
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: Full verified Emberfold commit SHA
+        type: string
+        required: true
+      publish:
+        description: Publish using the existing protected bootstrap credential
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: emberfold-bootstrap
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    environment: npm-publish
+    steps:
+      - name: Validate revision
+        env:
+          REVISION: ${{ inputs.revision }}
+        run: node -e 'if(!/^[a-f0-9]{40}$/.test(process.env.REVISION))process.exit(1)'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ChefTaco/emberfold
+          ref: ${{ inputs.revision }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794d2491c4babbbce0c15c1
+        with:
+          node-version: 24.22.1
+          registry-url: https://registry.npmjs.org
+      - run: npm ci --ignore-scripts
+      - run: npm run verify
+      - name: Publish exact verified tarballs
+        if: inputs.publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}
+          EMBERFOLD_PROVENANCE: off
+        run: node scripts/release.mjs --publish
