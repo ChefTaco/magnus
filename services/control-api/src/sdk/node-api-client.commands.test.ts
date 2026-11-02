@@ -5,7 +5,10 @@ import { commandRequestDigest as agentDigest } from '../../../../packages/agent/
 import { signCommandResult } from '../../../../packages/agent/src/security/command-result-signature.js';
 import { commandResultSchema } from '../schemas/node-responses.js';
 import { verifyCommandResultSignature } from '../security/command-result-signature.js';
-import { httpIdentity, httpReceiptBody } from '../security/managed-http.js';
+import { credentialMutationIdentity, httpIdentity, httpReceiptBody, sha256 } from '../security/managed-http.js';
+import { httpIdentity as agentHttpIdentity } from '../../../../packages/agent/src/security/managed-http.js';
+import { nativeCompletionDescriptor } from '../security/native-completion-registry.js';
+import { nativeCompletionDescriptor as agentNativeCompletionDescriptor } from '../../../../packages/agent/src/security/native-completion-registry.js';
 import { COMMAND_COMPLETION_REGISTRY_SHA256 } from '../security/command-completion-registry.js';
 const secret = 'cross-wire-receipt-test-signing-secret-32-characters';
 const mocks = vi.hoisted(() => ({ admit: vi.fn(), mark: vi.fn(), fail: vi.fn(), settle: vi.fn(),
@@ -31,6 +34,63 @@ function serve(response: unknown, capability = 1) {
   vi.stubGlobal('fetch', fetch); return fetch;
 }
 afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); mocks.admit.mockResolvedValue(null); });
+
+describe('credential-bearing native mutations', () => {
+  const password = 'fixture-password';
+  const calls: Array<[string, (c: NodeApiClient) => Promise<unknown>, object]> = [
+    ['users/provision', c => c.provisionUser({ username: 'alice', password, group: 'staff' }), { username: 'alice', password, group: 'staff' }],
+    ['users/change-password', c => c.changeUserPassword({ username: 'alice', password }), { username: 'alice', password }],
+  ];
+  const identity = (call: number) => mocks.admit.mock.calls[call]![1] as { commandId: string; command: string; args: string[] };
+
+  it.each(calls)('stores no digest of the %s body and sends an agent of any version the same direct POST', async (path, send, body) => {
+    const sent: string[] = [];
+    const fetch = vi.fn(async (request: Request) => {
+      sent.push(await request.clone().text());
+      return new Response(JSON.stringify({ success: true, data: {} }), { headers: { 'content-type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', fetch);
+    mocks.admit.mockResolvedValue(null);
+    await send(client());
+    await send(client());
+    const serialized = JSON.stringify(body);
+    expect(identity(0).args.slice(0, 2)).toEqual(['POST', `/${path}`]);
+    expect(identity(0).args[2]).toMatch(/^[a-f0-9]{64}$/);
+    expect(identity(0).args[2]).not.toBe(sha256(serialized));
+    expect(identity(0).args[2]).not.toBe(identity(1).args[2]);
+    expect(JSON.stringify(identity(0))).not.toContain(password);
+    const request = fetch.mock.calls[0]![0];
+    expect(request.url).toBe(`http://node.invalid/api/v1/${path}`);
+    expect(request.method).toBe('POST');
+    expect(request.headers.get('content-type')).toBe('application/json');
+    expect(sent[0]).toBe(serialized);
+    expect(fetch.mock.calls.every(([call]) => !call.url.endsWith('/commands/managed-http'))).toBe(true);
+  });
+
+  it.each(calls)('still refuses %s on an enrolled node without sending it', async (_path, send) => {
+    const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
+    const admission = { leaseId: 'lease', commandId: 'native', nodeId: 'fixture', nodeFqdn: 'node-1.example.com', payload: {} };
+    mocks.admit.mockResolvedValue(admission);
+    await expect(send(client())).rejects.toThrow('lacks a reviewed completion boundary; not dispatched');
+    expect(mocks.fail).toHaveBeenCalledWith(admission);
+    expect(mocks.mark).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('relies on these paths having no managed route on either side, while other identities stay wire-identical', () => {
+    // If a release ever registers these paths, the agent would recompute the digest and this design must change.
+    for (const path of ['/users/provision', '/users/change-password']) {
+      expect(nativeCompletionDescriptor('POST', path)).toBeUndefined();
+      expect(agentNativeCompletionDescriptor('POST', path)).toBeUndefined();
+    }
+    const args = ['native-fixture', 'POST', '/files/write', '{}', 10] as const;
+    expect(httpIdentity(...args)).toEqual(agentHttpIdentity(...args));
+    expect(httpIdentity(...args).args[2]).toBe('44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a');
+    expect(commandRequestDigest(credentialMutationIdentity('native-fixture', 'POST', '/users/provision', 30)))
+      .toMatch(/^[a-f0-9]{64}$/);
+    expect(() => credentialMutationIdentity('native-fixture', 'GET', '/users/provision', 30)).toThrow('Canonical native mutation');
+  });
+});
 
 describe('independently packaged command wire compatibility', () => {
   it('uses identical canonical requests and validates v2 through API parsing', () => {
