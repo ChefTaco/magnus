@@ -34,7 +34,10 @@
     "mysql2": "3.24.4",
     "tinypool": "2.2.0",
     "minimatch": "11.0.3",
-    "@redocly/openapi-core": "1.34.22"
+    "@redocly/openapi-core": "1.34.22",
+    "openapi-typescript": {
+      "typescript": "$typescript"
+    }
   },
   "scripts": {
     "build": "npm run build -w @hivemagnus/magnus-contracts -w @hivemagnus/magnus-skills -w @hivemagnus/ardent -w @hivemagnus/magnus-agent -w @hivemagnus/magnus-server -w @hivemagnus/magnus-ui -w @hivemagnus/magnus",
@@ -87,7 +90,7 @@
     "argon2@0.45.1": true,
     "better-sqlite3@13.0.3": true,
     "cpu-features@0.0.10": true,
-    "esbuild@0.28.1": true,
+    "esbuild@0.28.2": true,
     "msgpackr-extract@3.0.4": true,
     "prisma@7.10.1": true,
     "protobufjs@7.6.6": true,

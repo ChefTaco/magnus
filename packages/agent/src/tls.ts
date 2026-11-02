@@ -36,7 +36,7 @@ function fetchWithAgent(
       signal,
       ...(init as Parameters<typeof undiciFetch>[1]),
       dispatcher: agent,
-    }) as Promise<Response>;
+    }) as unknown as Promise<Response>;
   }
 
   const mergedInit = init as Parameters<typeof undiciFetch>[1];
@@ -44,7 +44,7 @@ function fetchWithAgent(
     ...mergedInit,
     ...(mergedInit?.body ? { duplex: 'half' as const } : {}),
     dispatcher: agent,
-  }) as Promise<Response>;
+  }) as unknown as Promise<Response>;
 }
 
 /** Use system trust for arbitrary HTTPS downloads. */
