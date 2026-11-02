@@ -569,6 +569,8 @@ describe('generated files', () => {
   it('compose project names are per project', () => {
     expect(composeProjectName('/opt/magnus')).toMatch(/^magnus-deps-magnus-[a-z0-9]+$/);
     expect(composeProjectName('/opt/magnus')).not.toBe(composeProjectName('/srv/magnus'));
+    expect(composeProjectName('/opt/--My Project--')).toMatch(/^magnus-deps-my-project-[a-z0-9]+$/);
+    expect(composeProjectName(`/opt/${'-'.repeat(50_000)}`)).toMatch(/^magnus-deps-project-[a-z0-9]+$/);
     expect(makeProject().composeProject()).toBe('magnus-deps');
   });
 

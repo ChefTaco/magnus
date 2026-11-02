@@ -109,7 +109,12 @@ export function refreshUnit(content: string, nodePath?: string): string {
 /** docker compose project name for a new project's PostgreSQL and Redis. */
 export function composeProjectName(dir: string): string {
   const base = dir.split(/[\\/]/).filter(Boolean).pop() ?? 'magnus';
-  const slug = base.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'project';
+  // Linear trim of the separators (no backtracking regex on a caller-supplied path).
+  let slug = base.toLowerCase().slice(0, 64).replace(/[^a-z0-9]+/g, '-');
+  let start = 0, end = slug.length;
+  while (start < end && slug[start] === '-') start++;
+  while (end > start && slug[end - 1] === '-') end--;
+  slug = slug.slice(start, end) || 'project';
   let hash = 0;
   for (const char of dir) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
   return `magnus-deps-${slug}-${hash.toString(36).slice(0, 6)}`;

@@ -134,7 +134,7 @@ wait_for() { # description, seconds, command...
   for ((i = 0; i < seconds; i += 3)); do "$@" >/dev/null 2>&1 && return 0; sleep 3; done
   fail "timed out waiting for $description"
 }
-agent_ready() { server_cli agents upgrade --to $AGENT_OK --integrity "sha512-$(printf 'A%.0s' {1..86})==" --dry-run 2>/dev/null | grep -q "will upgrade"; }
+agent_ready() { server_cli agents upgrade --allow-prerelease --to $AGENT_OK --integrity "sha512-$(printf 'A%.0s' {1..86})==" --dry-run 2>/dev/null | grep -q "will upgrade"; }
 wait_for "the agent to enroll with the launcher layout" 120 agent_ready
 
 synthetic() { node "$ROOT/scripts/e2e/synthetic-release.mjs" --from "$PACKS" --out "$SYNTH" "$@" >/dev/null; chmod -R a+rX "$SYNTH"; }
@@ -144,7 +144,7 @@ step "Agent upgrade $VERSION -> $AGENT_OK (confirms)"
 # The unpublished $VERSION contracts come from the source directory as well.
 cp "$PACKS/hivemagnus-magnus-contracts-$VERSION.tgz" "$SYNTH/"
 synthetic --version $AGENT_OK --only magnus-agent
-server_cli agents upgrade --to $AGENT_OK --integrity "$(integrity "$SYNTH/hivemagnus-magnus-agent-$AGENT_OK.tgz")" \
+server_cli agents upgrade --allow-prerelease --to $AGENT_OK --integrity "$(integrity "$SYNTH/hivemagnus-magnus-agent-$AGENT_OK.tgz")" \
   | tee "$WORK/agents-1.log" || fail "agent upgrade to $AGENT_OK"
 grep -q "confirmed" "$WORK/agents-1.log" || fail "agent upgrade was not confirmed"
 [[ $(sudo readlink "$AGENT_DIR/current") == versions/$AGENT_OK ]] || fail "agent ./current is not $AGENT_OK"
@@ -154,7 +154,7 @@ wait_for "last-good to record $AGENT_OK" 30 bash -c "[[ \$(sudo readlink '$AGENT
 step "Agent upgrade $AGENT_OK -> $AGENT_SILENT (never heartbeats: the launcher reverts it)"
 synthetic --version $AGENT_SILENT --only magnus-agent --agent-never-heartbeats
 set +e
-server_cli agents upgrade --to $AGENT_SILENT --integrity "$(integrity "$SYNTH/hivemagnus-magnus-agent-$AGENT_SILENT.tgz")" | tee "$WORK/agents-2.log"
+server_cli agents upgrade --allow-prerelease --to $AGENT_SILENT --integrity "$(integrity "$SYNTH/hivemagnus-magnus-agent-$AGENT_SILENT.tgz")" | tee "$WORK/agents-2.log"
 rc=${PIPESTATUS[0]}
 set -e
 (( rc != 0 )) || fail "a never-heartbeating agent upgrade reported success"
