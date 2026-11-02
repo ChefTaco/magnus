@@ -4,6 +4,7 @@ import { isAbsolute, join } from 'node:path';
 import { compareVersions } from '@hivemagnus/magnus-contracts';
 import { readEnvFile } from './env-file.js';
 import type { Io } from './io.js';
+import type { ProbeOptions } from './probe.js';
 import type { Project } from './project.js';
 
 export interface RuntimeInfo {
@@ -50,6 +51,21 @@ export function readRuntime(project: Project): RuntimeInfo | null {
 export function probeHost(host: string | undefined): string {
   if (!host || host === '0.0.0.0' || host === '::' || host === '*' || host === 'localhost') return '127.0.0.1';
   return host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+}
+
+/**
+ * The certificate a component serves, from its env file. Absent when the file
+ * or setting is missing or unreadable, which Io.probe handles.
+ */
+export function probeOptions(project: Project, component: 'server' | 'ui'): ProbeOptions {
+  try {
+    const configured = readEnvFile(project.envFile(component))['TLS_CERT_PATH'];
+    if (!configured) return {};
+    const pem = readFileSync(isAbsolute(configured) ? configured : project.path(configured), 'utf8');
+    return pem.includes('BEGIN CERTIFICATE') ? { ca: pem } : {};
+  } catch {
+    return {};
+  }
 }
 
 export interface WaitOptions {
@@ -102,11 +118,11 @@ export async function waitForHealthy(io: Io, project: Project, options: WaitOpti
       last = `no server has started since the restart (the last one ran ${runtime.version})`;
     } else if (runtime.version !== options.version) last = `serving ${runtime.version}, expected ${options.version}`;
     else {
-      const server = await io.probe(`https://${probeHost(runtime.host)}:${runtime.port || project.state.ports.server}/api/v1/health`);
+      const server = await io.probe(`https://${probeHost(runtime.host)}:${runtime.port || project.state.ports.server}/api/v1/health`, probeOptions(project, 'server'));
       if (server !== 200) last = `/api/v1/health answered ${server ?? 'nothing'}`;
       else if (!project.state.components.includes('ui')) return { ok: true, detail: `server ${runtime.version} healthy` };
       else {
-        const ui = await io.probe(`https://127.0.0.1:${project.state.ports.ui}/login`);
+        const ui = await io.probe(`https://127.0.0.1:${project.state.ports.ui}/login`, probeOptions(project, 'ui'));
         if (ui !== null && ui < 500) return { ok: true, detail: `server ${runtime.version} and console healthy` };
         last = `the console answered ${ui ?? 'nothing'}`;
       }

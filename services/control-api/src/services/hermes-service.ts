@@ -8,7 +8,7 @@ import type {
   HermesRuntimeConfiguration,
 } from '../types/index.js';
 import { getDb } from '../db/index.js';
-import { type ParsedHermesDetection } from './hermes-cli-parser.js';
+import { normalizeServiceStatus, type ParsedHermesDetection } from './hermes-cli-parser.js';
 
 // SSH-backed Hermes mutations (deploy, configure, profile, gateway, dashboard,
 // API-server, and OpenClaw operations) are retired; their routes return 410.
@@ -198,7 +198,7 @@ function profileFromNodeRecord(record: Record<string, unknown>, hermesHome: stri
     profileHome: stringField(record, 'profileHome', 'profile_home')
       ?? hermesHome.replace(/\/+$/, '') + '/profiles/' + name,
     isDefault: booleanField(record, name === 'default', 'isDefault', 'is_default', 'default'),
-    gatewayStatus: (stringField(record, 'gatewayStatus', 'gateway_status') ?? 'unknown') as any,
+    gatewayStatus: normalizeServiceStatus(stringField(record, 'gatewayStatus', 'gateway_status')),
     apiServerEnabled: booleanField(record, false, 'apiServerEnabled', 'api_server_enabled'),
     apiServerHost: stringField(record, 'apiServerHost', 'api_server_host') ?? '127.0.0.1',
     apiServerPort: numberField(record, 'apiServerPort', 'api_server_port'),
@@ -505,6 +505,11 @@ async function upsertInstallationFromDetection(params: {
       },
     });
     profileIdsByName.set(profile.name, profileRow.id);
+  }
+
+  // Hermes is gone from this home: its remembered profiles must not keep counting as running gateways.
+  if (detection.status === 'not_installed') {
+    await db.hermesProfile.updateMany({ where: { installationId: installation.id }, data: { gatewayStatus: 'not_installed' } });
   }
 
   if (detection.profiles.length > 0) {

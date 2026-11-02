@@ -2,6 +2,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { probeOptions } from './health.js';
 import { mustRun, type Io } from './io.js';
 import { writeAtomic, type Component, type Project } from './project.js';
 import { refreshUnit, UNIT_MARKER } from './templates.js';
@@ -106,7 +107,7 @@ export async function stopServices(io: Io, project: Project, options: { timeoutM
   io.log(`Stop the Magnus server and console now (the processes started from ${project.path('units')}/*.service). Waiting for port ${project.state.ports.server} to close…`);
   const deadline = io.now().getTime() + (options.timeoutMs ?? 300_000);
   for (;;) {
-    const answer = await io.probe(`https://127.0.0.1:${project.state.ports.server}/api/v1/health`);
+    const answer = await io.probe(`https://127.0.0.1:${project.state.ports.server}/api/v1/health`, probeOptions(project, 'server'));
     if (answer === null) break;
     if (io.now().getTime() >= deadline) throw new Error(`The server on port ${project.state.ports.server} is still running; stop it and re-run.`);
     await io.sleep(2_000);

@@ -83,7 +83,7 @@ export async function getOrchestraOverview(): Promise<OrchestraOverview> {
     hooks,
   ] = await Promise.all([
     db.hermesInstallation.findMany({ select: { status: true } }),
-    db.hermesProfile.count(),
+    db.hermesProfile.count({ where: { installation: { status: { not: 'not_installed' } } } }),
     db.hermesOperationJob.findMany({ select: { status: true } }),
     db.hermesOperationJob.findMany({
       orderBy: { startedAt: 'desc' },
@@ -107,7 +107,8 @@ export async function getOrchestraOverview(): Promise<OrchestraOverview> {
 
   return {
     installations: {
-      total: installations.length,
+      // A row kept for a host that no longer has Hermes is not an installation.
+      total: installations.filter((i) => i.status !== 'not_installed').length,
       running: installCount('running'),
       degraded: installCount('degraded'),
       error: installCount('error'),
@@ -213,7 +214,7 @@ export async function getOrchestraCapabilityInventory(): Promise<OrchestraCapabi
       {
         key: `profile:${profile.id}:gateway`,
         label: `${profileLabel} gateway`,
-        state: profile.gatewayStatus === 'running' ? 'supported' : ['stopped', 'failed', 'error'].includes(profile.gatewayStatus) ? 'missing' : 'unknown',
+        state: profile.gatewayStatus === 'running' ? 'supported' : ['inactive', 'stopped', 'failed', 'error', 'not_installed'].includes(profile.gatewayStatus) ? 'missing' : 'unknown',
         detail: `gateway ${profile.gatewayStatus}`,
         installationId: profile.installationId,
         profileId: profile.id,

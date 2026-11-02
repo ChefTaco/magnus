@@ -6,6 +6,49 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [1.1.7] - 2026-11-02
+
+### Fixed
+
+- Stopped Hermes gateways no longer report as running. "inactive" matched the pattern for `active` and "not running"
+  the one for `running`, so the console overcounted running gateways. One word-bounded parser now classifies
+  `hermes gateway status` output for the agent, the update evidence and SSH detection: a systemd `Active:` line
+  decides, journal lines and the "Recent gateway health" history (even with "Stopped" or "error") are ignored, and otherwise a negative state wins over a
+  failure, and a failure over a running state. The dashboard status from SSH detection had the same bug. Nodes report
+  correctly after their agent is upgraded, because the agent parses this output; SSH-detected installations do after the
+  server is upgraded.
+- Hermes counts no longer overstate installs and gateways. A profile that reports no gateway state of its own no longer
+  inherits the default gateway's `running`. A Hermes home without a working binary is `degraded` with no version,
+  so it stops counting as healthy. Mission Control and the orchestra overview no longer count rows for hosts without
+  Hermes, and profiles remembered for such a host stop counting as running gateways.
+- `magnus` health probes keep working with any certificate; see Security.
+
+### Security
+
+- The server no longer stores an unsalted digest of request bodies that hold a password. `users/provision` and
+  `users/change-password` have no managed route on any agent, so nothing verifies that digest: its slot now holds a random
+  value. The request an agent receives, and the refusal on enrolled nodes, are unchanged, so mixed-version fleets and stored
+  receipts are unaffected. Digests stored by earlier versions for refused requests on enrolled nodes remain in
+  `RemoteCommand.args`.
+- The Ardent A2A surface now has rate limits: by client address before authentication, by peer after it (also for gRPC),
+  and a cap on each peer's queued and running tasks, answered with `429` and `Retry-After`. `X-Forwarded-For` is ignored
+  unless `a2a.rate_limit.trusted_proxies` names the connecting address. **Behind a reverse proxy, list the proxy there**, or
+  all clients share one address limit. See `a2a.rate_limit` in the [Ardent README](packages/ardent/README.md#a2a).
+- `POST /a2a/push/:peerId` checks `X-A2A-Notification-Token` before parsing up to 2 MB of JSON.
+- `magnus` health probes verify the certificate in the component's `TLS_CERT_PATH` instead of turning verification off.
+  Verification stays off only for an address on this machine when no certificate is known or the known one does not verify,
+  so a renewed or adopted certificate cannot fail a working upgrade.
+- The console's browser cache of the active control node no longer holds credential fingerprints, and older copies are
+  rewritten without them. Terminal session ids come from `randomUUID()`. Registry URLs encode the package name in full.
+
+### New environment variables
+
+- None. The new Ardent limits are optional keys under `a2a.rate_limit` in the profile's `config.yaml`.
+
+### Migration impact
+
+- None.
+
 ## [1.1.6] - 2026-11-02
 
 ### Fixed
@@ -473,6 +516,7 @@ The initial release snapshot.
   Pass them to `npm install -g` with `--allow-scripts=...`, or list them under `allowScripts` in
   your project's `package.json`.
 
+[1.1.7]: https://github.com/ChefTaco/magnus/releases/tag/v1.1.7
 [1.1.6]: https://github.com/ChefTaco/magnus/releases/tag/v1.1.6
 [1.1.5]: https://github.com/ChefTaco/magnus/releases/tag/v1.1.5
 [1.1.4]: https://github.com/ChefTaco/magnus/releases/tag/v1.1.4

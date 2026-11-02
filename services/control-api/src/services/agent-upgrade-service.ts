@@ -209,7 +209,7 @@ export async function resolveAgentRelease(options: { version?: string; integrity
     return { version, integrity: options.integrity };
   }
   const registry = upgradeSettings().updateRegistry;
-  const url = `${registry}/${AGENT_PACKAGE.replace('/', '%2f')}/${version}`;
+  const url = `${registry}/@${encodeURIComponent(AGENT_PACKAGE.slice(1))}/${version}`;
   let response: Response;
   try {
     response = await (options.fetchImpl ?? fetch)(url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(options.timeoutMs ?? 15_000) });

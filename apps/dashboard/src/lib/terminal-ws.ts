@@ -16,6 +16,7 @@ import type { IncomingMessage } from 'node:http';
 import type { Server as HTTPServer } from 'node:http';
 import { parse as parseUrl } from 'node:url';
 import { Client as SSHClient } from 'ssh2';
+import { randomUUID } from 'node:crypto';
 import { mkdirSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { COOKIE_NAME, verifySessionToken } from '@/lib/auth';
@@ -166,7 +167,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
 
       const openedAt = new Date().toISOString();
       const sessionRecord: WsTerminalSession = { ws, ssh, host, alive: true, openedAt, username: session.username };
-      const sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const sessionId = randomUUID();
       recordTerminalSession({ event: 'open', sessionId, host, username: session.username });
       wsSessions.set(ws, sessionRecord);
 

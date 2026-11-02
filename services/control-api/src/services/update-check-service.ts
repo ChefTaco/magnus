@@ -86,7 +86,7 @@ export async function checkForUpdate(options: CheckOptions = {}): Promise<Update
   const settings = upgradeSettings(env);
   const current = options.current ?? CONTROL_API_VERSION;
   if (!settings.updateCheck) return { ...emptyResult(false), current };
-  const url = `${settings.updateRegistry}/${META_PACKAGE.replace('/', '%2f')}`;
+  const url = `${settings.updateRegistry}/@${encodeURIComponent(META_PACKAGE.slice(1))}`;
   const checkedAt = (options.now ?? (() => new Date()))().toISOString();
   try {
     const response = await (options.fetchImpl ?? fetch)(url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(15_000) });

@@ -1,0 +1,9 @@
+{
+  "summary": "Hermes gateway status and install counts no longer over-report. Security hardening: no stored digest of password-bearing requests, rate limits and a per-peer task cap on the Ardent A2A surface, verified magnus health probes, no credential fingerprints in browser storage. No migrations and no new environment variables; behind a reverse proxy, set a2a.rate_limit.trusted_proxies in Ardent.",
+  "breaking": false,
+  "minUpgradeFrom": "1.0.0",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}

@@ -11,6 +11,7 @@
 import Link from 'next/link';
 import { fleetFetch, fleetSystemFetch } from '@/lib/fleet-fetch';
 import { orchestraFetch } from '@/lib/orchestra-fetch';
+import { summarizeHermesInventory } from '@/lib/hermes-inventory';
 import {
   Server, Bot, DollarSign, Brain, Activity, Shield, Compass,
   AlertTriangle, CheckCircle2, Siren,
@@ -75,15 +76,7 @@ async function loadOrchestra(): Promise<OrchestraStats | null> {
       orchestraFetch<{ data?: HermesProfile[] }>('profiles').catch(() => ({ data: [] as HermesProfile[] })),
     ]);
 
-    const installationList = installations.data ?? [];
-    const profileList = profiles.data ?? [];
-
-    return {
-      installations: installationList.length,
-      healthyInstallations: installationList.filter((item) => item.status === 'running' || item.status === 'detected').length,
-      profiles: profileList.length,
-      runningGateways: profileList.filter((item) => item.gatewayStatus === 'running').length,
-    };
+    return summarizeHermesInventory(installations.data ?? [], profiles.data ?? []);
   } catch {
     return null;
   }

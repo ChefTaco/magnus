@@ -13,6 +13,7 @@ import {
 import type { ControlNode, ControlNodeMutation } from './control-nodes';
 import { DEFAULT_CONTROL_NODE } from './control-nodes';
 import { api } from './api-client';
+import { cachedControlNode, nodeFromCache, parseCachedControlNode } from './control-node-cache';
 
 interface ControlNodeContextValue {
   /** All configured control nodes. */
@@ -44,27 +45,12 @@ function getCachedActiveNode(): ControlNode | null {
   try {
     const raw = localStorage.getItem(ACTIVE_NODE_CACHE_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<ControlNode> & { apiSecret?: unknown; token?: unknown };
-    if (
-      typeof parsed.id !== 'string'
-      || typeof parsed.name !== 'string'
-      || typeof parsed.url !== 'string'
-      || typeof parsed.createdAt !== 'string'
-    ) return null;
-    const sanitized: ControlNode = {
-      id: parsed.id,
-      name: parsed.name,
-      url: parsed.url,
-      hasApiSecret: parsed.hasApiSecret === true,
-      apiSecretFingerprint: typeof parsed.apiSecretFingerprint === 'string' ? parsed.apiSecretFingerprint : null,
-      hasToken: parsed.hasToken === true,
-      tokenFingerprint: typeof parsed.tokenFingerprint === 'string' ? parsed.tokenFingerprint : null,
-      createdAt: parsed.createdAt,
-    };
-    // Rewrite legacy caches immediately so historical plaintext fields do not
-    // remain recoverable from browser storage.
+    const sanitized = parseCachedControlNode(raw);
+    if (!sanitized) return null;
+    // Rewrite older caches immediately so plaintext credentials and fingerprints
+    // do not remain recoverable from browser storage.
     localStorage.setItem(ACTIVE_NODE_CACHE_KEY, JSON.stringify(sanitized));
-    return sanitized;
+    return nodeFromCache(sanitized);
   } catch {
     return null;
   }
@@ -73,7 +59,7 @@ function getCachedActiveNode(): ControlNode | null {
 function setCachedActiveNode(node: ControlNode): void {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.setItem(ACTIVE_NODE_CACHE_KEY, JSON.stringify(node));
+    localStorage.setItem(ACTIVE_NODE_CACHE_KEY, JSON.stringify(cachedControlNode(node)));
   } catch {
     // ignore quota errors
   }

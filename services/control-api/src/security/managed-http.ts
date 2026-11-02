@@ -1,5 +1,5 @@
 /** Versioned native HTTP identity. Hashes bind request bytes; bodies stay off receipts. */
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { commandFenceSchema } from '../schemas/node-responses.js';
 export const managedClaimSchema = z.object({
@@ -25,10 +25,24 @@ export type ManagedHttpRequest = z.infer<typeof managedHttpRequestSchema>;
 export const MANAGED_HTTP_COMMAND = '@magnus/native-http/v1';
 export const MANAGED_CLAIM_HEADER = 'x-magnus-resource-claim';
 export function sha256(value: string): string { return createHash('sha256').update(value).digest('hex'); }
-export function httpIdentity(commandId: string, method: string, path: string, body: string, timeoutSeconds: number) {
+function assertCanonicalMutation(method: string, path: string): void {
   if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) || !/^\/[a-zA-Z0-9/_%.:-]+$/.test(path)
     || path.includes('..') || path.includes('//')) throw new Error('Canonical native mutation path required');
+}
+export function httpIdentity(commandId: string, method: string, path: string, body: string, timeoutSeconds: number) {
+  assertCanonicalMutation(method, path);
   return { commandId, command: MANAGED_HTTP_COMMAND, args: [method, path, sha256(body)], timeoutSeconds };
+}
+/**
+ * Identity for a mutation whose body holds a credential. A stored digest of
+ * such a body could be guessed offline, so the digest slot holds a random value
+ * instead of binding the body. That is safe only because these paths are absent
+ * from the native completion registry on every released agent: they are never
+ * sent through managed HTTP, so no agent ever recomputes this identity.
+ */
+export function credentialMutationIdentity(commandId: string, method: string, path: string, timeoutSeconds: number) {
+  assertCanonicalMutation(method, path);
+  return { commandId, command: MANAGED_HTTP_COMMAND, args: [method, path, sha256(randomUUID())], timeoutSeconds };
 }
 export function httpReceiptBody(method: string, path: string, status: number, body: string): string {
   return JSON.stringify({ version: 1, method, path, status, responseSha256: sha256(body) });

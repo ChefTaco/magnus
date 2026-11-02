@@ -36,7 +36,8 @@ const pluginSpecifier = z.string().min(1).max(500).refine(value =>
   /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*(?:\/[A-Za-z0-9._-]+)*$/.test(value) || value.startsWith('/') || value.startsWith('file://'),
 'Expected an npm package name, an absolute path, or a file:// URL');
 const magnusControlDefault = { enabled: false, base_url: '${ARDENT_MAGNUS_API_URL}', token_env: 'ARDENT_MAGNUS_READ_TOKEN' };
-const a2aDefault = { enabled: false, protocol_version: '1.0' as const, bindings: ['jsonrpc' as const, 'http-json' as const], public_url: '${ARDENT_A2A_PUBLIC_URL}', listen_host: '127.0.0.1', peers_file: 'peers.yaml', hermes_compat: false };
+const a2aRateLimitDefault = { enabled: true, ip_requests_per_minute: 600, ip_burst: 120, peer_requests_per_minute: 300, peer_burst: 60, max_concurrent_tasks_per_peer: 16, trusted_proxies: [] as string[] };
+const a2aDefault = { rate_limit: a2aRateLimitDefault, enabled: false, protocol_version: '1.0' as const, bindings: ['jsonrpc' as const, 'http-json' as const], public_url: '${ARDENT_A2A_PUBLIC_URL}', listen_host: '127.0.0.1', peers_file: 'peers.yaml', hermes_compat: false };
 const researchDefault = { enabled: false, searxng_url: '${ARDENT_SEARXNG_URL}', firecrawl_url: '${ARDENT_FIRECRAWL_URL}', firecrawl_token_env: 'FIRECRAWL_API_KEY' };
 
 export const ConfigSchema = z.object({
@@ -56,6 +57,8 @@ export const ConfigSchema = z.object({
   a2a: z.object({ enabled: z.boolean().default(false), protocol_version: z.literal('1.0').default('1.0'), bindings: z.array(z.enum(['jsonrpc', 'http-json', 'grpc'])).min(1).default(['jsonrpc', 'http-json']), public_url: urlReference.default('${ARDENT_A2A_PUBLIC_URL}'), listen_host: z.string().min(1).default('127.0.0.1'), listen_port: z.number().int().min(1).max(65534).optional(), peers_file: z.string().regex(/^[A-Za-z0-9._-]+\.yaml$/).default('peers.yaml'),
     /** Serve Hermes Agent team-card discovery and slash-style JSON-RPC method aliases. */
     hermes_compat: z.boolean().default(false),
+    /** Request and task limits. `trusted_proxies` lists the reverse proxies whose X-Forwarded-For is believed; by default none is. */
+    rate_limit: z.object({ enabled: z.boolean().default(true), ip_requests_per_minute: z.number().int().min(1).max(1_000_000).default(600), ip_burst: z.number().int().min(1).max(1_000_000).default(120), peer_requests_per_minute: z.number().int().min(1).max(1_000_000).default(300), peer_burst: z.number().int().min(1).max(1_000_000).default(60), max_concurrent_tasks_per_peer: z.number().int().min(1).max(100_000).default(16), trusted_proxies: z.array(z.string().min(1).max(64)).max(64).default([]) }).strict().default(a2aRateLimitDefault),
     /** Agent Card skill advertised to peers. */
     skill: z.object({ id: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/), name: z.string().min(1).max(100), description: z.string().min(1).max(500), tags: z.array(z.string().min(1).max(40)).max(10).default([]), example: z.string().min(1).max(300).optional() }).strict().optional() }).strict().default(a2aDefault),
   channels: z.object({ telegram: TelegramChannel.default(TelegramChannel.parse({})), mattermost: MattermostChannel.default(MattermostChannel.parse({})) }).strict().default({ telegram: TelegramChannel.parse({}), mattermost: MattermostChannel.parse({}) }),

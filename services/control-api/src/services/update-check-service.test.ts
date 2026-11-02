@@ -32,6 +32,12 @@ describe('update check', () => {
     expect(updateResult(result).status).toBe('pass');
   });
 
+  it('asks the registry for the encoded package name', async () => {
+    const urls: string[] = [];
+    await checkForUpdate({ env: { MAGNUS_UPDATE_REGISTRY: 'https://registry.example.com' }, current: '1.0.3', fetchImpl: (async (url: string | URL | Request) => { urls.push(String(url)); return new Response('{}', { status: 404 }); }) as typeof fetch });
+    expect(urls).toEqual(['https://registry.example.com/@hivemagnus%2Fmagnus']);
+  });
+
   it('reports registry problems without throwing', async () => {
     const result = await checkForUpdate({ env: {}, current: '1.0.3', fetchImpl: (async () => { throw new Error('offline'); }) as typeof fetch });
     expect(result.error).toMatch(/offline/);

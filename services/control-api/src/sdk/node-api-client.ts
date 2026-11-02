@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { MANAGED_CLAIM_HEADER, httpIdentity, httpReceiptBody, managedHttpRequestSchema } from '../security/managed-http.js';
+import { MANAGED_CLAIM_HEADER, credentialMutationIdentity, httpIdentity, httpReceiptBody, managedHttpRequestSchema } from '../security/managed-http.js';
 import { nativeCompletionDescriptor, nativeCompletionResourceKey } from '../security/native-completion-registry.js';
 import { COMMAND_COMPLETION_REGISTRY, COMMAND_COMPLETION_REGISTRY_SHA256, commandCompletionDescriptor } from '../security/command-completion-registry.js';
 import { commandReconciliationSchema } from '../schemas/command-reconciliation.js';
@@ -266,6 +266,24 @@ export class NodeApiClient {
 
   private async mutate<T>(method: 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown, timeout = this.defaultTimeout): Promise<T> {
     return (await this.mutateWithEvidence<T>(method, path, body, timeout)).response;
+  }
+
+  /**
+   * A body holding a credential never goes through the digest in mutateWithEvidence.
+   * Enrolled nodes refuse it exactly as they refuse any mutation without a reviewed
+   * completion boundary; other nodes receive the same direct POST as before.
+   */
+  private async mutateWithCredential<T>(path: string, body: object, timeout = this.defaultTimeout): Promise<T> {
+    if (!this.resourceContext) throw new Error('Managed mutation requires canonical resource node identity');
+    const nativePath = '/' + path;
+    if (nativeCompletionDescriptor('POST', nativePath)) throw new Error('A managed native path cannot carry an unbound credential mutation');
+    const identity = credentialMutationIdentity('native-' + randomUUID(), 'POST', nativePath, Math.min(3600, Math.ceil(timeout / 1000)));
+    const admission = await admitResourceCommand(this.resourceContext, identity);
+    if (admission) {
+      await failResourceCommand(admission);
+      throw new Error('This enrolled-node mutation lacks a reviewed completion boundary; not dispatched');
+    }
+    return this.api(path, { method: 'POST', body: JSON.stringify(body), headers: { 'content-type': 'application/json' }, timeout, retry: 0 }).json<T>();
   }
 
   private async evidencedMutation<T>(method: 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown,
@@ -685,13 +703,13 @@ export class NodeApiClient {
     password: string;
     group?: string;
   }): Promise<ApiResponse<{ username: string; group: string }>> {
-    return this.mutate('POST', 'users/provision', payload);
+    return this.mutateWithCredential('users/provision', payload);
   }
 
   async changeUserPassword(payload: {
     username: string;
     password: string;
   }): Promise<ApiResponse<{ username: string }>> {
-    return this.mutate('POST', 'users/change-password', payload);
+    return this.mutateWithCredential('users/change-password', payload);
   }
 }

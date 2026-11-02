@@ -7,6 +7,7 @@ import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import { observeHermesDashboard } from './hermes-dashboard-discovery.js';
 import { inspectHiveMemToken, type HiveMemTokenPosture } from './hivemem-token.js';
+import { parseGatewayStatusText } from './hermes-gateway-status.js';
 import { childEnvironment } from '../utils/child-env.js';
 import { armChildTimeout } from '../utils/child-timeout.js';
 
@@ -536,13 +537,21 @@ function parseProfileListText(text: string, home: string): Array<Record<string, 
       name,
       profileHome: join(home, 'profiles', name),
       isDefault: nameCell.startsWith('*') || nameCell.startsWith('◆') || /\bdefault\b/i.test(nameCell),
-      gatewayStatus: cells[2] && !['-', '—'].includes(cells[2]) ? cells[2] : 'unknown',
+      gatewayStatus: cells[2] ? parseGatewayStatusText(cells[2]) : 'unknown',
       modelSummary: cells[1] && !['-', '—'].includes(cells[1]) ? cells[1] : null,
       distribution: cells[4] && !['-', '—'].includes(cells[4]) ? cells[4] : null,
       metadata: { source: 'hermes profile list' },
     });
   }
   return profiles;
+}
+
+function profileGatewayStatus(profile: Record<string, unknown>, installationStatus: HermesServiceStatus): HermesServiceStatus {
+  const reported = profileString(profile, 'gatewayStatus', 'gateway_status');
+  const state = reported ? parseGatewayStatusText(reported) : 'unknown';
+  if (state !== 'unknown') return state;
+  return profile['isDefault'] === true || profile['is_default'] === true || profile['default'] === true || profile['name'] === 'default'
+    ? installationStatus : 'unknown';
 }
 
 function profileString(profile: Record<string, unknown>, ...keys: string[]): string | null {
@@ -575,10 +584,12 @@ function profileNumber(profile: Record<string, unknown>, ...keys: string[]): num
 }
 
 /**
- * Hermes exposes gateway, API-server, and model routing at the installation
- * level. Profile-list output varies by Hermes release and often contains only
- * names, so carry the observed installation posture into every profile unless
- * that profile explicitly reported its own value.
+ * Hermes exposes API-server and model routing at the installation level.
+ * Profile-list output varies by Hermes release and often contains only names,
+ * so carry the observed installation posture into every profile unless that
+ * profile explicitly reported its own value. `hermes gateway status` observes
+ * only the default profile's gateway, so another profile that reported nothing
+ * stays unknown instead of counting as one more running gateway.
  */
 function enrichProfiles(
   profiles: Array<Record<string, unknown>>,
@@ -586,7 +597,7 @@ function enrichProfiles(
 ): Array<Record<string, unknown>> {
   return profiles.map((profile) => ({
     ...profile,
-    gatewayStatus: profileString(profile, 'gatewayStatus', 'gateway_status') ?? installation.gatewayStatus,
+    gatewayStatus: profileGatewayStatus(profile, installation.gatewayStatus),
     providerSummary: profileString(profile, 'providerSummary', 'provider_summary', 'provider') ?? installation.configuration.modelProvider,
     modelSummary: profileString(profile, 'modelSummary', 'model_summary', 'model') ?? installation.configuration.modelName,
     apiServerEnabled: profileBoolean(profile, installation.apiServerEnabled, 'apiServerEnabled', 'api_server_enabled'),
@@ -714,6 +725,13 @@ export async function configureHermes(
 
 let stateCache: { key: string; at: number; value: HermesNodeState } | null = null;
 
+export function hermesInstallationStatus(input: { installed: boolean; runnable: boolean; gatewayStatus: HermesServiceStatus; configPresent: boolean }): HermesNodeState['status'] {
+  if (!input.installed) return 'not_installed';
+  if (input.gatewayStatus === 'running') return 'running';
+  if (!input.runnable) return 'degraded';
+  return input.configPresent ? 'detected' : 'needs_setup';
+}
+
 export async function collectHermesState(
   options: { hermesHome?: string; hermesBin?: string } = {},
   refresh = false,
@@ -732,9 +750,11 @@ export async function collectHermesState(
   const fallbackVersion = runtime.fallbackVersion;
   const homeProfiles = await profilesFromHome(resolved.home);
   const installed = versionResult.code === 0 || fallbackVersion?.code === 0 || runtime.homeDetected || configPresent || homeProfiles.length > 0;
-  const version = installed ? firstLine(versionResult.stdout || fallbackVersion?.stdout || versionResult.stderr) : null;
-  const gatewayResult = versionResult.code === 0 || fallbackVersion?.code === 0 ? await runHermes(runtime.requested, ['gateway', 'status']) : null;
-  const profileListResult = versionResult.code === 0 || fallbackVersion?.code === 0 ? await runHermes(runtime.requested, ['profile', 'list', '--json'], 15_000) : null;
+  // A Hermes home without a working binary is leftover data, not a usable installation.
+  const runnable = versionResult.code === 0 || fallbackVersion?.code === 0;
+  const version = runnable ? firstLine(versionResult.stdout || fallbackVersion?.stdout || versionResult.stderr) : null;
+  const gatewayResult = runnable ? await runHermes(runtime.requested, ['gateway', 'status']) : null;
+  const profileListResult = runnable ? await runHermes(runtime.requested, ['profile', 'list', '--json'], 15_000) : null;
   let profiles: Array<Record<string, unknown>> = [];
   if (profileListResult?.code === 0 && profileListResult.stdout.trim()) {
     try {
@@ -742,7 +762,7 @@ export async function collectHermesState(
       if (Array.isArray(parsed)) profiles = parsed.slice(0, 50).filter((entry): entry is Record<string, unknown> => typeof entry === 'object' && entry !== null);
     } catch { /* fall through with empty profiles */ }
   }
-  if (profiles.length === 0 && (versionResult.code === 0 || fallbackVersion?.code === 0)) {
+  if (profiles.length === 0 && runnable) {
     const textResult = await runHermes(runtime.requested, ['profile', 'list'], 15_000);
     profiles = parseProfileListText(`${textResult.stdout}\n${textResult.stderr}`, resolved.home).slice(0, 50);
   }
@@ -756,12 +776,9 @@ export async function collectHermesState(
       metadata: { source: 'implicit default profile' },
     }];
   }
-  const gatewayText = `${gatewayResult?.stdout ?? ''}\n${gatewayResult?.stderr ?? ''}`.toLowerCase();
   const gatewayStatus: HermesServiceStatus = !installed
     ? 'not_installed'
-    : /running|active|healthy/.test(gatewayText) ? 'running'
-      : /failed|error/.test(gatewayText) ? 'failed'
-        : /inactive|stopped|not running/.test(gatewayText) ? 'inactive' : 'unknown';
+    : parseGatewayStatusText(`${gatewayResult?.stdout ?? ''}\n${gatewayResult?.stderr ?? ''}`);
   const modelProvider = yamlBlockValue(config, 'model', 'provider');
   const modelName = yamlBlockValue(config, 'model', 'default');
   const modelBaseUrl = yamlBlockValue(config, 'model', 'base_url');
@@ -826,7 +843,7 @@ export async function collectHermesState(
   const dashboard = await observeHermesDashboard(resolved.home);
   const state: HermesNodeState = {
     installed,
-    status: !installed ? 'not_installed' : gatewayStatus === 'running' ? 'running' : configPresent ? 'detected' : 'needs_setup',
+    status: hermesInstallationStatus({ installed, runnable, gatewayStatus, configPresent }),
     installMode: installed ? 'official-script' : 'existing',
     version,
     hermesBin: requested.hermesBin,

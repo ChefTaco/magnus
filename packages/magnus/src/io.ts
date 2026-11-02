@@ -4,9 +4,8 @@
  */
 import { spawn } from 'node:child_process';
 import { statfsSync } from 'node:fs';
-import { request as httpRequest } from 'node:http';
-import { request as httpsRequest } from 'node:https';
 import { createInterface } from 'node:readline/promises';
+import { probeStatus, type ProbeOptions } from './probe.js';
 
 export interface RunOptions {
   cwd?: string;
@@ -45,7 +44,7 @@ export interface Io {
    * answers. Certificates are not verified: this only asks whether the local
    * process is up; the runtime file confirms which version it is.
    */
-  probe(url: string): Promise<number | null>;
+  probe(url: string, options?: ProbeOptions): Promise<number | null>;
   /** Free bytes for an unprivileged writer on the file system holding `path`, or null when unknown. */
   freeBytes(path: string): number | null;
   env: NodeJS.ProcessEnv;
@@ -91,17 +90,7 @@ export function systemIo(): Io {
         rl.close();
       }
     },
-    probe: (url) => new Promise((resolve) => {
-      const target = new URL(url);
-      const send = target.protocol === 'https:' ? httpsRequest : httpRequest;
-      const req = send(target, { method: 'GET', timeout: 5_000, rejectUnauthorized: false }, (res) => {
-        res.resume();
-        resolve(res.statusCode ?? null);
-      });
-      req.on('timeout', () => req.destroy());
-      req.on('error', () => resolve(null));
-      req.end();
-    }),
+    probe: (url, options) => probeStatus(url, options),
     freeBytes: (path) => {
       try {
         const stats = statfsSync(path);

@@ -8,7 +8,7 @@ import { init, type InitOptions } from './init.js';
 import type { Io, RunOptions, RunResult } from './io.js';
 import { ArgsError, parseArgs } from './main.js';
 import { acquireLock, parseLock, Project, type ProjectState } from './project.js';
-import { automaticCandidates, fetchRegistryCatalog, pickTarget, releaseFor, resolveRegistry } from './release.js';
+import { automaticCandidates, fetchRegistryCatalog, pickTarget, registryPackagePath, releaseFor, resolveRegistry, trimTrailingSlashes } from './release.js';
 import { restore } from './restore.js';
 import { rollback } from './rollback.js';
 import { composeProjectName, refreshUnit, serverUnit } from './templates.js';
@@ -677,5 +677,39 @@ describe('health after a restart', async () => {
     writeFileSync(project.path('data', 'run', 'server-runtime.json'), JSON.stringify({ version: '1.1.0', pid: 7, port: 4443, host: '192.0.2.10', startedAt: host.io.now().toISOString() }));
     expect((await waitForHealthy(host.io, project, { version: '1.1.0', startedAfter: host.io.now(), timeoutMs: 6_000 })).ok).toBe(true);
     expect(probed[0]).toBe('https://192.0.2.10:4443/api/v1/health');
+  });
+
+  it('probes with each component\'s own certificate and keeps working without one', async () => {
+    const project = makeProject();
+    const host = makeHost(project, {});
+    const seen: Array<string | undefined> = [];
+    host.io.probe = async (_url, options) => { seen.push(options?.ca); return 200; };
+    const pem = (name: string) => `-----BEGIN CERTIFICATE-----\n${name}\n-----END CERTIFICATE-----\n`;
+    writeFileSync(project.path('config', 'server.crt'), pem('server'));
+    writeFileSync(project.path('config', 'ui.crt'), pem('ui'));
+    writeFileSync(project.envFile('server'), `TLS_CERT_PATH=${project.path('config', 'server.crt')}\n`);
+    writeFileSync(project.envFile('ui'), 'TLS_CERT_PATH=config/ui.crt\n');
+    mkdirSync(project.path('run'), { recursive: true });
+    writeFileSync(project.path('run', 'server-runtime.json'), JSON.stringify({ version: '1.1.0', pid: 7, port: 4000, startedAt: host.io.now().toISOString() }));
+    expect((await waitForHealthy(host.io, project, { version: '1.1.0', startedAfter: host.io.now(), timeoutMs: 6_000 })).ok).toBe(true);
+    expect(seen).toEqual([pem('server'), pem('ui')]);
+    seen.length = 0;
+    writeFileSync(project.envFile('server'), 'TLS_CERT_PATH=/nonexistent/server.crt\n');
+    writeFileSync(project.envFile('ui'), 'API_SECRET=x\n');
+    expect((await waitForHealthy(host.io, project, { version: '1.1.0', startedAfter: host.io.now(), timeoutMs: 6_000 })).ok).toBe(true);
+    expect(seen).toEqual([undefined, undefined]);
+  });
+
+  it('builds the registry URL from an encoded name and any number of trailing slashes', async () => {
+    const project = makeProject();
+    const host = makeHost(project, {});
+    const urls: string[] = [];
+    const fetched = host.io.fetch;
+    host.io.fetch = (async (url: string | URL | Request, init?: RequestInit) => { urls.push(String(url)); return fetched(url, init); }) as typeof fetch;
+    await fetchRegistryCatalog(host.io, 'https://registry.example.com/npm///');
+    expect(urls).toEqual(['https://registry.example.com/npm/@hivemagnus%2Fmagnus']);
+    expect(registryPackagePath('unscoped')).toBe('unscoped');
+    expect(trimTrailingSlashes('https://registry.example.com')).toBe('https://registry.example.com');
+    expect(trimTrailingSlashes('///')).toBe('');
   });
 });
