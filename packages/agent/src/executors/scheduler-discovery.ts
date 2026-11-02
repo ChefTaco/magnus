@@ -101,6 +101,53 @@ export function boundedTimerInlineSources(executable: string, argv: string):
     commands: ['sponge', ...(shell.startsWith('/') ? [] : [shell])], mdmonitor: false };
   return null;
 }
+/**
+ * systemd appends the status of the last run to every Exec* record
+ * (`start_time=[...] ; stop_time=[...] ; pid=... ; code=... ; status=...`).
+ * That is runtime state, not the command definition: a timer that fires
+ * between two observations would otherwise change the source evidence on
+ * every run. Remove only a trailing run of those exact fields after the
+ * record's final `ignore_errors=`; anything else is kept byte for byte.
+ */
+const EXEC_RECORD_WITH_RUNTIME = /^((?:ExecStart|ExecStartPre|ExecStartPost|ExecCondition)=\{[\s\S]*;\s*ignore_errors=(?:yes|no))((?:\s*;\s*(?:start_time=\[[^\]\n]*\]|stop_time=\[[^\]\n]*\]|pid=\d+|code=[^\s;}]+|status=[^\s;}]+))+)(\s*\})$/;
+export function stableServiceProperties(raw: string): string {
+  return raw.split('\n').map(line => {
+    const match = EXEC_RECORD_WITH_RUNTIME.exec(line);
+    return match ? match[1]! + match[3]! : line;
+  }).join('\n');
+}
+/** A timer list keeps unit, load and active state; the SUB column
+ * (waiting/running/elapsed) and description change whenever a timer fires. */
+export function stableTimerUnitList(raw: string): string {
+  return raw.split('\n').map(line => line.trim().split(/\s+/).slice(0, 3).join(' ')).join('\n');
+}
+const HERMES_RUNTIME_TEXT = /(?:hermes|run_gateway\.py)/i;
+const SCRIPT_INTERPRETER = /^(?:python(?:[23](?:\.\d+)?)?|pypy3?|node|bun|deno|bash|sh|dash|zsh)$/;
+/**
+ * A process is a possible Hermes runtime when what it executes is Hermes: its
+ * executable, the script or module an interpreter runs, or an explicit Hermes
+ * home option. Other argument text is data, not identity: an operator's
+ * `grep hermes`, a report filter naming a Hermes kind, or a shell whose inline
+ * code mentions Hermes is not a runtime (any Hermes it starts is a separate
+ * process observed on its own).
+ */
+export function hermesRuntimeCommand(args: string[]): boolean {
+  const executable = args[0] ?? '';
+  if (HERMES_RUNTIME_TEXT.test(executable)) return true;
+  if (args.some(arg => /^--hermes-home(?:=|$)/.test(arg))) return true;
+  if (!SCRIPT_INTERPRETER.test(executable.split('/').pop() ?? '')) return false;
+  for (let index = 1; index < args.length; index++) {
+    const arg = args[index]!;
+    if (arg === '-m') return HERMES_RUNTIME_TEXT.test(args[index + 1] ?? '');
+    if (/^-m./.test(arg)) return HERMES_RUNTIME_TEXT.test(arg.slice(2));
+    // Inline code is not a script identity.
+    if (/^-[a-zA-Z]*[ce]$/.test(arg) || ['--command', '--eval', '--print'].includes(arg)) return false;
+    if (arg === '--') return HERMES_RUNTIME_TEXT.test(args[index + 1] ?? '');
+    if (arg.startsWith('-')) continue;
+    return HERMES_RUNTIME_TEXT.test(arg);
+  }
+  return false;
+}
 export async function discoverSchedulerSources(options: DiscoveryOptions = {}) {
   const issues: string[] = []; const blockers: DiscoveryBlockerInput[] = []; const sources: Record<string, string> = {};
   const homes = new Set<string>(); const hermesRoots = new Set<string>();
@@ -164,7 +211,7 @@ export async function discoverSchedulerSources(options: DiscoveryOptions = {}) {
         '--state=active,activating,reloading', '--all', '--plain', '--no-legend', '--no-pager']);
       const enabledRaw = await run('/usr/bin/systemctl', [...scope, 'list-unit-files', '--type=timer',
         '--state=enabled,enabled-runtime', '--plain', '--no-legend', '--no-pager']);
-      sources[sourceKey] = schedulerContentDigest(JSON.stringify([activeRaw, enabledRaw]));
+      sources[sourceKey] = schedulerContentDigest(JSON.stringify([stableTimerUnitList(activeRaw), enabledRaw]));
       const names = [...new Set([...timerNames(activeRaw), ...timerNames(enabledRaw)])].sort(compareText);
       for (const name of names) {
         try {
@@ -347,10 +394,11 @@ export async function discoverSchedulerSources(options: DiscoveryOptions = {}) {
           for (const path of absentEnvironmentFiles)
             try { await lstat(path); throw new Error('Optional environment file appeared during observation'); }
             catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+          const stableService = stableServiceProperties(serviceRaw);
           if (await run('/usr/bin/systemctl', showArgs) !== raw
-            || await run('/usr/bin/systemctl', serviceShowArgs) !== serviceRaw)
+            || stableServiceProperties(await run('/usr/bin/systemctl', serviceShowArgs)) !== stableService)
             throw new Error('Timer or triggered service identity changed during observation');
-          sources[sourceKey + ':' + hash(name)] = schedulerContentDigest(JSON.stringify([raw, serviceRaw]));
+          sources[sourceKey + ':' + hash(name)] = schedulerContentDigest(JSON.stringify([raw, stableService]));
           blockEvidence(kind, evidence, 1);
         } catch (error) {
           issue(issuePrefix + '_TIMER_IDENTITY_UNRECONCILABLE', name);
@@ -479,13 +527,13 @@ export async function discoverSchedulerSources(options: DiscoveryOptions = {}) {
       check();
       try {
         const command = await boundedSchedulerRead(join(proc, pid, 'cmdline')); if (command.length > 256 * 1024) throw new Error('Process command bound');
-        if (/(?:hermes|run_gateway\.py)/i.test(command.toString('utf8'))) {
+        if (hermesRuntimeCommand(command.toString('utf8').split('\0'))) {
           try {
             const startedAt = await processStart(pid);
             const member = await boundedSchedulerMemberEvidence(join(proc, pid, 'cmdline'), `process:${pid}:start:${startedAt}`);
             const verified = await boundedSchedulerRead(join(proc, pid, 'cmdline'));
             if (await processStart(pid) !== startedAt || schedulerContentDigest(verified) !== member.contentSha256
-              || !/(?:hermes|run_gateway\.py)/i.test(verified.toString('utf8'))) throw new Error('Process identity changed during observation');
+              || !hermesRuntimeCommand(verified.toString('utf8').split('\0'))) throw new Error('Process identity changed during observation');
             blockEvidence('NATIVE_HERMES_RUNTIME_UNINSTRUMENTED', [member]);
           } catch { issue('NATIVE_HERMES_RUNTIME_IDENTITY_UNRECONCILABLE', 'process:' + pid); }
           const args = command.toString('utf8').split('\0');

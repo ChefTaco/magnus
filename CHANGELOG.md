@@ -6,6 +6,32 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [1.1.5] - 2026-11-02
+
+### Fixed
+
+- The scheduler enrollment-drain proof no longer fails on hosts with frequently firing systemd timers. The
+  timer source evidence included the last run's start time, stop time and PID that `systemctl show` appends
+  to each command, so a timer firing between the proof's two inventory reads made them differ and the proof
+  was refused. Only that trailing run status (and the timer list's sub-state column) is ignored; the command
+  definition, unit files and drop-ins stay bound.
+- Scheduler discovery no longer records a process as an uninstrumented Hermes runtime merely because an argument
+  mentions Hermes (for example `grep hermes`, a report filter naming a Hermes kind, or a shell's inline code).
+  A process counts when its executable, the script or module its interpreter runs, or a `--hermes-home` option
+  is Hermes. Before, each such short-lived command seen during a proof added a remembered source, so the count
+  grew with every check and the proof's two reads could differ.
+- A refused agent or scheduler drain proof now says why. The 409 response carries a fixed `error.reason`
+  (for example `inventory-changed` or `challenge-expired`), the agent logs the underlying cause as a warning,
+  and the server keeps the reason in the enrollment status's `lastFailures` as `agentReason`.
+
+### New environment variables
+
+- None.
+
+### Migration impact
+
+- None.
+
 ## [1.1.4] - 2026-11-02
 
 ### Fixed
@@ -419,6 +445,7 @@ The initial release snapshot.
   Pass them to `npm install -g` with `--allow-scripts=...`, or list them under `allowScripts` in
   your project's `package.json`.
 
+[1.1.5]: https://github.com/ChefTaco/magnus/releases/tag/v1.1.5
 [1.1.4]: https://github.com/ChefTaco/magnus/releases/tag/v1.1.4
 [1.1.3]: https://github.com/ChefTaco/magnus/releases/tag/v1.1.3
 [1.1.2]: https://github.com/ChefTaco/magnus/releases/tag/v1.1.2

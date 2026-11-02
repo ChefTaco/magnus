@@ -19,6 +19,7 @@ vi.mock('./mutation-barrier.js', async importOriginal => ({ ...await importOrigi
 const { enrollmentDrainRoutes, canonicalDrainJson, HOST_LOCAL_WRITER_DOMAIN } = await import('./enrollment-drain.js');
 const { nodeAuthMiddleware } = await import('../middleware.js');
 const { managedMutationGuard } = await import('./managed-http.js');
+const { logger } = await import('../utils/logger.js');
 let root: string;
 let descriptor: { version: 1; participant: 'agent'; nodeId: string; nodeFqdn: string; epoch: number;
   barrierId: string; challengeId: string; expiresAt: number };
@@ -38,6 +39,12 @@ beforeEach(async () => {
   app.route('/commands', enrollmentDrainRoutes);
 });
 afterEach(async () => { await rm(root, { recursive: true, force: true }); });
+const reason = async (response: Response) => {
+  expect(response.status).toBe(409);
+  const body = await response.json() as { error: { code: string; reason: string } };
+  expect(body.error.code).toBe('DRAIN_EVIDENCE_UNAVAILABLE'); expect(Object.keys(body.error).sort()).toEqual(['code', 'message', 'reason']);
+  return body.error.reason;
+};
 const send = (body = descriptor, authenticated = true) => app.request('/commands/enrollment-drain', {
   method: 'POST', headers: { 'content-type': 'application/json', ...(authenticated ? { 'x-node-token': 'node-auth' } : {}) }, body: JSON.stringify(body),
 });
@@ -130,19 +137,24 @@ describe('authority-bound node drain evidence', () => {
   });
   it('cannot accept caller-supplied counts or a different challenge, node or epoch', async () => {
     expect((await send({ ...descriptor, activeCount: 0 } as typeof descriptor)).status).toBe(400);
-    for (const change of [{ nodeId: 'other' }, { epoch: 2 }, { challengeId: randomUUID() }, { nodeFqdn: 'other.lab' }])
-      expect((await send({ ...descriptor, ...change })).status).toBe(409);
+    for (const change of [{ nodeId: 'other' }, { epoch: 2 }, { challengeId: randomUUID() }])
+      expect(await reason(await send({ ...descriptor, ...change }))).toBe('authority-binding');
+    expect((await send({ ...descriptor, nodeFqdn: 'other.lab' })).status).toBe(409);
     expect(fixture.commandSnapshot).not.toHaveBeenCalled();
   });
   it('retains a sticky barrier but refuses proof when the ledger is unavailable', async () => {
     fixture.commandSnapshot.mockRejectedValue(new Error('ledger busy'));
-    expect((await send()).status).toBe(409);
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    try {
+      expect(await reason(await send())).toBe('inventory-failed');
+      expect(warn).toHaveBeenCalledWith('Agent enrollment drain refused', expect.objectContaining({ reason: 'inventory-failed', error: 'ledger busy' }));
+    } finally { warn.mockRestore(); }
     await expect(fixture.barrier.begin('POST', '/files/write')).rejects.toThrow('draining');
   });
   it('refuses zero-work proof if systemd is unsupported or retains unowned/unknown executions', async () => {
     for (const inventory of [{ supported: false, quiescent: false }, { supported: true, quiescent: false }]) {
       fixture.inventory.mockResolvedValue(inventory);
-      expect((await send()).status).toBe(409);
+      expect(await reason(await send())).toBe('supervisor-unverified');
     }
     expect(fixture.commandSnapshot).not.toHaveBeenCalled();
   });
@@ -152,6 +164,12 @@ describe('authority-bound node drain evidence', () => {
       vi.spyOn(Date, 'now').mockReturnValue(now + 120_000);
       return { activeCount: 0, unknownCount: 0, evidenceSha256: 'a'.repeat(64) };
     });
-    try { expect((await send()).status).toBe(409); } finally { vi.restoreAllMocks(); }
+    try { expect(await reason(await send())).toBe('challenge-expired'); } finally { vi.restoreAllMocks(); }
+  });
+  it('names an unreachable authority and a barrier that cannot be fenced', async () => {
+    fixture.authority.mockResolvedValueOnce(new Response('{}', { status: 503 }));
+    expect(await reason(await send())).toBe('authority-unavailable');
+    await fixture.barrier.drain({ nodeId: descriptor.nodeId, nodeFqdn: descriptor.nodeFqdn, epoch: descriptor.epoch, barrierId: randomUUID() });
+    expect(await reason(await send())).toBe('fence-failed');
   });
 });

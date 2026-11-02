@@ -160,9 +160,9 @@ export const PARTICIPANT_RECEIPT_LIMITS = { default: 16_384, scheduler: 256 * 10
 
 /** A participant refresh that failed, as a fixed reason code (never the raw provider error or body). */
 export class ParticipantEvidenceError extends Error {
-  constructor(readonly code: string, readonly agentCode: string | null = null) { super(code); }
+  constructor(readonly code: string, readonly agentCode: string | null = null, readonly agentReason: string | null = null) { super(code); }
 }
-const failures = new Map<string, { participant: string; cause: string; agentCode: string | null; at: string }>();
+const failures = new Map<string, { participant: string; cause: string; agentCode: string | null; agentReason: string | null; at: string }>();
 /** The last refresh failure of each participant on a node, as seen by this server process. */
 export function lastParticipantFailures(nodeId: string) {
   return [...failures.entries()].filter(([key]) => key.startsWith(`${nodeId}\n`)).map(([, value]) => value);
@@ -171,16 +171,18 @@ export function lastParticipantFailures(nodeId: string) {
 /** Bounded response consumption, including dishonest or absent content-length. */
 export async function readParticipantReceipt(response: Response, limit: number = PARTICIPANT_RECEIPT_LIMITS.default): Promise<unknown> {
   if (response.status !== 200 || !response.body) {
-    // An optional machine-readable code from the participant (`{ error: { code } }`) is kept; nothing else is.
-    let agentCode: string | null = null;
+    // An optional machine-readable code and fixed reason from the participant
+    // (`{ error: { code, reason } }`) are kept; nothing else is.
+    let agentCode: string | null = null; let agentReason: string | null = null;
     if (response.body && response.status >= 400) {
       const text = await response.text().catch(() => '');
       try {
-        const code = (JSON.parse(text.slice(0, 4096)) as { error?: { code?: unknown } } | null)?.error?.code;
-        if (typeof code === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(code)) agentCode = code;
+        const error = (JSON.parse(text.slice(0, 4096)) as { error?: { code?: unknown; reason?: unknown } } | null)?.error;
+        if (typeof error?.code === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(error.code)) agentCode = error.code;
+        if (typeof error?.reason === 'string' && /^[a-z][a-z0-9-]{0,47}$/.test(error.reason)) agentReason = error.reason;
       } catch { /* no code */ }
     } else await response.body?.cancel().catch(() => undefined);
-    throw new ParticipantEvidenceError(`participant-http-${response.status}`, agentCode);
+    throw new ParticipantEvidenceError(`participant-http-${response.status}`, agentCode, agentReason);
   }
   const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let size = 0;
   try {
@@ -243,8 +245,9 @@ export async function refreshEnrollmentParticipant(nodeId: string, participant: 
     // Outstanding challenge remains pending.
     const cause = error instanceof ParticipantEvidenceError ? error.code : 'participant-evidence-unavailable';
     const agentCode = error instanceof ParticipantEvidenceError ? error.agentCode : null;
-    failures.set(`${nodeId}\n${participant}`, { participant, cause, agentCode, at: new Date().toISOString() });
-    return { participant, status: 'pending', reason: 'participant-evidence-unavailable', cause, agentCode };
+    const agentReason = error instanceof ParticipantEvidenceError ? error.agentReason : null;
+    failures.set(`${nodeId}\n${participant}`, { participant, cause, agentCode, agentReason, at: new Date().toISOString() });
+    return { participant, status: 'pending', reason: 'participant-evidence-unavailable', cause, agentCode, agentReason };
   }
   failures.delete(`${nodeId}\n${participant}`);
   return getDb().$transaction(async tx => {

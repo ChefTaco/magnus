@@ -7,6 +7,7 @@ import { ManagedScheduler, makeCronJob, type SchedulerAuthority } from './manage
 import { schedulerDrainRoutes, canonicalSchedulerEvidence } from './scheduler-drain.js';
 import { schedulerAuthority } from './scheduler-authority.js';
 import { managedCronLine } from './cron-manager.js';
+import { logger } from '../utils/logger.js';
 const key = 'scheduler-drain-result-fixture-at-least-32';
 vi.mock('../env.js', () => ({ HOST_FQDN: 'scheduler.fixture.invalid', NODE_MANAGER_SECRET: 'scheduler-fixture-node', NODE_MANAGER_SECRET_PREVIOUS: '',
   RESULT_SIGNING_SECRET: 'scheduler-drain-result-fixture-at-least-32', CONTROL_API_URL: 'https://authority.fixture.invalid', MAGNUS_EXECUTION_SUPERVISOR_ENABLED: false }));
@@ -112,3 +113,72 @@ describe('authoritative scheduler drain', () => {
     expect(snapshot.occurrences.every(row => row.state === 'unknown')).toBe(true); expect(authority.execute).not.toHaveBeenCalled();
   });
 });
+describe('scheduler drain refusal reasons', () => {
+  async function refused(fixture: ReturnType<typeof route>) {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    try {
+      const response = await send(fixture); expect(response.status).toBe(409);
+      const body = await response.json() as { error: { code: string; reason: string; message: string } };
+      expect(body.error.code).toBe('SCHEDULER_DRAIN_EVIDENCE_UNAVAILABLE');
+      // The response never carries the raw cause, paths or evidence detail.
+      expect(JSON.stringify(body)).not.toContain(root);
+      expect(Object.keys(body.error).sort()).toEqual(['code', 'message', 'reason']);
+      expect(warn).toHaveBeenCalledTimes(1);
+      const [message, meta] = warn.mock.calls[0]!;
+      expect(message).toBe('Scheduler enrollment drain refused'); expect(meta).toMatchObject({ reason: body.error.reason });
+      return { reason: body.error.reason, meta: meta as Record<string, unknown> };
+    } finally { warn.mockRestore(); }
+  }
+  it('names an authority that cannot be reached or does not bind this challenge', async () => {
+    const unreachable = route(); unreachable.status.mockRejectedValueOnce(new Error('Scheduler authority unavailable'));
+    expect(await refused(unreachable)).toMatchObject({ reason: 'authority-unavailable', meta: { error: 'Scheduler authority unavailable' } });
+    expect(await refused(route(descriptor(), { epoch: 2 }))).toMatchObject({ reason: 'authority-binding',
+      meta: { error: 'Scheduler drain authority binding differs' } });
+    expect((await scheduler.inventory()).barrier).toBeNull();
+  });
+  it('names a fence that cannot be installed', async () => {
+    const prior = descriptor(); await scheduler.drain({ nodeId: prior.nodeId, nodeFqdn: prior.nodeFqdn, epoch: prior.epoch, barrierId: prior.barrierId });
+    expect(await refused(route())).toMatchObject({ reason: 'fence-failed', meta: { error: 'Scheduler drain identity differs' } });
+  });
+  it('names a managed inventory that cannot be read', async () => {
+    vi.spyOn(scheduler, 'inventory').mockRejectedValueOnce(new Error('Scheduler journal unavailable'));
+    expect(await refused(route())).toMatchObject({ reason: 'inventory-failed', meta: { error: 'Scheduler journal unavailable' } });
+  });
+  it('names a source inventory that changed between the two reads, by kind only', async () => {
+    await writeFile(join(root, 'spool/root'), '* * * * * first-command\n');
+    const original = scheduler.observeDiscovery.bind(scheduler); let calls = 0;
+    // The second journal observation ends the first read; change a source before the second read.
+    vi.spyOn(scheduler, 'observeDiscovery').mockImplementation(async (roots, sources) => {
+      if (++calls === 2) await writeFile(join(root, 'spool/root'), '* * * * * second-command\n');
+      return original(roots, sources);
+    });
+    const { reason, meta } = await refused(route());
+    expect(reason).toBe('inventory-changed');
+    expect(meta).toMatchObject({ error: 'Scheduler source inventory changed during proof', blockerKinds: ['LEGACY_OR_UNSUPPORTED_CRONTAB'] });
+    expect(meta['fields']).toEqual(expect.arrayContaining(['blockers', 'sources']));
+    expect(JSON.stringify(meta)).not.toContain('command');
+  });
+  it('names managed ownership that changed during the final snapshot', async () => {
+    const original = scheduler.inventory.bind(scheduler); let calls = 0;
+    vi.spyOn(scheduler, 'inventory').mockImplementation(async identity => {
+      const value = await original(identity);
+      // Calls: initial, one per source read (two), then the final pair.
+      return ++calls === 5 ? { ...value, issues: ['UNRECOGNIZED_SCHEDULER_RECORD'] } : value;
+    });
+    expect(await refused(route())).toMatchObject({ reason: 'ownership-changed' });
+  });
+  it('names a challenge that expired while evidence was collected', async () => {
+    const value = descriptor(); let clock = Date.now();
+    const now = vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    try {
+      const original = scheduler.inventory.bind(scheduler); let calls = 0;
+      vi.spyOn(scheduler, 'inventory').mockImplementation(async identity => {
+        if (++calls === 5) clock = value.expiresAt + 1;
+        return original(identity);
+      });
+      const result = await refused(route(value));
+      expect(result).toMatchObject({ reason: 'challenge-expired', meta: { lateByMs: 1 } });
+    } finally { now.mockRestore(); }
+  });
+});
+

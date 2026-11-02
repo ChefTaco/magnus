@@ -1,0 +1,9 @@
+{
+  "summary": "Enrollment drain fixes: scheduler proofs no longer fail when a timer fires between the two inventory reads, only real Hermes processes count as uninstrumented runtimes, and refused drain proofs log and return a specific reason. No migrations and no new settings.",
+  "breaking": false,
+  "minUpgradeFrom": "1.0.0",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}
