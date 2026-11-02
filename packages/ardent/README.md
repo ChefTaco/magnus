@@ -149,7 +149,22 @@ a2a:
   peers_file: peers.yaml
   skill: { id: research, name: Research, description: Sourced answers, tags: [research] }
   hermes_compat: false
+  rate_limit:                            # all optional; these are the defaults
+    enabled: true
+    ip_requests_per_minute: 600          # every HTTP request, before authentication
+    ip_burst: 120
+    peer_requests_per_minute: 300        # after authentication, per peer (also gRPC)
+    peer_burst: 60
+    max_concurrent_tasks_per_peer: 16    # queued and running tasks
+    trusted_proxies: []                  # proxies whose X-Forwarded-For is believed
 ```
+
+A limited request is answered with `429` and `Retry-After`. The client address
+is the socket address unless the connecting address is listed in
+`trusted_proxies` (addresses or CIDR ranges). Behind a reverse proxy, all clients
+otherwise share the proxy's address and one bucket, so list the proxy there.
+gRPC requests count against the peer limit and the task cap; the address limit
+covers HTTP only. Limits are kept in memory, per process.
 
 Peers are listed in `peers.yaml` with the environment variables holding their
 inbound and outbound bearer tokens. An ordinary peer task can reach only the

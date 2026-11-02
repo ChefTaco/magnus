@@ -39,12 +39,17 @@ export class A2APushInbox {
     this.db.prepare("UPDATE a2a_outbound_calls SET task_id=?,state='bound',updated_ms=? WHERE id=?").run(taskId, Date.now(), id);
   }
   markFailed(id: string): void { this.db.prepare("UPDATE a2a_outbound_calls SET state='failed',updated_ms=? WHERE id=?").run(Date.now(), id); }
-  accept(peerId: string, token: string | undefined, raw: unknown): { duplicate: boolean; outboundId: string; taskId: string } {
+  /** Checks the callback token alone, so an unauthorized sender cannot make the server parse its body. */
+  authorize(peerId: string, token: string | undefined): z.infer<typeof Outbound> {
     if (!token || token.length > 256 || !this.peers.some(peer => peer.enabled && peer.id === peerId)) throw new Error('A2A push is unauthorized');
     const row = this.db.prepare('SELECT id,peer_id,task_id FROM a2a_outbound_calls WHERE token_hash=?').get(digest(token));
     if (!row) throw new Error('A2A push is unauthorized');
     const call = Outbound.parse(row);
     if (call.peer_id !== peerId) throw new Error('A2A push is unauthorized');
+    return call;
+  }
+  accept(peerId: string, token: string | undefined, raw: unknown): { duplicate: boolean; outboundId: string; taskId: string } {
+    const call = this.authorize(peerId, token);
     const event = StreamCodec.fromJSON(raw);
     const payload = event.payload;
     if (!payload) throw new Error('A2A push event is malformed');
