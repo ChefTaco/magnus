@@ -5,30 +5,28 @@
  * every heartbeat, so an operator sees drift long before an upgrade.
  */
 import type { AgentDiskHealth, AgentLedgerHealth, AgentNpmHealth, AgentUpgradePreflight } from '@hivemagnus/magnus-contracts';
+import { HOST_FQDN, RESULT_SIGNING_SECRET } from '../env.js';
 import type { CommandLedger, LedgerHealth } from '../executors/command-ledger.js';
+import { fenceProofSigningPayload, signCommandEvidence } from '../security/command-result-signature.js';
 import { logger } from '../utils/logger.js';
 import { diskHealth, engineProblem, installDir, npmHealth, runsVersion, selfUpgradeStatus, unwritablePaths, versionComplete } from './self-upgrade.js';
 
 export const PREFLIGHT_PROTOCOL = 1;
 const LEDGER_CACHE_MS = 60_000;
 
-type LedgerReader = Pick<CommandLedger, 'health' | 'managedEnrollment'>;
+type LedgerReader = Pick<CommandLedger, 'health' | 'enrollmentMarker'>;
 
 const ledgerReport = (health: LedgerHealth): AgentLedgerHealth => ({ readable: health.readable, activeLock: health.activeLock,
   nonTerminalReceipts: health.nonTerminalReceipts, unresolvedReceipts: health.unresolvedReceipts, truncated: health.truncated, error: health.error });
 
-export async function upgradePreflight(options: { version: string; target?: string | undefined; engines?: string | undefined; ledger: LedgerReader;
+export async function upgradePreflight(options: { version: string; target?: string | undefined; engines?: string | undefined; nonce?: string | undefined; ledger: LedgerReader;
   env?: NodeJS.ProcessEnv; nodeVersion?: string }): Promise<AgentUpgradePreflight> {
   const env = options.env ?? process.env;
   const dir = installDir(env);
   const status = selfUpgradeStatus(options.version, env);
   const health = await options.ledger.health();
-  const enrollment = await options.ledger.managedEnrollment().then(
-    marker => marker ? { nodeId: marker.nodeId, nodeFqdn: marker.nodeFqdn } : null,
-    (error: unknown) => {
-      logger.warn(`Local enrollment marker could not be read: ${error instanceof Error ? error.message : String(error)}`);
-      return null;
-    });
+  const marker = await options.ledger.enrollmentMarker();
+  if (marker.error) logger.warn(`Local enrollment marker could not be read: ${marker.error}`);
   const nodeVersion = options.nodeVersion ?? process.versions.node;
   const range = options.engines?.slice(0, 200) || null;
   const problem = range ? engineProblem(range, nodeVersion) : null;
@@ -49,7 +47,10 @@ export async function upgradePreflight(options: { version: string; target?: stri
     fromVersionComplete: versionComplete(dir, options.version) && runsVersion(dir, options.version),
     ledger: ledgerReport(health),
     fenceHighWater: health.fenceHighWater,
-    managedEnrollment: enrollment,
+    ...(options.nonce && /^[a-zA-Z0-9-]{16,64}$/.test(options.nonce) && RESULT_SIGNING_SECRET.length >= 32 ? { fenceProof: { nonce: options.nonce, nodeFqdn: HOST_FQDN,
+      signature: signCommandEvidence(fenceProofSigningPayload({ nonce: options.nonce, nodeFqdn: HOST_FQDN, fenceHighWater: health.fenceHighWater }), RESULT_SIGNING_SECRET) } } : {}),
+    managedEnrollment: marker.marker ? { nodeId: marker.marker.nodeId, nodeFqdn: marker.marker.nodeFqdn } : null,
+    managedEnrollmentState: marker.state,
     engines: { node: nodeVersion, range, compatible: range ? problem === null : null, problem },
   };
 }

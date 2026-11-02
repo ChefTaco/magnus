@@ -310,6 +310,8 @@ export const agentNpmHealthSchema = z.object({
   problem: z.string().max(500).nullable().optional(),
 });
 
+export const agentMarkerStateSchema = z.enum(['absent', 'present', 'unknown']);
+
 /** Known reasons plus any future one, which the server treats as a problem and not as an expected state. */
 export const agentSelfUpgradeReasonCode = z.union([z.enum(['SWITCHED_OFF', 'CONTAINER', 'LEGACY_LAYOUT', 'NOT_WRITABLE', 'NPM']), z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/)]);
 
@@ -325,6 +327,8 @@ export const agentSelfUpgradeStatusSchema = z.object({
   /** Seconds a new version has on trial before the launcher switches back (MAGNUS_AGENT_UPGRADE_CONFIRM_SECONDS). */
   confirmSeconds: z.number().int().positive().max(86_400).nullable().optional(),
   managedEnrollment: agentManagedEnrollmentSchema.nullable().optional(),
+  /** `unknown`: the marker could not be read, which says nothing about a mismatch either way. */
+  managedEnrollmentState: agentMarkerStateSchema.optional().catch(undefined),
   // Drift evidence from 1.1.8 agents. Each drops alone when malformed, so a bad value never costs the whole report.
   fenceHighWater: fenceHighWaterSchema.optional().catch(undefined),
   ledger: agentLedgerHealthSchema.optional().catch(undefined),
@@ -351,6 +355,9 @@ export const agentUpgradePreflightSchema = z.object({
   ledger: agentLedgerHealthSchema.optional().catch(undefined),
   fenceHighWater: fenceHighWaterSchema.optional().catch(undefined),
   managedEnrollment: agentManagedEnrollmentSchema.nullable().optional().catch(null),
+  managedEnrollmentState: agentMarkerStateSchema.optional().catch(undefined),
+  /** `fenceHighWater`, signed by the agent for this nonce. Only a verified proof can move a server generation. */
+  fenceProof: z.object({ nonce: z.string().max(64), nodeFqdn: z.string().max(253), signature: z.string().regex(/^[a-f0-9]{64}$/) }).optional().catch(undefined),
   engines: z.object({
     node: z.string().max(64),
     range: z.string().max(200).nullable(),

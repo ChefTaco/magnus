@@ -255,8 +255,8 @@ describe('read-only ledger health', () => {
     await expect(ledger.execute({ commandId: 'lost', command: '/bin/true', args: [], timeoutSeconds: 1, coordination: fence }, async () => { throw new Error('lost'); })).rejects.toMatchObject({ code: 'OUTCOME_UNKNOWN', notStarted: false });
     const health = await ledger.health();
     expect(health).toMatchObject({ readable: true, nonTerminalReceipts: 1, unresolvedReceipts: 1, fenceHighWater: { 'node:fixture': '7' }, activeLock: { commandId: 'lost', receipt: 'unknown' } });
-    expect(await ledger.commandTrace('lost')).toEqual({ receipt: true, activeLock: true });
-    expect(await ledger.commandTrace('never-seen')).toEqual({ receipt: false, activeLock: false });
+    expect(await ledger.commandTrace('lost', 'node:fixture')).toMatchObject({ ledgerExists: true, receipt: true, activeLock: true, fenceHighWater: '7' });
+    expect(await ledger.commandTrace('never-seen')).toMatchObject({ ledgerExists: true, receipt: false, activeLock: false, fenceHighWater: null });
   });
 
   it('marks refusals before the callback as not started, and an existing receipt as not certain', async () => {

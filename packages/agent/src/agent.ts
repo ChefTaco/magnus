@@ -87,12 +87,10 @@ async function collectHealthWithDeadline(): ReturnType<typeof collectSystemHealt
 
 /** Self-upgrade status for the heartbeat, with the sticky local enrollment marker. */
 async function heartbeatSelfUpgrade(): Promise<ReturnType<typeof selfUpgradeStatus>> {
-  const enrollment = await commandLedger.managedEnrollment().catch((error: unknown) => {
-    logger.warn(`Local enrollment marker could not be read: ${error instanceof Error ? error.message : String(error)}`);
-    return null;
-  });
+  const marker = await commandLedger.enrollmentMarker();
+  if (marker.error) logger.warn(`Local enrollment marker could not be read: ${marker.error}`);
   return { ...selfUpgradeStatus(AGENT_VERSION), ...heartbeatDrift(commandLedger),
-    managedEnrollment: enrollment ? { nodeId: enrollment.nodeId, nodeFqdn: enrollment.nodeFqdn } : null };
+    managedEnrollment: marker.marker ? { nodeId: marker.marker.nodeId, nodeFqdn: marker.marker.nodeFqdn } : null, managedEnrollmentState: marker.state };
 }
 
 /** Stop the heartbeat loop. */

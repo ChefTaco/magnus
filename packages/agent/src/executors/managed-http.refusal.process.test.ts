@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { commandRefusalSigningPayload, signCommandEvidence } from '../security/command-result-signature.js';
+import { commandAbsenceSigningPayload, commandRefusalSigningPayload, fenceProofSigningPayload, signCommandEvidence } from '../security/command-result-signature.js';
 import { httpIdentity } from '../security/managed-http.js';
 
 const secret = 'managed-refusal-signing-key-at-least-32-bytes';
@@ -72,7 +72,7 @@ describe('a certain refusal on a ledger with a pre-seeded high fence', () => {
     const { error } = await response.json() as { error: Record<string, unknown> & { refusal: { signature: string } } };
     expect(error).toMatchObject({ code: 'STALE_FENCE', dispatched: false, executed: false, highWater: FENCE, resourceKey: 'node:fixture' });
     expect(error['code']).not.toBe('MANAGED_MUTATION_UNCERTAIN');
-    const unsigned = { commandId: input.commandId, requestSha256: digest(input), code: 'STALE_FENCE', highWater: FENCE };
+    const unsigned = { commandId: input.commandId, requestSha256: digest(input), code: 'STALE_FENCE', highWater: FENCE, nodeFqdn: 'fixture.example.com', leaseId: input.claim.leaseId };
     expect(error.refusal).toEqual({ ...unsigned, signature: signCommandEvidence(commandRefusalSigningPayload(unsigned), secret) });
     expect(effect).not.toHaveBeenCalled();
     const names = await readdir(receiptsDir());
@@ -212,5 +212,101 @@ describe('a machine-readable reason for why self-upgrade is off', () => {
       if (process.getuid?.() !== 0) expect(selfUpgradeStatus('1.1.7', { ...launcher, MAGNUS_AGENT_NPM: '/bin/true' })).toMatchObject({ enabled: false, reasonCode: 'NOT_WRITABLE' });
     } finally { await chmod(join(root, 'versions'), 0o700); }
     expect(selfUpgradeStatus('1.1.7', { ...launcher, MAGNUS_AGENT_NPM: '/bin/true' })).toMatchObject({ enabled: true, reasonCode: null });
+  });
+});
+
+describe('what the agent signs about a command it holds nothing for', () => {
+  const trace = async (id: string, query = 'nonce=nonce-of-sixteen-chars&resourceKey=node:fixture') => {
+    const { commandRoutes } = await import('./command-executor.js');
+    const response = await commandRoutes.request(`/receipts/${id}/trace?${query}`);
+    return { status: response.status, data: (await response.json() as { data: Record<string, unknown> }).data };
+  };
+
+  it('finding 3: signs that the ledger is missing, instead of an absence that reads as proof', async () => {
+    const { status, data } = await trace('agent-upgrade-x');
+    expect(status).toBe(200);
+    expect(data).toMatchObject({ commandId: 'agent-upgrade-x', nodeFqdn: 'fixture.example.com', ledgerExists: false, receipt: false, activeLock: false, fenceHighWater: null, markerState: 'absent' });
+    // Asking must not bring the ledger into being.
+    await expect(readdir(receiptsDir())).rejects.toThrow();
+  });
+
+  it('finding 3: signs the fence high-water and the enrollment marker along with the absence', async () => {
+    await seedFence('node:fixture', FENCE);
+    await writeFile(join(receiptsDir(), 'managed-enrollment.json'), JSON.stringify({ version: 1, nodeId: 'fixture', nodeFqdn: 'fixture.example.com' }), { mode: 0o600 });
+    const { data } = await trace('agent-upgrade-x');
+    const { signature, ...unsigned } = data as Record<string, unknown> & { signature: string };
+    expect(unsigned).toMatchObject({ ledgerExists: true, receipt: false, activeLock: false, resourceKey: 'node:fixture', fenceHighWater: FENCE, markerState: 'present', markerNodeId: 'fixture' });
+    expect(signature).toBe(signCommandEvidence(commandAbsenceSigningPayload(unsigned as never), secret));
+  });
+
+  it('reports an unreadable marker as unknown, not absent', async () => {
+    await seedFence('node:fixture', FENCE);
+    await writeFile(join(receiptsDir(), 'managed-enrollment.json'), 'not json', { mode: 0o600 });
+    expect((await trace('agent-upgrade-x')).data).toMatchObject({ markerState: 'unknown', markerNodeId: null });
+  });
+
+  it('rejects a trace without a nonce or with a malformed key', async () => {
+    expect((await trace('x', 'resourceKey=node:fixture')).status).toBe(400);
+    expect((await trace('x', 'nonce=nonce-of-sixteen-chars&resourceKey=../../etc')).status).toBe(400);
+  });
+});
+
+describe('a claim without a receipt', () => {
+  it('never started: the callback runs only after the receipt is durable, and the next holder clears the claim', async () => {
+    await mkdir(receiptsDir(), { recursive: true, mode: 0o700 });
+    // What a crash between active.lock and the receipt leaves behind.
+    await writeFile(join(receiptsDir(), 'active.lock'), JSON.stringify({ commandId: 'crashed', nonce: '6f9619ff-8b86-4d11-b42d-00c04fc964ff', pid: 1 }), { mode: 0o600 });
+    const { commandLedger } = await import('./command-executor.js');
+    expect(await commandLedger.commandTrace('crashed')).toMatchObject({ receipt: false, activeLock: true });
+    expect((await commandLedger.health()).activeLock).toEqual({ commandId: 'crashed', receipt: 'none' });
+    expect((await send(request('5', 'after-crash'))).status).toBe(200);
+    expect(await commandLedger.commandTrace('crashed')).toMatchObject({ receipt: false, activeLock: false });
+    expect(effect).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not sign non-execution while this very command holds the claim', async () => {
+    const { refusalError } = await import('./command-refusal.js');
+    await mkdir(receiptsDir(), { recursive: true, mode: 0o700 });
+    await writeFile(join(receiptsDir(), 'active.lock'), JSON.stringify({ commandId: 'mine', nonce: '6f9619ff-8b86-4d11-b42d-00c04fc964ff', pid: 1 }), { mode: 0o600 });
+    const error = await refusalError({ commandId: 'mine', requestSha256: 'a'.repeat(64), leaseId: 'lease-1' }, 'RESOURCE_BUSY', 'busy', { notStarted: true });
+    expect(error).not.toHaveProperty('executed');
+    expect(error).not.toHaveProperty('refusal');
+  });
+
+  it('finding 9: binds a refusal to this node and this lease, and signs nothing without a lease', async () => {
+    const { refusalError } = await import('./command-refusal.js');
+    const signed = await refusalError({ commandId: 'free', requestSha256: 'a'.repeat(64), leaseId: 'lease-1' }, 'RESOURCE_BUSY', 'busy', { notStarted: true }) as { refusal: Record<string, unknown> };
+    expect(signed.refusal).toMatchObject({ nodeFqdn: 'fixture.example.com', leaseId: 'lease-1' });
+    expect(await refusalError({ commandId: 'free', requestSha256: 'a'.repeat(64) }, 'RESOURCE_BUSY', 'busy', { notStarted: true })).not.toHaveProperty('refusal');
+  });
+});
+
+describe('the preflight is strictly read only', () => {
+  it('creates nothing on a node without a ledger, and signs its fences under the nonce it was given', async () => {
+    const { agentUpgradeRoutes } = await import('../upgrade/routes.js');
+    const response = await agentUpgradeRoutes.request('/preflight?target=1.1.9&nonce=nonce-of-sixteen-chars');
+    expect(response.status).toBe(200);
+    const { data } = await response.json() as { data: { managedEnrollmentState: string } };
+    expect(data.managedEnrollmentState).toBe('absent');
+    await expect(readdir(join(root, '.magnus'))).rejects.toThrow();
+  });
+
+  it('finding 9: proves its fence high-water with the nonce, the node and the values', async () => {
+    await seedFence('node:fixture', FENCE);
+    const { agentUpgradeRoutes } = await import('../upgrade/routes.js');
+    const { data } = await (await agentUpgradeRoutes.request('/preflight?nonce=nonce-of-sixteen-chars')).json() as { data: { fenceHighWater: Record<string, string>; fenceProof: { nonce: string; nodeFqdn: string; signature: string } } };
+    expect(data.fenceHighWater).toEqual({ 'node:fixture': FENCE });
+    expect(data.fenceProof).toEqual({ nonce: 'nonce-of-sixteen-chars', nodeFqdn: 'fixture.example.com',
+      signature: signCommandEvidence(fenceProofSigningPayload({ nonce: 'nonce-of-sixteen-chars', nodeFqdn: 'fixture.example.com', fenceHighWater: data.fenceHighWater }), secret) });
+    const unproven = await (await agentUpgradeRoutes.request('/preflight')).json() as { data: Record<string, unknown> };
+    expect(unproven.data).not.toHaveProperty('fenceProof');
+  });
+
+  it('reports an unreadable marker as unknown, so it cannot hide a mismatch', async () => {
+    await mkdir(receiptsDir(), { recursive: true, mode: 0o700 });
+    await writeFile(join(receiptsDir(), 'managed-enrollment.json'), '{"version":2}', { mode: 0o600 });
+    const { agentUpgradeRoutes } = await import('../upgrade/routes.js');
+    const { data } = await (await agentUpgradeRoutes.request('/preflight')).json() as { data: Record<string, unknown> };
+    expect(data).toMatchObject({ managedEnrollmentState: 'unknown', managedEnrollment: null });
   });
 });

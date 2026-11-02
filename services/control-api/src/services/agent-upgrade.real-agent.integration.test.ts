@@ -134,4 +134,111 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('the real agent against the r
     const rows = await db.commandResourceLease.findMany({ where: { nodeId } });
     expect(rows.map(row => row.state)).toEqual(['released', 'released']);
   });
+
+  /** A lease stuck unknown, past its deadline, as the failure this recovery exists for leaves it. */
+  async function stuckLease() {
+    const commandId = `cmd-${randomUUID()}`;
+    const context = { nodeId, actorId: 'admin', baseUrl: getNodeBaseUrl('127.0.0.1', 41100) };
+    const admission = await leases.admitResourceCommand(context, { commandId, command: '/usr/bin/true', args: [], timeoutSeconds: 5 });
+    await leases.markResourceDispatched(admission!);
+    await leases.failResourceCommand(admission!);
+    await db.$executeRaw`ALTER TABLE command_resource_leases DISABLE TRIGGER command_resource_leases_authority_immutable`;
+    await db.commandResourceLease.update({ where: { commandId }, data: { deadline: new Date(Date.now() - 10 * 60_000) } });
+    await db.$executeRaw`ALTER TABLE command_resource_leases ENABLE TRIGGER command_resource_leases_authority_immutable`;
+    return { commandId, fence: BigInt(admission!.payload.coordination!.fence) };
+  }
+  const recover = () => leases.recoverAbsentLeases(nodeId, nodeFqdn, (id, nonce, resourceKey) => client().getCommandTrace(id, nonce, resourceKey));
+  const leaseState = async (commandId: string) => (await db.commandResourceLease.findUniqueOrThrow({ where: { commandId } })).state;
+
+  it('finding 3: a missing ledger proves nothing, and the lease stays held with a code', async () => {
+    const { commandId } = await stuckLease();
+    expect(await recover()).toEqual([expect.objectContaining({ commandId, outcome: 'unverified', code: 'LEDGER_MISSING' })]);
+    expect(await leaseState(commandId)).toBe('unknown');
+  });
+
+  it('finding 3: an empty ledger with no fence file proves nothing either', async () => {
+    const { commandId } = await stuckLease();
+    await mkdir(ledgerDir, { recursive: true, mode: 0o700 });
+    expect(await recover()).toEqual([expect.objectContaining({ commandId, outcome: 'unverified', code: 'LEDGER_NO_FENCE' })]);
+    expect(await leaseState(commandId)).toBe('unknown');
+  });
+
+  it('finding 3: settles when the high-water is below the lease fence: it never passed admission', async () => {
+    await db.commandResourceFence.create({ data: { resourceKey: `node:${nodeId}`, generation: 10n } });
+    const { commandId, fence } = await stuckLease();
+    await seedFence(fence - 1n);
+    expect(await recover()).toEqual([{ commandId, outcome: 'settled' }]);
+  });
+
+  it('finding 3: settles when the high-water is above it with no receipt: the stale-refusal case', async () => {
+    const { commandId, fence } = await stuckLease();
+    await seedFence(fence + 100n);
+    expect(await recover()).toEqual([{ commandId, outcome: 'settled' }]);
+    expect(await db.commandResourceLease.findUniqueOrThrow({ where: { commandId } })).toMatchObject({ state: 'released', settlement: 'not-dispatched' });
+    expect(auditLog).toHaveBeenCalledWith(expect.objectContaining({ action: 'agent.lease.recovered', targetId: nodeId }));
+  });
+
+  it('finding 3: high-water equal to the lease fence with no lock is inconsistent: the receipt should be there', async () => {
+    const { commandId, fence } = await stuckLease();
+    await seedFence(fence);
+    expect(await recover()).toEqual([expect.objectContaining({ commandId, outcome: 'unverified', code: 'LEDGER_EVIDENCE_INCONSISTENT' })]);
+  });
+
+  it('a crash between the claim and the receipt settles: a lock without a receipt never started', async () => {
+    const { commandId, fence } = await stuckLease();
+    await seedFence(fence);
+    await writeFile(join(ledgerDir, 'active.lock'), JSON.stringify({ commandId, nonce: randomUUID(), pid: 1 }), { mode: 0o600 });
+    expect(await recover()).toEqual([{ commandId, outcome: 'settled' }]);
+  });
+
+  it('finding 3: a marker for another node, or one it cannot read, stays held', async () => {
+    const { commandId, fence } = await stuckLease();
+    await seedFence(fence + 1n);
+    await writeFile(join(ledgerDir, 'managed-enrollment.json'), JSON.stringify({ version: 1, nodeId: 'another-node', nodeFqdn: 'other.example.com' }), { mode: 0o600 });
+    expect(await recover()).toEqual([expect.objectContaining({ outcome: 'unverified', code: 'ENROLLMENT_MARKER_MISMATCH' })]);
+    await writeFile(join(ledgerDir, 'managed-enrollment.json'), 'garbage', { mode: 0o600 });
+    expect(await recover()).toEqual([expect.objectContaining({ outcome: 'unverified', code: 'ENROLLMENT_MARKER_UNKNOWN' })]);
+    expect(await leaseState(commandId)).toBe('unknown');
+  });
+
+  it('finding 9: a real stale fence reply settles and heals through the bound signature', async () => {
+    await seedFence(1789962351090n);
+    await expect(client().upgradeAgent({ version: target, integrity: INTEGRITY, requestId: randomUUID(), packageName: '@hivemagnus/magnus-agent' })).rejects.toMatchObject({ code: 'STALE_FENCE' });
+    expect(await db.commandResourceLease.findMany({ where: { nodeId } })).toEqual([expect.objectContaining({ state: 'released', settlement: 'not-dispatched' })]);
+    expect(await generation()).toBe(1789962351091n);
+  });
+
+  it('finding 9: the preflight heals a fence only through its signed proof', async () => {
+    await seedFence(1789962351090n);
+    await setNpm('echo "npm error code E404" >&2; exit 1');
+    const run = await wave();
+    // The fence never got in the way: the real failure came through on the first attempt.
+    expect(run.nodes[0]).toMatchObject({ code: 'SELF_UPGRADE_FAILED', attempts: 1 });
+    expect(await generation()).toBe(1789962351092n);
+    expect(auditLog).toHaveBeenCalledWith(expect.objectContaining({ action: 'agent.fence.advanced', details: expect.objectContaining({ source: 'preflight' }) }));
+  });
+
+  it('finding 9: a preflight whose proof does not verify moves nothing', async () => {
+    await seedFence(1789962351090n);
+    const preflight = await import('./agent-upgrade-preflight.js');
+    const target_ = { nodeId, hostname: nodeFqdn, managed: true };
+    const result = await preflight.preflightNode(target_, { target });
+    expect(result.fencesVerified).toBe(true);
+    const healed = await preflight.healNode(target_, { ...result, fencesVerified: false });
+    expect(healed.healed).toEqual([]);
+    expect(await generation()).toBe(0n);
+    const wrongNode = await preflight.preflightNode({ ...target_, hostname: 'another.example.com' }, { target });
+    expect(wrongNode.fencesVerified).toBe(false);
+  });
+
+  it('the console check changes nothing, however much it finds', async () => {
+    await seedFence(1789962351090n);
+    const { commandId } = await stuckLease();
+    await seedFence(1789962351090n);
+    const before = await generation();
+    const report = await service.checkUpgrade({ version: target, integrity: INTEGRITY, nodeIds: [nodeId], deps: fastDeps() });
+    expect(report.nodes[0]?.preflight?.problems.map(problem => problem.code)).toContain('FENCE_AHEAD');
+    expect(await generation()).toBe(before);
+    expect(await leaseState(commandId)).toBe('unknown');
+  });
 });

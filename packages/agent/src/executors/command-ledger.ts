@@ -76,6 +76,9 @@ export class CommandAdmissionError extends Error {
     if (details.highWater) this.highWater = details.highWater;
   }
 }
+const enrollmentMarkerSchema = z.object({ version: z.literal(1), nodeId: z.string().min(1).max(128), nodeFqdn: z.string().min(1).max(253) }).strict();
+export type EnrollmentMarker = { state: 'absent' | 'present' | 'unknown'; marker: z.infer<typeof enrollmentMarkerSchema> | null; error?: string };
+export interface CommandTrace { ledgerExists: boolean; receipt: boolean; activeLock: boolean; fenceHighWater: string | null; marker: EnrollmentMarker }
 /** Read-only view of the ledger for preflight checks and heartbeats. */
 export interface LedgerHealth {
   readable: boolean;
@@ -241,7 +244,7 @@ export class CommandLedger {
     await this.initialize();
     const value = await this.read<unknown>('managed-enrollment.json');
     if (value === undefined) return null;
-    return z.object({ version: z.literal(1), nodeId: z.string().min(1).max(128), nodeFqdn: z.string().min(1).max(253) }).strict().parse(value);
+    return enrollmentMarkerSchema.parse(value);
   }
 
   /** A drain cannot equate an idle process or expired fence with settled effects. */
@@ -325,15 +328,44 @@ export class CommandLedger {
   }
 
   /**
-   * Whether anything local refers to this command. A running receipt is durable
-   * before its callback starts, and active.lock precedes that receipt, so finding
-   * neither proves the callback did not start. Read only, without the mutex.
+   * The sticky marker as it is, without creating anything. An unreadable marker
+   * is `unknown`, not absent: reporting nothing could hide a mismatch.
    */
-  async commandTrace(id: string): Promise<{ receipt: boolean; activeLock: boolean }> {
+  async enrollmentMarker(): Promise<EnrollmentMarker> {
+    try {
+      const raw = await this.read<unknown>('managed-enrollment.json');
+      if (raw === undefined) return { state: 'absent', marker: null };
+      return { state: 'present', marker: enrollmentMarkerSchema.parse(raw) };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT' || (error as NodeJS.ErrnoException).code === 'ENOTDIR') return { state: 'absent', marker: null };
+      return { state: 'unknown', marker: null, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  /**
+   * What this ledger holds about a command, read only and without the mutex. On its
+   * own "no receipt" proves nothing: a ledger that is gone holds nothing either. So
+   * this also says whether there is a ledger, what fence it last accepted for the
+   * key and what its marker says. Ordering in execute(): active.lock, fence, durable
+   * running receipt, and only then the callback, so a claim without a receipt
+   * never started.
+   */
+  async commandTrace(id: string, resourceKey?: string): Promise<CommandTrace> {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(id)) throw new Error('Invalid command identifier');
+    let ledgerExists = true;
+    try {
+      ledgerExists = (await lstat(this.root)).isDirectory();
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT' && (error as NodeJS.ErrnoException).code !== 'ENOTDIR') throw error;
+      ledgerExists = false;
+    }
+    const marker = await this.enrollmentMarker();
+    if (!ledgerExists) return { ledgerExists, receipt: false, activeLock: false, fenceHighWater: null, marker };
     const raw = await this.read<unknown>('active.lock');
     const receipt = await this.read<unknown>(this.receiptName(id));
-    return { receipt: receipt !== undefined, activeLock: raw !== undefined && lockSchema.parse(raw).commandId === id };
+    const fence = resourceKey ? await this.read<{ resourceKey?: unknown; fence?: unknown }>('fence-'+hash(resourceKey)+'.json') : undefined;
+    return { ledgerExists, receipt: receipt !== undefined, activeLock: raw !== undefined && lockSchema.parse(raw).commandId === id,
+      fenceHighWater: fence?.resourceKey === resourceKey && typeof fence?.fence === 'string' && /^[0-9]{1,20}$/.test(fence.fence) ? fence.fence : null, marker };
   }
 
   /**

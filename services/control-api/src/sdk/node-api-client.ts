@@ -185,8 +185,9 @@ export function parseAgentRefusal(error: unknown): (CommandRefusal & { message: 
   const body = (error.data ?? null) as { error?: { executed?: unknown; message?: unknown; refusal?: Partial<CommandRefusal> } } | null;
   const refusal = body?.error?.refusal;
   if (body?.error?.executed !== false || !refusal || typeof refusal.commandId !== 'string' || typeof refusal.requestSha256 !== 'string'
-    || typeof refusal.code !== 'string' || typeof refusal.signature !== 'string' || !(refusal.highWater === null || typeof refusal.highWater === 'string')) return null;
-  return { commandId: refusal.commandId, requestSha256: refusal.requestSha256, code: refusal.code.slice(0, 64), highWater: refusal.highWater, signature: refusal.signature,
+    || typeof refusal.code !== 'string' || typeof refusal.signature !== 'string' || !(refusal.highWater === null || typeof refusal.highWater === 'string')
+    || typeof refusal.nodeFqdn !== 'string' || typeof refusal.leaseId !== 'string') return null;
+  return { commandId: refusal.commandId, requestSha256: refusal.requestSha256, code: refusal.code, highWater: refusal.highWater, nodeFqdn: refusal.nodeFqdn, leaseId: refusal.leaseId, signature: refusal.signature,
     message: typeof body.error.message === 'string' ? body.error.message.slice(0, 1000) : refusal.code };
 }
 
@@ -639,12 +640,12 @@ export class NodeApiClient {
    * `unavailable` is an agent older than 1.1.8 (404) or a report that does not
    * parse; neither says anything against the node.
    */
-  async getUpgradePreflight(query: { target?: string; engines?: string | null }, timeoutMs = 5_000): Promise<
+  async getUpgradePreflight(query: { target?: string; engines?: string | null; nonce?: string }, timeoutMs = 5_000): Promise<
     { status: 'ok'; report: AgentUpgradePreflight } | { status: 'unavailable'; detail: string } | { status: 'unreachable'; detail: string }> {
     let body: ApiResponse<unknown>;
     try {
       body = await this.api.get('agent-upgrade/preflight', { timeout: timeoutMs, retry: 0,
-        searchParams: { ...(query.target ? { target: query.target } : {}), ...(query.engines ? { engines: query.engines } : {}) } }).json<ApiResponse<unknown>>();
+        searchParams: { ...(query.target ? { target: query.target } : {}), ...(query.engines ? { engines: query.engines } : {}), ...(query.nonce ? { nonce: query.nonce } : {}) } }).json<ApiResponse<unknown>>();
     } catch (error) {
       if (error instanceof HTTPError && error.response.status === 404) return { status: 'unavailable', detail: 'this agent has no preflight check' };
       if (error instanceof SyntaxError) return { status: 'unavailable', detail: 'the preflight answer is not JSON' };
@@ -654,11 +655,11 @@ export class NodeApiClient {
     return parsed.success ? { status: 'ok', report: parsed.data } : { status: 'unavailable', detail: 'the preflight answer does not parse' };
   }
 
-  /** Signed answer on whether the agent holds a receipt or active.lock for a command; null from an agent without this route. */
-  async getCommandTrace(commandId: string, nonce: string, timeoutMs = 5_000): Promise<CommandAbsence | null> {
+  /** Signed account of what the agent's ledger holds for a command; null from an agent without this route. */
+  async getCommandTrace(commandId: string, nonce: string, resourceKey: string, timeoutMs = 5_000): Promise<CommandAbsence | null> {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(commandId)) throw new Error('Invalid command identifier');
     try {
-      const response = await this.api.get(`commands/receipts/${encodeURIComponent(commandId)}/trace`, { timeout: timeoutMs, retry: 0, searchParams: { nonce } }).json<ApiResponse<CommandAbsence>>();
+      const response = await this.api.get(`commands/receipts/${encodeURIComponent(commandId)}/trace`, { timeout: timeoutMs, retry: 0, searchParams: { nonce, resourceKey } }).json<ApiResponse<CommandAbsence>>();
       return response.success ? response.data : null;
     } catch (error) {
       if (error instanceof HTTPError && error.response.status === 404) return null;

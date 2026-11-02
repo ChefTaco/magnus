@@ -5,12 +5,18 @@
  * owns: the ledger refuses anything at or below its high-water, so the only
  * safe repair is to move the server's generation UP.
  *
- * Trust: the value comes from the node itself, over the authenticated channel
- * the server opened to its inventory address. Only that node's own keys are
- * accepted, so a malicious agent can only inflate its own counter, which costs
- * nothing but its own numbering. The cap keeps a hostile or corrupt value from
- * pushing the column near BIGINT overflow. Heartbeat values are never trusted
- * for this: heartbeats authenticate with a credential shared by the fleet.
+ * Trust, precisely. The value must be signed with the fleet's result key, under
+ * a nonce this server just chose (a preflight) or bound to this node's lease and
+ * request (a STALE_FENCE refusal), and it must arrive over a connection this server
+ * opened to the node's inventory address. Only that node's own keys are accepted, and
+ * the cap keeps a value from pushing the column near BIGINT overflow. The result
+ * key and the node credential are shared by the fleet, so these signatures tell
+ * agents apart only by what they claim: whoever holds them can sign for any node.
+ * The limit is the connection, which ends at whatever the inventory says. An
+ * agent, or a holder of the fleet secrets the server connects to, can inflate the
+ * counters of the node the server thinks it is talking to; the cost is that node's
+ * numbering, since a generation only moves up and nothing depends on its size.
+ * Heartbeat values are never used for this.
  *
  * command_resource_fences has no database trigger. The increase-only triggers
  * guard the separate shared_resource_fences table, so "never lower" is enforced

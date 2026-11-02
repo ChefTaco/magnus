@@ -50,35 +50,53 @@ export function verifyCommandResultSignature(
 }
 
 /**
- * A certain refusal: this exact request was not started and has no receipt.
- * Bound to the request digest, so it settles nothing but this request's lease.
+ * A certain refusal: this exact request did not start and has no receipt. Bound
+ * to the request digest, the lease and the node, so it settles nothing else.
  */
 export interface CommandRefusal {
   commandId: string;
   requestSha256: string;
   code: string;
   highWater: string | null;
+  nodeFqdn: string;
+  leaseId: string;
   signature: string;
 }
 
 export function commandRefusalSigningPayload(refusal: Omit<CommandRefusal, 'signature'>): string {
   return JSON.stringify({ domain: 'magnus.command-refusal.v1', commandId: refusal.commandId, requestSha256: refusal.requestSha256,
-    code: refusal.code, highWater: refusal.highWater });
+    code: refusal.code, highWater: refusal.highWater, nodeFqdn: refusal.nodeFqdn, leaseId: refusal.leaseId });
 }
 
-/** Nothing local refers to this command: no receipt and no active.lock. Bound to the node and a fresh nonce. */
+/**
+ * What this ledger holds about a command right now, bound to the node and a fresh
+ * nonce. Absence means something only next to positive evidence that a ledger is
+ * there at all: its root, the fence high-water and the enrollment marker.
+ */
 export interface CommandAbsence {
   commandId: string;
   nodeFqdn: string;
   nonce: string;
+  ledgerExists: boolean;
   receipt: boolean;
   activeLock: boolean;
+  resourceKey: string;
+  fenceHighWater: string | null;
+  markerState: 'absent' | 'present' | 'unknown';
+  markerNodeId: string | null;
   signature: string;
 }
 
 export function commandAbsenceSigningPayload(absence: Omit<CommandAbsence, 'signature'>): string {
-  return JSON.stringify({ domain: 'magnus.command-absence.v1', commandId: absence.commandId, nodeFqdn: absence.nodeFqdn,
-    nonce: absence.nonce, receipt: absence.receipt, activeLock: absence.activeLock });
+  return JSON.stringify({ domain: 'magnus.command-absence.v1', commandId: absence.commandId, nodeFqdn: absence.nodeFqdn, nonce: absence.nonce,
+    ledgerExists: absence.ledgerExists, receipt: absence.receipt, activeLock: absence.activeLock, resourceKey: absence.resourceKey,
+    fenceHighWater: absence.fenceHighWater, markerState: absence.markerState, markerNodeId: absence.markerNodeId });
+}
+
+/** The fence high-water a preflight reports, bound to the node and a fresh nonce. Only this can move a server generation. */
+export function fenceProofSigningPayload(proof: { nonce: string; nodeFqdn: string; fenceHighWater: Readonly<Record<string, string>> }): string {
+  return JSON.stringify({ domain: 'magnus.fence-high-water.v1', nonce: proof.nonce, nodeFqdn: proof.nodeFqdn,
+    fenceHighWater: Object.fromEntries(Object.entries(proof.fenceHighWater).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) });
 }
 
 /** HMAC check of a signed refusal or absence payload against the active or previous result key. */

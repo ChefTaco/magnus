@@ -15,7 +15,7 @@ agentUpgradeRoutes.get('/status', c => c.json({ success: true, data: selfUpgrade
 // Read only, and a GET, so it needs no lease, no claim and no registry entry. Older agents answer 404.
 agentUpgradeRoutes.get('/preflight', async c => {
   const { commandLedger } = await import('../executors/command-executor.js');
-  return c.json({ success: true, data: await upgradePreflight({ version: AGENT_VERSION, target: c.req.query('target'), engines: c.req.query('engines'), ledger: commandLedger }) });
+  return c.json({ success: true, data: await upgradePreflight({ version: AGENT_VERSION, target: c.req.query('target'), engines: c.req.query('engines'), nonce: c.req.query('nonce'), ledger: commandLedger }) });
 });
 
 agentUpgradeRoutes.post('/', async c => {

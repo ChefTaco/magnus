@@ -122,7 +122,7 @@ commandRoutes.post('/execute', async (c) => {
   } catch (error) {
     if (!(error instanceof CommandAdmissionError)) throw error;
     logger.warn(`Command ${parsed.data.commandId} refused: ${error.code}: ${error.message}`);
-    return c.json({ success: false, error: await refusalError({ commandId: parsed.data.commandId, requestSha256: commandRequestDigest(parsed.data) }, error.code, error.message,
+    return c.json({ success: false, error: await refusalError({ commandId: parsed.data.commandId, requestSha256: commandRequestDigest(parsed.data), leaseId: managedExecution.getStore()?.claim?.leaseId }, error.code, error.message,
       { notStarted: error.notStarted, ...(error.highWater ? { highWater: error.highWater } : {}) }) }, refusalStatus(error.code));
   }
 });
@@ -288,10 +288,14 @@ commandRoutes.get('/receipts/:commandId', async (c) => {
 commandRoutes.get('/receipts/:commandId/trace', async (c) => {
   const id = c.req.param('commandId');
   const nonce = c.req.query('nonce') ?? '';
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(id) || !/^[a-zA-Z0-9-]{16,64}$/.test(nonce))
-    return c.json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid command identifier or nonce' } }, 400);
+  const resourceKey = c.req.query('resourceKey') ?? '';
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(id) || !/^[a-zA-Z0-9-]{16,64}$/.test(nonce) || !/^[a-zA-Z0-9][a-zA-Z0-9:._-]{0,199}$/.test(resourceKey))
+    return c.json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid command identifier, nonce or resource key' } }, 400);
   try {
-    const unsigned = { commandId: id, nodeFqdn: HOST_FQDN, nonce, ...await commandLedger.commandTrace(id) };
+    const trace = await commandLedger.commandTrace(id, resourceKey);
+    if (trace.marker.error) logger.warn(`Enrollment marker could not be read: ${trace.marker.error}`);
+    const unsigned = { commandId: id, nodeFqdn: HOST_FQDN, nonce, ledgerExists: trace.ledgerExists, receipt: trace.receipt, activeLock: trace.activeLock, resourceKey,
+      fenceHighWater: trace.fenceHighWater, markerState: trace.marker.state, markerNodeId: trace.marker.marker?.nodeId ?? null };
     return c.json({ success: true, data: { ...unsigned, signature: signCommandEvidence(commandAbsenceSigningPayload(unsigned), RESULT_SIGNING_SECRET) } });
   } catch (error) {
     logger.warn(`Command trace ${id} could not be read: ${error instanceof Error ? error.message : String(error)}`);

@@ -450,10 +450,10 @@ try { const row = await admitResourceCommand(JSON.parse(process.argv[2]), JSON.p
   });
 
   describe('certain refusals and stuck leases', () => {
-    const refusalReply = (value: { commandId: string; method: 'POST'; path: string; body: string; timeoutSeconds: number; coordination: NonNullable<CommandRequest['coordination']> },
+    const refusalReply = (value: { claim: { leaseId: string; nodeFqdn: string }; commandId: string; method: 'POST'; path: string; body: string; timeoutSeconds: number; coordination: NonNullable<CommandRequest['coordination']> },
       code: string, highWater: string | null, signingSecret = secret) => {
       const input = { ...httpIdentity(value.commandId, value.method, value.path, value.body, value.timeoutSeconds), coordination: value.coordination };
-      const unsigned = { commandId: value.commandId, requestSha256: commandRequestDigest(input), code, highWater };
+      const unsigned = { commandId: value.commandId, requestSha256: commandRequestDigest(input), code, highWater, nodeFqdn: value.claim.nodeFqdn, leaseId: value.claim.leaseId };
       return new Response(JSON.stringify({ success: false, error: { code, message: 'refused, nothing ran', dispatched: false, executed: false,
         ...(highWater ? { highWater, resourceKey: value.coordination.resourceKey } : {}),
         refusal: { ...unsigned, signature: createHmac('sha256', signingSecret).update(commandRefusalSigningPayload(unsigned)).digest('hex') } } }),
@@ -502,8 +502,22 @@ try { const row = await admitResourceCommand(JSON.parse(process.argv[2]), JSON.p
       expect((await fenceRow()).generation).toBe(before + 3n);
     });
 
+    it('finding 9: refuses a refusal signed for this request but another lease or another node', async () => {
+      for (const forge of [{ leaseId: 'another-lease' }, { nodeFqdn: 'another-node.invalid' }]) {
+        agent(((value: Parameters<typeof refusalReply>[0]) => {
+          const input = { ...httpIdentity(value.commandId, value.method, value.path, value.body, value.timeoutSeconds), coordination: value.coordination };
+          const unsigned = { commandId: value.commandId, requestSha256: commandRequestDigest(input), code: 'STALE_FENCE', highWater: '5', nodeFqdn: value.claim.nodeFqdn, leaseId: value.claim.leaseId, ...forge };
+          return new Response(JSON.stringify({ success: false, error: { code: 'STALE_FENCE', executed: false, refusal: { ...unsigned, signature: createHmac('sha256', secret).update(commandRefusalSigningPayload(unsigned)).digest('hex') } } }), { status: 409, headers: { 'content-type': 'application/json' } });
+        }) as never);
+        await expect(client().writeFile({ filePath: '/tmp/fixture', content: 'fixture' })).rejects.toBeDefined();
+        const row = await db.commandResourceLease.findFirstOrThrow({ where: { nodeId } });
+        expect(row.state).toBe('unknown');
+        await db.commandResourceLease.delete({ where: { id: row.id } });
+      }
+    });
+
     it('refuses to settle with a refusal bound to another request', async () => {
-      const other = { commandId: 'someone-else', requestSha256: 'a'.repeat(64), code: 'STALE_FENCE', highWater: null };
+      const other = { commandId: 'someone-else', requestSha256: 'a'.repeat(64), code: 'STALE_FENCE', highWater: null, nodeFqdn: `${prefix}.invalid`, leaseId: 'another-lease' };
       agent(() => new Response(JSON.stringify({ success: false, error: { code: 'STALE_FENCE', executed: false,
         refusal: { ...other, signature: createHmac('sha256', secret).update(commandRefusalSigningPayload(other)).digest('hex') } } }), { status: 409, headers: { 'content-type': 'application/json' } }));
       await expect(client().writeFile({ filePath: '/tmp/fixture', content: 'fixture' })).rejects.toBeDefined();
@@ -528,15 +542,15 @@ try { const row = await admitResourceCommand(JSON.parse(process.argv[2]), JSON.p
       if (pastDeadline) await db.$executeRaw`ALTER TABLE command_resource_leases ENABLE TRIGGER command_resource_leases_authority_immutable`;
       return req;
     }
-    const absence = (commandId: string, nonce: string, extra: Partial<{ receipt: boolean; activeLock: boolean; nodeFqdn: string }> = {}, signingSecret = secret) => {
-      const unsigned = { commandId, nodeFqdn: `${prefix}.invalid`, nonce, receipt: false, activeLock: false, ...extra };
+    const absence = (commandId: string, nonce: string, resourceKey: string, extra: Partial<{ ledgerExists: boolean; receipt: boolean; activeLock: boolean; nodeFqdn: string; fenceHighWater: string | null; markerState: 'absent' | 'present' | 'unknown'; markerNodeId: string | null }> = {}, signingSecret = secret) => {
+      const unsigned = { commandId, nodeFqdn: `${prefix}.invalid`, nonce, ledgerExists: true, receipt: false, activeLock: false, resourceKey, fenceHighWater: '999999999', markerState: 'present' as const, markerNodeId: nodeId, ...extra };
       return { ...unsigned, signature: createHmac('sha256', signingSecret).update(commandAbsenceSigningPayload(unsigned)).digest('hex') };
     };
 
-    it('settles a stuck lease only on a signed answer of no receipt and no active.lock, audited', async () => {
+    it('settles a stuck lease on a signed answer of no receipt in a ledger that has seen this node, audited', async () => {
       const req = await stuckLease();
       const nonces: string[] = [];
-      const results = await lease.recoverAbsentLeases(nodeId, `${prefix}.invalid`, async (commandId, nonce) => { nonces.push(nonce); return absence(commandId, nonce); });
+      const results = await lease.recoverAbsentLeases(nodeId, `${prefix}.invalid`, async (commandId, nonce, key) => { nonces.push(nonce); return absence(commandId, nonce, key); });
       expect(results).toEqual([{ commandId: req.commandId, outcome: 'settled' }]);
       expect(await db.commandResourceLease.findUniqueOrThrow({ where: { commandId: req.commandId } })).toMatchObject({ state: 'released', settlement: 'not-dispatched' });
       expect((await db.remoteCommand.findUniqueOrThrow({ where: { id: req.commandId } })).status).toBe('FAILED');
@@ -547,19 +561,20 @@ try { const row = await admitResourceCommand(JSON.parse(process.argv[2]), JSON.p
     it('keeps it held on any trace, a bad signature, a replayed answer, an older agent, or before the deadline', async () => {
       const req = await stuckLease();
       const held = async (trace: Parameters<typeof lease.recoverAbsentLeases>[2], outcome: string) => {
-        expect(await lease.recoverAbsentLeases(nodeId, `${prefix}.invalid`, trace)).toEqual([{ commandId: req.commandId, outcome }]);
+        expect(await lease.recoverAbsentLeases(nodeId, `${prefix}.invalid`, trace)).toEqual([expect.objectContaining({ commandId: req.commandId, outcome })]);
         expect((await db.commandResourceLease.findUniqueOrThrow({ where: { commandId: req.commandId } })).state).toBe('unknown');
       };
-      await held(async (id, nonce) => absence(id, nonce, { receipt: true }), 'has-trace');
-      await held(async (id, nonce) => absence(id, nonce, { activeLock: true }), 'has-trace');
-      await held(async (id, nonce) => absence(id, nonce, {}, 'a-forged-signing-key-of-at-least-32-characters'), 'unverified');
-      await held(async id => absence(id, 'a-replayed-nonce-from-before'), 'unverified');
-      await held(async (id, nonce) => absence(id, nonce, { nodeFqdn: 'other.invalid' }), 'unverified');
+      await held(async (id, nonce, key) => absence(id, nonce, key, { receipt: true }), 'has-trace');
+      await held(async (id, nonce, key) => absence(id, nonce, key, {}, 'a-forged-signing-key-of-at-least-32-characters'), 'unverified');
+      await held(async (id, _nonce, key) => absence(id, 'a-replayed-nonce-from-before', key), 'unverified');
+      await held(async (id, nonce, key) => absence(id, nonce, key, { nodeFqdn: 'other.invalid' }), 'unverified');
+      await held(async (id, nonce) => absence(id, nonce, 'node:another'), 'unverified');
+      await held(async (id, nonce, key) => absence(id, nonce, key, { ledgerExists: false }), 'unverified');
       await held(async () => null, 'unsupported');
       await held(async () => { throw new Error('timed out'); }, 'unavailable');
       await db.commandResourceLease.deleteMany({ where: { nodeId } });
       const fresh = await stuckLease(false);
-      expect(await lease.recoverAbsentLeases(nodeId, `${prefix}.invalid`, async (id, nonce) => absence(id, nonce))).toEqual([{ commandId: fresh.commandId, outcome: 'not-past-deadline' }]);
+      expect(await lease.recoverAbsentLeases(nodeId, `${prefix}.invalid`, async (id, nonce, key) => absence(id, nonce, key))).toEqual([{ commandId: fresh.commandId, outcome: 'not-past-deadline' }]);
     });
   });
 

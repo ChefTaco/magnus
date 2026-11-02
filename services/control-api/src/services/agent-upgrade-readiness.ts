@@ -50,6 +50,7 @@ export function computeUpgradeReadiness(input: ReadinessInput): UpgradeReadiness
     const since = enrollment.startedAt ?? enrollment.updatedAt;
     problems.push(problem('ENROLLMENT_DRAINING', `resource enrollment has been draining for ${Math.floor((now - since.getTime()) / DAY_MS)} day(s), since ${since.toISOString().slice(0, 10)}`));
   }
+  if (report?.managedEnrollmentState === 'unknown') problems.push(problem('ENROLLMENT_MARKER_UNKNOWN', 'the agent could not read its managed-enrollment marker'));
   const marker = report?.managedEnrollment;
   if (marker && (!enrollmentIsComplete(enrollment, marker.nodeFqdn) || marker.nodeId !== input.id || marker.nodeFqdn !== input.hostname))
     problems.push(problem('ENROLLMENT_MARKER_MISMATCH', `the agent holds a managed-enrollment marker for ${marker.nodeFqdn}, but the server has ${enrollment ? `a ${enrollment.state} enrollment for ${enrollment.nodeFqdn}` : 'no enrollment row'}`));

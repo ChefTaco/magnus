@@ -8,7 +8,7 @@ import { heartbeatDrift, upgradePreflight } from './preflight.js';
 
 const health: LedgerHealth = { readable: true, activeLock: null, nonTerminalReceipts: 0, unresolvedReceipts: 0, truncated: false, fenceHighWater: { 'node:n1': '42' }, error: null };
 const ledger = (overrides: Partial<LedgerHealth> = {}, marker: { version: 1; nodeId: string; nodeFqdn: string } | null = null) => ({
-  health: vi.fn(async () => ({ ...health, ...overrides })), managedEnrollment: vi.fn(async () => marker) });
+  health: vi.fn(async () => ({ ...health, ...overrides })), enrollmentMarker: vi.fn(async () => ({ state: marker ? 'present' as const : 'absent' as const, marker })) });
 
 function installation(complete = true): string {
   const dir = mkdtempSync(join(tmpdir(), 'magnus-preflight-'));

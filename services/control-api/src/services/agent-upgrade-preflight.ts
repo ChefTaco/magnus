@@ -5,9 +5,11 @@
  * agent without the route is `unavailable`, which is not a failure.
  */
 import type { AgentSelfUpgradeStatus, AgentUpgradePreflight } from '@hivemagnus/magnus-contracts';
+import { randomUUID } from 'node:crypto';
 import { getDb } from '../db/client.js';
+import { fenceProofSigningPayload, verifyCommandEvidence } from '../security/command-result-signature.js';
 import { NodeApiClient } from '../sdk/node-api-client.js';
-import { getNodeManagerSecret } from '../utils/env.js';
+import { getNodeManagerSecret, RESULT_SIGNING_PREVIOUS_SECRET, RESULT_SIGNING_SECRET } from '../utils/env.js';
 import { getNodeBaseUrl } from '../utils/node-url.js';
 import { advanceCommandFence, checkReportedFence, fenceIsAhead, isOwnFenceKey } from './command-fence-repair.js';
 import { recoverAbsentLeases, type LeaseRecovery } from './command-resource-leases.js';
@@ -28,6 +30,8 @@ export interface NodePreflight {
   /** Why there is no report. */
   detail?: string;
   report?: AgentUpgradePreflight;
+  /** The agent signed `report.fenceHighWater` for this check's nonce and this node. Without this, nothing moves a fence. */
+  fencesVerified?: boolean;
   /** What this check repaired on the server. */
   healed?: string[];
 }
@@ -74,10 +78,13 @@ export function evaluatePreflight(report: AgentUpgradePreflight, context: Prefli
   if (report.engines?.compatible === false) add('PREFLIGHT_ENGINE', report.engines.problem ?? `the target does not support Node.js ${report.engines.node}`);
   const ledger = report.ledger;
   if (ledger && !ledger.readable) add('LEDGER_UNAVAILABLE', ledger.error ?? 'the command ledger cannot be read', context.managed);
+  // A command running right now finishes by itself: it is a busy slot, which dispatch refuses and the end of the wave retries.
+  else if (ledger?.activeLock?.receipt === 'running') add('RESOURCE_BUSY', `${ledger.activeLock.commandId} is running on this node right now`, false);
   else if (ledger?.activeLock && !['none', 'completed', 'reconciled'].includes(ledger.activeLock.receipt)) {
     add('LEDGER_UNRESOLVED', `active.lock is held by ${ledger.activeLock.commandId}, whose receipt is ${ledger.activeLock.receipt}`, context.managed);
   } else if (ledger?.unresolvedReceipts) add('LEDGER_UNRESOLVED', `${ledger.unresolvedReceipts} receipt(s) have no terminal outcome`, false);
   const marker = report.managedEnrollment;
+  if (report.managedEnrollmentState === 'unknown') add('ENROLLMENT_MARKER_UNKNOWN', 'the agent could not read its managed-enrollment marker');
   if (marker && (marker.nodeId !== context.nodeId || marker.nodeFqdn !== context.hostname))
     add('ENROLLMENT_MARKER_MISMATCH', `the agent's managed-enrollment marker is for ${marker.nodeFqdn} (${marker.nodeId}), not this node`);
   for (const [key, value] of Object.entries(report.fenceHighWater ?? {})) {
@@ -132,10 +139,14 @@ export async function preflightNode(target: PreflightTarget, query: PreflightQue
   try {
     const node = await getDb().node.findUnique({ where: { id: target.nodeId }, select: { id: true, ipAddress: true, port: true } });
     if (!node) return { status: 'unavailable', checkedAt, problems: [], detail: 'node is no longer in the inventory' };
-    const answer = await clientFor(node).getUpgradePreflight(query, options.timeoutMs ?? PREFLIGHT_TIMEOUT_MS);
+    const nonce = randomUUID();
+    const answer = await clientFor(node).getUpgradePreflight({ ...query, nonce }, options.timeoutMs ?? PREFLIGHT_TIMEOUT_MS);
     if (answer.status !== 'ok') return { status: answer.status, checkedAt, problems: [], detail: answer.detail };
     const problems = evaluatePreflight(answer.report, { nodeId: target.nodeId, hostname: target.hostname, managed: target.managed, generations: await generationsOf(target.nodeId) });
-    return { status: preflightStatus(problems), checkedAt, problems, report: answer.report };
+    const proof = answer.report.fenceProof;
+    const fencesVerified = Boolean(proof && proof.nonce === nonce && proof.nodeFqdn === target.hostname && verifyCommandEvidence(
+      fenceProofSigningPayload({ nonce, nodeFqdn: proof.nodeFqdn, fenceHighWater: answer.report.fenceHighWater ?? {} }), proof.signature, RESULT_SIGNING_SECRET, RESULT_SIGNING_PREVIOUS_SECRET));
+    return { status: preflightStatus(problems), checkedAt, problems, report: answer.report, fencesVerified };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     console.warn(`[agent-upgrade] preflight of ${target.nodeId} failed: ${detail}`);
@@ -147,7 +158,9 @@ export async function preflightNode(target: PreflightTarget, query: PreflightQue
 export async function healNode(target: PreflightTarget, preflight: NodePreflight, actorId = 'system:agent-upgrade'): Promise<{ healed: string[]; leases: LeaseRecovery[]; problems: PreflightProblem[] }> {
   const healed: string[] = [];
   const problems = [...preflight.problems];
-  for (const [resourceKey, highWater] of Object.entries(preflight.report?.fenceHighWater ?? {})) {
+  const fences = Object.entries(preflight.report?.fenceHighWater ?? {});
+  if (fences.length && !preflight.fencesVerified) console.warn(`[agent-upgrade] the fences reported by ${target.nodeId} carry no valid proof; generations unchanged`);
+  for (const [resourceKey, highWater] of preflight.fencesVerified ? fences : []) {
     if (!isOwnFenceKey(target.nodeId, resourceKey)) continue;
     const advanced = await advanceCommandFence({ nodeId: target.nodeId, resourceKey, highWater, source: 'preflight', actorId });
     if (advanced.status !== 'advanced') continue;
@@ -159,9 +172,12 @@ export async function healNode(target: PreflightTarget, preflight: NodePreflight
   const node = await getDb().node.findUnique({ where: { id: target.nodeId }, select: { id: true, ipAddress: true, port: true, hostname: true } });
   if (node) {
     const client = clientFor(node);
-    leases = await recoverAbsentLeases(node.id, node.hostname, (commandId, nonce) => client.getCommandTrace(commandId, nonce, PREFLIGHT_TIMEOUT_MS), actorId, Date.now(),
+    leases = await recoverAbsentLeases(node.id, node.hostname, (commandId, nonce, resourceKey) => client.getCommandTrace(commandId, nonce, resourceKey, PREFLIGHT_TIMEOUT_MS), actorId, Date.now(),
       (commandId, expected) => client.getCommandReceipt(commandId, expected));
-    for (const lease of leases) if (lease.outcome === 'settled') healed.push(`settled lease ${lease.commandId} as not dispatched: the agent holds no receipt for it`);
+    for (const lease of leases) {
+      if (lease.outcome === 'settled') healed.push(`settled lease ${lease.commandId} as not dispatched: the agent holds no receipt for it`);
+      if (lease.outcome === 'unverified' && lease.code) problems.push({ code: lease.code, detail: `lease ${lease.commandId}: ${lease.detail ?? 'unverified'}`, blocking: false });
+    }
   }
   return { healed, leases, problems };
 }

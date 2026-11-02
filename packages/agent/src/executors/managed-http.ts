@@ -68,11 +68,15 @@ export const managedMutationGuard: MiddlewareHandler = async (c, next) => {
   const encoded = c.req.header(MANAGED_CLAIM_HEADER);
   if (path === '/commands/execute' && encoded) {
     let input: CommandIdentity | undefined;
+    let leaseId: string | undefined;
+    try { leaseId = managedClaimSchema.parse(JSON.parse(encoded)).leaseId; } catch (error) {
+      logger.warn(`Managed command claim does not parse: ${error instanceof Error ? error.message : String(error)}`);
+    }
     const refused = async (code: string, message: string) => {
       // Only a well-formed request can be bound to a signed refusal.
       const parsed = executeBodySchema.safeParse(input ?? await c.req.json().catch(() => null));
       const error = parsed.success
-        ? await refusalError({ commandId: parsed.data.commandId, requestSha256: commandRequestDigest(parsed.data) }, code, message, { notStarted: true })
+        ? await refusalError({ commandId: parsed.data.commandId, requestSha256: commandRequestDigest(parsed.data), leaseId }, code, message, { notStarted: true })
         : { code, message };
       return c.json({ success: false, error }, 409);
     };
@@ -145,7 +149,7 @@ export function registerManagedHttp(app: Hono): void {
     const identity = { ...httpIdentity(value.commandId, value.method, value.path, value.body, value.timeoutSeconds), coordination: value.coordination };
     const digest = commandRequestDigest(identity);
     const refuse = async (code: string, message: string, details: { notStarted: boolean; highWater?: { resourceKey: string; fence: string } }) =>
-      c.json({ success: false, error: await refusalError({ commandId: value.commandId, requestSha256: digest }, code, message, details) }, refusalStatus(code));
+      c.json({ success: false, error: await refusalError({ commandId: value.commandId, requestSha256: digest, leaseId: value.claim.leaseId }, code, message, details) }, refusalStatus(code));
     const descriptor = nativeCompletionDescriptor(value.method, value.path);
     if (!descriptor) return refuse('UNREVIEWED_MUTATION', 'This mutation needs a separately reviewed completion boundary', { notStarted: true });
     if (value.timeoutSeconds > descriptor.timeoutCeilingSeconds
