@@ -147,6 +147,8 @@ server_cli agents upgrade --to $AGENT_OK --integrity "$(integrity "$SYNTH/hivema
   | tee "$WORK/agents-1.log" || fail "agent upgrade to $AGENT_OK"
 grep -q "confirmed" "$WORK/agents-1.log" || fail "agent upgrade was not confirmed"
 [[ $(sudo readlink "$AGENT_DIR/current") == versions/$AGENT_OK ]] || fail "agent ./current is not $AGENT_OK"
+wait_for "last-good to record $AGENT_OK" 30 bash -c "[[ \$(sudo readlink '$AGENT_DIR/last-good') == versions/$AGENT_OK ]]"
+[[ -z $(sudo find "$AGENT_DIR/staging" -mindepth 1 -maxdepth 1 2>/dev/null) ]] || fail "staging/ was not cleaned up"
 
 step "Agent upgrade $AGENT_OK -> $AGENT_SILENT (never heartbeats: the launcher reverts it)"
 synthetic --version $AGENT_SILENT --only magnus-agent --agent-never-heartbeats
@@ -158,6 +160,8 @@ set -e
 grep -q "reverted" "$WORK/agents-2.log" || fail "the agent did not report the revert"
 [[ $(sudo readlink "$AGENT_DIR/current") == versions/$AGENT_OK ]] || fail "agent ./current was not reverted"
 sudo grep -q '"state": "reverted"' "$AGENT_DIR/upgrade-state.json" || fail "agent upgrade state is not reverted"
+sudo grep -q 'no confirmed heartbeat' "$AGENT_DIR/upgrade-state.json" || fail "the revert reason does not name the missing heartbeat"
+[[ $(sudo readlink "$AGENT_DIR/last-good") == versions/$AGENT_OK ]] || fail "last-good moved during a failed trial"
 
 step "Server upgrade $VERSION -> $SERVER_BROKEN (broken, with a migration: reverts)"
 mkdir -p "$WORK/broken"

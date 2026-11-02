@@ -1,14 +1,21 @@
 #!/usr/bin/env node
 /** Fixed cron entrypoint. Load the installed private environment before runtime imports. */
+import { lstatSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config } from 'dotenv';
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 // The deployment helper installs the tarball below the stable host directory;
 // its private .env and .magnus ledger are outside node_modules and survive upgrades.
-const install = basename(packageRoot) === 'magnus-agent' && basename(dirname(packageRoot)) === '@hivemagnus'
+let install = basename(packageRoot) === 'magnus-agent' && basename(dirname(packageRoot)) === '@hivemagnus'
   && basename(dirname(dirname(packageRoot))) === 'node_modules'
   ? resolve(packageRoot, '../../..') : packageRoot;
+// Versioned layout: Node resolves the cron path (<dir>/node_modules or <dir>/current) to
+// <dir>/versions/<X>; the stable directory is the one that holds ./current.
+if (basename(dirname(install)) === 'versions') {
+  const stable = dirname(dirname(install));
+  try { if (lstatSync(resolve(stable, 'current')).isSymbolicLink()) install = stable; } catch { /* not the versioned layout */ }
+}
 for (const key of ['CONTROL_API_URL', 'HOST_FQDN', 'NODE_MANAGER_SECRET', 'NODE_MANAGER_SECRET_PREVIOUS',
   'RESULT_SIGNING_SECRET', 'MAGNUS_EXECUTION_SUPERVISOR_ENABLED', 'CONTROL_API_CA_PATH', 'COMMAND_RECONCILIATION_SECRET']) delete process.env[key];
 const loaded = config({ path: resolve(install, '.env'), quiet: true, override: true });

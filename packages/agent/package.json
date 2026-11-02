@@ -42,6 +42,9 @@
   "engines": {
     "node": "^24.22.1 || ^26.13.0"
   },
+  "magnusAgent": {
+    "minLauncher": 1
+  },
   "publishConfig": {
     "access": "public"
   },

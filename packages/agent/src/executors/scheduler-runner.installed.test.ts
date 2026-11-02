@@ -18,14 +18,14 @@ beforeEach(async () => {
   store = new ManagedScheduler(join(root, '.magnus/managed-scheduler'));
 });
 afterEach(async () => { await rm(root, { recursive: true, force: true }); });
-async function seed() {
-  const job = makeCronJob({ nodeFqdn: 'installed.fixture.invalid', name: 'installed-probe', revision: 1,
+async function seed(name = 'installed-probe') {
+  const job = makeCronJob({ nodeFqdn: 'installed.fixture.invalid', name, revision: 1,
     schedule: '* * * * *', timezone: 'UTC', command: '/usr/bin/false', timeoutSeconds: 3600, expiresAt: Date.now() + 3_600_000 });
   await store.locked(() => store.saveJob(job)); return job;
 }
-async function run(id: string) {
+async function run(id: string, entry = runner) {
   return new Promise<{ code: number | string; stdout: string; stderr: string }>(resolveResult => {
-    execFile(process.execPath, [runner, 'trigger', id, '1'], { timeout: 10_000, maxBuffer: 64 * 1024,
+    execFile(process.execPath, [entry, 'trigger', id, '1'], { timeout: 10_000, maxBuffer: 64 * 1024,
       env: { PATH: '/usr/bin:/bin', MAGNUS_EXECUTION_SUPERVISOR_ENABLED: 'true', CONTROL_API_URL: 'https://must-not-contact.invalid',
         AGENT_INSTALL_DIR: '/must-not-write', NODE_MANAGER_SECRET: 'fixture-stale-inherited-credential' } },
     (error, stdout, stderr) => resolveResult({ code: error?.code ?? 0, stdout, stderr }));
@@ -47,5 +47,22 @@ describe('installed managed scheduler entrypoint', () => {
     const result = await run(job.jobId); expect(result.code).toBe(1); expect(result.stdout).toBe('');
     expect(result.stderr).toContain('Installed scheduler environment is unavailable');
     expect((await store.inventory()).occurrences).toHaveLength(0);
+  });
+  it('finds the stable directory under the versioned layout, through the compatibility link and through ./current', async () => {
+    // <root>/versions/1.1.0/node_modules/... with <root>/current -> versions/1.1.0 and <root>/node_modules -> current/node_modules
+    const version = join(root, 'versions', '1.1.0');
+    await mkdir(version, { recursive: true });
+    await cp(join(root, 'node_modules'), join(version, 'node_modules'), { recursive: true, verbatimSymlinks: true });
+    await rm(join(root, 'node_modules'), { recursive: true, force: true });
+    await symlink(join('versions', '1.1.0'), join(root, 'current'));
+    await symlink(join('current', 'node_modules'), join(root, 'node_modules'));
+    for (const [index, entry] of [join(root, 'node_modules/@hivemagnus/magnus-agent/dist/executors/scheduler-runner.js'),
+      join(root, 'current/node_modules/@hivemagnus/magnus-agent/dist/executors/scheduler-runner.js')].entries()) {
+      const job = await seed(`versioned-probe-${index}`); const result = await run(job.jobId, entry);
+      expect(result.stderr).toBe('');
+      const summary = JSON.parse(result.stdout);
+      expect((await store.occurrence(summary.occurrenceId))?.command.command).toBe('/usr/bin/false');
+    }
+    await expect(readFile(join(version, '.env'))).rejects.toThrow();
   });
 });

@@ -73,10 +73,17 @@ deploy/                 example systemd units
   processes never inherit agent credentials (`utils/child-env.ts`).
 - `src/security/native-completion-registry.ts` must stay byte-identical with
   the server's copy. The server pins its SHA-256 in a test.
-- `launcher/launcher.mjs` is copied onto nodes by `install-service` and is not
-  replaced by self-upgrades. Keep it dependency-free and backwards compatible
-  with older agent versions; bump `LAUNCHER_PROTOCOL` (and `minLauncher` in the
-  release manifest) when a newer agent needs launcher changes.
+- `launcher/launcher.mjs` is copied onto nodes by `install-service`. A
+  confirmed self-upgrade replaces it only when the new copy declares a higher
+  `LAUNCHER_PROTOCOL` and answers `--protocol`. Keep it dependency-free and
+  backwards compatible with older agent versions, keep `--protocol` side-effect
+  free, and never let a failed write stop it from starting an agent. Bump
+  `LAUNCHER_PROTOCOL` when the launcher changes. When an agent needs a newer
+  launcher, also raise `MIN_LAUNCHER_PROTOCOL`, `magnusAgent.minLauncher` in
+  `package.json` and `minLauncher` in the release manifest.
+- The agent (`src/upgrade/self-upgrade.ts`) and the launcher share the state
+  file, its lock (`upgrade-state.lock`), `last-good` and `trial-alive.json`.
+  Change both sides together.
 - Self-upgrades write only inside the install directory and verify the exact
   integrity the server sent. Never add a path that installs an unpinned
   version or escalates privileges.

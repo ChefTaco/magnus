@@ -7,9 +7,12 @@ import { controlApiFetch } from './tls.js';
 import { startSpan, formatTraceparent } from './collectors/otel-collector.js';
 import { collectHermesState } from './executors/hermes-manager.js';
 import { existsSync } from 'node:fs';
-import { confirmTrial, selfUpgradeStatus } from './upgrade/self-upgrade.js';
+import { confirmTrial, controlApiUnreachable, recordTrialAlive, selfUpgradeStatus, trialOf } from './upgrade/self-upgrade.js';
+import { commandLedger } from './executors/command-executor.js';
 const HEARTBEAT_INTERVAL_MS = 30_000; // 30s
 const HEARTBEAT_BACKOFF_MAX_MS = 5 * 60_000; // 5 min max backoff
+/** On an upgrade trial: retry fast, without backoff, so a short control API outage does not end the trial. */
+export const TRIAL_RETRY_MS = 5_000;
 const HERMES_DISCOVERY_INTERVAL_MS = Number(process.env['HERMES_DISCOVERY_INTERVAL_MS'] ?? 3 * 60 * 60 * 1000);
 
 let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
@@ -81,6 +84,12 @@ async function collectHealthWithDeadline(): ReturnType<typeof collectSystemHealt
   }
 }
 
+/** Self-upgrade status for the heartbeat, with the sticky local enrollment marker. */
+async function heartbeatSelfUpgrade(): Promise<ReturnType<typeof selfUpgradeStatus>> {
+  const enrollment = await commandLedger.managedEnrollment().catch(() => null);
+  return { ...selfUpgradeStatus(AGENT_VERSION), managedEnrollment: enrollment ? { nodeId: enrollment.nodeId, nodeFqdn: enrollment.nodeFqdn } : null };
+}
+
 /** Stop the heartbeat loop. */
 export function stopHeartbeatLoop(): void {
   heartbeatRunning = false;
@@ -100,6 +109,7 @@ export function startHeartbeatLoop(): void {
     if (!heartbeatRunning) return;
 
     const span = startSpan('heartbeat.send', { kind: 'client' });
+    let posting = false;
 
     try {
       const health = await collectHealthWithDeadline();
@@ -109,6 +119,8 @@ export function startHeartbeatLoop(): void {
       if (!hermesSnapshot) await Promise.race([refresh, delay(HERMES_HEARTBEAT_WAIT_MS)]);
       const hermes = hermesSnapshot;
 
+      const selfUpgrade = await heartbeatSelfUpgrade();
+      posting = true;
       await ky.post(`${CONTROL_API_URL}/api/v1/heartbeat`, {
         json: {
           agentVersion: AGENT_VERSION,
@@ -126,7 +138,7 @@ export function startHeartbeatLoop(): void {
           },
           ...(hermes ? { hermes } : {}),
           nodeVersion: process.version,
-          selfUpgrade: selfUpgradeStatus(AGENT_VERSION),
+          selfUpgrade,
         },
         headers: {
           'x-node-token': NODE_TOKEN,
@@ -161,8 +173,11 @@ export function startHeartbeatLoop(): void {
       if (consecutiveFailures === 1 || Math.log2(consecutiveFailures) % 1 === 0) {
         logger.warn(`Heartbeat failed to send`, { attempt: consecutiveFailures, error: message });
       }
+      // On trial: tell the launcher this version is alive, and retry at a fixed short interval.
+      const onTrial = trialOf(AGENT_VERSION) !== null;
+      if (onTrial && posting && controlApiUnreachable(err)) recordTrialAlive(AGENT_VERSION, message);
       // Back off retry interval: 30s → 60s → 120s … capped at 5min
-      const backoffMs = Math.min(
+      const backoffMs = onTrial ? TRIAL_RETRY_MS : Math.min(
         HEARTBEAT_INTERVAL_MS * Math.pow(2, consecutiveFailures - 1),
         HEARTBEAT_BACKOFF_MAX_MS,
       );
