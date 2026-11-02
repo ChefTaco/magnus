@@ -157,7 +157,9 @@ describe('finding 2: old agents with a stale fence must not stop a healthy wave'
     for (const node of previous.nodes.slice(2)) Object.assign(node, { state: 'skipped', code: 'NOT_REACHED' });
     await store.save(previous);
     const asked: string[] = [];
-    const over: Partial<UpgradeDeps> = { preflight, request: async (id: string) => { asked.push(id); }, observe: async (id: string) => confirmed(id), save: saved => store.save(saved) };
+    const ids = new Map<string, string>();
+    const over: Partial<UpgradeDeps> = { preflight, request: async (id, body) => { asked.push(id); ids.set(id, body.requestId); },
+      observe: async id => ({ version: '1.1.10', report: { upgrade: { state: 'confirmed', requestId: ids.get(id) } } as StoredSelfUpgrade }), save: saved => store.save(saved) };
     const { run, done } = await service.retryUpgradeRun('prev', { actorId: 'admin', store, deps: deps(over) });
     expect(run.nodes.map(node => node.nodeId)).toEqual(['new-n']);
     expect(run.excluded?.filter(node => node.code === 'RETRY_HELD_SUSPECTED').map(node => node.nodeId).sort()).toEqual(['o3', 'o4']);

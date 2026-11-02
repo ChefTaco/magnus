@@ -47,18 +47,29 @@ from then on.
 - A lease stuck `unknown` with no receipt can be settled as `not-dispatched` once its deadline has passed by a
   minute, by a run, `magnus-server agents doctor --heal` or the readiness monitor (once an hour per node). The agent
   signs, under a fresh nonce, what its ledger holds for the command (`GET /api/v1/commands/receipts/<id>/trace`):
-  whether the ledger exists, a receipt, this command's claim, the fence high-water and the enrollment marker. A running
-  receipt is durable before any handler starts, and past the deadline a delayed request can pass neither the ledger nor
-  `/claim`. So with a ledger present, no receipt proves no execution when the high-water is below the lease's fence
-  (it never passed admission), above it (a later fence won), or equal with this command's claim still held (a crash
-  between the claim and the receipt).
-- Everything else stays held, with a code: no ledger (`LEDGER_MISSING`), no fence file (`LEDGER_NO_FENCE`), the fence
-  accepted but no claim or receipt (`LEDGER_EVIDENCE_INCONSISTENT`), a marker for another node or one that cannot be read.
-  A receipt leaves signed reconciliation as the only way out. Scheduler occurrences and skill publications keep
+  whether the ledger exists, a receipt, this command's claim, the fence high-water, the enrollment marker and any record of a
+  failed admission. The ledger writes the claim, the fence, the marker and a durable running receipt, in that order, and only then
+  starts the handler. Past the deadline a delayed request can pass neither the ledger nor `/claim`. So with no receipt:
+  | Ledger holds | Means | Lease |
+  |---|---|---|
+  | This node's marker, no fence, no claim | The marker shows it is this node's ledger; no request passed the fence | settles |
+  | High-water below the lease's fence | It never passed admission | settles |
+  | High-water above it | A later fence won, or the request was refused as stale | settles |
+  | High-water equal, with this command's claim | A crash or failed write between the claim and the receipt | settles |
+  | High-water equal, with its record of a failed admission for this fence | The agent recorded that a write failed before the handler | settles |
+  | High-water equal, with neither | A receipt was removed, or a build without such records failed the admission | `LEDGER_EVIDENCE_INCONSISTENT`, held |
+  | No fence and no marker | Nothing shows this is the ledger the command would have used | `LEDGER_NO_FENCE`, held |
+  | No ledger | Nothing at all | `LEDGER_MISSING`, held |
+  | A marker for another node, or one it cannot read | | held |
+- A receipt leaves signed reconciliation as the only way out. Scheduler occurrences and skill publications keep
   their own retained evidence and are never settled this way, and agents older than 1.1.8 have no such route: their
   leases stay held until the agent is upgraded by hand.
+- If a held lease has no receipt, signed reconciliation does not apply either, since the agent refuses it. Restore the ledger if
+  it moved, and the lease settles by itself. Otherwise there is no way out in Magnus: someone has to establish what the command
+  did on the node, and change the lease row in the database by hand.
 - What this cannot detect: a ledger that was wiped and then used again, whose higher fence with no receipt looks the
-  same as a later fence winning. A receipt deleted by hand on a ledger whose high-water has since moved on looks the same too.
+  same as a later fence winning, or one wiped and then told its enrollment again, which looks like the first row. A receipt
+  deleted by hand on a ledger whose high-water has since moved on looks the same too.
   The check proves a ledger is there and has seen this node, not that its history is complete.
 
 A node's ledger can be ahead of the server's fence generation, after a database restore or because an older

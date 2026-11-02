@@ -19,9 +19,12 @@ fixes shipped in 1.1.7.
   when reverts, failed installs and trials that never confirm reach `MAGNUS_AGENT_UPGRADE_MAX_FAILURES` (default 2;
   `maxFailures`, `--max-failures` or the console for one run). Agents before 1.1.8 can only answer a failed install as uncertain, so
   that many ambiguous canaries with nothing confirmed (at least two) stop the run, with the release reported as suspect but unproven;
-  one such node hands off. Identical refusals with nothing confirmed are surfaced the same way, without stopping. From 1.1.8 the agent
-  names the cause of a failed install, so disk, access and network causes are node-level. Everything else is a node-level problem:
-  recorded, and the wave goes on. A node whose reply was lost is watched by request id and frees its batch slot once its window has passed, and late
+  one such node hands off. The canary queue goes current agents, old agents with no lease history, then those that cannot report their
+  fence, which do not count while another node may still confirm. A retry of such a run holds older agents back until `acknowledgeSuspicion`
+  (`--acknowledge-suspicion`), so it strands no further lease. Identical refusals with nothing confirmed are surfaced the same way, without
+  stopping, unless their code names a node-level cause. From 1.1.8 the agent names the cause of a failed install from npm's own code line, how
+  the process ended, and the disk itself, so disk, access, network, certificate, auth and memory causes are node-level. Everything else is a
+  node-level problem: recorded, and the wave goes on. The confirmation window counts from the reply, so a slow stage does not use it up. A node whose reply was lost is watched by request id and frees its batch slot once its window has passed, and late
   outcomes are recorded.
 - **Run statuses and an attention list.** Runs end `succeeded` (every selected node confirmed or with an expected reason), `partial`
   (node-level problems, nothing against the release), `failed` (release evidence or suspicion), `stopped` or `interrupted`. Each node needing attention has a code, a cause and a specific remedy.
@@ -65,7 +68,8 @@ fixes shipped in 1.1.7.
   receipt and a held lease on every node a bad release reached. An unexpected handler failure stays uncertain.
 - Leases stuck `unknown` with no receipt can recover. A minute past the lease deadline, the readiness monitor, a run or
   `agents doctor --heal` asks a 1.1.8 agent for a signed, nonce-bound account of its ledger. It settles the lease as `not-dispatched`, audited as
-  `agent.lease.recovered`, only if a ledger exists, has seen this node, and the evidence fits; a missing ledger stays held with a code.
+  `agent.lease.recovered`, only if a ledger shows it is this node's and the evidence fits; a missing ledger stays held with a code. A failed write
+  after the fence is recorded durably so it can settle later.
   Signed reconciliation is unchanged for anything with a receipt. **A lease stranded by an agent older than 1.1.8 has no automatic way
   out:** upgrade that agent by hand, after which this recovery can settle it.
 - A lost reply whose node then confirms no longer leaves its lease held: the server reads the signed receipt of that request.

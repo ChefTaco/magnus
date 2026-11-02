@@ -252,10 +252,22 @@ that became ineligible is skipped with the reason.
 - An integrity or source failure stops at once, because every node gets the same artifact.
 - On the canary, a release failure stops the run and no other node is touched. A node-level problem
   hands the canary role to the next node.
+- Who goes first decides who can stop the wave. The queue is: agents on 1.1.8 or later, older agents with no lease
+  history, then older agents with lease history, which cannot report their fence (`FENCE_UNREPORTED`). `canaryNodeId`
+  still goes first.
 - While no node has confirmed, canaries that answer ambiguously stop the run after
   `MAGNUS_AGENT_UPGRADE_MAX_FAILURES` of them (at least two), with the release reported as suspect but unproven. An
   agent older than 1.1.8 can only answer a failed install as `MANAGED_MUTATION_UNCERTAIN`, so this is the only signal
-  such a fleet gives about a bad release. One such node hands off as usual.
+  such a fleet gives about a bad release. One such node hands off as usual. A `FENCE_UNREPORTED` node has another
+  explanation for its answer, a stale fence, so it does not count while any other node may still confirm. Once only those
+  are left it does, so the walk stays bounded; a fleet of nothing but stale old agents also stops there, and the message
+  says so.
+- A first canary whose reply was lost keeps its role through its whole watch, the trial window plus ten minutes, because
+  it may still be staging and restarting. A canary that answered uncertain has finished with the request, and hands off
+  after the window.
+- A retry of a run that stopped on ambiguity leaves older agents out (`RETRY_HELD_SUSPECTED`), so it strands no further
+  lease. After reading the agent log, and running `agents fence` where needed, retry with `acknowledgeSuspicion`
+  (`--acknowledge-suspicion`, or the console's "Retry older agents too").
 - After the canary, the run stops when release failures (a revert, a failed install or smoke test, a
   trial that never confirms) reach `MAGNUS_AGENT_UPGRADE_MAX_FAILURES` (default 2). Override it for
   one run with `maxFailures`, `--max-failures N` or the console's "Stop after" field.
@@ -264,8 +276,11 @@ that became ineligible is skipped with the reason.
   again at the end of the wave, up to twice, with a new request each time, and only once the last request's lease has
   settled. A retry that cannot go ahead keeps the node's original code. Anything ambiguous or release-class is never
   retried automatically.
-- From 1.1.8 the agent names the cause of a failed install: a bad package stays `SELF_UPGRADE_FAILED` (release), while disk,
-  access and network causes have node-level codes. An older agent reports them all as `SELF_UPGRADE_FAILED`.
+- From 1.1.8 the agent names the cause of a failed install, reading only npm's own first `npm error code` line, how the
+  process ended, and the disk itself, never text a lifecycle script could write. A bad package or a failing script stays
+  `SELF_UPGRADE_FAILED` (release); disk, access, network, certificate, registry auth and memory causes have node-level
+  codes. A lifecycle script killed inside npm, or hanging inside npm, cannot be told apart and reads as the package and as
+  `SELF_UPGRADE_TIMEOUT` respectively. An older agent reports them all as `SELF_UPGRADE_FAILED`.
 
 Outcomes per node:
 
@@ -283,9 +298,9 @@ The run ends as one of:
 
 | Status | Meaning |
 | --- | --- |
-| `succeeded` | Every selected node is confirmed or has an expected reason, such as already being on the target or an operator's switch-off |
+| `succeeded` | Every selected node is confirmed or has an expected reason, such as already being on the target or an operator's switch-off. A node that reverted this version or is still on trial is not finished |
 | `partial` | Some nodes need attention, and nothing points at the release. Retry takes just those nodes |
-| `failed` | Evidence about the release: a release failure, even when the wave went on below the budget. Or a suspicion, shown as such: nodes that all answered ambiguously, or all refused with the same code, with nothing confirmed |
+| `failed` | Evidence about the release: a release failure, even when the wave went on below the budget. Or a suspicion, shown as such: nodes that all answered ambiguously, or all refused with the same code, with nothing confirmed. A code that names a node-level cause of its own, such as a full disk, never raises one |
 | `stopped` | Someone stopped it |
 | `interrupted` | The server running it went away |
 
@@ -307,8 +322,8 @@ updates the run: a lost reply that finally confirms turns `partial` into `succee
 - Prerelease versions need `allowPrerelease` (`--allow-prerelease`). A target the registry does not
   have is shown as unverified.
 - The server waits for each agent's own trial window (`MAGNUS_AGENT_UPGRADE_CONFIRM_SECONDS`, which
-  1.1.3 agents report), two heartbeats and a restart margin, and gives up earlier on an agent that
-  stopped sending heartbeats.
+  1.1.3 agents report), two heartbeats and a restart margin, counted from the reply to the request, so
+  staging time does not eat it.
 
 If the reply to an upgrade request is lost, the server keeps watching: the agent's heartbeat report
 for that request decides, and the node gives up its batch slot once its window has passed. When the node
@@ -317,10 +332,11 @@ reports, the lease (`agent-upgrade-<requestId>`) stays `unknown` until reconcile
 `POST /api/v1/commands/agent-upgrade-<requestId>/reconcile-resource` adopts the agent's signed receipt (see
 docs/COMMAND_RESOURCE_LEASES.md).
 
-**Upgrade readiness.** Node pages and the node list also show whether a node could take an upgrade now,
+**Upgrade readiness.** On a versioned, enabled agent, node pages and the node list also show whether a node could take an upgrade now,
 all the time and not only when one starts: an enrollment stuck draining and for how long, a marker the
 server does not share, a fence ahead of the server, an unresolved ledger, low disk, missing npm. A node that
-has not been ready for 24 hours raises a notification (`node.upgrade_not_ready`).
+has not been ready for 24 hours raises a notification (`node.upgrade_not_ready`), unless `MAGNUS_AGENT_UPGRADES=false`.
+The readiness monitor keeps settling stuck leases either way.
 
 ### When an agent can't be upgraded
 
@@ -353,11 +369,15 @@ means the request may have run, so it is never repeated automatically.
 | `CHECK_FAILED` | node, tried again | The server could not check this node right before asking it, so it did not ask. | Read the detail, usually a database or Redis problem on the server, then retry the node. |
 | `AGENT_SILENT_AFTER_LOST_REPLY` | node, ambiguous | The request may or may not have arrived, and the agent has stopped sending heartbeats. | Check the service on the node. A later report for this request is still recorded in the run. |
 | `FENCE_UNREPORTED` | node | This agent is older than 1.1.8, has handled managed requests before, and cannot say what fence it holds. If that fence is ahead of the server, its request fails as MANAGED_MUTATION_UNCERTAIN and strands a lease. | Before the wave, read .magnus/command-receipts/fence-*.json on the node and run `magnus-server agents fence NODE VALUE`. Nothing to do if the fence is not ahead. |
-| `LEDGER_MISSING` | node | The agent has no command ledger, so its "no receipt" proves nothing about a lease held for it. The ledger may have moved, or the install may have been rebuilt. | Check AGENT_INSTALL_DIR and restore .magnus/command-receipts if it moved; the lease then settles by itself. If it is gone, Magnus has no way to settle the lease: establish by hand what the command did. |
-| `LEDGER_NO_FENCE` | node | The agent ledger holds no fence for this node, so it cannot have seen any managed request, or it was replaced. | Check whether .magnus/command-receipts was replaced or restored. If so, establish by hand what the command did; Magnus has no way to settle the lease. |
-| `LEDGER_EVIDENCE_INCONSISTENT` | node | The agent ledger accepted this lease's fence but holds no receipt and no claim for it, and a receipt is never removed. | Inspect .magnus/command-receipts on the node: a receipt is missing. Establish by hand what the command did; Magnus has no way to settle the lease. |
+| `LEDGER_MISSING` | node | The agent has no command ledger, so its "no receipt" proves nothing about a lease held for it. The ledger may have moved, or the install may have been rebuilt. | Check AGENT_INSTALL_DIR and restore .magnus/command-receipts if it moved; the lease then settles by itself. If it is gone, Magnus has no way to settle the lease: establish by hand what the command did, then change the lease row in the database yourself. |
+| `LEDGER_NO_FENCE` | node | The agent ledger holds neither a fence nor this node's enrollment marker, so nothing shows it is the ledger this command would have used. | Check whether .magnus/command-receipts was replaced, and restore it if so; the lease then settles by itself. If it cannot be restored, Magnus has no way to settle the lease: establish by hand what the command did, then change the lease row in the database yourself. |
+| `LEDGER_EVIDENCE_INCONSISTENT` | node | The agent ledger accepted this lease's fence, but holds no receipt, no claim and no record of a failed admission for it. Either a receipt was removed, or an admission failed on an agent build that kept no such record. | Inspect .magnus/command-receipts on the node and the agent log around the lease's time. Magnus has no way to settle the lease: establish by hand what the command did, then change the lease row in the database yourself. |
 | `ENROLLMENT_MARKER_UNKNOWN` | node | The agent could not read its managed-enrollment marker, so a mismatch cannot be ruled out. | Check .magnus/command-receipts/managed-enrollment.json on the node: its mode, owner and content. |
-| `SELF_UPGRADE_ENV_DISK` | node | The node ran out of disk space or quota while installing the new version. | Free disk space on the node, then retry it. |
+| `SELF_UPGRADE_ENV_TLS` | node | npm would not trust the registry's certificate on this node: a wrong clock, an expired certificate or an intercepting proxy. | Check the clock on the node and its CA trust for the registry, then retry it. |
+| `SELF_UPGRADE_ENV_AUTH` | node | The registry refused this node's request (401 or 403). | Check the npm credentials and registry settings on the node, or use MAGNUS_AGENT_UPGRADE_SOURCE_DIR, then retry it. |
+| `SELF_UPGRADE_ENV_RESOURCE` | node | The node ran out of memory or file handles, npm was killed, or a file was busy. A killed npm is told apart by how the process ended; a lifecycle script killed inside npm still reads as a package fault. | Check the memory on the node and its kernel log, then retry it. |
+| `RETRY_HELD_SUSPECTED` | node | The run this one retries stopped because older agents answered ambiguously with nothing confirmed. Each further attempt on an older agent can strand another lease, so this retry leaves them alone. | Read the agent log of the nodes that answered, and run `magnus-server agents fence NODE VALUE` where a fence is ahead. Then retry with acknowledgeSuspicion (--acknowledge-suspicion). |
+| `SELF_UPGRADE_ENV_DISK` | node | The node ran out of disk space or quota, or hit an I/O error, while installing the new version. | Free disk space on the node, then retry it. |
 | `SELF_UPGRADE_ENV_ACCESS` | node | The node refused a write while installing the new version. | Run `sudo magnus-agent install-service` again on the node, which repairs ownership, then retry it. |
 | `RESOURCE_ENROLLMENT_REQUIRED` | node | Admission refused the request because the node's resource enrollment is not complete. | Complete the node's resource enrollment (docs/COMMAND_RESOURCE_LEASES.md). |
 | `FENCE_OVERFLOW` | node | The agent reports a resource fence above the highest value the server will adopt. | Stop the agent, inspect .magnus/command-receipts/fence-*.json on the node, and repair that file by hand. The server does not change its generation. |
@@ -380,7 +400,7 @@ means the request may have run, so it is never repeated automatically.
 | `NODE_OFFLINE` | node, tried again | The node is offline or has no recent heartbeat. | Bring the agent back, then retry the node. |
 | `NODE_NOT_FOUND` | node | The node is no longer in the inventory. | Register the node again if it should be managed. |
 | `VERSION_UNKNOWN` | node | The agent has not reported a usable version. | Wait for a heartbeat, or upgrade the agent by hand. |
-| `SELF_UPGRADE_TIMEOUT` | node | A step of the upgrade did not finish in its time budget on the node. | Check the network and disk speed of the node, then retry it. |
+| `SELF_UPGRADE_TIMEOUT` | node | An npm step of the upgrade did not finish in its time budget on the node. A new version that hangs when it is run reports SELF_UPGRADE_FAILED instead. A lifecycle script that hangs inside npm also ends up here: it cannot be told apart. | Check the network and disk speed of the node, then retry it. If every node hangs the same way, suspect the release. |
 | `SELF_UPGRADE_UNAVAILABLE` | node | The agent cannot upgrade itself now: its layout, launcher, directories or npm are not usable. | Read the detail. Running `sudo magnus-agent install-service` once on the node usually repairs it. |
 | `SELF_UPGRADE_LAUNCHER` | node | The new version needs a newer launcher than the node has. | Run `sudo magnus-agent install-service` once on the node. |
 | `SELF_UPGRADE_ENGINE` | node | The new version does not support the Node.js on this node. | Upgrade Node.js on the node. |
@@ -401,8 +421,8 @@ means the request may have run, so it is never repeated automatically.
 | `NOT_SELF_UPGRADABLE` | expected | This agent cannot upgrade itself: it is too old, or not set up with the launcher. | Run `sudo magnus-agent install-service` once on the node. |
 | `PROTOCOL_TOO_OLD` | expected | The agent speaks an older self-upgrade protocol. | Upgrade this agent by hand. |
 | `SELF_UPGRADE_DISABLED` | expected | An operator switched self-upgrade off on this node, or it runs in a container or the legacy layout. | Nothing to do if that is intended. Otherwise set MAGNUS_AGENT_SELF_UPGRADE=true, pull a newer image, or run `sudo magnus-agent install-service` once. |
-| `UPGRADE_IN_PROGRESS` | expected | An upgrade is already staged or on trial on this node. | Wait for its trial to end. |
-| `ALREADY_REVERTED` | expected | This node already switched back from this exact version. | Read the reason. To try again, use allowRetryReverted (--retry-reverted). |
+| `UPGRADE_IN_PROGRESS` | node | An upgrade is staged or on trial on this node, and it can still switch back. | Wait for its trial to end, then retry the node if it did not confirm. |
+| `ALREADY_REVERTED` | node | This node already switched back from this exact version. | Read the reason. To try again, use allowRetryReverted (--retry-reverted). |
 | `PREFLIGHT_UNAVAILABLE` | expected | An agent older than 1.1.8 has no preflight check; heartbeat data is used instead. | Nothing to do: the agent gains the check when it is upgraded. |
 | `PREFLIGHT_UNREACHABLE` | expected | The preflight check got no answer. The node stays in the run, and dispatch decides. | Nothing to do unless the node then fails with AGENT_UNREACHABLE. |
 <!-- upgrade-remedies:end -->
@@ -425,9 +445,14 @@ each selected node that cannot report its fence and has lease history (`FENCE_UN
 request, the lease and the node, and the lease settles as `not-dispatched`. For a lease already stuck, the readiness
 monitor (once an hour per node), a run or `magnus-server agents doctor --heal` asks a 1.1.8 agent, a minute past the
 lease's deadline, what its ledger holds for that command. Only a signed account with no receipt, from a ledger that
-exists and has seen this node, settles it, audited as `agent.lease.recovered`; see docs/COMMAND_RESOURCE_LEASES.md for
-exactly what proves what. A missing ledger or no fence file stays held with a code. A receipt leaves signed
-reconciliation as the only way out.
+shows it is this node's, settles it, audited as `agent.lease.recovered`; see docs/COMMAND_RESOURCE_LEASES.md for exactly what
+proves what. A receipt leaves signed reconciliation as the only way out.
+
+**What stays stuck, and the way out.** `LEDGER_MISSING`, `LEDGER_NO_FENCE` (no fence and no marker) and
+`LEDGER_EVIDENCE_INCONSISTENT` (the fence accepted, with no receipt, claim or record of a failed admission) stay held, and no
+signed reconciliation applies, since the agent refuses to reconcile a command it has no receipt for. Restore the ledger if it
+moved, and the lease settles by itself. Otherwise Magnus has no way out: someone has to establish what the command did on the
+node and change the lease row in the database by hand.
 
 **There is no automatic way out on an older agent.** A lease stranded by an agent older than 1.1.8 with no receipt stays
 held: it cannot be reconciled, since there is nothing to reconcile, and it blocks managed requests on that node, an upgrade
