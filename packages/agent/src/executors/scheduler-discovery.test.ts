@@ -489,7 +489,8 @@ describe('native and user scheduler discovery', () => {
       }
       await write([job('a'), job('b')]);
       const enabled = blocker(await inventory(), 'NATIVE_HERMES_SCHEDULES');
-      expect(enabled.find(row => row.sourceSha256 !== first[0]?.sourceSha256)).toMatchObject({ count: 2 });
+      // Remembered sources also appear, ordered by a digest of the random test path.
+      expect(enabled.filter(row => row.sourceSha256 !== first[0]?.sourceSha256).map(row => row.count)).toContain(2);
       expect((await remembered()).filter(row => row.kind === 'NATIVE_HERMES_SCHEDULES')).toHaveLength(7);
     });
     it('counts enabled schedules and claims from the live file', async () => {
