@@ -1,6 +1,6 @@
 {
   "name": "@hivemagnus/magnus",
-  "version": "1.1.2",
+  "version": "1.1.3",
   "description": "Install, upgrade and roll back a Magnus server and console with one command: `npx @hivemagnus/magnus init`, then `magnus upgrade`. Pins exact, tested component versions, backs up PostgreSQL before every migration and reverts automatically when the new version fails its health check.",
   "keywords": [
     "magnus",
@@ -47,7 +47,7 @@
     "clean": "node -e \"const fs=require('node:fs');fs.rmSync('dist',{recursive:true,force:true});fs.rmSync('tsconfig.tsbuildinfo',{force:true})\""
   },
   "dependencies": {
-    "@hivemagnus/magnus-contracts": "1.1.2"
+    "@hivemagnus/magnus-contracts": "1.1.3"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
@@ -56,29 +56,54 @@
   },
   "magnusRelease": {
     "schema": 1,
-    "version": "1.1.2",
+    "version": "1.1.3",
     "engines": {
       "node": "^24.22.1 || ^26.13.0"
     },
     "components": {
-      "@hivemagnus/magnus-server": "1.1.2",
-      "@hivemagnus/magnus-ui": "1.1.2",
-      "@hivemagnus/magnus-contracts": "1.1.2",
-      "@hivemagnus/magnus-agent": "1.1.2"
+      "@hivemagnus/magnus-server": "1.1.3",
+      "@hivemagnus/magnus-ui": "1.1.3",
+      "@hivemagnus/magnus-contracts": "1.1.3",
+      "@hivemagnus/magnus-agent": "1.1.3"
     },
     "breaking": false,
     "minUpgradeFrom": "1.0.0",
     "engineProtocol": 2,
     "newRequiredEnv": [],
-    "newOptionalEnv": [],
+    "newOptionalEnv": [
+      {
+        "name": "MAGNUS_BACKUP_KEEP",
+        "component": "server",
+        "secret": false,
+        "description": "Dumps kept in MAGNUS_BACKUP_DIR (default 5); the newest of each label always stays."
+      },
+      {
+        "name": "MAGNUS_AUTO_MIGRATE_LOCK_TIMEOUT",
+        "component": "server",
+        "secret": false,
+        "description": "Seconds auto-migrate waits for another instance's migrate lock (default 600)."
+      },
+      {
+        "name": "MAGNUS_MIGRATE_DATABASE_URL",
+        "component": "server",
+        "secret": true,
+        "description": "Direct database connection for migrations, dumps and restores when DATABASE_URL goes through a pooler."
+      },
+      {
+        "name": "MAGNUS_AGENT_REVIEWED_HISTORICAL_RECORDS",
+        "component": "agent",
+        "secret": false,
+        "description": "Path of the root-owned reviewed historical mutation records file (default /etc/magnus/reviewed-historical-records.json)."
+      }
+    ],
     "removedEnv": [],
     "migrations": [],
     "agent": {
       "selfUpgradeProtocol": 1,
       "minLauncher": 1
     },
-    "summary": "Dependency refresh: bullmq 6, ioredis 6, undici 8, better-sqlite3 13 and TypeScript 6, and the minimatch advisory (GHSA-g3hv-75wg-m249) resolved. No migrations and no new settings.",
-    "notesUrl": "https://github.com/ChefTaco/magnus/releases/tag/v1.1.2",
+    "summary": "Upgrade resilience: console and CLI agent upgrades keep going past refused nodes, survive server restarts and lost replies, and can be stopped and retried; the agent launcher survives full disks, power loss and control-API outages; `magnus upgrade` records interrupted upgrades for resume or rollback, restores into a clean schema, and refuses unsafe rollbacks. No migrations.",
+    "notesUrl": "https://github.com/ChefTaco/magnus/releases/tag/v1.1.3",
     "allowScripts": {
       "@prisma/engines": true,
       "argon2": true,

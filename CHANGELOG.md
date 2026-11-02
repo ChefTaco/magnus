@@ -6,6 +6,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [1.1.3] - 2026-11-02
+
 ### Changed
 
 - Ardent: extract prompt fitting and durable checkpoint logic into the exact
@@ -151,15 +153,12 @@ All notable changes to this project are documented in this file. The format is b
   instance's migrate lock.
 - `MAGNUS_MIGRATE_DATABASE_URL` (server, optional): a direct connection for migrations, dumps and
   restores when `DATABASE_URL` goes through a pooler such as PgBouncer.
+- `MAGNUS_AGENT_REVIEWED_HISTORICAL_RECORDS` (agent): path of the reviewed historical mutation records
+  file. Optional; default `/etc/magnus/reviewed-historical-records.json`.
 
 ### Migration impact
 
 - None.
-
-### New environment variables
-
-- `MAGNUS_AGENT_REVIEWED_HISTORICAL_RECORDS` (agent): path of the reviewed historical mutation records
-  file. Optional; default `/etc/magnus/reviewed-historical-records.json`.
 
 ## [1.1.2] - 2026-11-02
 
@@ -400,6 +399,7 @@ The initial release snapshot.
   Pass them to `npm install -g` with `--allow-scripts=...`, or list them under `allowScripts` in
   your project's `package.json`.
 
+[1.1.3]: https://github.com/ChefTaco/magnus/releases/tag/v1.1.3
 [1.1.2]: https://github.com/ChefTaco/magnus/releases/tag/v1.1.2
 [1.1.1]: https://github.com/ChefTaco/magnus/releases/tag/v1.1.1
 [1.1.0]: https://github.com/ChefTaco/magnus/releases/tag/v1.1.0
