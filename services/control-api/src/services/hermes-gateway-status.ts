@@ -5,7 +5,8 @@
  *
  * `systemctl status` output appends a journal tail, so a running service can
  * print "Stopped ..." or "error" from an earlier run. A systemd `Active:` line
- * is therefore authoritative. Without one, only summary lines count, and on
+ * is therefore authoritative, and Hermes' own "Recent gateway health" history is
+ * skipped. Without an `Active:` line, only summary lines count, and on
  * those a negative state outranks a failure, which outranks a positive one.
  */
 export type HermesGatewayState = 'running' | 'inactive' | 'failed' | 'unknown';
@@ -24,10 +25,21 @@ const IGNORED_LINE = new RegExp([
   // systemctl could not ask: that is not evidence about the gateway either.
   String.raw`failed to connect to bus`,
 ].join('|'));
+// `hermes gateway status` ends with history under a heading such as "Recent gateway health:".
+const HISTORY_HEADING = /^\s*recent\b.*:\s*$/;
 const HEALTHY_PHRASE = /\b(?:no|0|zero)\s+(?:errors?|failures?|failed)\b|\b(?:last|previous|recent)\s+(?:errors?|failures?)\b.*$/g;
 const NEGATIVE = /\b(?:not[\s_-]+(?:running|active|started|loaded|installed)|isn'?t\s+running|inactive|stopped|disabled|dead|exited|could not be found)\b/;
 const FAILED = /\b(?:failed|failure|crashed|fatal|errors?|errored|unhealthy|not[\s_-]+healthy)\b/;
 const POSITIVE = /\b(?:running|active|healthy)\b/;
+
+function withoutHistory(lines: string[]): string[] {
+  let inHistory = false;
+  return lines.filter((line) => {
+    if (HISTORY_HEADING.test(line)) inHistory = true;
+    else if (!line.trim()) inHistory = false;
+    return !inHistory;
+  });
+}
 
 function activeLineState(state: string, detail: string): HermesGatewayState {
   if (state === 'active') return detail.startsWith('exited') ? 'inactive' : 'running';
@@ -50,7 +62,7 @@ export function parseGatewayStatusText(text: string): HermesGatewayState {
     for (const state of ['running', 'failed', 'inactive'] as const) if (activeStates.includes(state)) return state;
     return 'unknown';
   }
-  const summary = lines.filter((line) => !IGNORED_LINE.test(line)).map((line) => line.replace(HEALTHY_PHRASE, ' '));
+  const summary = withoutHistory(lines).filter((line) => !IGNORED_LINE.test(line)).map((line) => line.replace(HEALTHY_PHRASE, ' '));
   if (summary.some((line) => NEGATIVE.test(line))) return 'inactive';
   if (summary.some((line) => FAILED.test(line))) return 'failed';
   if (summary.some((line) => POSITIVE.test(line))) return 'running';

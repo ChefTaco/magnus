@@ -13,7 +13,7 @@ All notable changes to this project are documented in this file. The format is b
 - Stopped Hermes gateways no longer report as running. "inactive" matched the pattern for `active` and "not running"
   the one for `running`, so the console overcounted running gateways. One word-bounded parser now classifies
   `hermes gateway status` output for the agent, the update evidence and SSH detection: a systemd `Active:` line
-  decides, journal lines (even with "Stopped" or "error") are ignored, and otherwise a negative state wins over a
+  decides, journal lines and the "Recent gateway health" history (even with "Stopped" or "error") are ignored, and otherwise a negative state wins over a
   failure, and a failure over a running state. The dashboard status from SSH detection had the same bug. Nodes report
   correctly after their agent is upgraded, because the agent parses this output; SSH-detected installations do after the
   server is upgraded.

@@ -40,7 +40,16 @@ def parse_gateway_status(text):
         r'|\b(?:linger|auto-?start|on boot|at boot)\b'
         r'|failed to connect to bus')
     healthy = re.compile(r'\b(?:no|0|zero)\s+(?:errors?|failures?|failed)\b|\b(?:last|previous|recent)\s+(?:errors?|failures?)\b.*$')
-    summary = [healthy.sub(' ', line) for line in lines if not ignored.search(line)]
+    current = []
+    in_history = False
+    for line in lines:
+        if re.match(r'\s*recent\b.*:\s*$', line):
+            in_history = True
+        elif not line.strip():
+            in_history = False
+        if not in_history:
+            current.append(line)
+    summary = [healthy.sub(' ', line) for line in current if not ignored.search(line)]
     if any(re.search(r"\b(?:not[\s_-]+(?:running|active|started|loaded|installed)|isn'?t\s+running|inactive|stopped|disabled|dead|exited|could not be found)\b", line) for line in summary):
         return 'inactive'
     if any(re.search(r'\b(?:failed|failure|crashed|fatal|errors?|errored|unhealthy|not[\s_-]+healthy)\b', line) for line in summary):
