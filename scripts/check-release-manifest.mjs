@@ -24,13 +24,25 @@ import { isDeepStrictEqual } from 'node:util';
 const defaultRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
 /** Bumped when the upgrade engine's hand-over contract changes (see packages/magnus/src/release.ts). */
-export const ENGINE_PROTOCOL = 1;
+export const ENGINE_PROTOCOL = 2;
 /** Agent self-upgrade wire protocol and the launcher it needs. */
 export const AGENT_PROTOCOLS = { selfUpgradeProtocol: 1, minLauncher: 1 };
 const COMPONENTS = ['@hivemagnus/magnus-server', '@hivemagnus/magnus-ui', '@hivemagnus/magnus-contracts', '@hivemagnus/magnus-agent'];
 const MIGRATIONS = 'services/control-api/prisma/migrations';
 
 const readJson = (path) => JSON.parse(readFileSync(path, 'utf8'));
+
+/**
+ * npm install scripts a release's version install needs, by package name
+ * (ALLOW_SCRIPTS in packages/magnus/src/templates.ts). They go into the
+ * manifest so an older engine installing this release allows the right ones.
+ */
+export function allowScripts(root) {
+  const source = readFileSync(join(root, 'packages/magnus/src/templates.ts'), 'utf8');
+  const block = /export const ALLOW_SCRIPTS[^{]*\{([^}]*)\}/.exec(source)?.[1];
+  if (!block) throw new Error('packages/magnus/src/templates.ts: ALLOW_SCRIPTS not found');
+  return Object.fromEntries([...block.matchAll(/'([^']+)'\s*:\s*true|([A-Za-z0-9_-]+)\s*:\s*true/g)].map((match) => [match[1] ?? match[2], true]).sort(([a], [b]) => a.localeCompare(b)));
+}
 
 export function migrationImpact(root, name) {
   const path = join(root, MIGRATIONS, name, 'magnus-impact.json');
@@ -67,6 +79,7 @@ export function buildManifest(root) {
     agent: { ...AGENT_PROTOCOLS },
     summary: notes.summary ?? '',
     notesUrl: `https://github.com/ChefTaco/magnus/releases/tag/v${version}`,
+    allowScripts: allowScripts(root),
   };
 }
 

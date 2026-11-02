@@ -3,6 +3,7 @@
  * a scripted host: commands, HTTP, clock, prompts and logging.
  */
 import { spawn } from 'node:child_process';
+import { statfsSync } from 'node:fs';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { createInterface } from 'node:readline/promises';
@@ -17,6 +18,11 @@ export interface RunOptions {
   /** Redirect stdout to this file descriptor (for dumps). */
   stdoutFd?: number;
   stdinFd?: number;
+  /**
+   * Own process group: a Ctrl-C in the terminal does not reach it. Used for
+   * migrations, which must never be interrupted halfway.
+   */
+  detached?: boolean;
 }
 
 export interface RunResult {
@@ -40,9 +46,14 @@ export interface Io {
    * process is up; the runtime file confirms which version it is.
    */
   probe(url: string): Promise<number | null>;
+  /** Free bytes for an unprivileged writer on the file system holding `path`, or null when unknown. */
+  freeBytes(path: string): number | null;
   env: NodeJS.ProcessEnv;
   nodeVersion: string;
   isRoot: boolean;
+  /** Effective user id (null where the platform has none). */
+  uid: number | null;
+  platform: NodeJS.Platform;
 }
 
 export class CommandError extends Error {
@@ -57,7 +68,7 @@ export function systemIo(): Io {
       const stdin = options.stdinFd ?? (options.input !== undefined ? 'pipe' : 'ignore');
       const stdout = options.stdoutFd ?? (options.capture ? 'pipe' : 'inherit');
       const stderr = options.capture ? 'pipe' : 'inherit';
-      const child = spawn(command, args, { cwd: options.cwd, env: options.env ?? process.env, stdio: [stdin, stdout, stderr] });
+      const child = spawn(command, args, { cwd: options.cwd, env: options.env ?? process.env, stdio: [stdin, stdout, stderr], detached: options.detached ?? false });
       let out = '';
       let err = '';
       child.stdout?.on('data', (chunk) => { out += String(chunk); });
@@ -91,9 +102,19 @@ export function systemIo(): Io {
       req.on('error', () => resolve(null));
       req.end();
     }),
+    freeBytes: (path) => {
+      try {
+        const stats = statfsSync(path);
+        return Number(stats.bavail) * Number(stats.bsize);
+      } catch {
+        return null;
+      }
+    },
     env: process.env,
     nodeVersion: process.version,
-    isRoot: typeof process.getuid === 'function' && process.getuid() === 0,
+    isRoot: typeof process.geteuid === 'function' && process.geteuid() === 0,
+    uid: typeof process.geteuid === 'function' ? process.geteuid() : null,
+    platform: process.platform,
   };
 }
 
