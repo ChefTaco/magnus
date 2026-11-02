@@ -40,19 +40,19 @@ function fixture() {
 
 describe('durable context checkpoints', () => {
   it('rejects publication when the host policy changes during summarization', async () => {
-    const f = fixture();
-    f.add('first'); f.add('second'); f.add('third');
-    const manager = new ContextCheckpoints(f.store, async (...args) => {
-      const summary = await f.summarize(...args);
-      writeFileSync(f.policy.path, JSON.stringify({ ...f.policy.policy, revision: 2 }), { mode: 0o600 });
+    const fixtureData = fixture();
+    fixtureData.add('first'); fixtureData.add('second'); fixtureData.add('third');
+    const manager = new ContextCheckpoints(fixtureData.store, async (...args) => {
+      const summary = await fixtureData.summarize(...args);
+      writeFileSync(fixtureData.policy.path, JSON.stringify({ ...fixtureData.policy.policy, revision: 2 }), { mode: 0o600 });
       return summary;
     });
-    await expect(manager.prepare(f.preview, 'Current policy', [], f.policy, AbortSignal.timeout(5000), { force: true, apply: true }))
+    await expect(manager.prepare(fixtureData.preview, 'Current policy', [], fixtureData.policy, AbortSignal.timeout(5000), { force: true, apply: true }))
       .rejects.toThrow('Model policy changed during compaction');
-    expect(f.store.db.prepare('SELECT count(*) AS total FROM context_checkpoints').get()).toEqual({ total: 0 });
-    expect(f.store.db.prepare('SELECT count(*) AS total FROM emberfold_checkpoint_metadata').get()).toEqual({ total: 0 });
-    expect(manager.status(f.session.id, 'alice', 'direct')).toMatchObject({ active_checkpoint_id: null });
-    f.store.close();
+    expect(fixtureData.store.db.prepare('SELECT count(*) AS total FROM context_checkpoints').get()).toEqual({ total: 0 });
+    expect(fixtureData.store.db.prepare('SELECT count(*) AS total FROM emberfold_checkpoint_metadata').get()).toEqual({ total: 0 });
+    expect(manager.status(fixtureData.session.id, 'alice', 'direct')).toMatchObject({ active_checkpoint_id: null });
+    fixtureData.store.close();
   });
   it('publishes a digest-bound head while keeping complete recent exchanges and the full journal', async () => {
     const f = fixture();
