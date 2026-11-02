@@ -135,5 +135,6 @@ test('Ardent profile navigation, saved configuration, provider error, channel st
   if (process.env['MAGNUS_HERMES_ENABLED']?.trim().toLowerCase() === 'true')
     await expect(page.getByRole('heading', { name: 'Hermes Agents' })).toBeVisible();
   else
-    await expect(page.getByText('Hermes Agent integration not enabled')).toBeVisible();
+    // Scoped to main: during client navigation the streamed page can briefly render a second copy.
+    await expect(page.getByRole('main').getByText('Hermes Agent integration not enabled')).toBeVisible();
 });
