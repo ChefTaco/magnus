@@ -60,6 +60,7 @@ const UNKNOWN_DISPATCH_MARGIN_MS = 10 * 60_000;
 const POLL_MS = 5_000;
 /** MAGNUS_AGENT_UPGRADE_MAX_FAILURES default, for runs stored without their own budget. */
 const DEFAULT_MAX_FAILURES = 2;
+const LEASE_HELD_NOTE = 'not tried again: the lease of this request is still held';
 const RUN_TTL_SECONDS = 7 * 24 * 60 * 60;
 /** The owner renews its lease every LEASE_MS / 3; a lease this old means the owner is gone. */
 const LEASE_MS = 90_000;
@@ -199,6 +200,14 @@ export async function recordSelfUpgradeReport(node: { id: string; name: string }
   }
 }
 
+function applyLateOutcome(entry: RunNode, state: 'confirmed' | 'reverted' | 'failed', reason: string | null): void {
+  entry.state = state;
+  entry.code = state === 'confirmed' ? null : state === 'reverted' ? 'SELF_UPGRADE_REVERTED' : 'SELF_UPGRADE_FAILED';
+  entry.failureClass = state === 'confirmed' ? null : 'release';
+  entry.detail = `${state === 'confirmed' ? 'confirmed' : state === 'reverted' ? `reverted: ${reason ?? 'the agent switched back'}` : `failed: ${reason ?? 'the agent reported a failure'}`} (reported after the run stopped watching)`;
+  entry.awaitingReport = false;
+}
+
 /** A report for a node nobody watches any more: its run ended, or its watch timed out while the run goes on. */
 async function recordLateOutcome(store: RunStore, runId: string, requestId: string, state: 'confirmed' | 'reverted' | 'failed', reason: string | null): Promise<void> {
   const live = executing.get(runId)?.run;
@@ -207,13 +216,10 @@ async function recordLateOutcome(store: RunStore, runId: string, requestId: stri
   if (run.status === 'running' && !live) return; // another server owns it and records it itself
   const entry = run.nodes.find(node => node.requestId === requestId);
   if (!entry) return;
-  const stillWatched = run.status === 'running' && entry.state !== 'ambiguous';
-  if (stillWatched || !(entry.awaitingReport || entry.state === 'requested' || entry.state === 'watching')) return;
-  entry.state = state;
-  entry.code = state === 'confirmed' ? null : state === 'reverted' ? 'SELF_UPGRADE_REVERTED' : 'SELF_UPGRADE_FAILED';
-  entry.failureClass = state === 'confirmed' ? null : 'release';
-  entry.detail = `${state === 'confirmed' ? 'confirmed' : state === 'reverted' ? `reverted: ${reason ?? 'the agent switched back'}` : `failed: ${reason ?? 'the agent reported a failure'}`} (reported after the run stopped watching)`;
-  entry.awaitingReport = false;
+  // In a live run a node still being asked is its watcher's to record. Anything that gave up waiting is open,
+  // whatever state it ended in: a timed-out trial that confirms later must stop counting against the budget.
+  if (!(entry.awaitingReport || (run.status !== 'running' && (entry.state === 'requested' || entry.state === 'watching')))) return;
+  applyLateOutcome(entry, state, reason);
   if (run.status === 'running') return; // the owner counts it at its next decision
   run.summary = summarizeRun(run);
   run.attention = attentionList(run);
@@ -605,6 +611,8 @@ export interface UpgradeDeps {
   heal?: (target: PreflightTarget, preflight: NodePreflight) => Promise<{ healed: string[]; problems: PreflightProblem[] }>;
   /** A node confirmed after its reply was lost: read its signed receipt, so the lease of that request does not stay held. */
   settleLostReply?: (nodeId: string, requestId: string) => Promise<void>;
+  /** Whether this request's lease settled. A held lease makes a retry pointless: admission would refuse it. */
+  leaseSettled?: (nodeId: string, requestId: string) => Promise<boolean>;
   /** Waits before each end-of-wave retry. */
   retryBackoffMs?: readonly number[];
   sleep: (ms: number) => Promise<void>;
@@ -650,6 +658,10 @@ export function defaultDeps(store: RunStore = defaultRunStore()): UpgradeDeps {
     confirmTimeoutMs: confirmWindowMs(null),
     pollMs: POLL_MS,
     index: run => store.index(run),
+    leaseSettled: async (_nodeId, requestId) => {
+      const lease = await getDb().commandResourceLease.findUnique({ where: { commandId: `agent-upgrade-${requestId}` }, select: { state: true } });
+      return !lease || lease.state === 'released';
+    },
     settleLostReply: async (nodeId, requestId) => {
       const node = await getDb().node.findUnique({ where: { id: nodeId }, select: { id: true, ipAddress: true, port: true } });
       // Settles through the signed result of the receipt; a receipt without one changes nothing.
@@ -689,6 +701,8 @@ interface RunContext {
   watchers: Set<Promise<void>>;
   /** The run ended: remaining watches stop, and heartbeat reports take over. */
   closed: boolean;
+  /** What a node's last attempt ended as, while an automatic retry is under way. */
+  retrying: Map<string, { state: NodeRunState; code: string | null; detail: string | null }>;
 }
 
 /** Ask one node to upgrade and wait for its confirmed (or reverted) report. An ambiguous node holds its slot only for its window. */
@@ -703,11 +717,14 @@ async function upgradeOne(run: UpgradeRun, entry: RunNode, deps: UpgradeDeps, co
   try {
     verdict = await deps.check(entry.nodeId, run);
   } catch (error) {
-    verdict = `eligibility check failed: ${error instanceof Error ? error.message : String(error)}`;
+    verdict = { reason: `eligibility check failed: ${error instanceof Error ? error.message : String(error)}`, code: 'CHECK_FAILED' };
   }
   if (verdict) {
-    const skipped = typeof verdict === 'string' ? { reason: verdict, code: null } : verdict;
-    return void Object.assign(entry, { state: 'skipped', detail: skipped.reason, code: skipped.code, failureClass: skipped.code ? upgradeRemedy(skipped.code).class : null, finishedAt: iso() });
+    const skipped = typeof verdict === 'string' ? { reason: verdict, code: 'NOT_ELIGIBLE' } : { reason: verdict.reason, code: verdict.code ?? 'NOT_ELIGIBLE' };
+    // A retry that cannot go ahead says so, and the node keeps what its real attempt ended as.
+    const prior = context.retrying.get(entry.nodeId);
+    if (prior && prior.state === 'refused') return void Object.assign(entry, { ...prior, detail: `${prior.detail ?? ''}; not tried again: ${skipped.reason}`.slice(0, 1000), failureClass: prior.code ? upgradeRemedy(prior.code).class : null, finishedAt: iso() });
+    return void Object.assign(entry, { state: 'skipped', detail: skipped.reason, code: skipped.code, failureClass: upgradeRemedy(skipped.code).class, finishedAt: iso() });
   }
   entry.state = 'requested';
   entry.attempts = (entry.attempts ?? 0) + 1;
@@ -802,23 +819,27 @@ export function summarizeRun(run: UpgradeRun): string {
 }
 
 const isReleaseFailure = (node: RunNode) => (node.state === 'failed' || node.state === 'reverted') && upgradeRemedy(node.code).class === 'release';
-const NEEDS_ATTENTION = new Set<NodeRunState>(['failed', 'reverted', 'refused', 'ambiguous', 'watching']);
 
-/** Every node someone has to look at, each with a code and what to do about it. Expected states are left out. */
+/** An expected state: a refusal or skip whose code says the node needs nobody. */
+const isExpected = (node: RunNode) => (node.state === 'refused' || node.state === 'skipped') && Boolean(node.code && upgradeRemedy(node.code).informational);
+
+/** Every selected node someone has to look at: everything not confirmed, unless its code says it is expected. */
 export function attentionList(run: UpgradeRun): RunAttention[] {
   const item = (node: { nodeId: string; name: string }, state: RunAttention['state'], code: string, detail: string | null): RunAttention => {
     const remedy = upgradeRemedy(code);
     return { nodeId: node.nodeId, name: node.name, state, code, failureClass: remedy.class, detail, cause: remedy.cause, remedy: remedy.remedy };
   };
   return [
-    ...run.nodes.filter(node => node.code && !upgradeRemedy(node.code).informational && (NEEDS_ATTENTION.has(node.state) || node.state === 'skipped'))
-      .map(node => item(node, node.state, node.code!, node.detail)),
-    ...run.nodes.filter(node => !node.code && NEEDS_ATTENTION.has(node.state)).map(node => item(node, node.state, 'NOT_DISPATCHED', node.detail)),
-    ...(run.excluded ?? []).filter(node => node.code && !upgradeRemedy(node.code).informational).map(node => item(node, 'excluded', node.code!, node.reason)),
+    ...run.nodes.filter(node => node.state !== 'confirmed' && !isExpected(node)).map(node => item(node, node.state, node.code ?? 'NOT_REACHED', node.detail)),
+    ...(run.excluded ?? []).filter(node => !(node.code && upgradeRemedy(node.code).informational)).map(node => item(node, 'excluded', node.code ?? 'NOT_ELIGIBLE', node.reason)),
   ];
 }
 
-/** Evidence against the release decides first; then whether any node still needs someone. */
+/**
+ * Evidence against the release decides first; then whether any node still needs
+ * someone. `succeeded` means every selected node is confirmed or has an
+ * informational reason; finish and late reports both come through here.
+ */
 export function finalStatus(run: UpgradeRun): RunStatus {
   if (run.nodes.some(isReleaseFailure)) return 'failed';
   return attentionList(run).length ? 'partial' : 'succeeded';
@@ -833,13 +854,13 @@ export function finalStatus(run: UpgradeRun): RunStatus {
  * nodes it still watches have reported or run out of time.
  */
 export async function executeUpgradeRun(run: UpgradeRun, deps: UpgradeDeps): Promise<UpgradeRun> {
-  const context: RunContext = { watchers: new Set(), closed: false };
+  const context: RunContext = { watchers: new Set(), closed: false, retrying: new Map() };
   const budget = run.maxFailures ?? DEFAULT_MAX_FAILURES;
   const finish = async (status: RunStatus, message: string) => {
     context.closed = true;
     const at = new Date(deps.now()).toISOString();
     for (const node of run.nodes) {
-      if (node.state === 'pending') Object.assign(node, { state: 'skipped', detail: status === 'stopped' ? 'run stopped' : 'not reached' });
+      if (node.state === 'pending') Object.assign(node, { state: 'skipped', detail: status === 'stopped' ? 'run stopped' : 'not reached', code: status === 'stopped' ? 'RUN_STOPPED' : 'NOT_REACHED' });
       if (node.state === 'watching') Object.assign(node, { state: 'ambiguous', finishedAt: at, detail: `${node.detail ?? 'outcome unknown'}; a later report is recorded here` });
     }
     run.status = status;
@@ -859,6 +880,18 @@ export async function executeUpgradeRun(run: UpgradeRun, deps: UpgradeDeps): Pro
     if (actor) run.stopRequestedBy = actor;
     return actor;
   };
+  /** A node that gave up waiting may have reported since: the stored report is the same on every server. */
+  const readLateReports = async () => {
+    for (const node of run.nodes.filter(entry => entry.awaitingReport && entry.state !== 'watching')) {
+      const upgrade = await deps.observe(node.nodeId).then(observation => observation.report?.upgrade, () => null);
+      if (upgrade?.requestId !== node.requestId) continue;
+      if (upgrade.state === 'confirmed' || upgrade.state === 'reverted' || upgrade.state === 'failed') applyLateOutcome(node, upgrade.state, upgrade.reason ?? null);
+    }
+  };
+  const leaseSettled = (node: RunNode) => (deps.leaseSettled?.(node.nodeId, node.requestId) ?? Promise.resolve(true)).catch((error: unknown) => {
+    console.warn(`[agent-upgrade] lease of ${node.name} could not be read: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
+  });
   const stoppedByOperator = () => finish('stopped', `stopped by ${run.stopRequestedBy}`);
   const describe = (node: RunNode) => `${node.name} (${node.code ?? node.state}: ${node.detail ?? ''})`;
   /** What the evidence so far says: null, or why the run ends now. */
@@ -879,6 +912,7 @@ export async function executeUpgradeRun(run: UpgradeRun, deps: UpgradeDeps): Pro
       if (canaryPhase) run.canaryNodeId = batch[0]!.nodeId;
       await Promise.all(batch.map(node => upgradeOne(run, node, deps, context)));
       await deps.save(run);
+      await readLateReports();
       const stop = evidenceStop(canaryPhase && confirmed().length === 0);
       if (stop) return stop;
     }
@@ -890,12 +924,21 @@ export async function executeUpgradeRun(run: UpgradeRun, deps: UpgradeDeps): Pro
     if (ended) return ended;
     // Refusals that clear by themselves, once or twice, with a pause. Never anything ambiguous or release-class.
     for (const wait of deps.retryBackoffMs ?? AUTO_RETRY_BACKOFF_MS) {
-      const again = run.nodes.filter(node => (node.state === 'refused' || node.state === 'skipped') && node.code && upgradeRemedy(node.code).transient);
+      const transient = run.nodes.filter(node => (node.state === 'refused' || node.state === 'skipped') && node.code && upgradeRemedy(node.code).transient);
+      // A lease still held makes a retry pointless: admission would refuse it, and hide why with LEASE_HELD.
+      const again: RunNode[] = [];
+      for (const node of transient) {
+        if (await leaseSettled(node)) again.push(node);
+        else if (!node.detail?.includes(LEASE_HELD_NOTE)) node.detail = `${node.detail ?? ''}; ${LEASE_HELD_NOTE}`.slice(0, 1000);
+      }
       if (!again.length) break;
       await deps.sleep(wait);
       if (await stopped()) return await stoppedByOperator();
       // A command id owns one lease for good, so each attempt is a new request.
-      for (const node of again) Object.assign(node, { state: 'pending', requestId: randomUUID(), detail: null, code: null, failureClass: null, finishedAt: null, dispatchedAt: null });
+      for (const node of again) {
+        context.retrying.set(node.nodeId, { state: node.state, code: node.code ?? null, detail: node.detail });
+        Object.assign(node, { state: 'pending', requestId: randomUUID(), detail: null, code: null, failureClass: null, finishedAt: null, dispatchedAt: null });
+      }
       await deps.index?.(run);
       await deps.save(run);
       ended = await drain();
@@ -905,9 +948,11 @@ export async function executeUpgradeRun(run: UpgradeRun, deps: UpgradeDeps): Pro
     while (context.watchers.size) {
       await deps.sleep(deps.pollMs);
       if (await stopped()) return await stoppedByOperator();
+      await readLateReports();
       const stop = evidenceStop(confirmed().length === 0);
       if (stop) return await stop;
     }
+    await readLateReports();
     const upgraded = confirmed().length;
     const status = finalStatus(run);
     return await finish(status, status === 'succeeded' ? `${upgraded} agent(s) upgraded to ${run.version}`
@@ -933,7 +978,7 @@ export async function reconcileInterruptedRun(run: UpgradeRun, observe: UpgradeD
   if (!leaseExpired(run, now)) return run;
   const at = new Date(now).toISOString();
   for (const node of run.nodes) {
-    if (node.state === 'pending') Object.assign(node, { state: 'skipped', detail: 'run interrupted before this node', finishedAt: at });
+    if (node.state === 'pending') Object.assign(node, { state: 'skipped', detail: 'run interrupted before this node', code: 'NOT_REACHED', finishedAt: at });
     if (node.state !== 'requested' && node.state !== 'watching') continue;
     const upgrade = await observe(node.nodeId).then(observation => observation.report?.upgrade, () => null);
     const mine = upgrade?.requestId === node.requestId ? upgrade : null;

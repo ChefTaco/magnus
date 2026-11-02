@@ -44,6 +44,7 @@ export const UPGRADE_REMEDIES = {
   STALE_FENCE: { class: 'node', transient: true, cause: 'The agent holds a resource fence at least as high as the one the server sent, and refused without running anything.', remedy: 'The server repairs this by itself by moving its generation up, and tries the node again. Nothing to do unless the problem persists.' },
   LEASE_EXPIRED: { class: 'node', transient: true, cause: 'The command lease expired before the agent could start it; nothing ran.', remedy: 'Retry the node. If this repeats, compare the clocks of the node and the server.' },
   NOT_DISPATCHED: { class: 'node', transient: true, cause: 'The server did not send the request.', remedy: 'Read the detail, then retry the node.' },
+  CHECK_FAILED: { class: 'node', transient: true, cause: 'The server could not check this node right before asking it, so it did not ask.', remedy: 'Read the detail, usually a database or Redis problem on the server, then retry the node.' },
 
   // Node-level: needs someone.
   FENCE_OVERFLOW: { class: 'node', cause: 'The agent reports a resource fence above the highest value the server will adopt.', remedy: 'Stop the agent, inspect .magnus/command-receipts/fence-*.json on the node, and repair that file by hand. The server does not change its generation.' },
@@ -77,6 +78,10 @@ export const UPGRADE_REMEDIES = {
   PREFLIGHT_NPM: { class: 'node', cause: 'npm is missing on the node or too old.', remedy: 'Install npm beside the agent\'s Node.js, or set MAGNUS_AGENT_NPM.' },
   PREFLIGHT_FROM_INCOMPLETE: { class: 'node', cause: 'The running version is not complete under versions/, so a failed upgrade could not switch back.', remedy: 'Run `sudo magnus-agent install-service` again on the node.' },
   PREFLIGHT_ENGINE: { class: 'node', cause: 'The target version does not support the Node.js on this node.', remedy: 'Upgrade Node.js on the node.' },
+
+  NOT_REACHED: { class: 'node', cause: 'The run ended before it reached this node.', remedy: 'Retry the run, once what ended it is dealt with. This node was not asked and did not change.' },
+  RUN_STOPPED: { class: 'node', cause: 'Someone stopped the run before it reached this node.', remedy: 'Retry the run when you want this node upgraded. This node was not asked and did not change.' },
+  NOT_ELIGIBLE: { class: 'node', cause: 'This node became ineligible at its turn, for a reason without a code of its own.', remedy: 'Read the detail, then retry the node.' },
 
   // Expected states: reported, but not a problem with the run.
   ALREADY_CURRENT: { class: 'node', informational: true, cause: 'The node already runs the target version.', remedy: 'Nothing to do.' },

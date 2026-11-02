@@ -418,7 +418,7 @@ describe('a server restart in the middle of a run', () => {
     const after = await service.reconcileInterruptedRun(run, observe, saved => store.save(saved));
     expect(after.status).toBe('interrupted');
     expect(after.nodes.map(entry => entry.state)).toEqual(['confirmed', 'confirmed', 'ambiguous', 'skipped']);
-    expect(after.attention).toEqual([expect.objectContaining({ name: 'c', code: 'RUN_INTERRUPTED', failureClass: 'node' })]);
+    expect(after.attention).toEqual([expect.objectContaining({ name: 'c', code: 'RUN_INTERRUPTED', failureClass: 'node' }), expect.objectContaining({ name: 'd', code: 'NOT_REACHED' })]);
     // The heartbeat that finally reports the outcome finds the run.
     let metadata = '{}';
     db.node.findUnique.mockImplementation(async () => ({ metadata }));

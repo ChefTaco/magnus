@@ -275,7 +275,7 @@ describe('agent upgrade runs', () => {
   it('skips a node that became ineligible at its turn and goes on', async () => {
     const deps = makeDeps({ a: 'confirm', b: 'ineligible', c: 'confirm' });
     const run = await executeUpgradeRun(makeRun(['a', 'b', 'c']), deps);
-    expect(run.status).toBe('succeeded');
+    expect(run.status).toBe('partial');
     expect(run.nodes[1]).toMatchObject({ state: 'skipped', detail: 'offline or no recent heartbeat' });
     expect(deps.requested).toEqual(['a', 'c']);
   });
