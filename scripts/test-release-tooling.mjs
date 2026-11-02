@@ -34,10 +34,12 @@ test('the committed release manifest is current', async () => {
 test('bumping sets every version and pin, and the manifest follows', async (t) => {
   const root = fixture(t);
   bumpVersion(root, '9.8.7', { today: '2026-11-01' });
+  // Only the release's own packages follow its version; separately versioned @hivemagnus libraries keep their pins.
+  const released = new Set(PACKAGE_DIRECTORIES.map((directory) => JSON.parse(readFileSync(join(root, directory, 'package.json'), 'utf8')).name));
   for (const directory of PACKAGE_DIRECTORIES) {
     const pkg = JSON.parse(readFileSync(join(root, directory, 'package.json'), 'utf8'));
     assert.equal(pkg.version, '9.8.7', directory);
-    for (const [name, pinned] of Object.entries(pkg.dependencies ?? {})) if (name.startsWith('@hivemagnus/')) assert.equal(pinned, '9.8.7', `${directory} ${name}`);
+    for (const [name, pinned] of Object.entries(pkg.dependencies ?? {})) if (released.has(name)) assert.equal(pinned, '9.8.7', `${directory} ${name}`);
   }
   assert.equal(JSON.parse(readFileSync(join(root, 'services/control-api/agent-version.json'), 'utf8')).version, '9.8.7');
   const meta = JSON.parse(readFileSync(join(root, 'packages/magnus/package.json'), 'utf8'));
