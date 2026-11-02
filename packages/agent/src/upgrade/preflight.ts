@@ -42,6 +42,7 @@ export async function upgradePreflight(options: { version: string; target?: stri
     launcherProtocol: status.launcherProtocol,
     enabled: status.enabled,
     reason: status.reason ?? null,
+    reasonCode: status.reasonCode ?? null,
     writable: { ok: blocked.length === 0, blocked },
     ...(disk ? { disk } : {}),
     npm: npmHealth(env),

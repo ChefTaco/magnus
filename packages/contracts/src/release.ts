@@ -310,12 +310,17 @@ export const agentNpmHealthSchema = z.object({
   problem: z.string().max(500).nullable().optional(),
 });
 
+/** Known reasons plus any future one, which the server treats as a problem and not as an expected state. */
+export const agentSelfUpgradeReasonCode = z.union([z.enum(['SWITCHED_OFF', 'CONTAINER', 'LEGACY_LAYOUT', 'NOT_WRITABLE', 'NPM']), z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/)]);
+
 export const agentSelfUpgradeStatusSchema = z.object({
   protocol: z.number().int().nonnegative(),
   launcherProtocol: z.number().int().nonnegative().nullable(),
   layout: z.enum(['versioned', 'legacy', 'container']),
   enabled: z.boolean(),
   reason: z.string().max(1000).nullable().optional(),
+  /** Why self-upgrade is off, for the server; `reason` is for people. Older agents leave it out. */
+  reasonCode: agentSelfUpgradeReasonCode.nullable().optional().catch(undefined),
   upgrade: agentUpgradeReportSchema.nullable().optional(),
   /** Seconds a new version has on trial before the launcher switches back (MAGNUS_AGENT_UPGRADE_CONFIRM_SECONDS). */
   confirmSeconds: z.number().int().positive().max(86_400).nullable().optional(),
@@ -337,6 +342,7 @@ export const agentUpgradePreflightSchema = z.object({
   launcherProtocol: z.number().int().nonnegative().nullable().optional().catch(null),
   enabled: z.boolean().optional().catch(undefined),
   reason: z.string().max(1000).nullable().optional().catch(null),
+  reasonCode: agentSelfUpgradeReasonCode.nullable().optional().catch(undefined),
   writable: z.object({ ok: z.boolean(), blocked: z.array(z.string().max(255)).max(16).optional() }).optional().catch(undefined),
   disk: agentDiskHealthSchema.optional().catch(undefined),
   npm: agentNpmHealthSchema.optional().catch(undefined),

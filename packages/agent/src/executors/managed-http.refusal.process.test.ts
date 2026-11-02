@@ -4,7 +4,7 @@
  * The refusal must be reported as what it is, not as an uncertain mutation.
  */
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Hono } from 'hono';
@@ -15,6 +15,7 @@ import { httpIdentity } from '../security/managed-http.js';
 const secret = 'managed-refusal-signing-key-at-least-32-bytes';
 const nodeKey = 'managed-refusal-node-key-at-least-32-bytes';
 const FENCE = '1789962351090';
+const AGENT_MAJOR = (await import('../version.js')).AGENT_VERSION.split('.')[0];
 const fetchMock = vi.hoisted(() => vi.fn());
 vi.mock('../tls.js', async original => ({ ...await original<object>(), controlApiFetch: fetchMock }));
 
@@ -121,5 +122,95 @@ describe('a certain refusal on a ledger with a pre-seeded high fence', () => {
     expect(error['code']).toBe('IDEMPOTENCY_CONFLICT');
     expect(error).not.toHaveProperty('executed');
     expect(effect).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('a failed self-upgrade over the real route, ledger and managed-http', () => {
+  // Same major as the running version: a major change is refused before anything else happens.
+  const VERSION_TARGET = `${AGENT_MAJOR}.999.0`;
+  async function installation(npmScript: string) {
+    const { AGENT_VERSION } = await import('../version.js');
+    const entry = join(root, 'versions', AGENT_VERSION, 'node_modules/@hivemagnus/magnus-agent/dist');
+    await mkdir(entry, { recursive: true });
+    await writeFile(join(entry, 'index.js'), '');
+    await symlink(join('versions', AGENT_VERSION), join(root, 'current'), 'dir');
+    const npm = join(root, 'fake-npm.sh');
+    await writeFile(npm, `#!/bin/sh\n${npmScript}\n`, { mode: 0o755 });
+    vi.stubEnv('MAGNUS_AGENT_LAUNCHER', '1');
+    vi.stubEnv('MAGNUS_AGENT_LAUNCHER_PROTOCOL', '1');
+    vi.stubEnv('MAGNUS_AGENT_NPM', npm);
+    vi.stubEnv('MAGNUS_AGENT_UPGRADE_REQUIRE_PROVENANCE', 'false');
+    const { agentUpgradeRoutes } = await import('../upgrade/routes.js');
+    app.route('/api/v1/agent-upgrade', agentUpgradeRoutes);
+  }
+  const upgrade = (id: string, fence: string) => ({ claim: { leaseId: `lease-${id}`, nodeId: 'fixture', nodeFqdn: 'fixture.example.com' }, commandId: id, method: 'POST', path: '/agent-upgrade',
+    body: JSON.stringify({ version: VERSION_TARGET, integrity: `sha512-${'A'.repeat(86)}==`, requestId: id, packageName: '@hivemagnus/magnus-agent' }), timeoutSeconds: 900,
+    coordination: { version: 1, resourceKey: 'node:fixture', fence, expiresAt: Date.now() + 60_000 } });
+  const settledBody = async (response: Response) => {
+    expect(response.status).toBe(200);
+    const { data } = await response.json() as { data: { response: { status: number; body: string }; receipt: { signature: string; exitCode: number } } };
+    return { status: data.response.status, error: (JSON.parse(data.response.body) as { error: { code: string; message: string } }).error, receipt: data.receipt };
+  };
+
+  it('settles a bad package as a signed result, with the lock and receipt cleared, so the real code reaches the server', async () => {
+    await installation('echo "npm error code E404: this version is broken" >&2; exit 1');
+    const first = await settledBody(await send(upgrade('bad-release', '5') as never));
+    expect(first.status).toBeLessThan(500);
+    expect(first.error).toMatchObject({ code: 'SELF_UPGRADE_FAILED', message: expect.stringMatching(/npm pack failed/) });
+    expect(first.receipt.exitCode).toBe(1);
+    const { commandLedger } = await import('./command-executor.js');
+    expect(await commandLedger.health()).toMatchObject({ activeLock: null, nonTerminalReceipts: 0, unresolvedReceipts: 0 });
+    expect((await commandLedger.receipt('bad-release'))?.state).toBe('completed');
+    // The next request on this node is not blocked by what the last one left behind.
+    const second = await settledBody(await send(upgrade('next-request', '6') as never));
+    expect(second.error.code).toBe('SELF_UPGRADE_FAILED');
+  });
+
+  it('keeps the generic rule: an unexpected handler failure stays uncertain', async () => {
+    effect.mockResolvedValue(new Response(JSON.stringify({ success: false, error: { code: 'SELF_UPGRADE_FAILED', message: 'x' } }), { status: 500, headers: { 'content-type': 'application/json' } }));
+    const response = await send(request('5', 'generic-500'));
+    expect(response.status).toBe(409);
+    const { error } = await response.json() as { error: Record<string, unknown> };
+    expect(error['code']).toBe('MANAGED_MUTATION_UNCERTAIN');
+    const { commandLedger } = await import('./command-executor.js');
+    expect(await commandLedger.health()).toMatchObject({ unresolvedReceipts: 1, activeLock: { commandId: 'generic-500', receipt: 'unknown' } });
+  });
+
+  it('names an environment cause with its own code, not a release failure', async () => {
+    await installation('echo "npm error code ENOSPC: no space left on device" >&2; exit 1');
+    expect((await settledBody(await send(upgrade('disk', '5') as never))).error.code).toBe('SELF_UPGRADE_ENV_DISK');
+  });
+
+  it('names a network cause as such', async () => {
+    await installation('echo "npm error code ENOTFOUND: registry.example.com" >&2; exit 1');
+    expect((await settledBody(await send(upgrade('network', '5') as never))).error.code).toBe('SELF_UPGRADE_ENV_NETWORK');
+  });
+
+  it('names an access cause as such', async () => {
+    await installation('echo "npm error code EACCES: permission denied" >&2; exit 1');
+    expect((await settledBody(await send(upgrade('access', '5') as never))).error.code).toBe('SELF_UPGRADE_ENV_ACCESS');
+  });
+
+  it('keeps a corrupt package a release failure, whatever else the output says', async () => {
+    await installation('echo "npm error code EINTEGRITY: sha512 mismatch" >&2; exit 1');
+    expect((await settledBody(await send(upgrade('corrupt', '5') as never))).error.code).toBe('SELF_UPGRADE_FAILED');
+  });
+});
+
+describe('a machine-readable reason for why self-upgrade is off', () => {
+  it('tells an operator switch-off from a problem', async () => {
+    const { selfUpgradeStatus } = await import('../upgrade/self-upgrade.js');
+    expect(selfUpgradeStatus('1.1.7', { MAGNUS_AGENT_SELF_UPGRADE: 'false', AGENT_INSTALL_DIR: root })).toMatchObject({ enabled: false, reasonCode: 'SWITCHED_OFF' });
+    expect(selfUpgradeStatus('1.1.7', { MAGNUS_AGENT_CONTAINER: '1', AGENT_INSTALL_DIR: root })).toMatchObject({ enabled: false, reasonCode: 'CONTAINER' });
+    expect(selfUpgradeStatus('1.1.7', { AGENT_INSTALL_DIR: root })).toMatchObject({ enabled: false, reasonCode: 'LEGACY_LAYOUT' });
+    await symlink('versions/1.1.7', join(root, 'current'), 'dir');
+    await mkdir(join(root, 'versions'), { recursive: true });
+    const launcher = { AGENT_INSTALL_DIR: root, MAGNUS_AGENT_LAUNCHER: '1' };
+    expect(selfUpgradeStatus('1.1.7', { ...launcher, PATH: '/nonexistent' }, '/nonexistent/deep/bin/node')).toMatchObject({ enabled: false, reasonCode: 'NPM' });
+    await chmod(join(root, 'versions'), 0o500);
+    try {
+      if (process.getuid?.() !== 0) expect(selfUpgradeStatus('1.1.7', { ...launcher, MAGNUS_AGENT_NPM: '/bin/true' })).toMatchObject({ enabled: false, reasonCode: 'NOT_WRITABLE' });
+    } finally { await chmod(join(root, 'versions'), 0o700); }
+    expect(selfUpgradeStatus('1.1.7', { ...launcher, MAGNUS_AGENT_NPM: '/bin/true' })).toMatchObject({ enabled: true, reasonCode: null });
   });
 });

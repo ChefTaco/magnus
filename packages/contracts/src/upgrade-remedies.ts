@@ -16,6 +16,8 @@ export interface UpgradeRemedy {
   ambiguous?: boolean;
   /** An expected state that does not make a run `partial`, such as a node already on the target. */
   informational?: boolean;
+  /** Not in the catalogue, for example from a newer agent: treated as node-level, and shown as unrecognised. */
+  unknown?: boolean;
   cause: string;
   remedy: string;
 }
@@ -24,7 +26,7 @@ export const UPGRADE_REMEDIES = {
   // Release evidence.
   SELF_UPGRADE_INTEGRITY: { class: 'release', stopsRun: true, cause: 'The downloaded tarball does not match the pinned npm integrity.', remedy: 'Do not retry. Check the registry or MAGNUS_AGENT_UPGRADE_SOURCE_DIR, and the integrity passed to the run.' },
   SELF_UPGRADE_SOURCE: { class: 'release', stopsRun: true, cause: 'The tarball is missing from MAGNUS_AGENT_UPGRADE_SOURCE_DIR.', remedy: 'Copy the exact tarball to that directory on the nodes, then retry.' },
-  SELF_UPGRADE_FAILED: { class: 'release', cause: 'Installing or smoke-testing the new version failed on the node.', remedy: 'Read the detail and the agent log. If several nodes fail the same way, the release is at fault.' },
+  SELF_UPGRADE_FAILED: { class: 'release', cause: 'The package itself failed on the node: a bad tarball, an install error, missing provenance or a smoke test that failed or hung. An agent older than 1.1.8 also reports environment causes this way.', remedy: 'Read the detail and the agent log. If several nodes fail the same way, the release is at fault.' },
   SELF_UPGRADE_REVERTED: { class: 'release', cause: 'The new version crashed or stayed silent during its trial, and the launcher switched back.', remedy: 'Read the reason on the node and in the agent log. To try again, retry with allowRetryReverted (--retry-reverted).' },
   CONFIRM_TIMEOUT: { class: 'release', cause: 'The agent accepted the request, but the new version was not confirmed within its trial window.', remedy: 'Read the agent log on the node. A later report for this request is still recorded in the run.' },
   AGENT_SILENT: { class: 'release', cause: 'The agent accepted the request and then stopped sending heartbeats.', remedy: 'Check the service on the node. The launcher switches back by itself if it is running.' },
@@ -36,6 +38,7 @@ export const UPGRADE_REMEDIES = {
   RUN_INTERRUPTED: { class: 'node', ambiguous: true, cause: 'The server stopped watching this node when the run was interrupted.', remedy: 'A later report is recorded in the run. If the node does not report, retry it.' },
 
   // Node-level and transient: tried again at the end of the wave.
+  SELF_UPGRADE_ENV_NETWORK: { class: 'node', transient: true, cause: 'The node could not reach the registry while fetching the new version.', remedy: 'Check the path from the node to the registry, or use MAGNUS_AGENT_UPGRADE_SOURCE_DIR, then retry it.' },
   AGENT_UNREACHABLE: { class: 'node', transient: true, cause: 'The server could not open a connection to the agent.', remedy: 'Check that the agent is running and that its address and port in the inventory are correct.' },
   SELF_UPGRADE_BUSY: { class: 'node', transient: true, cause: 'The agent is already staging an upgrade or another process holds its upgrade lock.', remedy: 'Wait for it to finish, then retry the node.' },
   RESOURCE_BUSY: { class: 'node', transient: true, cause: 'Another command owns the single execution slot on the node.', remedy: 'Wait for the command to finish, then retry the node.' },
@@ -47,6 +50,9 @@ export const UPGRADE_REMEDIES = {
   CHECK_FAILED: { class: 'node', transient: true, cause: 'The server could not check this node right before asking it, so it did not ask.', remedy: 'Read the detail, usually a database or Redis problem on the server, then retry the node.' },
 
   // Node-level: needs someone.
+  SELF_UPGRADE_ENV_DISK: { class: 'node', cause: 'The node ran out of disk space or quota while installing the new version.', remedy: 'Free disk space on the node, then retry it.' },
+  SELF_UPGRADE_ENV_ACCESS: { class: 'node', cause: 'The node refused a write while installing the new version.', remedy: 'Run `sudo magnus-agent install-service` again on the node, which repairs ownership, then retry it.' },
+  RESOURCE_ENROLLMENT_REQUIRED: { class: 'node', cause: 'Admission refused the request because the node\'s resource enrollment is not complete.', remedy: 'Complete the node\'s resource enrollment (docs/COMMAND_RESOURCE_LEASES.md).' },
   FENCE_OVERFLOW: { class: 'node', cause: 'The agent reports a resource fence above the highest value the server will adopt.', remedy: 'Stop the agent, inspect .magnus/command-receipts/fence-*.json on the node, and repair that file by hand. The server does not change its generation.' },
   FENCE_INVALID: { class: 'node', cause: 'The agent reports a resource fence that is not a decimal value for its own node.', remedy: 'Inspect .magnus/command-receipts/fence-*.json on the node.' },
   FENCE_AHEAD: { class: 'node', cause: 'The agent holds a resource fence above the server generation, so managed requests would be refused.', remedy: 'Nothing to do for an upgrade run: it repairs this at its start. `magnus-server agents doctor --heal` repairs it now.' },
@@ -90,7 +96,7 @@ export const UPGRADE_REMEDIES = {
   MAJOR_VERSION: { class: 'node', informational: true, cause: 'The change crosses a major version.', remedy: 'Upgrade this node by hand.' },
   NOT_SELF_UPGRADABLE: { class: 'node', informational: true, cause: 'This agent cannot upgrade itself: it is too old, or not set up with the launcher.', remedy: 'Run `sudo magnus-agent install-service` once on the node.' },
   PROTOCOL_TOO_OLD: { class: 'node', informational: true, cause: 'The agent speaks an older self-upgrade protocol.', remedy: 'Upgrade this agent by hand.' },
-  SELF_UPGRADE_DISABLED: { class: 'node', informational: true, cause: 'Self-upgrade is off on this node, or its layout does not allow it.', remedy: 'Read the detail. MAGNUS_AGENT_SELF_UPGRADE=false, a container or a legacy layout all end up here.' },
+  SELF_UPGRADE_DISABLED: { class: 'node', informational: true, cause: 'An operator switched self-upgrade off on this node, or it runs in a container or the legacy layout.', remedy: 'Nothing to do if that is intended. Otherwise set MAGNUS_AGENT_SELF_UPGRADE=true, pull a newer image, or run `sudo magnus-agent install-service` once.' },
   UPGRADE_IN_PROGRESS: { class: 'node', informational: true, cause: 'An upgrade is already staged or on trial on this node.', remedy: 'Wait for its trial to end.' },
   ALREADY_REVERTED: { class: 'node', informational: true, cause: 'This node already switched back from this exact version.', remedy: 'Read the reason. To try again, use allowRetryReverted (--retry-reverted).' },
   PREFLIGHT_UNAVAILABLE: { class: 'node', informational: true, cause: 'An agent older than 1.1.8 has no preflight check; heartbeat data is used instead.', remedy: 'Nothing to do: the agent gains the check when it is upgraded.' },
@@ -99,7 +105,7 @@ export const UPGRADE_REMEDIES = {
 
 export type UpgradeProblemCode = keyof typeof UPGRADE_REMEDIES;
 
-const FALLBACK: UpgradeRemedy = { class: 'node', cause: 'The agent or the server refused this node for a reason the catalogue does not list.', remedy: 'Read the detail and the agent log, then retry the node.' };
+const FALLBACK: UpgradeRemedy = { class: 'node', unknown: true, cause: 'Unrecognised code: the agent or the server refused this node for a reason the catalogue does not list.', remedy: 'Read the detail and the agent log, then retry the node. An agent newer than the server can cause this.' };
 
 /** Cause and remedy for a code; an unknown code (a newer agent, an unexpected 4xx) is a node-level problem. */
 export function upgradeRemedy(code: string | null | undefined): UpgradeRemedy {

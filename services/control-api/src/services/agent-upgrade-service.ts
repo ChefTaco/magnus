@@ -43,7 +43,7 @@ import { getNodeManagerSecret } from '../utils/env.js';
 import { getNodeBaseUrl } from '../utils/node-url.js';
 import { SENTINEL_NODE_IDS } from '../utils/sentinel-nodes.js';
 import type { AuditAction } from '../types/auth.js';
-import { healNode, mapLimit, PREFLIGHT_CONCURRENCY, preflightNode, preflightStatus, type NodePreflight, type PreflightProblem, type PreflightQuery, type PreflightTarget } from './agent-upgrade-preflight.js';
+import { healNode, mapLimit, PREFLIGHT_CONCURRENCY, preflightNode, preflightStatus, selfUpgradeOffCode, type NodePreflight, type PreflightProblem, type PreflightQuery, type PreflightTarget } from './agent-upgrade-preflight.js';
 import { logAuditEvent } from './audit-service.js';
 import { HELD_RESOURCE_STATES, hasFreshOnlineHealth, legacyAdmissionPossible, resourceLeasesRequested } from './command-resource-leases.js';
 import { enrollmentIsComplete } from './resource-enrollment.js';
@@ -223,6 +223,7 @@ async function recordLateOutcome(store: RunStore, runId: string, requestId: stri
   if (run.status === 'running') return; // the owner counts it at its next decision
   run.summary = summarizeRun(run);
   run.attention = attentionList(run);
+  run.suspectedRelease = releaseSuspicion(run);
   if (run.status === 'succeeded' || run.status === 'partial' || run.status === 'failed') {
     run.status = finalStatus(run);
     run.message = `${run.status === 'succeeded' ? 'all nodes upgraded after late reports' : 'updated by a late report'} (${run.summary})`;
@@ -348,7 +349,7 @@ export function classifyCandidate(row: CandidateRow, target: string, options: El
   if (!decision.allowed) return decision.kind === 'downgrade' ? no('DOWNGRADE', `runs ${version}, newer than ${target}`) : no('MAJOR_VERSION', `${version} -> ${target} crosses a major version; upgrade this node by hand`);
   if (!report) return no('NOT_SELF_UPGRADABLE', `magnus-agent ${version} cannot upgrade itself (needs 1.1.0 or later and \`sudo magnus-agent install-service\`)`);
   if (report.protocol < AGENT_SELF_UPGRADE_PROTOCOL) return no('PROTOCOL_TOO_OLD', 'agent self-upgrade protocol too old');
-  if (!report.enabled) return no('SELF_UPGRADE_DISABLED', report.reason ?? 'self-upgrade disabled on this node');
+  if (!report.enabled) return no(selfUpgradeOffCode(report), report.reason ?? 'self-upgrade disabled on this node');
   const upgrade = report.upgrade;
   if (upgrade && (upgrade.state === 'staged' || upgrade.state === 'trial')) return no('UPGRADE_IN_PROGRESS', `an upgrade to ${upgrade.to} is in progress`);
   if (upgrade?.state === 'reverted' && upgrade.to === target && !options.allowRetryReverted)
@@ -446,6 +447,8 @@ export interface RunAttention {
   detail: string | null;
   cause: string;
   remedy: string;
+  /** The code is not in the catalogue: `cause` and `remedy` are generic. */
+  unknownCode?: boolean;
 }
 
 export interface UpgradeRun {
@@ -467,6 +470,8 @@ export interface UpgradeRun {
   stopRequestedBy?: string | null;
   retryOf?: string | null;
   allowRetryReverted?: boolean;
+  /** Why the run reads as failed without a proven release failure. Cleared when a node confirms after all. */
+  suspectedRelease?: string | null;
   /** Selected nodes that were not eligible when the run started. */
   excluded?: Array<{ nodeId: string; name: string; reason: string; code?: string | null }>;
   /** Release failures that stop the run (MAGNUS_AGENT_UPGRADE_MAX_FAILURES, or this run's override). */
@@ -827,12 +832,38 @@ const isExpected = (node: RunNode) => (node.state === 'refused' || node.state ==
 export function attentionList(run: UpgradeRun): RunAttention[] {
   const item = (node: { nodeId: string; name: string }, state: RunAttention['state'], code: string, detail: string | null): RunAttention => {
     const remedy = upgradeRemedy(code);
-    return { nodeId: node.nodeId, name: node.name, state, code, failureClass: remedy.class, detail, cause: remedy.cause, remedy: remedy.remedy };
+    return { nodeId: node.nodeId, name: node.name, state, code, failureClass: remedy.class, detail, cause: remedy.cause, remedy: remedy.remedy, ...(remedy.unknown ? { unknownCode: true } : {}) };
   };
   return [
     ...run.nodes.filter(node => node.state !== 'confirmed' && !isExpected(node)).map(node => item(node, node.state, node.code ?? 'NOT_REACHED', node.detail)),
     ...(run.excluded ?? []).filter(node => !(node.code && upgradeRemedy(node.code).informational)).map(node => item(node, 'excluded', node.code ?? 'NOT_ELIGIBLE', node.reason)),
   ];
+}
+
+/** One old agent with a stale fence looks exactly like this, so a suspicion always takes more than one node. */
+const suspicionThreshold = (run: UpgradeRun) => Math.max(run.maxFailures ?? DEFAULT_MAX_FAILURES, 2);
+
+/**
+ * With nothing confirmed, nodes that all behave the same point at what they have
+ * in common. An agent before 1.1.8 can only answer a failed install as uncertain,
+ * so this is the one signal such a fleet can give about a bad release. Not proof:
+ * the message says so, and a node that confirms clears it.
+ */
+export function releaseSuspicion(run: UpgradeRun): string | null {
+  if (run.nodes.some(node => node.state === 'confirmed')) return null;
+  const threshold = suspicionThreshold(run);
+  const ambiguous = run.nodes.filter(node => (node.state === 'watching' || node.state === 'ambiguous') && node.code !== 'RUN_INTERRUPTED');
+  if (ambiguous.length >= threshold)
+    return `the release is suspect but unproven: ${ambiguous.length} canaries in a row answered without a usable outcome (${[...new Set(ambiguous.map(node => node.code))].join(', ')}) and no node has confirmed; read the agent log on ${ambiguous.slice(0, 3).map(node => node.name).join(', ')}`;
+  const refusals = new Map<string, RunNode[]>();
+  for (const node of run.nodes) {
+    if (node.state !== 'refused' || !node.code) continue;
+    const remedy = upgradeRemedy(node.code);
+    if (!remedy.transient && !remedy.informational) refusals.set(node.code, [...refusals.get(node.code) ?? [], node]);
+  }
+  for (const [code, nodes] of refusals)
+    if (nodes.length >= threshold) return `a release problem is suspected: ${nodes.length} nodes refused with ${code} and none has confirmed`;
+  return null;
 }
 
 /**
@@ -841,7 +872,7 @@ export function attentionList(run: UpgradeRun): RunAttention[] {
  * informational reason; finish and late reports both come through here.
  */
 export function finalStatus(run: UpgradeRun): RunStatus {
-  if (run.nodes.some(isReleaseFailure)) return 'failed';
+  if (run.nodes.some(isReleaseFailure) || releaseSuspicion(run)) return 'failed';
   return attentionList(run).length ? 'partial' : 'succeeded';
 }
 
@@ -866,6 +897,7 @@ export async function executeUpgradeRun(run: UpgradeRun, deps: UpgradeDeps): Pro
     run.status = status;
     run.summary = summarizeRun(run);
     run.attention = attentionList(run);
+    run.suspectedRelease = releaseSuspicion(run);
     run.message = `${message} (${run.summary})`;
     run.finishedAt = at;
     await deps.save(run);
@@ -900,6 +932,11 @@ export async function executeUpgradeRun(run: UpgradeRun, deps: UpgradeDeps): Pro
     const fatal = failures.find(node => upgradeRemedy(node.code).stopsRun);
     if (fatal) return finish('failed', `${describe(fatal)}: every node gets the same artifact, so the run stopped`);
     if (canaryPhase && failures[0]) return finish('failed', `canary ${failures[0].name} did not confirm (${failures[0].code}: ${failures[0].detail ?? ''}); the other nodes were not touched`);
+    // Ambiguity stops the wave; identical refusals do not, since each of those nodes is known to be untouched.
+    if (confirmed().length === 0) {
+      const ambiguous = run.nodes.filter(node => (node.state === 'watching' || node.state === 'ambiguous') && node.code !== 'RUN_INTERRUPTED');
+      if (ambiguous.length >= suspicionThreshold(run)) return finish('failed', releaseSuspicion(run) ?? 'the release is suspect but unproven');
+    }
     if (failures.length >= budget) return finish('failed', `${failures.length} release failure(s) reached the budget of ${budget}: ${failures.slice(0, 5).map(describe).join('; ')}; remaining nodes were skipped`);
     return null;
   };
@@ -955,7 +992,9 @@ export async function executeUpgradeRun(run: UpgradeRun, deps: UpgradeDeps): Pro
     await readLateReports();
     const upgraded = confirmed().length;
     const status = finalStatus(run);
+    const suspicion = releaseSuspicion(run);
     return await finish(status, status === 'succeeded' ? `${upgraded} agent(s) upgraded to ${run.version}`
+      : suspicion ? suspicion
       : status === 'failed' ? `${run.nodes.filter(isReleaseFailure).length} node(s) failed in a way that points at the release; ${upgraded} agent(s) upgraded`
       : upgraded ? `${upgraded} agent(s) upgraded to ${run.version}; ${run.attention?.length ?? attentionList(run).length} node(s) need attention`
       : `no agent was upgraded; ${attentionList(run).length} node(s) need attention, and nothing points at the release`);

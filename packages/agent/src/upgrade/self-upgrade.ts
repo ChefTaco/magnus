@@ -292,21 +292,23 @@ export function npmHealth(env: NodeJS.ProcessEnv = process.env): AgentNpmHealth 
 const clip = (text: string | null | undefined, max: number): string | null => (text == null ? null : text.length > max ? `${text.slice(0, max - 1)}…` : text);
 
 /** Whether this agent can upgrade itself, and why not. Reported with every heartbeat. */
-export function selfUpgradeStatus(version: string, env: NodeJS.ProcessEnv = process.env): AgentSelfUpgradeStatus {
+export function selfUpgradeStatus(version: string, env: NodeJS.ProcessEnv = process.env, execPath = process.execPath): AgentSelfUpgradeStatus {
   const dir = installDir(env);
   const layout = detectLayout(dir, env);
   const launcherProtocol = Number.parseInt(env['MAGNUS_AGENT_LAUNCHER_PROTOCOL'] ?? '', 10);
   const state = readUpgradeState(dir);
   let reason: string | null = null;
-  if (!selfUpgradeSwitch(env)) reason = 'MAGNUS_AGENT_SELF_UPGRADE=false on this node';
-  else if (layout === 'container') reason = 'container agent: upgrade by pulling a newer image';
-  else if (layout === 'legacy') reason = 'not running under the upgrade launcher; run `sudo magnus-agent install-service` once on this node';
+  let reasonCode: AgentSelfUpgradeStatus['reasonCode'] = null;
+  if (!selfUpgradeSwitch(env)) [reason, reasonCode] = ['MAGNUS_AGENT_SELF_UPGRADE=false on this node', 'SWITCHED_OFF'];
+  else if (layout === 'container') [reason, reasonCode] = ['container agent: upgrade by pulling a newer image', 'CONTAINER'];
+  else if (layout === 'legacy') [reason, reasonCode] = ['not running under the upgrade launcher; run `sudo magnus-agent install-service` once on this node', 'LEGACY_LAYOUT'];
   else {
     // Paths left behind by root (an earlier privileged run) block an unprivileged agent.
     const blocked = [dir, join(dir, 'versions'), ...[join(dir, 'staging'), join(dir, STATE_FILE)].filter(path => existsSync(path))]
       .find(path => !writable(path));
-    if (blocked) reason = `the agent cannot write ${blocked}; run \`sudo magnus-agent install-service\` again`;
-    else reason = resolveNpm(env).problem;
+    const npmProblem = resolveNpm(env, execPath).problem;
+    if (blocked) [reason, reasonCode] = [`the agent cannot write ${blocked}; run \`sudo magnus-agent install-service\` again`, 'NOT_WRITABLE'];
+    else if (npmProblem) [reason, reasonCode] = [npmProblem, 'NPM'];
   }
   return {
     protocol: AGENT_SELF_UPGRADE_PROTOCOL,
@@ -314,6 +316,7 @@ export function selfUpgradeStatus(version: string, env: NodeJS.ProcessEnv = proc
     layout,
     enabled: reason === null,
     reason: clip(reason, 300),
+    reasonCode,
     confirmSeconds: confirmWindowSeconds(env, layout),
     upgrade: state ? reportOf(state) : { state: 'idle', from: null, to: version },
   };
@@ -432,8 +435,28 @@ export function pruneVersions(dir: string, keep: ReadonlyArray<string | null>): 
   }
 }
 
+const ENV_ERRNO: Readonly<Record<string, string>> = { ENOSPC: 'SELF_UPGRADE_ENV_DISK', EDQUOT: 'SELF_UPGRADE_ENV_DISK', EACCES: 'SELF_UPGRADE_ENV_ACCESS', EPERM: 'SELF_UPGRADE_ENV_ACCESS', EROFS: 'SELF_UPGRADE_ENV_ACCESS' };
+
+/**
+ * What a failed npm step says about its cause. A package fault wins, since a
+ * corrupt tarball must stay evidence against the release whatever else the
+ * output mentions; only a clear environment cause moves it off the release.
+ */
+export function npmFailureCode(output: string): string {
+  if (/\b(EINTEGRITY|E404|ETARGET|EBADENGINE|EJSONPARSE|TAR_BAD_ARCHIVE|TAR_ENTRY_ERROR)\b/.test(output)) return 'SELF_UPGRADE_FAILED';
+  if (/\b(ENOSPC|EDQUOT)\b|no space left/i.test(output)) return 'SELF_UPGRADE_ENV_DISK';
+  if (/\b(EACCES|EPERM|EROFS)\b|permission denied/i.test(output)) return 'SELF_UPGRADE_ENV_ACCESS';
+  if (/\b(ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EHOSTUNREACH|ENETUNREACH|E429|E50[0-4])\b|network timeout|socket hang up/i.test(output)) return 'SELF_UPGRADE_ENV_NETWORK';
+  return 'SELF_UPGRADE_FAILED';
+}
+
 export class SelfUpgradeError extends Error {
-  constructor(readonly code: string, message: string, readonly status: 400 | 409 | 422 | 500 | 504 = 409) {
+  /**
+   * Always below 500: a thrown SelfUpgradeError means the attempt ended and the
+   * staging was cleaned up, so over managed-http it is a settled, signed result
+   * rather than an uncertain mutation. Anything else that goes wrong stays a 500.
+   */
+  constructor(readonly code: string, message: string, readonly status: 400 | 409 | 422 = 409) {
     super(message);
   }
 }
@@ -576,18 +599,18 @@ export async function stageUpgrade(options: StageOptions): Promise<StageResult> 
     const path = [npm.pathPrefix, env['PATH']].filter(Boolean).join(delimiter);
     // No agent credentials for npm, lifecycle scripts or the smoke test; a per-upgrade cache that goes with the staging directory.
     const npmEnv = childEnvironment({ PATH: path, npm_config_cache: join(work, '.npm'), npm_config_update_notifier: 'false' }, env);
-    const step = async (name: string, limitMs: number, command: string, args: readonly string[], cwd: string, stepEnv: NodeJS.ProcessEnv) => {
+    const step = async (name: string, limitMs: number, command: string, args: readonly string[], cwd: string, stepEnv: NodeJS.ProcessEnv, timeoutCode = 'SELF_UPGRADE_TIMEOUT') => {
       const remaining = STAGE_BUDGET_MS - (clock() - started);
-      if (remaining <= 0) throw new SelfUpgradeError('SELF_UPGRADE_TIMEOUT', `the upgrade used its ${STAGE_BUDGET_MS / 60_000} minute budget before ${name}`, 504);
+      if (remaining <= 0) throw new SelfUpgradeError('SELF_UPGRADE_TIMEOUT', `the upgrade used its ${STAGE_BUDGET_MS / 60_000} minute budget before ${name}`, 422);
       const timeoutMs = Math.min(limitMs, remaining);
       const result = await run(command, args, { cwd, env: stepEnv, timeoutMs });
-      if (result.timedOut) throw new SelfUpgradeError('SELF_UPGRADE_TIMEOUT', `${name} did not finish within ${Math.round(timeoutMs / 1000)} s`, 504);
+      if (result.timedOut) throw new SelfUpgradeError(timeoutCode, `${name} did not finish within ${Math.round(timeoutMs / 1000)} s`, 422);
       return result;
     };
     const npmStep = (name: string, limitMs: number, args: readonly string[], cwd: string) =>
       step(name, limitMs, npm.command, [...npm.args, ...args, ...NPM_NETWORK, '--loglevel=error'], cwd, npmEnv);
     const fail = (name: string, result: RunResult) => {
-      throw new SelfUpgradeError('SELF_UPGRADE_FAILED', `${name} failed (exit ${result.code}): ${(result.stderr || result.stdout).trim().split('\n').slice(-3).join(' ')}`, 500);
+      throw new SelfUpgradeError(npmFailureCode(`${result.stderr}\n${result.stdout}`), `${name} failed (exit ${result.code}): ${(result.stderr || result.stdout).trim().split('\n').slice(-3).join(' ')}`, 422);
     };
 
     // 1. The exact tarball: from an operator-provided directory, or the registry.
@@ -633,9 +656,10 @@ export async function stageUpgrade(options: StageOptions): Promise<StageResult> 
     }
     // 6. The new code must at least start and report the requested version.
     const entry = join(install, ...ENTRY);
-    const smoke = await step('the installed agent', STEP_TIMEOUT_MS.smoke, process.execPath, [entry, '--version'], install, childEnvironment({ PATH: path }, env));
+    // A new version that hangs on --version is a bad package, whatever the clock says about this node.
+    const smoke = await step('the installed agent', STEP_TIMEOUT_MS.smoke, process.execPath, [entry, '--version'], install, childEnvironment({ PATH: path }, env), 'SELF_UPGRADE_FAILED');
     if (smoke.code !== 0 || smoke.stdout.trim() !== request.version) {
-      throw new SelfUpgradeError('SELF_UPGRADE_FAILED', `the installed agent reports "${smoke.stdout.trim()}", not ${request.version}`, 500);
+      throw new SelfUpgradeError('SELF_UPGRADE_FAILED', `the installed agent reports "${smoke.stdout.trim()}", not ${request.version}`, 422);
     }
     rmSync(target, { recursive: true, force: true });
     mkdirSync(join(dir, 'versions'), { recursive: true });
@@ -653,7 +677,7 @@ export async function stageUpgrade(options: StageOptions): Promise<StageResult> 
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           try { writeUpgradeState(dir, { ...staged, state: 'failed', reason: `switching ./current failed: ${message}` }); } catch { /* the launcher detects it */ }
-          throw new SelfUpgradeError('SELF_UPGRADE_FAILED', `switching ./current to ${request.version} failed: ${message}`, 500);
+          throw new SelfUpgradeError('SELF_UPGRADE_FAILED', `switching ./current to ${request.version} failed: ${message}`, 422);
         }
       });
     } catch (error) {
@@ -661,9 +685,14 @@ export async function stageUpgrade(options: StageOptions): Promise<StageResult> 
       if (error instanceof SelfUpgradeError) throw error;
       const code = (error as NodeJS.ErrnoException).code;
       throw new SelfUpgradeError(code === 'ELOCKED' ? 'SELF_UPGRADE_BUSY' : 'SELF_UPGRADE_FAILED',
-        `recording the upgrade failed: ${error instanceof Error ? error.message : String(error)}`, code === 'ELOCKED' ? 409 : 500);
+        `recording the upgrade failed: ${error instanceof Error ? error.message : String(error)}`, code === 'ELOCKED' ? 409 : 422);
     }
     return { from, to: request.version, integrity, requestId: request.requestId };
+  } catch (error) {
+    // The filesystem said no: the node's problem, and the finally below still cleans up.
+    const code = (error as NodeJS.ErrnoException).code;
+    if (!(error instanceof SelfUpgradeError) && code && ENV_ERRNO[code]) throw new SelfUpgradeError(ENV_ERRNO[code], `staging ${request.version} failed: ${error instanceof Error ? error.message : String(error)}`, 422);
+    throw error;
   } finally {
     try { rmSync(work, { recursive: true, force: true }); } catch { /* cleared at the next upgrade */ }
     try { adoptInstallOwner(dir, stagingRoot); } catch { /* reported by selfUpgradeStatus */ }

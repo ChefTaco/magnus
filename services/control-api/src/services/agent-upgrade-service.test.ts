@@ -267,9 +267,9 @@ describe('agent upgrade runs', () => {
     expect(run.nodes[1]).toMatchObject({ state: 'failed', code: 'SELF_UPGRADE_INTEGRITY' });
   });
 
-  it('reports a run where every node refused as partial: nothing points at the release', async () => {
+  it('reports a run where every node refused the same way as a suspected release problem', async () => {
     const run = await executeUpgradeRun(makeRun(['a', 'b']), makeDeps({ a: 'refuse', b: 'refuse' }));
-    expect(run).toMatchObject({ status: 'partial', message: expect.stringMatching(/no agent was upgraded.*nothing points at the release/) });
+    expect(run).toMatchObject({ status: 'failed', message: expect.stringMatching(/release problem is suspected: 2 nodes refused with UNMANAGED_MUTATION/) });
   });
 
   it('skips a node that became ineligible at its turn and goes on', async () => {

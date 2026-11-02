@@ -192,6 +192,126 @@ describe('finding 10 continued', () => {
   });
 });
 
+describe('finding 1: an ambiguous canary on an agent that can only answer uncertain', () => {
+  const uncertain = () => new AgentResponseError(409, { code: 'MANAGED_MUTATION_UNCERTAIN', message: 'Inspect the exact resource receipt' });
+  it('hands off past one, as for a single old agent with a stale fence', async () => {
+    const run = await service.executeUpgradeRun(makeRun(['old', 'b', 'c']), deps({
+      request: async id => { if (id === 'old') throw uncertain(); },
+      observe: async id => id === 'old' ? { version: '1.1.7', report: null } : confirmed(`req-${id}`) }));
+    expect(run.nodes.map(node => node.state)).toEqual(['ambiguous', 'confirmed', 'confirmed']);
+    expect(run.canaryNodeId).toBe('b');
+    expect(run.status).toBe('partial');
+    expect(run.suspectedRelease).toBeNull();
+  });
+
+  it('hands off past one even with a budget of one', async () => {
+    const run = await service.executeUpgradeRun(makeRun(['old', 'b']), deps({
+      request: async id => { if (id === 'old') throw uncertain(); },
+      observe: async id => id === 'old' ? { version: '1.1.7', report: null } : confirmed(`req-${id}`) }));
+    expect(run.nodes[1]?.state).toBe('confirmed');
+    const one = makeRun(['old', 'b']);
+    one.maxFailures = 1;
+    const result = await service.executeUpgradeRun(one, deps({
+      request: async id => { if (id === 'old') throw uncertain(); },
+      observe: async id => id === 'old' ? { version: '1.1.7', report: null } : confirmed(`req-${id}`) }));
+    expect(result.nodes[1]?.state).toBe('confirmed');
+  });
+
+  it('stops after the budget of them with nothing confirmed, and says the release is suspect but unproven', async () => {
+    const asked: string[] = [];
+    const run = await service.executeUpgradeRun(makeRun(['a', 'b', 'c', 'd']), deps({ request: async id => { asked.push(id); throw uncertain(); } }));
+    expect(asked).toEqual(['a', 'b']);
+    expect(run).toMatchObject({ status: 'failed', message: expect.stringMatching(/suspect but unproven/), suspectedRelease: expect.stringMatching(/suspect but unproven/) });
+    expect(run.nodes[2]).toMatchObject({ state: 'skipped', code: 'NOT_REACHED' });
+  });
+
+  it('does not stop on ambiguity once a node has confirmed', async () => {
+    const run = await service.executeUpgradeRun(makeRun(['a', 'b', 'c', 'd', 'e']), deps({
+      request: async id => { if (id !== 'a' && id !== 'e') throw uncertain(); },
+      observe: async id => id === 'a' || id === 'e' ? confirmed(`req-${id}`) : { version: '1.1.7', report: null } }));
+    expect(run.nodes[4]?.state).toBe('confirmed');
+    expect(run.status).toBe('partial');
+    expect(run.suspectedRelease).toBeNull();
+  });
+});
+
+describe('finding 8: classification', () => {
+  it('keeps old agents as they were, and treats environment codes as node-level', async () => {
+    expect(service.classifyDispatchFailure(new AgentResponseError(500, { code: 'SELF_UPGRADE_FAILED', message: 'x' })).kind).toBe('failed');
+    for (const code of ['SELF_UPGRADE_ENV_DISK', 'SELF_UPGRADE_ENV_ACCESS', 'SELF_UPGRADE_ENV_NETWORK']) expect(service.classifyDispatchFailure(new AgentResponseError(422, { code, message: 'x' })).kind).toBe('refused');
+    expect(upgradeRemedy('SELF_UPGRADE_ENV_NETWORK').transient).toBe(true);
+    expect(upgradeRemedy('SELF_UPGRADE_ENV_DISK').transient).toBeUndefined();
+    expect(upgradeRemedy('RESOURCE_ENROLLMENT_REQUIRED')).toMatchObject({ class: 'node' });
+    expect(upgradeRemedy('RESOURCE_ENROLLMENT_REQUIRED').unknown).toBeUndefined();
+  });
+
+  it('surfaces identical refusals with nothing confirmed as a suspected release problem, without stopping', async () => {
+    const asked: string[] = [];
+    const run = await service.executeUpgradeRun(makeRun(['a', 'b', 'c']), deps({ request: async id => { asked.push(id); throw new AgentResponseError(422, { code: 'SELF_UPGRADE_LAUNCHER', message: 'needs a newer launcher' }); } }));
+    expect(asked).toEqual(['a', 'b', 'c']);
+    expect(run).toMatchObject({ status: 'failed', message: expect.stringMatching(/release problem is suspected: 3 nodes refused with SELF_UPGRADE_LAUNCHER/) });
+    expect(run.message).not.toMatch(/nothing points at the release/);
+  });
+
+  it('does not suspect the release for different refusals, or once a node confirmed', async () => {
+    const codes: Record<string, string> = { a: 'SELF_UPGRADE_LAUNCHER', b: 'UNMANAGED_MUTATION' };
+    const mixed = await service.executeUpgradeRun(makeRun(['a', 'b']), deps({ request: async id => { throw new AgentResponseError(422, { code: codes[id]!, message: 'x' }); } }));
+    expect(mixed).toMatchObject({ status: 'partial', suspectedRelease: null });
+    const one = await service.executeUpgradeRun(makeRun(['ok', 'a', 'b']), deps({
+      request: async id => { if (id !== 'ok') throw new AgentResponseError(422, { code: 'SELF_UPGRADE_LAUNCHER', message: 'x' }); },
+      observe: async () => confirmed('req-ok') }));
+    expect(one).toMatchObject({ status: 'partial', suspectedRelease: null });
+  });
+
+  it('labels an unknown code as unknown, and keeps it node-level', async () => {
+    const run = await service.executeUpgradeRun(makeRun(['ok', 'a']), deps({
+      request: async id => { if (id === 'a') throw new AgentResponseError(422, { code: 'FROM_THE_FUTURE', message: 'x' }); },
+      observe: async () => confirmed('req-ok') }));
+    expect(run.status).toBe('partial');
+    expect(run.attention?.[0]).toMatchObject({ code: 'FROM_THE_FUTURE', failureClass: 'node', unknownCode: true, cause: expect.stringMatching(/Unrecognised code/) });
+  });
+});
+
+describe('finding 4: problems must not hide behind "self-upgrade is off"', () => {
+  const candidate = (extra: Record<string, unknown>) => service.classifyCandidate({ id: 'n', name: 'n', hostname: 'n.example.com', status: 'ONLINE', lastHeartbeatAt: new Date(), agent: { version: '1.1.7' },
+    metadata: JSON.stringify({ agentSelfUpgrade: { protocol: 1, launcherProtocol: 1, layout: 'versioned', enabled: false, upgrade: { state: 'idle', to: '1.1.7' }, observedAt: new Date().toISOString(), ...extra } }) }, '1.1.8', { leasesRequested: false });
+  const runOf = (code: string | null) => ({ ...makeRun([]), nodes: [{ nodeId: 'a', name: 'a', from: '1', state: 'confirmed' as const, requestId: 'q', detail: null }], excluded: [{ nodeId: 'n', name: 'n', reason: 'r', code }] });
+
+  it('keeps informational only for an operator switch-off and for container or legacy layouts', () => {
+    expect(candidate({ reasonCode: 'SWITCHED_OFF', reason: 'x' }).code).toBe('SELF_UPGRADE_DISABLED');
+    expect(candidate({ reasonCode: 'CONTAINER', layout: 'container' }).code).toBe('SELF_UPGRADE_DISABLED');
+    expect(candidate({ reasonCode: 'LEGACY_LAYOUT', layout: 'legacy' }).code).toBe('SELF_UPGRADE_DISABLED');
+    expect(service.finalStatus(runOf(candidate({ reasonCode: 'SWITCHED_OFF' }).code))).toBe('succeeded');
+  });
+
+  it('reports an unwritable install directory or missing npm as a problem, so the run is not succeeded', () => {
+    const blocked = candidate({ reasonCode: 'NOT_WRITABLE', reason: 'the agent cannot write /opt/magnus-agent/versions' });
+    expect(blocked.code).toBe('PREFLIGHT_NOT_WRITABLE');
+    expect(service.finalStatus(runOf(blocked.code))).toBe('partial');
+    expect(candidate({ reasonCode: 'NPM', reason: 'npm was not found' }).code).toBe('PREFLIGHT_NPM');
+    expect(candidate({ reasonCode: 'A_FUTURE_REASON' }).code).toBe('SELF_UPGRADE_UNAVAILABLE');
+  });
+
+  it('does not take an old agent\'s text for a choice, except the one exact switch-off string', () => {
+    expect(candidate({ reason: 'the agent cannot write /x; run install-service' }).code).toBe('SELF_UPGRADE_UNAVAILABLE');
+    expect(candidate({ reason: 'MAGNUS_AGENT_SELF_UPGRADE=false on this node' }).code).toBe('SELF_UPGRADE_DISABLED');
+    expect(candidate({ layout: 'legacy', reason: 'anything' }).code).toBe('SELF_UPGRADE_DISABLED');
+  });
+
+  it('brings such a node back in a retry', async () => {
+    const store = service.memoryRunStore();
+    const previous = runOf('PREFLIGHT_NOT_WRITABLE');
+    previous.status = 'partial';
+    previous.integrity = INTEGRITY;
+    previous.id = 'prev';
+    await store.save(previous);
+    db.node.findMany.mockImplementation(async () => [{ id: 'n', name: 'n', hostname: 'n.example.com', status: 'ONLINE', lastHeartbeatAt: new Date(), metadata: JSON.stringify({ agentSelfUpgrade: { protocol: 1, launcherProtocol: 1, layout: 'versioned', enabled: true, observedAt: new Date().toISOString() } }), agent: { version: '1.1.7' }, resourceEnrollment: null, admissionFence: null }]);
+    const { run, done } = await service.retryUpgradeRun('prev', { actorId: 'admin', store, deps: deps({ observe: async () => ({ version: '1.1.8', report: null }) }) });
+    expect(run.nodes.map(node => node.nodeId)).toEqual(['n']);
+    await done;
+  });
+});
+
 describe('catalogue', () => {
   it('has no informational code that hides a node needing someone', () => {
     for (const code of ['NOT_REACHED', 'RUN_STOPPED', 'CHECK_FAILED', 'NOT_ELIGIBLE']) expect((UPGRADE_REMEDIES as Record<string, { informational?: boolean }>)[code]?.informational, code).toBeFalsy();

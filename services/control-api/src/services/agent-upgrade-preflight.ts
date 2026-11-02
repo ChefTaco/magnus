@@ -4,7 +4,7 @@
  * and against the server's own fences. Pure where it can be, for tests; an
  * agent without the route is `unavailable`, which is not a failure.
  */
-import type { AgentUpgradePreflight } from '@hivemagnus/magnus-contracts';
+import type { AgentSelfUpgradeStatus, AgentUpgradePreflight } from '@hivemagnus/magnus-contracts';
 import { getDb } from '../db/client.js';
 import { NodeApiClient } from '../sdk/node-api-client.js';
 import { getNodeManagerSecret } from '../utils/env.js';
@@ -41,17 +41,34 @@ export interface PreflightContext {
   generations: Readonly<Record<string, bigint>>;
 }
 
+/**
+ * Why self-upgrade is off, from what the agent says. Only an operator's choice
+ * and a layout that cannot do it are expected; anything else is a problem someone
+ * has to fix, so it must not read as expected and let a run look finished.
+ */
+export function selfUpgradeOffCode(report: Pick<AgentSelfUpgradeStatus, 'reasonCode' | 'reason' | 'layout'>): string {
+  switch (report.reasonCode) {
+    case 'SWITCHED_OFF': case 'CONTAINER': case 'LEGACY_LAYOUT': return 'SELF_UPGRADE_DISABLED';
+    case 'NOT_WRITABLE': return 'PREFLIGHT_NOT_WRITABLE';
+    case 'NPM': return 'PREFLIGHT_NPM';
+    case undefined: case null:
+      // An agent older than 1.1.8 sends text only. Its layouts and this one exact string are all it can say safely.
+      return report.layout !== 'versioned' || report.reason === 'MAGNUS_AGENT_SELF_UPGRADE=false on this node' ? 'SELF_UPGRADE_DISABLED' : 'SELF_UPGRADE_UNAVAILABLE';
+    default: return 'SELF_UPGRADE_UNAVAILABLE';
+  }
+}
+
 /** Hold a report against what an upgrade needs. A field the agent left out proves nothing either way. */
 export function evaluatePreflight(report: AgentUpgradePreflight, context: PreflightContext): PreflightProblem[] {
   const problems: PreflightProblem[] = [];
   const add = (code: string, detail: string, blocking = true) => problems.push({ code, detail, blocking });
   const versioned = report.layout === 'versioned';
-  if (report.enabled === false && !versioned) add('SELF_UPGRADE_DISABLED', report.reason ?? 'self-upgrade is unavailable on this node');
+  if (report.enabled === false && !versioned) add(selfUpgradeOffCode({ reasonCode: report.reasonCode, reason: report.reason ?? null, layout: report.layout ?? 'legacy' }), report.reason ?? 'self-upgrade is unavailable on this node');
   if (versioned) {
     if (report.writable && !report.writable.ok) add('PREFLIGHT_NOT_WRITABLE', `the agent cannot write ${report.writable.blocked?.join(', ') || 'its install directory'}`);
     if (report.npm && (!report.npm.present || report.npm.problem)) add('PREFLIGHT_NPM', report.npm.problem ?? 'npm is missing');
     if (report.fromVersionComplete === false) add('PREFLIGHT_FROM_INCOMPLETE', `versions/${report.version} is incomplete or ./current does not run it, so a failed upgrade could not switch back`);
-    if (report.enabled === false && !report.writable?.blocked?.length && !report.npm?.problem) add('SELF_UPGRADE_DISABLED', report.reason ?? 'self-upgrade is unavailable on this node');
+    if (report.enabled === false && !report.writable?.blocked?.length && !report.npm?.problem) add(selfUpgradeOffCode({ reasonCode: report.reasonCode, reason: report.reason ?? null, layout: 'versioned' }), report.reason ?? 'self-upgrade is unavailable on this node');
   }
   if (report.disk?.low) add('PREFLIGHT_DISK_LOW', `${mib(report.disk.freeBytes)} MiB free in the install directory; an upgrade needs ${mib(report.disk.requiredBytes)} MiB`);
   if (report.engines?.compatible === false) add('PREFLIGHT_ENGINE', report.engines.problem ?? `the target does not support Node.js ${report.engines.node}`);
