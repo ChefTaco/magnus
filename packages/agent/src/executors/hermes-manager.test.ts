@@ -2,7 +2,7 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { collectHermesState, configureHermes, hermesRoutes } from './hermes-manager.js';
+import { collectHermesState, configureHermes, hermesInstallationStatus, hermesRoutes } from './hermes-manager.js';
 
 describe('Hermes runtime manager', () => {
   let home: string;
@@ -99,6 +99,62 @@ exit 0
       apiServerEnabled: true,
       apiServerPort: 8642,
     })]);
+  });
+
+  it.each([
+    ['Active: inactive (dead)', 'inactive', 'detected'],
+    ['not running', 'inactive', 'detected'],
+    ['Active: active (running)', 'running', 'running'],
+    ['Active: failed (Result: exit-code)', 'failed', 'detected'],
+  ])('reports %j as gateway %s and installation %s', async (output, gatewayStatus, status) => {
+    await writeFile(join(home, 'config.yaml'), 'model:\n  provider: custom\n', 'utf8');
+    await writeFile(bin, `#!/bin/sh
+if [ "$1" = "version" ] || [ "$1" = "--version" ]; then echo 'Hermes Agent v0.12.0'; exit 0; fi
+if [ "$1" = "gateway" ] && [ "$2" = "status" ]; then echo '${output}'; exit 0; fi
+exit 0
+`, 'utf8');
+    await expect(collectHermesState({ hermesHome: home, hermesBin: bin }, true)).resolves.toMatchObject({ gatewayStatus, status });
+  });
+
+  it('does not let one running gateway count for profiles that reported nothing', async () => {
+    await writeFile(bin, `#!/bin/sh
+if [ "$1" = "version" ] || [ "$1" = "--version" ]; then echo 'Hermes Agent v0.12.0'; exit 0; fi
+if [ "$1" = "gateway" ] && [ "$2" = "status" ]; then echo 'running'; exit 0; fi
+if [ "$1" = "profile" ] && [ "$2" = "list" ] && [ "$3" = "--json" ]; then
+  echo '[{"name":"default","is_default":true},{"name":"research"},{"name":"ops","gateway_status":"not running"},{"name":"live","gateway_status":"active"}]'
+  exit 0
+fi
+exit 0
+`, 'utf8');
+    const state = await collectHermesState({ hermesHome: home, hermesBin: bin }, true);
+    expect(Object.fromEntries(state.profiles.map((profile) => [profile['name'], profile['gatewayStatus']]))).toEqual({
+      default: 'running', research: 'unknown', ops: 'inactive', live: 'running',
+    });
+  });
+
+  it('normalizes the gateway column of profile list text', async () => {
+    await writeFile(bin, `#!/bin/sh
+if [ "$1" = "version" ] || [ "$1" = "--version" ]; then echo 'Hermes Agent v0.12.0'; exit 0; fi
+if [ "$1" = "gateway" ] && [ "$2" = "status" ]; then echo 'stopped'; exit 0; fi
+if [ "$1" = "profile" ] && [ "$2" = "list" ] && [ "$3" != "--json" ]; then
+  printf '%s\\n' '│ research │ gpt-example │ not running │' '│ ops │ gpt-example │ running │' '│ idle │ gpt-example │ — │'
+  exit 0
+fi
+exit 1
+`, 'utf8');
+    const state = await collectHermesState({ hermesHome: home, hermesBin: bin }, true);
+    expect(Object.fromEntries(state.profiles.map((profile) => [profile['name'], profile['gatewayStatus']]))).toEqual({
+      research: 'inactive', ops: 'running', idle: 'unknown',
+    });
+  });
+
+  it('reports a Hermes home without a working binary as degraded leftover data', () => {
+    const base = { installed: true, runnable: false, gatewayStatus: 'unknown', configPresent: true } as const;
+    expect(hermesInstallationStatus(base)).toBe('degraded');
+    expect(hermesInstallationStatus({ ...base, runnable: true })).toBe('detected');
+    expect(hermesInstallationStatus({ ...base, runnable: true, configPresent: false })).toBe('needs_setup');
+    expect(hermesInstallationStatus({ ...base, runnable: true, gatewayStatus: 'running' })).toBe('running');
+    expect(hermesInstallationStatus({ ...base, installed: false })).toBe('not_installed');
   });
 
   it('uses unattended Hermes uninstall flags while preserving configuration by default', async () => {

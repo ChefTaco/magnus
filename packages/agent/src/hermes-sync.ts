@@ -7,6 +7,7 @@ import { access, chown, chmod, lstat, mkdir, mkdtemp, readFile, readlink, readdi
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { parseGatewayStatusText } from './executors/hermes-gateway-status.js';
 import { childEnvironment } from './utils/child-env.js';
 import { armChildTimeout } from './utils/child-timeout.js';
 
@@ -519,7 +520,7 @@ async function coreUpdate(): Promise<void> {
     const current = (await runAsOwner('/usr/bin/git', home, ['-C', checkout, 'rev-parse', 'HEAD'])).trim();
     evidence.beforeVersion = (await runHermes(bin, home, ['--version'])).trim().slice(0, 100);
     const gatewayBefore = await runHermes(bin, home, ['gateway', 'status']);
-    evidence.beforeGatewayActive = /active|running/i.test(gatewayBefore) && !/inactive|not active|not running|stopped|dead/i.test(gatewayBefore);
+    evidence.beforeGatewayActive = parseGatewayStatusText(gatewayBefore) === 'running';
     const pluginsBefore = await runHermes(bin, home, ['plugins', 'list', '--json']);
     const toolsBefore = await toolsSummary(bin, home);
     if (current === slot.commit) {
@@ -574,7 +575,7 @@ async function coreUpdate(): Promise<void> {
     }
     evidence.afterVersion = (await runHermes(bin, home, ['--version'])).trim().slice(0, 100);
     const gatewayAfter = await runHermes(bin, home, ['gateway', 'status']);
-    evidence.afterGatewayActive = /active|running/i.test(gatewayAfter) && !/inactive|not active|not running|stopped|dead/i.test(gatewayAfter);
+    evidence.afterGatewayActive = parseGatewayStatusText(gatewayAfter) === 'running';
     const pluginsAfter = await runHermes(bin, home, ['plugins', 'list', '--json']);
     const before = JSON.parse(pluginsBefore) as Array<{ name?: string; status?: string }>;
     const after = JSON.parse(pluginsAfter) as Array<{ name?: string; status?: string }>;

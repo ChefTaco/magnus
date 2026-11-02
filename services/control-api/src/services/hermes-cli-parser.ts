@@ -2,6 +2,53 @@ import type {
   HermesInstallationStatus,
   HermesServiceStatus,
 } from '../types/index.js';
+import { parseGatewayStatusText } from './hermes-gateway-status.js';
+
+/** Python port of parseGatewayStatusText for SSH detection, pinned to it by a shared test table. */
+export const GATEWAY_STATUS_PYTHON = String.raw`
+def parse_gateway_status(text):
+    text = re.sub(r'\x1b\[[0-9;]*m', '', text or '').lower()
+    lines = re.split(r'\r?\n', text)
+    states = []
+    for line in lines:
+        match = re.match(r'\s*active:\s*([a-z-]+)(?:\s*\(([^)]*)\))?', line)
+        if not match:
+            continue
+        state, detail = match.group(1), match.group(2) or ''
+        if state == 'active':
+            states.append('inactive' if detail.startswith('exited') else 'running')
+        elif state == 'reloading':
+            states.append('running')
+        elif state in ('inactive', 'deactivating'):
+            states.append('inactive')
+        elif state == 'failed':
+            states.append('failed')
+        elif state == 'activating':
+            states.append('failed' if 'auto-restart' in detail else 'unknown')
+        else:
+            states.append('unknown')
+    if states:
+        for state in ('running', 'failed', 'inactive'):
+            if state in states:
+                return state
+        return 'unknown'
+    ignored = re.compile(
+        r'^\s*(?:[a-z]{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}|\d{4}-\d{2}-\d{2}[t ]\d{2}:\d{2})'
+        r'|^\s*(?:loaded|docs|main pid|tasks|memory|cpu|cgroup|process|drop-in|triggeredby|invocation|status|ip|mem peak)\s*:'
+        r'|^\s*[●○×↻✗✓]?\s*\S+\.service\b'
+        r'|^\s*[│├└]'
+        r'|\b(?:linger|auto-?start|on boot|at boot)\b'
+        r'|failed to connect to bus')
+    healthy = re.compile(r'\b(?:no|0|zero)\s+(?:errors?|failures?|failed)\b|\b(?:last|previous|recent)\s+(?:errors?|failures?)\b.*$')
+    summary = [healthy.sub(' ', line) for line in lines if not ignored.search(line)]
+    if any(re.search(r"\b(?:not[\s_-]+(?:running|active|started|loaded|installed)|isn'?t\s+running|inactive|stopped|disabled|dead|exited|could not be found)\b", line) for line in summary):
+        return 'inactive'
+    if any(re.search(r'\b(?:failed|failure|crashed|fatal|errors?|errored|unhealthy|not[\s_-]+healthy)\b', line) for line in summary):
+        return 'failed'
+    if any(re.search(r'\b(?:running|active|healthy)\b', line) for line in summary):
+        return 'running'
+    return 'unknown'
+`;
 
 export interface ParsedHermesProfile {
   name: string;
@@ -121,7 +168,7 @@ export function normalizeServiceStatus(value: unknown): HermesServiceStatus {
   if (['failed', 'failure'].includes(text)) return 'failed';
   if (['error', 'errored'].includes(text)) return 'error';
   if (['not_installed', 'missing', 'not-found'].includes(text)) return 'not_installed';
-  return 'unknown';
+  return parseGatewayStatusText(text);
 }
 
 export function normalizeInstallationStatus(value: unknown, installed: boolean): HermesInstallationStatus {
@@ -283,7 +330,7 @@ opts = json.loads(base64.b64decode(os.environ['MAGNUS_HERMES_PAYLOAD']).decode('
 hermes_home = os.path.expanduser(opts.get('hermesHome') or '~/.hermes')
 requested_bin = opts.get('hermesBin') or 'hermes'
 dashboard_port = int(opts.get('dashboardPort') or 9119)
-
+${GATEWAY_STATUS_PYTHON}
 
 def looks_like_hermes_home(path):
     home = pathlib.Path(path)
@@ -461,10 +508,10 @@ if resolved_bin:
             plugins.append({'slug': cells[0], 'pluginType': cells[0].split('/')[0] if '/' in cells[0] else 'general', 'version': cells[2] or None, 'status': status_value, 'healthState': 'unknown', 'metadata': {'source': cells[4] or 'hermes plugins list'}})
 
     gateway_result = run([resolved_bin, 'gateway', 'status'])
-    gateway_text = (gateway_result['stdout'] + gateway_result['stderr']).lower()
+    gateway_state = parse_gateway_status(gateway_result['stdout'] + gateway_result['stderr'])
 else:
     gateway_result = {'code': 127, 'stdout': '', 'stderr': 'hermes binary not found'}
-    gateway_text = ''
+    gateway_state = 'unknown'
 
 # Profile discovery fallback: Hermes can be installed with a valid home even when
 # the binary is not visible to a non-login SSH shell. Scan profile directories,
@@ -511,7 +558,8 @@ if installed and not profiles and pathlib.Path(hermes_home).exists():
 # Check systemd and port hints for local dashboard status.
 dash_user = run(['systemctl', '--user', 'is-active', 'hermes-dashboard.service'])
 dash_system = run(['systemctl', 'is-active', 'hermes-dashboard.service'])
-dash_text = (dash_user['stdout'] + dash_user['stderr'] + dash_system['stdout'] + dash_system['stderr']).lower()
+# is-active prints exactly one state per unit; compare whole lines because 'inactive' contains 'active'.
+dash_states = {line.strip() for line in (dash_user['stdout'] + '\n' + dash_system['stdout']).lower().splitlines()}
 
 # Read base .env for API server hints and configured provider key names. Do not return secret values.
 env_path = pathlib.Path(hermes_home) / '.env'
@@ -712,8 +760,11 @@ if plugins_dir.exists():
 status = 'not_installed'
 if installed:
     status = 'detected'
-    if 'running' in gateway_text or 'active' in gateway_text:
+    if gateway_state == 'running':
         status = 'running'
+    elif not resolved_bin:
+        # A Hermes home without a working binary is leftover data, not a usable installation.
+        status = 'degraded'
     elif resolved_bin and not pathlib.Path(hermes_home).exists():
         status = 'needs_setup'
 
@@ -723,8 +774,8 @@ out = {
     'version': version,
     'hermesBin': resolved_bin or requested_bin,
     'hermesHome': hermes_home,
-    'gatewayStatus': 'running' if ('running' in gateway_text or 'active' in gateway_text) else ('error' if gateway_result.get('code') not in (0, None) and resolved_bin else 'unknown'),
-    'dashboardStatus': 'running' if 'active' in dash_text else ('inactive' if 'inactive' in dash_text else 'unknown'),
+    'gatewayStatus': gateway_state if gateway_state != 'unknown' else ('error' if gateway_result.get('code') not in (0, None) and resolved_bin else 'unknown'),
+    'dashboardStatus': 'running' if 'active' in dash_states else ('failed' if 'failed' in dash_states else ('inactive' if 'inactive' in dash_states else 'unknown')),
     'dashboardPort': dashboard_port,
     'apiServerEnabled': api_enabled,
     'apiServerHost': api_host,
