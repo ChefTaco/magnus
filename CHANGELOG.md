@@ -4,6 +4,35 @@ All notable changes to this project are documented in this file. The format is b
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
+## [1.1.2] - 2026-11-02
+
+### Changed
+
+- Server: bullmq 6 and ioredis 6. Job data and Redis keys are unchanged, so a 1.1.1 and a 1.1.2 server
+  can share one Redis during an upgrade or a rollback. ioredis 6 negotiates RESP3 but keeps the
+  RESP2 reply shapes, and falls back to RESP2 by itself on Redis older than 6.
+- Agent and console: undici 8. TLS verification (custom CA, host name checks) is unchanged. Requests
+  now use HTTP/2 when the server offers it, for example through an HTTP/2 reverse proxy; the server's
+  own listener stays HTTP/1.1.
+- Ardent: better-sqlite3 13 with SQLite 3.53.4 (from 3.53.2). The database file format is unchanged,
+  so rolling back to 1.1.1 opens the same files. Prebuilt binaries now ship in the package, so the
+  install needs no download.
+- Console: lucide-react 1.x (no visual change) and nanoid 6.
+- Builds use TypeScript 6.0.3, and `@types/node` 24 to match the lowest supported Node.js runtime.
+
+### Security
+
+- minimatch 5.1.9 (GHSA-g3hv-75wg-m249) is gone from the dependency tree; the build-time OpenAPI
+  generator now uses the patched minimatch 11 as well.
+
+### New environment variables
+
+- None.
+
+### Migration impact
+
+- None: 1.1.2 adds no database migrations.
+
 ## [1.1.1] - 2026-11-01
 
 ### Fixed
@@ -214,6 +243,7 @@ The initial release snapshot.
   Pass them to `npm install -g` with `--allow-scripts=...`, or list them under `allowScripts` in
   your project's `package.json`.
 
+[1.1.2]: https://github.com/ChefTaco/magnus/releases/tag/v1.1.2
 [1.1.1]: https://github.com/ChefTaco/magnus/releases/tag/v1.1.1
 [1.1.0]: https://github.com/ChefTaco/magnus/releases/tag/v1.1.0
 [1.0.3]: https://github.com/ChefTaco/magnus/releases/tag/v1.0.3
