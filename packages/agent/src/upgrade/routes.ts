@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { agentUpgradeRequestSchema } from '@hivemagnus/magnus-contracts';
 import { logger } from '../utils/logger.js';
 import { AGENT_VERSION } from '../version.js';
+import { upgradePreflight } from './preflight.js';
 import { EXIT_BACKSTOP_MS, SelfUpgradeError, selfUpgradeStatus, stageUpgrade } from './self-upgrade.js';
 
 /** Seconds between the reply and the exit that hands over to the launcher. */
@@ -10,6 +11,12 @@ export const RESTART_DELAY_MS = 3_000;
 export const agentUpgradeRoutes = new Hono();
 
 agentUpgradeRoutes.get('/status', c => c.json({ success: true, data: selfUpgradeStatus(AGENT_VERSION) }));
+
+// Read only, and a GET, so it needs no lease, no claim and no registry entry. Older agents answer 404.
+agentUpgradeRoutes.get('/preflight', async c => {
+  const { commandLedger } = await import('../executors/command-executor.js');
+  return c.json({ success: true, data: await upgradePreflight({ version: AGENT_VERSION, target: c.req.query('target'), engines: c.req.query('engines'), ledger: commandLedger }) });
+});
 
 agentUpgradeRoutes.post('/', async c => {
   const parsed = agentUpgradeRequestSchema.safeParse(await c.req.json().catch(() => null));

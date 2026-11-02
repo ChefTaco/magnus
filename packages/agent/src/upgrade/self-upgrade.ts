@@ -14,13 +14,15 @@
 import { createHash } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { accessSync, closeSync, constants, copyFileSync, existsSync, fsyncSync, lchownSync, lstatSync, mkdirSync, openSync, readdirSync,
-  readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync, writeSync } from 'node:fs';
+  readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statfsSync, statSync, symlinkSync, writeFileSync, writeSync } from 'node:fs';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import {
   AGENT_SELF_UPGRADE_PROTOCOL,
   checkUpgradeAllowed,
   compareVersions,
   satisfiesRange,
+  type AgentDiskHealth,
+  type AgentNpmHealth,
   type AgentSelfUpgradeStatus,
   type AgentUpgradeReport,
   type AgentUpgradeRequest,
@@ -43,6 +45,8 @@ export const STAGE_BUDGET_MS = 13 * 60_000;
 /** After staging, the agent exits even if a graceful shutdown hangs. */
 export const EXIT_BACKSTOP_MS = 60_000;
 const NPM_NETWORK = ['--fetch-timeout=60000', '--fetch-retries=2'];
+/** Free space an upgrade needs in the install directory: the staged install, its npm cache and the new version. */
+export const REQUIRED_FREE_BYTES = 512 * 1024 * 1024;
 const ENTRY = ['node_modules', '@hivemagnus', 'magnus-agent', 'dist', 'index.js'] as const;
 
 export interface UpgradeState {
@@ -261,6 +265,28 @@ function confirmWindowSeconds(env: NodeJS.ProcessEnv, layout: Layout): number | 
 
 function writable(path: string): boolean {
   try { accessSync(path, constants.W_OK); return true; } catch { return false; }
+}
+
+/** The paths in the install directory this agent cannot write, relative to it. */
+export function unwritablePaths(dir: string): string[] {
+  return ['.', 'versions', ...['staging', STATE_FILE].filter(name => existsSync(join(dir, name)))].filter(name => !writable(name === '.' ? dir : join(dir, name)));
+}
+
+/** Free space of the install directory, or null where the filesystem does not say. */
+export function diskHealth(dir: string, requiredBytes = REQUIRED_FREE_BYTES): AgentDiskHealth | null {
+  try {
+    const stats = statfsSync(dir);
+    const freeBytes = Number(stats.bavail) * Number(stats.bsize);
+    return { freeBytes, requiredBytes, low: freeBytes < requiredBytes };
+  } catch (error) {
+    logger.warn(`Free disk of ${dir} is unknown: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
+}
+
+export function npmHealth(env: NodeJS.ProcessEnv = process.env): AgentNpmHealth {
+  const npm = resolveNpm(env);
+  return { present: !npm.problem || !/not found/.test(npm.problem), version: npm.version, problem: clip(npm.problem, 300) };
 }
 
 const clip = (text: string | null | undefined, max: number): string | null => (text == null ? null : text.length > max ? `${text.slice(0, max - 1)}…` : text);

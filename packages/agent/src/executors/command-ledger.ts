@@ -3,7 +3,7 @@ import type { ManagedClaim } from '../security/managed-http.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { spawn } from 'node:child_process';
-import { lstat, mkdir, open, rename, unlink } from 'node:fs/promises';
+import { lstat, mkdir, open, readdir, rename, unlink } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
 import { HOST_FQDN, NODE_MANAGER_SECRET, RESULT_SIGNING_SECRET } from '../env.js';
@@ -62,9 +62,35 @@ const receiptSchema = z.object({
   result: resultSchema.optional(), reconciliation: commandReconciliationSchema.optional(),
 }).strict();
 type Receipt = z.infer<typeof receiptSchema>;
+export type CommandAdmissionCode = 'RESOURCE_BUSY' | 'OUTCOME_UNKNOWN' | 'IDEMPOTENCY_CONFLICT' | 'STALE_FENCE' | 'LEASE_EXPIRED'
+  | 'LEDGER_UNAVAILABLE' | 'INVALID_RECONCILIATION' | 'UNMANAGED_MUTATION' | 'RESOURCE_CLAIM_INVALID';
 export class CommandAdmissionError extends Error {
-  constructor(readonly code: 'RESOURCE_BUSY' | 'OUTCOME_UNKNOWN' | 'IDEMPOTENCY_CONFLICT' | 'STALE_FENCE' | 'LEASE_EXPIRED' | 'LEDGER_UNAVAILABLE' | 'INVALID_RECONCILIATION' | 'UNMANAGED_MUTATION', message: string) { super(message); }
+  /** The callback demonstrably never ran and this command id has no receipt: a certain refusal. */
+  notStarted: boolean;
+  /** STALE_FENCE: the fence this ledger already accepted for the key, so the server can move past it. */
+  readonly highWater?: { resourceKey: string; fence: string };
+  constructor(readonly code: CommandAdmissionCode, message: string,
+    details: { notStarted?: boolean; highWater?: { resourceKey: string; fence: string } } = {}) {
+    super(message);
+    this.notStarted = details.notStarted ?? false;
+    if (details.highWater) this.highWater = details.highWater;
+  }
 }
+/** Read-only view of the ledger for preflight checks and heartbeats. */
+export interface LedgerHealth {
+  readable: boolean;
+  activeLock: { commandId: string; receipt: string } | null;
+  nonTerminalReceipts: number;
+  unresolvedReceipts: number;
+  truncated: boolean;
+  fenceHighWater: Record<string, string>;
+  error: string | null;
+}
+/** Bounds one scan: receipts are never pruned, and a heartbeat must stay cheap. */
+const HEALTH_SCAN_LIMIT = 5000;
+const HEALTH_FENCE_LIMIT = 64;
+/** `state` precedes the potentially large result in every receipt this ledger writes. */
+const RECEIPT_STATE = /"state":"([a-z]+)"/;
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 export function commandRequestDigest(input: CommandIdentity): string {
   return hash(JSON.stringify({ commandId: input.commandId, command: input.command, args: input.args,
@@ -288,13 +314,75 @@ export class CommandLedger {
       if (!prior || BigInt(fence.fence) > BigInt(prior.fence))
         await this.write(fenceName, { resourceKey: fence.resourceKey, fence: fence.fence });
       else if (prior && BigInt(fence.fence) < BigInt(prior.fence))
-        throw new CommandAdmissionError('STALE_FENCE', 'A successor fence already owns this resource');
+        throw new CommandAdmissionError('STALE_FENCE', 'A successor fence already owns this resource',
+          { highWater: { resourceKey: fence.resourceKey, fence: prior.fence } });
       if (!enrolled) await this.write('managed-enrollment.json', { version: 1, nodeId: enrollment.nodeId, nodeFqdn: enrollment.nodeFqdn });
       this.checkResult(result, input.commandId, digest, fence); const now = Date.now();
       await this.write(this.receiptName(input.commandId), { version: 1, commandId: input.commandId, requestSha256: digest,
         state: 'completed', acceptedAt: now, finishedAt: now, coordination: fence, result });
       return (await this.receipt(input.commandId))!;
     } finally { await mutex.close(); }
+  }
+
+  /**
+   * Whether anything local refers to this command. A running receipt is durable
+   * before its callback starts, and active.lock precedes that receipt, so finding
+   * neither proves the callback did not start. Read only, without the mutex.
+   */
+  async commandTrace(id: string): Promise<{ receipt: boolean; activeLock: boolean }> {
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(id)) throw new Error('Invalid command identifier');
+    const raw = await this.read<unknown>('active.lock');
+    const receipt = await this.read<unknown>(this.receiptName(id));
+    return { receipt: receipt !== undefined, activeLock: raw !== undefined && lockSchema.parse(raw).commandId === id };
+  }
+
+  /**
+   * Read-only health for preflight checks and heartbeats. Takes no mutex and
+   * creates nothing, so asking never competes with a running command.
+   */
+  async health(): Promise<LedgerHealth> {
+    const health: LedgerHealth = { readable: true, activeLock: null, nonTerminalReceipts: 0, unresolvedReceipts: 0, truncated: false, fenceHighWater: {}, error: null };
+    let names: string[];
+    try {
+      names = await readdir(this.root);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return health;
+      return { ...health, readable: false, error: 'the ledger directory cannot be read' };
+    }
+    try {
+      const receiptState = async (name: string) => {
+        const file = await open(join(this.root, name), constants.O_RDONLY | constants.O_NOFOLLOW);
+        try {
+          const { buffer, bytesRead } = await file.read({ buffer: Buffer.alloc(1024), position: 0 });
+          return RECEIPT_STATE.exec(buffer.toString('utf8', 0, bytesRead))?.[1] ?? null;
+        } finally { await file.close(); }
+      };
+      const running = new Set([...this.active].map(id => this.receiptName(id)));
+      const receipts = names.filter(name => name.startsWith('receipt-'));
+      health.truncated = receipts.length > HEALTH_SCAN_LIMIT;
+      for (const name of receipts.slice(0, HEALTH_SCAN_LIMIT)) {
+        const state = await receiptState(name);
+        if (state === 'completed' || state === 'reconciled') continue;
+        health.nonTerminalReceipts += 1;
+        if (!running.has(name)) health.unresolvedReceipts += 1;
+      }
+      for (const name of names.filter(entry => entry.startsWith('fence-')).slice(0, HEALTH_FENCE_LIMIT)) {
+        const record = await this.read<{ resourceKey?: unknown; fence?: unknown }>(name);
+        if (typeof record?.resourceKey === 'string' && typeof record.fence === 'string' && /^[0-9]{1,20}$/.test(record.fence)) health.fenceHighWater[record.resourceKey] = record.fence;
+      }
+      const raw = await this.read<unknown>('active.lock');
+      if (raw !== undefined) {
+        const claim = lockSchema.parse(raw);
+        const state = await receiptState(this.receiptName(claim.commandId)).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === 'ENOENT') return 'none';
+          throw error;
+        });
+        health.activeLock = { commandId: claim.commandId, receipt: state === 'running' ? (this.active.has(claim.commandId) ? 'running' : 'unknown') : state ?? 'invalid' };
+      }
+      return health;
+    } catch (error) {
+      return { ...health, readable: false, error: `the ledger holds an unreadable record (${error instanceof Error ? error.name : 'error'})` };
+    }
   }
 
   /** Persist an authoritative observation; never clears an active/unknown claim. */
@@ -314,7 +402,7 @@ export class CommandLedger {
     // Snapshot before awaiting; callers cannot mutate accepted scope or identity.
     input = structuredClone(input);
     const digest = commandRequestDigest(input);
-    let held = false, started = false, admitted = false;
+    let held = false, started = false, admitted = false, noReceipt = false;
     let mutex;
     const previous = async () => {
       const row = await this.receipt(input.commandId);
@@ -326,6 +414,7 @@ export class CommandLedger {
     try {
       if (this.authority.resultSecret.length < 32) throw new Error('Result signing unavailable');
       const replay = await previous(); if (replay) return replay;
+      noReceipt = true;
       mutex = await this.acquire();
       await this.recoverClaim();
       const enrolled = await this.managedEnrollment();
@@ -343,7 +432,8 @@ export class CommandLedger {
         const name = 'fence-'+hash(fence.resourceKey)+'.json';
         const prior = await this.read<{resourceKey: string; fence: string}>(name);
         if (prior && (prior.resourceKey !== fence.resourceKey || !/^[1-9][0-9]{0,18}$/.test(prior.fence))) throw new Error('Invalid fencing record');
-        if (prior && BigInt(fence.fence) <= BigInt(prior.fence)) throw new CommandAdmissionError('STALE_FENCE', 'Stale resource fence cannot execute');
+        if (prior && BigInt(fence.fence) <= BigInt(prior.fence)) throw new CommandAdmissionError('STALE_FENCE', 'Stale resource fence cannot execute',
+          { highWater: { resourceKey: fence.resourceKey, fence: prior.fence } });
         await this.write(name, { resourceKey: fence.resourceKey, fence: fence.fence });
       }
       if (enrollment && !enrolled) await this.write('managed-enrollment.json', { version: 1, nodeId: enrollment.nodeId, nodeFqdn: enrollment.nodeFqdn });
@@ -357,9 +447,15 @@ export class CommandLedger {
       started = false;
       return result;
     } catch (error) {
-      if (error instanceof CommandAdmissionError) throw error;
+      // `started` stays true from just before the callback until its terminal receipt is durable.
+      const certain = !started && noReceipt;
+      if (error instanceof CommandAdmissionError) {
+        if (certain && !['OUTCOME_UNKNOWN', 'IDEMPOTENCY_CONFLICT'].includes(error.code)) error.notStarted = true;
+        throw error;
+      }
       throw new CommandAdmissionError(started ? 'OUTCOME_UNKNOWN' : 'LEDGER_UNAVAILABLE',
-        started ? 'Execution receipt is uncertain; retained for reconciliation and never replayed' : 'Command ledger unavailable; inspect its receipt before retrying');
+        started ? 'Execution receipt is uncertain; retained for reconciliation and never replayed' : 'Command ledger unavailable; inspect its receipt before retrying',
+        { notStarted: certain });
     } finally {
       if (admitted) this.active.delete(input.commandId);
       try {

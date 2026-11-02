@@ -2,14 +2,16 @@ import { managedExecution } from '../security/managed-context.js';
 import { Hono } from 'hono';
 import { spawn } from 'node:child_process';
 import { z } from 'zod';
-import { RESULT_SIGNING_SECRET, MAGNUS_EXECUTION_SUPERVISOR_ENABLED } from '../env.js';
+import { HOST_FQDN, RESULT_SIGNING_SECRET, MAGNUS_EXECUTION_SUPERVISOR_ENABLED } from '../env.js';
 import { startSpan } from '../collectors/otel-collector.js';
-import { CommandLedger, CommandAdmissionError, commandFenceSchema, commandReconciliationSchema, type CommandReceiptResult } from './command-ledger.js';
-import { signCommandResult } from '../security/command-result-signature.js';
+import { CommandLedger, CommandAdmissionError, commandFenceSchema, commandReconciliationSchema, commandRequestDigest, type CommandReceiptResult } from './command-ledger.js';
+import { commandAbsenceSigningPayload, signCommandEvidence, signCommandResult } from '../security/command-result-signature.js';
+import { refusalError, refusalStatus } from './command-refusal.js';
 import { ExecutionSupervisor } from './execution-supervisor.js';
 import { mutationBarrier } from './mutation-barrier.js';
 import { COMMAND_COMPLETION_REGISTRY, COMMAND_COMPLETION_REGISTRY_SHA256, commandCompletionDescriptor } from '../security/command-completion-registry.js';
 import { childEnvironment } from '../utils/child-env.js';
+import { logger } from '../utils/logger.js';
 
 export const commandRoutes = new Hono();
 export const commandLedger = new CommandLedger();
@@ -102,6 +104,7 @@ export const executeBodySchema = z.object({
 
 type ExecuteBody = z.infer<typeof executeBodySchema>;
 
+
 // ── Execute a command locally ──
 commandRoutes.post('/execute', async (c) => {
   const raw = await c.req.json();
@@ -118,8 +121,9 @@ commandRoutes.post('/execute', async (c) => {
     return c.json({ success: true, data: result });
   } catch (error) {
     if (!(error instanceof CommandAdmissionError)) throw error;
-    return c.json({ success: false, error: { code: error.code, message: error.message } },
-      error.code === 'LEDGER_UNAVAILABLE' ? 503 : 409);
+    logger.warn(`Command ${parsed.data.commandId} refused: ${error.code}: ${error.message}`);
+    return c.json({ success: false, error: await refusalError({ commandId: parsed.data.commandId, requestSha256: commandRequestDigest(parsed.data) }, error.code, error.message,
+      { notStarted: error.notStarted, ...(error.highWater ? { highWater: error.highWater } : {}) }) }, refusalStatus(error.code));
   }
 });
 
@@ -138,10 +142,10 @@ commandRoutes.post('/execute', async (c) => {
 export async function executeCommand(input: ExecuteBody): Promise<CommandReceiptResult> {
   // Parse/snapshot even internal callers before awaiting or executing effects.
   const opts = executeBodySchema.parse(input);
-  if (draining) throw new CommandAdmissionError('LEDGER_UNAVAILABLE', 'Node is draining; no command executed');
+  if (draining) throw new CommandAdmissionError('LEDGER_UNAVAILABLE', 'Node is draining; no command executed', { notStarted: true });
   if (RESULT_SIGNING_SECRET.length < 32) throw new CommandAdmissionError('LEDGER_UNAVAILABLE', 'Command signing is unavailable; no command executed');
   if (opts.coordination && !MAGNUS_EXECUTION_SUPERVISOR_ENABLED)
-    throw new CommandAdmissionError('LEDGER_UNAVAILABLE', 'Managed commands require the node execution supervisor; no command executed');
+    throw new CommandAdmissionError('LEDGER_UNAVAILABLE', 'Managed commands require the node execution supervisor; no command executed', { notStarted: true });
   const pending = commandLedger.execute(opts, (digest) => MAGNUS_EXECUTION_SUPERVISOR_ENABLED
     ? executeSupervised(opts, digest) : executeProcess(opts, digest), managedExecution.getStore()?.claim);
   pendingExecutions.add(pending);
@@ -272,8 +276,26 @@ commandRoutes.get('/receipts/:commandId', async (c) => {
     const row = await recoverCommandReceipt(id);
     if (!row) return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'Command receipt not found' } }, 404);
     return c.json({ success: true, data: row });
-  } catch {
+  } catch (error) {
+    logger.warn(`Command receipt ${id} could not be read: ${error instanceof Error ? error.message : String(error)}`);
     return c.json({ success: false, error: { code: 'LEDGER_UNAVAILABLE', message: 'Command receipt unavailable; do not replay' } }, 503);
+  }
+});
+
+// Whether anything local refers to a command, for leases the server holds as
+// `unknown`. Read only and signed with a nonce: it says what this ledger holds
+// now, and the server decides what that proves.
+commandRoutes.get('/receipts/:commandId/trace', async (c) => {
+  const id = c.req.param('commandId');
+  const nonce = c.req.query('nonce') ?? '';
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(id) || !/^[a-zA-Z0-9-]{16,64}$/.test(nonce))
+    return c.json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid command identifier or nonce' } }, 400);
+  try {
+    const unsigned = { commandId: id, nodeFqdn: HOST_FQDN, nonce, ...await commandLedger.commandTrace(id) };
+    return c.json({ success: true, data: { ...unsigned, signature: signCommandEvidence(commandAbsenceSigningPayload(unsigned), RESULT_SIGNING_SECRET) } });
+  } catch (error) {
+    logger.warn(`Command trace ${id} could not be read: ${error instanceof Error ? error.message : String(error)}`);
+    return c.json({ success: false, error: { code: 'LEDGER_UNAVAILABLE', message: 'Command ledger unavailable' } }, 503);
   }
 });
 

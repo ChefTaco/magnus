@@ -11,6 +11,12 @@ const post = () => agentUpgradeRoutes.request('/', { method: 'POST', body: JSON.
 describe('agent upgrade route', () => {
   afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); stageUpgrade.mockReset(); });
 
+  it('answers a read-only preflight GET', async () => {
+    const response = await agentUpgradeRoutes.request('/preflight?target=1.1.8&engines=%5E24.0.0');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ success: true, data: { preflightProtocol: 1, target: '1.1.8', engines: { range: '^24.0.0' }, ledger: { readable: true } } });
+  });
+
   it('answers a repeated request with the current state and does not restart', async () => {
     vi.useFakeTimers();
     const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);

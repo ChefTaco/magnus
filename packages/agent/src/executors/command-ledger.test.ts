@@ -1,5 +1,5 @@
 import { createHash, createHmac, randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -242,4 +242,46 @@ describe('crash and cross-process execution recovery', () => {
     expect(results.filter(r => r['error'] === 'RESOURCE_BUSY')).toHaveLength(3);
     expect((await readFile(join(root, 'effects'), 'utf8')).trim().split('\n')).toHaveLength(1);
   }, 15_000);
+});
+
+describe('read-only ledger health', () => {
+  it('reports fences, the active claim and unresolved receipts without taking the mutex or creating anything', async () => {
+    const root = join(await mkdtemp(join(tmpdir(), 'ledger-health-')), 'absent');
+    const secret = 'ledger-health-result-key-more-than-thirty-two';
+    const ledger = new CommandLedger(root, { resultSecret: secret, reconciliationSecret: '', nodeFqdn: 'fixture.example.com' });
+    expect(await ledger.health()).toMatchObject({ readable: true, activeLock: null, nonTerminalReceipts: 0, fenceHighWater: {} });
+    await expect(lstat(root)).rejects.toThrow();
+    const fence = { version: 1 as const, resourceKey: 'node:fixture', fence: '7', expiresAt: Date.now() + 60_000 };
+    await expect(ledger.execute({ commandId: 'lost', command: '/bin/true', args: [], timeoutSeconds: 1, coordination: fence }, async () => { throw new Error('lost'); })).rejects.toMatchObject({ code: 'OUTCOME_UNKNOWN', notStarted: false });
+    const health = await ledger.health();
+    expect(health).toMatchObject({ readable: true, nonTerminalReceipts: 1, unresolvedReceipts: 1, fenceHighWater: { 'node:fixture': '7' }, activeLock: { commandId: 'lost', receipt: 'unknown' } });
+    expect(await ledger.commandTrace('lost')).toEqual({ receipt: true, activeLock: true });
+    expect(await ledger.commandTrace('never-seen')).toEqual({ receipt: false, activeLock: false });
+  });
+
+  it('marks refusals before the callback as not started, and an existing receipt as not certain', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'ledger-certain-'));
+    const ledger = new CommandLedger(root, { resultSecret: 'ledger-health-result-key-more-than-thirty-two', reconciliationSecret: '', nodeFqdn: 'fixture.example.com' });
+    const fence = (value: string) => ({ version: 1 as const, resourceKey: 'node:fixture', fence: value, expiresAt: Date.now() + 60_000 });
+    await expect(ledger.execute({ commandId: 'lost', command: '/bin/true', args: [], timeoutSeconds: 1, coordination: fence('7') }, async () => { throw new Error('lost'); })).rejects.toMatchObject({ code: 'OUTCOME_UNKNOWN', notStarted: false });
+    // The unresolved command blocks later ones, which never start.
+    await expect(ledger.execute({ commandId: 'blocked', command: '/bin/true', args: [], timeoutSeconds: 1, coordination: fence('8') }, async () => { throw new Error('unreachable'); }))
+      .rejects.toMatchObject({ code: 'RESOURCE_BUSY', notStarted: true });
+    await expect(ledger.execute({ commandId: 'lost', command: '/bin/false', args: [], timeoutSeconds: 1, coordination: fence('7') }, async () => { throw new Error('unreachable'); }))
+      .rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT', notStarted: false });
+  });
+
+  it('carries the high-water in a stale fence refusal', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'ledger-stale-'));
+    const secret = 'ledger-health-result-key-more-than-thirty-two';
+    const ledger = new CommandLedger(root, { resultSecret: secret, reconciliationSecret: '', nodeFqdn: 'fixture.example.com' });
+    await mkdir(root, { recursive: true, mode: 0o700 });
+    const key = 'node:fixture';
+    await writeFile(join(root, `fence-${createHash('sha256').update(key).digest('hex')}.json`), JSON.stringify({ resourceKey: key, fence: '1789962351090' }), { mode: 0o600 });
+    const run = vi.fn();
+    await expect(ledger.execute({ commandId: 'stale', command: '/bin/true', args: [], timeoutSeconds: 1, coordination: { version: 1, resourceKey: key, fence: '1', expiresAt: Date.now() + 60_000 } }, run))
+      .rejects.toMatchObject({ code: 'STALE_FENCE', notStarted: true, highWater: { resourceKey: key, fence: '1789962351090' } });
+    expect(run).not.toHaveBeenCalled();
+    expect(await ledger.health()).toMatchObject({ activeLock: null, nonTerminalReceipts: 0 });
+  });
 });
