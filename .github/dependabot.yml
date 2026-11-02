@@ -9,6 +9,9 @@ updates:
       # @types/node tracks the Node.js runtime major (see .nvmrc); bump it with the runtime.
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
+      # TypeScript majors change compiler defaults and the JS API (typescript-eslint caps its range); upgrade by hand.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
     groups:
       npm-minor-and-patch:
         update-types:
