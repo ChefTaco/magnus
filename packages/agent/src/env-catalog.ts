@@ -35,6 +35,7 @@ export const agentEnvCatalog: EnvVarSpec[] = [
   { name: 'NODE_MANAGER_SECRET_PREVIOUS', required: false, secret: true, group: 'core', description: 'Previous node credential, accepted only during a rotation window.' },
   { name: 'RESULT_SIGNING_PREVIOUS_SECRET', required: false, secret: true, group: 'core', description: 'Previous result-signing key, accepted only during a rotation window.' },
   { name: 'COMMAND_RECONCILIATION_SECRET', required: false, secret: true, generate: 'hex32', group: 'core', description: 'Independent key that authorizes explicit command-receipt reconciliation. Leave unset unless your control plane uses it.' },
+  { name: 'MAGNUS_AGENT_REVIEWED_HISTORICAL_RECORDS', required: false, secret: false, default: '/etc/magnus/reviewed-historical-records.json', group: 'core', description: 'Root-owned JSON file of operator-reviewed historical mutation records ({"version":1,"records":{"<record id>":{"nodeFqdn","recordSha256"}}}). Read at startup; a missing file means none, a file that is not root-controlled or fails the schema is refused.' },
   { name: 'HOST_FQDN', required: false, secret: false, default: 'hostname --fqdn', group: 'core', description: 'Host identity reported to the Control API.' },
   { name: 'NODE_MANAGER_PORT', required: false, secret: false, default: String(DEFAULT_PORT), group: 'core', description: 'Listener port.' },
   { name: 'NODE_MANAGER_BIND_HOST', required: false, secret: false, default: '0.0.0.0 (TLS) / 127.0.0.1 (HTTP)', group: 'core', description: 'Listener address.' },

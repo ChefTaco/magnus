@@ -216,6 +216,30 @@ The entries can only touch what the comma-separated allowlists name:
 `_TOKEN_FILES` and `_SIGNING_ENV_FILES`. Every list is empty by default, so
 renewal does nothing until you configure it.
 
+### Reviewed historical mutation records
+
+A node with retained mutation records whose outcome is unknown can settle them only through a signed
+historical quiescence receipt. The receipt counts only for records an operator has reviewed, listed
+in a root-controlled JSON file (`MAGNUS_AGENT_REVIEWED_HISTORICAL_RECORDS`, default
+`/etc/magnus/reviewed-historical-records.json`):
+
+```json
+{
+  "version": 1,
+  "records": {
+    "0b6f1c2e-6d3a-4f6e-9c1d-2a7b8e9f0a1b": { "nodeFqdn": "node-1.example.com", "recordSha256": "<64 lowercase hex>" }
+  }
+}
+```
+
+The keys are the mutation record ids. `recordSha256` is the SHA-256 of the retained record file, as
+in the signed observation. Entries for other nodes (`nodeFqdn` other than `HOST_FQDN`) are ignored, so
+one file can serve a fleet. The file and its directory must be owned by root and not group- or
+world-writable, and the file must not be a symlink or larger than 1 MiB. `0644` works for an
+unprivileged agent too. The agent reads the file once at startup, so restart it after a change. A
+missing file means no reviewed records. A file that fails these checks or the schema is refused as a
+whole, and the agent logs the reason at startup.
+
 ### Hermes registry sync
 
 `deploy/magnus-hermes-sync.service` and its timer run `dist/hermes-sync.js`

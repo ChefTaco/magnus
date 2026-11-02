@@ -46,12 +46,23 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Added
 
+- Agent: operator-reviewed historical mutation records are read from a root-controlled JSON file
+  (`MAGNUS_AGENT_REVIEWED_HISTORICAL_RECORDS`, default `/etc/magnus/reviewed-historical-records.json`).
+  Before, the public agent shipped an empty set, so the enrollment drain proof of a node with signed
+  historical quiescence settlements failed with 409. The file must be owned by root, not group- or
+  world-writable, not a symlink, at most 1 MiB, and match the schema. Otherwise it is refused and the
+  reason is logged. Entries for other nodes are ignored.
 - Agent launcher protocol 2. `./last-good` points at the last confirmed version, and the launcher
   falls back to it after repeated crashes with an unreadable state file. A confirmed version installs
   its own launcher when that declares a higher protocol and passes a self-check
   (`launcher.mjs --protocol`).
 - Heartbeat `selfUpgrade` gains `confirmSeconds` (the trial window) and `managedEnrollment` (the
   agent's local enrollment marker), so the server can detect an enrollment disagreement.
+
+### New environment variables
+
+- `MAGNUS_AGENT_REVIEWED_HISTORICAL_RECORDS` (agent): path of the reviewed historical mutation records
+  file. Optional; default `/etc/magnus/reviewed-historical-records.json`.
 
 ## [1.1.2] - 2026-11-02
 
