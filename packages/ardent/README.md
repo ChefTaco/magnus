@@ -29,6 +29,14 @@ What you get:
 - **Plugins**: add tools, API routes, CLI commands, and job handlers from a
   separate npm package.
 
+Context fitting and checkpoint compression use the pinned
+`@hivemagnus/emberfold` library directly; the optional Emberfold HTTP service is
+not required. Ardent retains authoritative SQLite history, transactional
+publication, model-policy fences, task eligibility, and journal events. Existing
+checkpoints stay readable by the previous runtime; richer portable metadata is
+stored in an additive `emberfold_checkpoint_metadata` sidecar table. The initial
+integration retains existing budgets and uses the general continuity profile.
+
 ## Install
 
 Ardent needs Node.js 24.22.1+ or 26.13.0+ (`better-sqlite3` is a native

@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file. The format is b
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- Ardent: extract prompt fitting and durable checkpoint logic into the exact
+  `@hivemagnus/emberfold` 0.1.0 dependency. Keep SQLite publication, policy fences,
+  journals, and profile isolation local. Add portable checkpoint metadata without
+  changing existing checkpoint rows; previous-reader rollback remains supported.
+
 ## [1.1.2] - 2026-11-02
 
 ### Changed

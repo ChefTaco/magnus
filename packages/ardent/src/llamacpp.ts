@@ -4,7 +4,7 @@ import type { ArdentConfig } from './config.js';
 import { resolveReference } from './config.js';
 import type { BackendEventSink } from './backend-events.js';
 
-export type ChatMessage = { role: 'system' | 'user' | 'assistant' | 'tool'; content: string | null; tool_call_id?: string; tool_calls?: ModelToolCall[] };
+export type ChatMessage = import('@hivemagnus/emberfold').ChatMessage;
 export type ModelToolCall = { id: string; type: 'function'; function: { name: string; arguments: string } };
 export type ModelReply = { content: string; reasoning?: string; toolCalls: ModelToolCall[]; usage?: { promptTokens?: number; completionTokens?: number } };
 export type LlamaCapabilities = { modelListed: boolean | null; contextTokens: number | null; supportsTools: boolean | null; supportsReasoningEffort: boolean | null; sampling: { temperature: number | null; topP: number | null }; reasoningFormat: string | null; chatFormat: string | null };
