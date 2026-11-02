@@ -1,0 +1,9 @@
+{
+  "summary": "Dependency refresh: bullmq 6, ioredis 6, undici 8, better-sqlite3 13 and TypeScript 6, and the minimatch advisory (GHSA-g3hv-75wg-m249) resolved. No migrations and no new settings.",
+  "breaking": false,
+  "minUpgradeFrom": "1.0.0",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}
