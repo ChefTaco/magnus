@@ -54,7 +54,9 @@ Each upgrade goes through these steps:
    dump with `pg_restore --list`, and migrates. Old dumps are pruned to the newest five
    (`keepBackups` in `magnus-project.json`); the newest dump of each upgrade step always stays.
 9. Switches `./current`, restarts the services and waits until the new version answers health
-   checks and reports itself as running.
+   checks and reports itself as running. Health checks verify the certificate in each component's
+   `TLS_CERT_PATH`; on an address of this machine, a missing or non-matching certificate does not
+   fail them.
 10. If the new version is not healthy in time (`--health-timeout`, default 180 s), or the restart
     fails, it switches `./current` back, restarts the previous version and prints the restore
     command for the dump. When the upgrade applied a **one-way** migration, the previous version is
