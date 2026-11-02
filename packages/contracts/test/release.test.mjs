@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { UPGRADE_REMEDIES, upgradeFailureClass, upgradeRemedy } from '../src/upgrade-remedies.ts';
 import {
+  agentSelfUpgradeStatusSchema,
+  agentUpgradePreflightSchema,
   checkUpgradeAllowed,
   classifyUpgrade,
   compareVersions,
@@ -110,4 +113,33 @@ test('manifests tolerate fields and migration impacts added by newer releases', 
   assert.equal(parsed.migrations[0].impact, 'one-way');
   assert.deepEqual(parsed.allowScripts, { argon2: true });
   assert.equal('futureField' in parsed, false);
+});
+
+test('a malformed drift field drops alone and never costs the self-upgrade report', () => {
+  const base = { protocol: 1, launcherProtocol: 1, layout: 'versioned', enabled: true };
+  const parsed = agentSelfUpgradeStatusSchema.parse({ ...base, fenceHighWater: { 'node:n1': 'not-a-number' }, ledger: { readable: 'yes' }, disk: 7, npm: { present: true, version: '11.0.0' } });
+  assert.equal(parsed.fenceHighWater, undefined);
+  assert.equal(parsed.ledger, undefined);
+  assert.equal(parsed.disk, undefined);
+  assert.deepEqual(parsed.npm, { present: true, version: '11.0.0' });
+  assert.deepEqual(agentSelfUpgradeStatusSchema.parse({ ...base, fenceHighWater: { 'node:n1': '1789962351090' } }).fenceHighWater, { 'node:n1': '1789962351090' });
+  assert.equal(agentSelfUpgradeStatusSchema.parse(base).ledger, undefined);
+});
+
+test('a preflight report tolerates fields it does not know and drops ones it cannot read', () => {
+  const report = agentUpgradePreflightSchema.parse({ preflightProtocol: 1, version: '1.1.8', futureField: true, disk: 'lots', fenceHighWater: { 'node:n1': '5' } });
+  assert.equal(report.disk, undefined);
+  assert.deepEqual(report.fenceHighWater, { 'node:n1': '5' });
+});
+
+test('the remedies catalogue classes the codes the wave policy depends on', () => {
+  for (const code of ['SELF_UPGRADE_INTEGRITY', 'SELF_UPGRADE_SOURCE']) assert.deepEqual([upgradeFailureClass(code), upgradeRemedy(code).stopsRun], ['release', true]);
+  for (const code of ['SELF_UPGRADE_FAILED', 'SELF_UPGRADE_REVERTED', 'CONFIRM_TIMEOUT', 'AGENT_SILENT']) assert.equal(upgradeFailureClass(code), 'release');
+  for (const code of ['STALE_FENCE', 'RESOURCE_BUSY', 'AGENT_UNREACHABLE', 'MANAGED_MUTATION_UNCERTAIN', 'UNMANAGED_MUTATION', 'HTTP_418', 'FROM_A_NEWER_AGENT']) assert.equal(upgradeFailureClass(code), 'node');
+  for (const code of Object.keys(UPGRADE_REMEDIES)) {
+    const entry = upgradeRemedy(code);
+    assert.ok(entry.cause.length > 10 && entry.remedy.length > 5, code);
+    assert.ok(!(entry.ambiguous && entry.transient), `${code} is ambiguous and must not be retried automatically`);
+    assert.ok(!(entry.class === 'release' && entry.transient), `${code} is release evidence and must not be retried automatically`);
+  }
 });
