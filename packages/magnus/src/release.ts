@@ -75,8 +75,19 @@ async function npmConfigRegistry(io: Io): Promise<string | null> {
   return /^https?:\/\//.test(value) ? value : null;
 }
 
+export function trimTrailingSlashes(url: string): string {
+  let end = url.length;
+  while (end > 0 && url[end - 1] === '/') end -= 1;
+  return url.slice(0, end);
+}
+
+/** Encodes the scope's slash; the leading @ stays literal, as npm itself sends it and every registry proxy accepts it. */
+export function registryPackagePath(name: string): string {
+  return name.startsWith('@') ? `@${encodeURIComponent(name.slice(1))}` : encodeURIComponent(name);
+}
+
 export async function fetchRegistryCatalog(io: Io, registry: string, packageName = META_PACKAGE): Promise<ReleaseCatalog> {
-  const url = `${registry.replace(/\/+$/, '')}/${packageName.replace('/', '%2f')}`;
+  const url = `${trimTrailingSlashes(registry)}/${registryPackagePath(packageName)}`;
   let response: Response;
   try {
     // The full document: the abbreviated install format drops custom fields.
