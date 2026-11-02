@@ -48,3 +48,43 @@ export function verifyCommandResultSignature(
   }
   return matched;
 }
+
+/**
+ * A certain refusal: this exact request was not started and has no receipt.
+ * Bound to the request digest, so it settles nothing but this request's lease.
+ */
+export interface CommandRefusal {
+  commandId: string;
+  requestSha256: string;
+  code: string;
+  highWater: string | null;
+  signature: string;
+}
+
+export function commandRefusalSigningPayload(refusal: Omit<CommandRefusal, 'signature'>): string {
+  return JSON.stringify({ domain: 'magnus.command-refusal.v1', commandId: refusal.commandId, requestSha256: refusal.requestSha256,
+    code: refusal.code, highWater: refusal.highWater });
+}
+
+/** Nothing local refers to this command: no receipt and no active.lock. Bound to the node and a fresh nonce. */
+export interface CommandAbsence {
+  commandId: string;
+  nodeFqdn: string;
+  nonce: string;
+  receipt: boolean;
+  activeLock: boolean;
+  signature: string;
+}
+
+export function commandAbsenceSigningPayload(absence: Omit<CommandAbsence, 'signature'>): string {
+  return JSON.stringify({ domain: 'magnus.command-absence.v1', commandId: absence.commandId, nodeFqdn: absence.nodeFqdn,
+    nonce: absence.nonce, receipt: absence.receipt, activeLock: absence.activeLock });
+}
+
+/** HMAC check of a signed refusal or absence payload against the active or previous result key. */
+export function verifyCommandEvidence(payload: string, signature: unknown, activeSecret: string, previousSecret = ''): boolean {
+  if (typeof signature !== 'string' || !/^[a-f0-9]{64}$/.test(signature) || activeSecret.length < 32) return false;
+  const actual = Buffer.from(signature, 'hex');
+  return [activeSecret, previousSecret].filter(secret => secret.length >= 32)
+    .some(secret => timingSafeEqual(actual, createHmac('sha256', secret).update(payload).digest()));
+}

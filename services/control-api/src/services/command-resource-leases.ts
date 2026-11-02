@@ -7,19 +7,20 @@ import { assertNodeAdmissionOpen } from './admission-fence.js';
  * A node requires the explicit durable participant drain before its first lease; switching the flag off does
  * not remove held/unknown ownership or permit a legacy bypass on that node.
  */
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { nanoid } from 'nanoid';
 import { getDb } from '../db/index.js';
 import { HttpError } from '../middleware/error-handler.js';
 import { commandRequestDigest, type CommandRequest } from '../security/command-request.js';
 import { commandFenceSchema } from '../schemas/node-responses.js';
 import type { SignedCommandResult } from '../security/command-result-signature.js';
-import { verifyCommandResultSignature } from '../security/command-result-signature.js';
+import { commandAbsenceSigningPayload, commandRefusalSigningPayload, verifyCommandEvidence, verifyCommandResultSignature, type CommandAbsence, type CommandRefusal } from '../security/command-result-signature.js';
 import { RESULT_SIGNING_SECRET, RESULT_SIGNING_PREVIOUS_SECRET } from '../utils/env.js';
 import { getNodeBaseUrl } from '../utils/node-url.js';
 import { COMMAND_COMPLETION_REGISTRY, COMMAND_COMPLETION_REGISTRY_SHA256, commandCompletionDescriptor } from '../security/command-completion-registry.js';
 import { MANAGED_HTTP_COMMAND } from '../security/managed-http.js';
 import { NATIVE_COMPLETION_REGISTRY, NATIVE_COMPLETION_REGISTRY_SHA256, nativeCompletionDescriptor } from '../security/native-completion-registry.js';
+import { logAuditEvent } from './audit-service.js';
 
 const HELD = ['reserved', 'running', 'unknown'];
 export class ResourceLeaseConflict extends HttpError {
@@ -202,24 +203,107 @@ export async function markResourceDispatched(admission: ResourceAdmission, verif
   });
 }
 
-export async function failResourceCommand(admission: ResourceAdmission): Promise<void> {
+/** The agent's signed word that this exact request did not start and has no receipt. Unsigned or mismatched words prove nothing. */
+function refusalBindsLease(row: { commandId: string; requestSha256: string }, refusal: CommandRefusal): boolean {
+  return refusal.commandId === row.commandId && refusal.requestSha256 === row.requestSha256
+    && verifyCommandEvidence(commandRefusalSigningPayload(refusal), refusal.signature, RESULT_SIGNING_SECRET, RESULT_SIGNING_PREVIOUS_SECRET);
+}
+
+/**
+ * Close a lease whose dispatch ended without a result. A lease never sent, or
+ * one the agent proved it refused, is `not-dispatched`; anything else is
+ * `unknown` and held until reconciled. Answers whether the refusal settled it.
+ */
+export async function failResourceCommand(admission: ResourceAdmission, refusal?: CommandRefusal): Promise<boolean> {
   const db = getDb();
-  await db.$transaction(async tx => {
+  return db.$transaction(async tx => {
     const row = await tx.commandResourceLease.findUnique({ where: { id: admission.leaseId } });
-    if (!row || row.state === 'released') return;
+    if (!row || row.state === 'released') return false;
     const notSent = row.state === 'reserved';
+    const refused = !notSent && refusal !== undefined && refusalBindsLease(row, refusal);
+    if (refusal && !notSent && !refused) console.warn(`[resource-leases] refusal for ${row.commandId} does not verify; the lease stays uncertain`);
     const changed = await tx.commandResourceLease.updateMany({ where: { id: row.id, state: row.state }, data: notSent
       ? { state: 'released', settledAt: new Date(), settlement: 'not-dispatched',
           evidenceSha256: createHash('sha256').update(`pre-post:${row.commandId}:${row.requestSha256}`).digest('hex') }
+      : refused ? { state: 'released', settledAt: new Date(), settlement: 'not-dispatched',
+          evidenceSha256: createHash('sha256').update(`certain-refusal:${JSON.stringify(refusal)}`).digest('hex') }
       : { state: 'unknown' } });
-    if (!changed.count) return;
+    if (!changed.count) return false;
     if (row.directCommand) {
       await tx.remoteCommand.updateMany({ where: { id: row.commandId, status: 'RUNNING' }, data: { status: 'FAILED', completedAt: new Date() } });
       await tx.commandResult.upsert({ where: { commandId: row.commandId }, update: {}, create: {
         commandId: row.commandId, exitCode: -1, stdout: '', durationMs: 0,
-        stderr: notSent ? 'Resource admission ended before dispatch.' : 'Execution outcome unknown; resource ownership retained until verified evidence reconciliation.' } });
+        stderr: notSent ? 'Resource admission ended before dispatch.' : refused ? `The node refused the request before it started (${refusal!.code}); nothing ran.`
+          : 'Execution outcome unknown; resource ownership retained until verified evidence reconciliation.' } });
     }
+    return refused;
   });
+}
+
+/** Past the deadline the ledger refuses a late request, and /claim stops confirming it; the margin covers clock skew. */
+export const ABSENT_RECEIPT_MARGIN_MS = 60_000;
+
+export type LeaseRecovery = { commandId: string; outcome: 'settled' | 'has-trace' | 'unsupported' | 'unverified' | 'not-past-deadline' | 'unavailable' };
+
+/**
+ * Settle leases stuck `unknown` whose request demonstrably never started. The
+ * agent signs, under a fresh nonce, that it holds neither a receipt nor an
+ * active.lock for the command. A running receipt is durable before any callback
+ * starts, and past the deadline a delayed request can no longer pass the ledger
+ * or /claim, so that absence proves no execution. A trace of any kind leaves
+ * signed reconciliation as the only way out. Scheduler occurrences and skill
+ * publications keep their own retained evidence and are never settled here.
+ */
+export async function recoverAbsentLeases(nodeId: string, nodeFqdn: string, trace: (commandId: string, nonce: string) => Promise<CommandAbsence | null>,
+  actorId = 'system:agent-upgrade', now = Date.now(), signedReceipt?: (commandId: string, expected: { nodeFqdn: string; requestSha256: string }) => Promise<unknown>): Promise<LeaseRecovery[]> {
+  const db = getDb();
+  const rows = await db.commandResourceLease.findMany({ where: { nodeId, state: 'unknown' } });
+  const results: LeaseRecovery[] = [];
+  for (const row of rows) {
+    const { commandId } = row;
+    if (row.completionClass === 'managed-scheduler' || row.completionDescriptorId === 'skill-install') { results.push({ commandId, outcome: 'unsupported' }); continue; }
+    if (row.deadline.getTime() + ABSENT_RECEIPT_MARGIN_MS > now) { results.push({ commandId, outcome: 'not-past-deadline' }); continue; }
+    const nonce = randomUUID();
+    let answer: CommandAbsence | null;
+    try {
+      answer = await trace(commandId, nonce);
+    } catch (error) {
+      console.warn(`[resource-leases] trace of ${commandId} failed: ${error instanceof Error ? error.message : String(error)}`);
+      results.push({ commandId, outcome: 'unavailable' });
+      continue;
+    }
+    // An agent without this route keeps the current behaviour: held until reconciled.
+    if (!answer) { results.push({ commandId, outcome: 'unsupported' }); continue; }
+    if (answer.commandId !== commandId || answer.nonce !== nonce || answer.nodeFqdn !== nodeFqdn
+      || !verifyCommandEvidence(commandAbsenceSigningPayload(answer), answer.signature, RESULT_SIGNING_SECRET, RESULT_SIGNING_PREVIOUS_SECRET)) {
+      console.warn(`[resource-leases] trace of ${commandId} does not verify; the lease stays held`);
+      results.push({ commandId, outcome: 'unverified' });
+      continue;
+    }
+    if (answer.receipt || answer.activeLock) {
+      // The usual path out for a receipt: a signed result or reconciliation settles it, anything else stays held.
+      await signedReceipt?.(commandId, { nodeFqdn, requestSha256: row.requestSha256 }).catch((error: unknown) => {
+        console.warn(`[resource-leases] receipt of ${commandId} settles nothing: ${error instanceof Error ? error.message : String(error)}`);
+      });
+      results.push({ commandId, outcome: 'has-trace' });
+      continue;
+    }
+    const evidence = createHash('sha256').update(`receipt-absent:${JSON.stringify(answer)}`).digest('hex');
+    const settled = await db.$transaction(async tx => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`command-resource-node:${nodeId}`}, 0))`;
+      const changed = await tx.commandResourceLease.updateMany({ where: { id: row.id, state: 'unknown' },
+        data: { state: 'released', settledAt: new Date(), settlement: 'not-dispatched', evidenceSha256: evidence } });
+      if (!changed.count) return false;
+      if (row.directCommand) await tx.remoteCommand.updateMany({ where: { id: commandId, status: 'RUNNING' }, data: { status: 'FAILED', completedAt: new Date() } });
+      return true;
+    });
+    if (!settled) continue;
+    await logAuditEvent({ action: 'agent.lease.recovered', actorId, actorType: 'system', targetType: 'node', targetId: nodeId,
+      details: { commandId, leaseId: row.id, settlement: 'not-dispatched', evidenceSha256: evidence, reason: 'no receipt and no active.lock on the agent after the lease deadline' } })
+      .catch((error: unknown) => console.warn(`[resource-leases] audit of ${commandId} failed: ${error instanceof Error ? error.message : String(error)}`));
+    results.push({ commandId, outcome: 'settled' });
+  }
+  return results;
 }
 
 export async function retainUnknownResourceCommand(commandId: string): Promise<void> {

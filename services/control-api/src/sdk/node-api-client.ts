@@ -3,15 +3,16 @@ import { MANAGED_CLAIM_HEADER, credentialMutationIdentity, httpIdentity, httpRec
 import { nativeCompletionDescriptor, nativeCompletionResourceKey } from '../security/native-completion-registry.js';
 import { COMMAND_COMPLETION_REGISTRY, COMMAND_COMPLETION_REGISTRY_SHA256, commandCompletionDescriptor } from '../security/command-completion-registry.js';
 import { commandReconciliationSchema } from '../schemas/command-reconciliation.js';
-import { admitResourceCommand, markResourceDispatched, failResourceCommand, settleResourceResult, settleResourceReconciliation, type ResourceCommandContext } from '../services/command-resource-leases.js';
+import { admitResourceCommand, markResourceDispatched, failResourceCommand, settleResourceResult, settleResourceReconciliation, type ResourceAdmission, type ResourceCommandContext } from '../services/command-resource-leases.js';
 import { commandFenceSchema, commandResultSchema } from '../schemas/node-responses.js';
+import { advanceCommandFence } from '../services/command-fence-repair.js';
 import type { CronEnrollmentStage, ManagedCronIdentity, ManagedCronSpec, SchedulerSourceSettlement } from '../schemas/managed-cron.js';
 import { commandRequestDigest, type CommandRequest } from '../security/command-request.js';
 import ky, { HTTPError, type AfterResponseState, type KyInstance } from 'ky';
 import { HttpError } from '../middleware/error-handler.js';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
-import type { ArdentNodeState } from '@hivemagnus/magnus-contracts';
+import { agentUpgradePreflightSchema, type AgentUpgradePreflight, type ArdentNodeState } from '@hivemagnus/magnus-contracts';
 import type {
   ApiResponse,
   HealthSnapshot,
@@ -32,6 +33,8 @@ import { RESULT_SIGNING_PREVIOUS_SECRET, RESULT_SIGNING_SECRET } from '../utils/
 import { correlateSkillPublicationNoEffect } from '../services/skill-publication-settlement.js';
 import {
   commandResultSigningPayload,
+  type CommandAbsence,
+  type CommandRefusal,
   type SignedCommandResult,
   verifyCommandResultSignature,
 } from '../security/command-result-signature.js';
@@ -172,8 +175,48 @@ function errorText(error: unknown): string {
   return (error instanceof Error ? error.message : String(error)).slice(0, 1000);
 }
 
+/** A managed request the agent proved it refused; set on the error by settleFailedDispatch once the lease settled. */
+export interface CertainRefusal { code: string; message: string }
+const certainRefusalOf = (error: unknown): CertainRefusal | undefined => (error as { certainRefusal?: CertainRefusal } | null)?.certainRefusal;
+
+/** The signed refusal in an agent's error reply. An older agent, or a reply without one, says nothing about execution. */
+export function parseAgentRefusal(error: unknown): (CommandRefusal & { message: string }) | null {
+  if (!(error instanceof HTTPError)) return null;
+  const body = (error.data ?? null) as { error?: { executed?: unknown; message?: unknown; refusal?: Partial<CommandRefusal> } } | null;
+  const refusal = body?.error?.refusal;
+  if (body?.error?.executed !== false || !refusal || typeof refusal.commandId !== 'string' || typeof refusal.requestSha256 !== 'string'
+    || typeof refusal.code !== 'string' || typeof refusal.signature !== 'string' || !(refusal.highWater === null || typeof refusal.highWater === 'string')) return null;
+  return { commandId: refusal.commandId, requestSha256: refusal.requestSha256, code: refusal.code.slice(0, 64), highWater: refusal.highWater, signature: refusal.signature,
+    message: typeof body.error.message === 'string' ? body.error.message.slice(0, 1000) : refusal.code };
+}
+
+/**
+ * Close the lease of a dispatch that threw. A verified refusal settles it as
+ * not-dispatched, and a STALE_FENCE moves the server's fence past the agent's
+ * high-water so the next request can pass. Everything else stays `unknown`.
+ */
+async function settleFailedDispatch(admission: ResourceAdmission, actorId: string, error: unknown): Promise<void> {
+  const refusal = parseAgentRefusal(error);
+  const settled = await failResourceCommand(admission, refusal ?? undefined);
+  if (!refusal || !settled) return;
+  let code = refusal.code;
+  let { message } = refusal;
+  const resourceKey = admission.payload.coordination?.resourceKey;
+  if (code === 'STALE_FENCE' && refusal.highWater && resourceKey) {
+    try {
+      const advanced = await advanceCommandFence({ nodeId: admission.nodeId, resourceKey, highWater: refusal.highWater, source: 'stale-fence-reply', actorId });
+      if (advanced.status === 'rejected') ({ code, detail: message } = advanced);
+    } catch (repairError) {
+      console.warn(`[resource-leases] fence of ${admission.nodeId} could not be advanced: ${repairError instanceof Error ? repairError.message : String(repairError)}`);
+    }
+  }
+  Object.assign(error as object, { certainRefusal: { code, message } satisfies CertainRefusal });
+}
+
 /** Sort an upgradeAgent failure by whether the request can have reached the agent. */
 export function classifyAgentRequestError(error: unknown, dispatched: boolean): Error {
+  const refused = certainRefusalOf(error);
+  if (refused) return new NotDispatchedError(refused.code, refused.message, error);
   if (!dispatched) return error instanceof NotDispatchedError ? error : new NotDispatchedError(
     error instanceof HttpError ? error.code : error instanceof AgentResponseError && error.code ? error.code : 'NOT_DISPATCHED', errorText(error), error);
   if (error instanceof AgentResponseError) return error;
@@ -261,7 +304,7 @@ export class NodeApiClient {
           payload: commandResultSigningPayload(receipt), signature: receipt.signature,
         })).digest('hex'),
         acknowledgedAt: new Date() } };
-    } catch (error) { await failResourceCommand(admission); throw error; }
+    } catch (error) { await settleFailedDispatch(admission, this.resourceContext.actorId, error); throw error; }
   }
 
   private async mutate<T>(method: 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown, timeout = this.defaultTimeout): Promise<T> {
@@ -354,7 +397,7 @@ export class NodeApiClient {
       if (admission) await settleResourceResult(payload.commandId, result);
       return response;
     } catch (error) {
-      if (admission) await failResourceCommand(admission);
+      if (admission) await settleFailedDispatch(admission, this.resourceContext.actorId, error);
       throw error;
     }
   }
@@ -588,6 +631,38 @@ export class NodeApiClient {
       { pingFirst: true, onDispatch: () => { dispatched = true; } })).response;
     } catch (error) {
       throw classifyAgentRequestError(error, dispatched);
+    }
+  }
+
+  /**
+   * The agent's read-only upgrade report: its GET needs no lease or claim.
+   * `unavailable` is an agent older than 1.1.8 (404) or a report that does not
+   * parse; neither says anything against the node.
+   */
+  async getUpgradePreflight(query: { target?: string; engines?: string | null }, timeoutMs = 5_000): Promise<
+    { status: 'ok'; report: AgentUpgradePreflight } | { status: 'unavailable'; detail: string } | { status: 'unreachable'; detail: string }> {
+    let body: ApiResponse<unknown>;
+    try {
+      body = await this.api.get('agent-upgrade/preflight', { timeout: timeoutMs, retry: 0,
+        searchParams: { ...(query.target ? { target: query.target } : {}), ...(query.engines ? { engines: query.engines } : {}) } }).json<ApiResponse<unknown>>();
+    } catch (error) {
+      if (error instanceof HTTPError && error.response.status === 404) return { status: 'unavailable', detail: 'this agent has no preflight check' };
+      if (error instanceof SyntaxError) return { status: 'unavailable', detail: 'the preflight answer is not JSON' };
+      return { status: 'unreachable', detail: errorText(error) };
+    }
+    const parsed = agentUpgradePreflightSchema.safeParse(body?.data);
+    return parsed.success ? { status: 'ok', report: parsed.data } : { status: 'unavailable', detail: 'the preflight answer does not parse' };
+  }
+
+  /** Signed answer on whether the agent holds a receipt or active.lock for a command; null from an agent without this route. */
+  async getCommandTrace(commandId: string, nonce: string, timeoutMs = 5_000): Promise<CommandAbsence | null> {
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(commandId)) throw new Error('Invalid command identifier');
+    try {
+      const response = await this.api.get(`commands/receipts/${encodeURIComponent(commandId)}/trace`, { timeout: timeoutMs, retry: 0, searchParams: { nonce } }).json<ApiResponse<CommandAbsence>>();
+      return response.success ? response.data : null;
+    } catch (error) {
+      if (error instanceof HTTPError && error.response.status === 404) return null;
+      throw error;
     }
   }
 
