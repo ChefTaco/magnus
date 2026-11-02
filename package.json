@@ -84,7 +84,7 @@
   "allowScripts": {
     "@prisma/engines@7.10.1": true,
     "argon2@0.45.1": true,
-    "better-sqlite3@12.11.1": true,
+    "better-sqlite3@13.0.3": true,
     "cpu-features@0.0.10": true,
     "esbuild@0.28.1": true,
     "msgpackr-extract@3.0.4": true,
