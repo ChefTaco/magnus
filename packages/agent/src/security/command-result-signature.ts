@@ -110,13 +110,15 @@ export interface CommandAbsence {
   fenceHighWater: string | null;
   markerState: 'absent' | 'present' | 'unknown';
   markerNodeId: string | null;
+  /** The fence of this command's durable record of a failed admission, if it has one. */
+  admissionFailedFence: string | null;
   signature: string;
 }
 
 export function commandAbsenceSigningPayload(absence: Omit<CommandAbsence, 'signature'>): string {
   return JSON.stringify({ domain: 'magnus.command-absence.v1', commandId: absence.commandId, nodeFqdn: absence.nodeFqdn, nonce: absence.nonce,
     ledgerExists: absence.ledgerExists, receipt: absence.receipt, activeLock: absence.activeLock, resourceKey: absence.resourceKey,
-    fenceHighWater: absence.fenceHighWater, markerState: absence.markerState, markerNodeId: absence.markerNodeId });
+    fenceHighWater: absence.fenceHighWater, markerState: absence.markerState, markerNodeId: absence.markerNodeId, admissionFailedFence: absence.admissionFailedFence });
 }
 
 /** The fence high-water a preflight reports, bound to the node and a fresh nonce. Only this can move a server generation. */

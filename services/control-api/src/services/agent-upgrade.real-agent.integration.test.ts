@@ -127,7 +127,7 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('the real agent against the r
   });
 
   it('finding 8: a network failure is a node problem, tried again, and each attempt settles', async () => {
-    await setNpm('echo "npm error code ENOTFOUND registry.example.com" >&2; exit 1');
+    await setNpm('printf "npm error code ENOTFOUND\\nnpm error network request failed\\n" >&2; exit 1');
     const run = await wave();
     expect(run.nodes[0]).toMatchObject({ state: 'refused', code: 'SELF_UPGRADE_ENV_NETWORK', failureClass: 'node', attempts: 2 });
     expect(run.status).toBe('partial');
@@ -191,6 +191,50 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('the real agent against the r
     expect(await recover()).toEqual([{ commandId, outcome: 'settled' }]);
   });
 
+  const seedMarker = async () => {
+    await mkdir(ledgerDir, { recursive: true, mode: 0o700 });
+    await writeFile(join(ledgerDir, 'managed-enrollment.json'), JSON.stringify({ version: 1, nodeId, nodeFqdn }), { mode: 0o600 });
+  };
+
+  it('second review, finding 7: this node\'s marker with no fence, receipt or lock is positive evidence that it never ran', async () => {
+    const { commandId } = await stuckLease();
+    await seedMarker();
+    expect(await recover()).toEqual([{ commandId, outcome: 'settled' }]);
+    expect(await db.commandResourceLease.findUniqueOrThrow({ where: { commandId } })).toMatchObject({ state: 'released', settlement: 'not-dispatched' });
+  });
+
+  it('second review, finding 7: another node\'s marker with no fence stays held', async () => {
+    const { commandId } = await stuckLease();
+    await mkdir(ledgerDir, { recursive: true, mode: 0o700 });
+    await writeFile(join(ledgerDir, 'managed-enrollment.json'), JSON.stringify({ version: 1, nodeId: 'another', nodeFqdn: 'other.example.com' }), { mode: 0o600 });
+    expect(await recover()).toEqual([expect.objectContaining({ outcome: 'unverified', code: 'ENROLLMENT_MARKER_MISMATCH' })]);
+    expect(await leaseState(commandId)).toBe('unknown');
+  });
+
+  it('second review, finding 7: the fence accepted with a signed record of the failed admission settles', async () => {
+    const { commandId, fence } = await stuckLease();
+    await seedFence(fence);
+    await writeFile(join(ledgerDir, `admission-failed-${createHash('sha256').update(commandId).digest('hex')}.json`), JSON.stringify({ commandId, fence: String(fence) }), { mode: 0o600 });
+    expect(await recover()).toEqual([{ commandId, outcome: 'settled' }]);
+  });
+
+  it('second review, finding 7: a record for an earlier fence proves nothing about this one', async () => {
+    const { commandId, fence } = await stuckLease();
+    await seedFence(fence);
+    await writeFile(join(ledgerDir, `admission-failed-${createHash('sha256').update(commandId).digest('hex')}.json`), JSON.stringify({ commandId, fence: String(fence + 7n) }), { mode: 0o600 });
+    expect(await recover()).toEqual([expect.objectContaining({ outcome: 'unverified', code: 'LEDGER_EVIDENCE_INCONSISTENT' })]);
+  });
+
+  it('second review, finding 7: a receipt still leaves only signed reconciliation, whatever else is there', async () => {
+    const { commandId, fence } = await stuckLease();
+    await seedMarker();
+    await seedFence(fence);
+    await writeFile(join(ledgerDir, `receipt-${createHash('sha256').update(commandId).digest('hex')}.json`), JSON.stringify({ version: 1, commandId, requestSha256: 'a'.repeat(64), state: 'running', acceptedAt: 1 }), { mode: 0o600 });
+    await writeFile(join(ledgerDir, `admission-failed-${createHash('sha256').update(commandId).digest('hex')}.json`), JSON.stringify({ commandId, fence: String(fence) }), { mode: 0o600 });
+    expect((await recover())[0]).toMatchObject({ commandId, outcome: 'has-trace' });
+    expect(await leaseState(commandId)).toBe('unknown');
+  });
+
   it('finding 3: a marker for another node, or one it cannot read, stays held', async () => {
     const { commandId, fence } = await stuckLease();
     await seedFence(fence + 1n);
@@ -216,6 +260,12 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('the real agent against the r
     expect(run.nodes[0]).toMatchObject({ code: 'SELF_UPGRADE_FAILED', attempts: 1 });
     expect(await generation()).toBe(1789962351092n);
     expect(auditLog).toHaveBeenCalledWith(expect.objectContaining({ action: 'agent.fence.advanced', details: expect.objectContaining({ source: 'preflight' }) }));
+  });
+
+  it('plausible item: host name case does not defeat the proof', async () => {
+    await seedFence(1789962351090n);
+    const preflight = await import('./agent-upgrade-preflight.js');
+    expect((await preflight.preflightNode({ nodeId, hostname: nodeFqdn.toUpperCase(), managed: true }, { target })).fencesVerified).toBe(true);
   });
 
   it('finding 9: a preflight whose proof does not verify moves nothing', async () => {
@@ -254,6 +304,18 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('the real agent against the r
       await checkUpgradeReadiness();
       expect(await db.commandResourceLease.findUniqueOrThrow({ where: { commandId } })).toMatchObject({ state: 'released', settlement: 'not-dispatched' });
       expect(auditLog).toHaveBeenCalledWith(expect.objectContaining({ action: 'agent.lease.recovered', targetId: nodeId, details: expect.objectContaining({ commandId }) }));
+    });
+
+    it('second review, finding 8: two servers notify once', async () => {
+      const low = JSON.stringify({ agentSelfUpgrade: { protocol: 1, launcherProtocol: 1, layout: 'versioned', enabled: true, disk: { freeBytes: 1, requiredBytes: 2, low: true }, observedAt: new Date().toISOString() },
+        upgradeNotReadySince: new Date(Date.now() - 3 * 24 * 60 * 60_000).toISOString() });
+      const before = await db.node.findUniqueOrThrow({ where: { id: nodeId }, select: { metadata: true } });
+      await db.node.update({ where: { id: nodeId }, data: { metadata: low } });
+      const { checkUpgradeReadiness } = await monitor();
+      await Promise.all([checkUpgradeReadiness(), checkUpgradeReadiness(), checkUpgradeReadiness()]);
+      expect(await db.notification.count({ where: { nodeId, type: 'node.upgrade_not_ready' } })).toBe(1);
+      await db.notification.deleteMany({ where: { nodeId } });
+      await db.node.update({ where: { id: nodeId }, data: { metadata: before.metadata } });
     });
 
     it('never settles without ledger evidence', async () => {

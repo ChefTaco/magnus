@@ -81,7 +81,9 @@ export class CommandAdmissionError extends Error {
 }
 const enrollmentMarkerSchema = z.object({ version: z.literal(1), nodeId: z.string().min(1).max(128), nodeFqdn: z.string().min(1).max(253) }).strict();
 export type EnrollmentMarker = { state: 'absent' | 'present' | 'unknown'; marker: z.infer<typeof enrollmentMarkerSchema> | null; error?: string };
-export interface CommandTrace { ledgerExists: boolean; receipt: boolean; activeLock: boolean; fenceHighWater: string | null; marker: EnrollmentMarker }
+export interface CommandTrace { ledgerExists: boolean; receipt: boolean; activeLock: boolean; fenceHighWater: string | null; marker: EnrollmentMarker;
+  /** This request passed the fence, then a later write failed, and the callback did not start. */
+  admissionFailed: boolean; admissionFailedFence: string | null }
 /** Read-only view of the ledger for preflight checks and heartbeats. */
 export interface LedgerHealth {
   readable: boolean;
@@ -178,6 +180,23 @@ export class CommandLedger {
     } catch (error) { await unlink(temporary).catch(() => {}); throw error; }
   }
   private receiptName(id: string) { return 'receipt-'+hash(id)+'.json'; }
+  private failedAdmissionName(id: string) { return 'admission-failed-'+hash(id)+'.json'; }
+  /**
+   * A write after the fence failed, so the fence is ahead with no receipt, and the
+   * callback did not start. Say so durably, or that state looks like a receipt that
+   * went missing. If not even this can be written, keep the claim instead: it is
+   * already on disk, needs no new space, and says the same (recoverClaim clears it).
+   * A receipt that did land must keep its claim too, or it can never be reconciled.
+   */
+  private async keepEvidenceOfFailedAdmission(input: CommandIdentity): Promise<boolean> {
+    try {
+      if (await this.read<unknown>(this.receiptName(input.commandId)) !== undefined) return true;
+      await this.write(this.failedAdmissionName(input.commandId), { commandId: input.commandId, fence: input.coordination!.fence });
+      return false;
+    } catch { // no-reason-needed: the original failure is what is reported; keeping the claim is the fallback
+      return true;
+    }
+  }
   async receipt(id: string) {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(id)) throw new Error('Invalid command identifier');
     await this.initialize();
@@ -363,11 +382,14 @@ export class CommandLedger {
       ledgerExists = false;
     }
     const marker = await this.enrollmentMarker();
-    if (!ledgerExists) return { ledgerExists, receipt: false, activeLock: false, fenceHighWater: null, marker };
+    if (!ledgerExists) return { ledgerExists, receipt: false, activeLock: false, fenceHighWater: null, marker, admissionFailed: false, admissionFailedFence: null };
     const raw = await this.read<unknown>('active.lock');
     const receipt = await this.read<unknown>(this.receiptName(id));
     const fence = resourceKey ? await this.read<{ resourceKey?: unknown; fence?: unknown }>('fence-'+hash(resourceKey)+'.json') : undefined;
+    const failed = await this.read<{ commandId?: unknown; fence?: unknown }>(this.failedAdmissionName(id));
+    const admissionFailedFence = failed?.commandId === id && typeof failed.fence === 'string' && /^[0-9]{1,20}$/.test(failed.fence) ? failed.fence : null;
     return { ledgerExists, receipt: receipt !== undefined, activeLock: raw !== undefined && lockSchema.parse(raw).commandId === id,
+      admissionFailed: admissionFailedFence !== null, admissionFailedFence,
       fenceHighWater: fence?.resourceKey === resourceKey && typeof fence?.fence === 'string' && /^[0-9]{1,20}$/.test(fence.fence) ? fence.fence : null, marker };
   }
 
@@ -437,7 +459,7 @@ export class CommandLedger {
     // Snapshot before awaiting; callers cannot mutate accepted scope or identity.
     input = structuredClone(input);
     const digest = commandRequestDigest(input);
-    let held = false, started = false, admitted = false, noReceipt = false;
+    let held = false, started = false, admitted = false, noReceipt = false, fenceWritten = false, keepClaim = false;
     let mutex;
     const previous = async () => {
       const row = await this.receipt(input.commandId);
@@ -470,6 +492,7 @@ export class CommandLedger {
         if (prior && BigInt(fence.fence) <= BigInt(prior.fence)) throw new CommandAdmissionError('STALE_FENCE', 'Stale resource fence cannot execute',
           { highWater: { resourceKey: fence.resourceKey, fence: prior.fence } });
         await this.write(name, { resourceKey: fence.resourceKey, fence: fence.fence });
+        fenceWritten = true;
       }
       if (enrollment && !enrolled) await this.write('managed-enrollment.json', { version: 1, nodeId: enrollment.nodeId, nodeFqdn: enrollment.nodeFqdn });
       const receipt: Receipt = { version: 1, commandId: input.commandId, requestSha256: digest,
@@ -488,13 +511,14 @@ export class CommandLedger {
         if (certain && !['OUTCOME_UNKNOWN', 'IDEMPOTENCY_CONFLICT'].includes(error.code)) error.notStarted = true;
         throw error;
       }
+      if (certain && fenceWritten) keepClaim = await this.keepEvidenceOfFailedAdmission(input);
       throw new CommandAdmissionError(started ? 'OUTCOME_UNKNOWN' : 'LEDGER_UNAVAILABLE',
         started ? 'Execution receipt is uncertain; retained for reconciliation and never replayed' : 'Command ledger unavailable; inspect its receipt before retrying',
         { notStarted: certain, cause: error });
     } finally {
       if (admitted) this.active.delete(input.commandId);
       try {
-        if (held && !started) await this.releaseClaim();
+        if (held && !started && !keepClaim) await this.releaseClaim();
       } catch {
         // A durable terminal receipt remains authoritative if lock cleanup fails.
         // The next holder verifies it and completes cleanup under the mutex.

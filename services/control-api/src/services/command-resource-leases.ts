@@ -246,27 +246,36 @@ export const ABSENT_RECEIPT_MARGIN_MS = 60_000;
 export type LeaseRecovery = { commandId: string; outcome: 'settled' | 'has-trace' | 'unsupported' | 'unverified' | 'not-past-deadline' | 'unavailable'; code?: string; detail?: string };
 
 /**
- * What a signed trace says about a lease held for this node, or why it says
- * nothing. "No receipt" alone proves nothing, since a ledger that is gone holds
- * nothing either. It needs a ledger that is there and has seen this node, and
- * consistent evidence:
+ * What a signed trace with no receipt says about a lease held for this node, or
+ * why it says nothing. "No receipt" alone proves nothing, since a ledger that is
+ * gone holds nothing either. execute() writes in this order: claim, fence, marker,
+ * durable receipt, and only then runs the callback. So in a ledger that is there:
+ * - no fence, with this node's marker: the marker shows this is its ledger, and the
+ *   fence comes before everything that could run, so no request passed admission.
+ * - no fence and no marker: nothing shows this is the ledger the command would have
+ *   used. Stays held.
  * - high-water below the lease's fence: the request never passed admission.
- * - above it, with no receipt: the stale-refusal case, or a later fence won.
- * - equal, with this command's claim: a crash between the claim and the receipt,
- *   which never started, since the callback runs only after the durable receipt.
- * - equal, without a claim: it passed the fence and its receipt is gone. Receipts
- *   are never removed, so this is not a state the agent reaches by itself.
- * Not provable from here: a ledger wiped and then used again looks like the
- * second case, because a higher fence and no receipt is all that is left of it.
+ * - above it: the stale-refusal case, or a later fence won.
+ * - equal, with this command's claim: a crash or a failed write between the claim and
+ *   the receipt, which never started.
+ * - equal, with its durable record of a failed admission for this fence: the same.
+ * - equal with neither: the receipt was removed, or a build without such records
+ *   failed the admission. These look the same, so it stays held.
+ * Not provable from here: a ledger wiped and used again looks like a later fence
+ * winning, and one wiped and told its enrollment again looks like the first case.
  */
 export function judgeTrace(answer: CommandAbsence, nodeId: string, leaseFence: bigint): { settle: true } | { settle: false; code: string; detail: string } {
   const no = (code: string, detail: string) => ({ settle: false as const, code, detail });
   if (!answer.ledgerExists) return no('LEDGER_MISSING', 'the agent reports no ledger directory');
   if (answer.markerState === 'unknown') return no('ENROLLMENT_MARKER_UNKNOWN', 'the agent could not read its enrollment marker');
   if (answer.markerState === 'present' && answer.markerNodeId !== nodeId) return no('ENROLLMENT_MARKER_MISMATCH', `the agent's enrollment marker names ${answer.markerNodeId ?? 'nothing'}`);
-  if (answer.fenceHighWater === null || !/^[0-9]{1,20}$/.test(answer.fenceHighWater)) return no('LEDGER_NO_FENCE', `the ledger holds no fence for ${answer.resourceKey}`);
+  if (answer.fenceHighWater === null || !/^[0-9]{1,20}$/.test(answer.fenceHighWater)) {
+    if (answer.markerState === 'present' && !answer.activeLock) return { settle: true };
+    return no('LEDGER_NO_FENCE', `the ledger holds no fence for ${answer.resourceKey} and nothing shows it is this node's`);
+  }
   const highWater = BigInt(answer.fenceHighWater);
-  if (highWater === leaseFence && !answer.activeLock) return no('LEDGER_EVIDENCE_INCONSISTENT', `the ledger accepted fence ${leaseFence} but holds no receipt or claim for it`);
+  if (highWater === leaseFence && !answer.activeLock && answer.admissionFailedFence !== String(leaseFence))
+    return no('LEDGER_EVIDENCE_INCONSISTENT', `the ledger accepted fence ${leaseFence} but holds no receipt, claim or failed admission for it`);
   return { settle: true };
 }
 

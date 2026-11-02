@@ -177,17 +177,17 @@ describe('a failed self-upgrade over the real route, ledger and managed-http', (
   });
 
   it('names an environment cause with its own code, not a release failure', async () => {
-    await installation('echo "npm error code ENOSPC: no space left on device" >&2; exit 1');
+    await installation('printf "npm error code ENOSPC\\nnpm error syscall write\\n" >&2; exit 1');
     expect((await settledBody(await send(upgrade('disk', '5') as never))).error.code).toBe('SELF_UPGRADE_ENV_DISK');
   });
 
   it('names a network cause as such', async () => {
-    await installation('echo "npm error code ENOTFOUND: registry.example.com" >&2; exit 1');
+    await installation('printf "npm error code ENOTFOUND\\nnpm error network request to https://registry.example.com failed\\n" >&2; exit 1');
     expect((await settledBody(await send(upgrade('network', '5') as never))).error.code).toBe('SELF_UPGRADE_ENV_NETWORK');
   });
 
   it('names an access cause as such', async () => {
-    await installation('echo "npm error code EACCES: permission denied" >&2; exit 1');
+    await installation('printf "npm error code EACCES\\nnpm error syscall mkdir\\n" >&2; exit 1');
     expect((await settledBody(await send(upgrade('access', '5') as never))).error.code).toBe('SELF_UPGRADE_ENV_ACCESS');
   });
 
@@ -208,6 +208,132 @@ describe('the cause behind LEDGER_UNAVAILABLE', () => {
     expect(response.status).toBe(503);
     expect((await response.json() as { error: unknown }).error).toMatchObject({ code: 'LEDGER_UNAVAILABLE', executed: false });
     expect(warn.mock.calls.flat().join(' ')).toMatch(/Invalid fencing record/);
+  });
+});
+
+describe('finding 4 and 9: real causes through the real stage', () => {
+  async function staged(npmScript: string) {
+    const { AGENT_VERSION } = await import('../version.js');
+    const entry = join(root, 'versions', AGENT_VERSION, 'node_modules/@hivemagnus/magnus-agent/dist');
+    await mkdir(entry, { recursive: true });
+    await writeFile(join(entry, 'index.js'), '');
+    await symlink(join('versions', AGENT_VERSION), join(root, 'current'), 'dir');
+    await writeFile(join(root, 'fake-npm.sh'), `#!/bin/sh\n${npmScript}\n`, { mode: 0o755 });
+    vi.stubEnv('MAGNUS_AGENT_LAUNCHER', '1');
+    vi.stubEnv('MAGNUS_AGENT_LAUNCHER_PROTOCOL', '1');
+    vi.stubEnv('MAGNUS_AGENT_NPM', join(root, 'fake-npm.sh'));
+    vi.stubEnv('MAGNUS_AGENT_UPGRADE_REQUIRE_PROVENANCE', 'false');
+    const { stageUpgrade, AGENT_PACKAGE } = await import('../upgrade/self-upgrade.js');
+    return (run?: Parameters<typeof stageUpgrade>[0]['run']) => stageUpgrade({ version: AGENT_VERSION, ...(run ? { run } : {}),
+      request: { version: `${AGENT_MAJOR}.999.0`, integrity: `sha512-${'A'.repeat(86)}==`, requestId: 'r1', packageName: AGENT_PACKAGE } });
+  }
+
+  it('a script cannot pass its failure off as the node: real npm-shaped output of a lifecycle failure', async () => {
+    const stage = await staged(`printf 'npm error code 1\\nnpm error command sh -c x\\nnpm error ENOSPC: no space left\\n' >&2; exit 1`);
+    await expect(stage()).rejects.toMatchObject({ code: 'SELF_UPGRADE_FAILED', status: 422 });
+  });
+
+  it('a killed npm reads as the node, from the signal', async () => {
+    const stage = await staged('kill -9 $$');
+    await expect(stage()).rejects.toMatchObject({ code: 'SELF_UPGRADE_ENV_RESOURCE' });
+  });
+
+  it('a failed state write maps its errno to the node, and a failed switch too', async () => {
+    const stage = await staged('exit 0');
+    const selfUpgrade = await import('../upgrade/self-upgrade.js');
+    const tarball = selfUpgrade.tarballName(`${AGENT_MAJOR}.999.0`);
+    expect(selfUpgrade.switchFailureCode(Object.assign(new Error('x'), { code: 'ENOSPC' }))).toBe('SELF_UPGRADE_ENV_DISK');
+    expect(selfUpgrade.switchFailureCode(Object.assign(new Error('x'), { code: 'EIO' }))).toBe('SELF_UPGRADE_ENV_DISK');
+    expect(selfUpgrade.switchFailureCode(Object.assign(new Error('x'), { code: 'EACCES' }))).toBe('SELF_UPGRADE_ENV_ACCESS');
+    expect(selfUpgrade.switchFailureCode(Object.assign(new Error('x'), { code: 'ELOCKED' }))).toBe('SELF_UPGRADE_BUSY');
+    expect(selfUpgrade.switchFailureCode(new Error('x'))).toBe('SELF_UPGRADE_FAILED');
+    void stage; void tarball;
+  });
+
+  it('finding 9: a crashing smoke test names its exit code and stderr tail, cleaned', async () => {
+    const stage = await staged('exit 0');
+    const { AGENT_VERSION } = await import('../version.js');
+    const { sha512Integrity, tarballName } = await import('../upgrade/self-upgrade.js');
+    void AGENT_VERSION;
+    const target = `${AGENT_MAJOR}.999.0`;
+    const run = async (_command: string, args: readonly string[], options: { cwd: string }) => {
+      if (args.includes('pack')) { await writeFile(join(options.cwd, tarballName(target)), 'tarball'); return { code: 0, stdout: '', stderr: '' }; }
+      if (args.includes('--version')) return { code: 3, stdout: '', stderr: `boom\u001b[31m ${'x'.repeat(2000)} end of the trace\n` };
+      if (args.includes('install')) {
+        await mkdir(join(options.cwd, 'node_modules/@hivemagnus/magnus-agent/dist'), { recursive: true });
+        await writeFile(join(options.cwd, 'node_modules/@hivemagnus/magnus-agent/package.json'), '{}');
+      }
+      return { code: 0, stdout: '', stderr: '' };
+    };
+    const { stageUpgrade, AGENT_PACKAGE } = await import('../upgrade/self-upgrade.js');
+    void stage;
+    const packed = join(root, 'probe.tgz');
+    await writeFile(packed, 'tarball');
+    const error = await stageUpgrade({ version: (await import('../version.js')).AGENT_VERSION, run: run as never, request: { version: target, integrity: sha512Integrity(packed), requestId: 'r2', packageName: AGENT_PACKAGE } }).catch(caught => caught as Error & { code: string });
+    expect((error as { code: string }).code).toBe('SELF_UPGRADE_FAILED');
+    expect(error.message).toMatch(/exit 3/);
+    expect(error.message).toMatch(/end of the trace/);
+    // eslint-disable-next-line no-control-regex
+    expect(error.message).not.toMatch(/[\u0000-\u001f\u007f]/);
+    expect(error.message.length).toBeLessThan(700);
+  });
+});
+
+describe('finding 7: failed admissions and the write order', () => {
+  it('writes the fence before the marker, and the marker before the receipt', async () => {
+    const { commandLedger } = await import('./command-executor.js');
+    const written: string[] = [];
+    const ledgerAny = commandLedger as unknown as { write: (name: string, value: unknown) => Promise<void> };
+    const write = ledgerAny.write.bind(commandLedger);
+    ledgerAny.write = async (name, value) => { written.push(name.replace(/-[a-f0-9]{64}/, '')); await write(name, value); };
+    expect((await send(request('5', 'order'))).status).toBe(200);
+    expect(written.slice(0, 4)).toEqual(['active.lock', 'fence.json', 'managed-enrollment.json', 'receipt.json']);
+  });
+
+  const failOn = (commandLedger: unknown, match: RegExp, code = 'EIO') => {
+    const ledgerAny = commandLedger as { write: (name: string, value: unknown) => Promise<void> };
+    const write = ledgerAny.write.bind(commandLedger);
+    ledgerAny.write = async (name, value) => { if (match.test(name)) throw Object.assign(new Error(`${code}: i/o error`), { code }); await write(name, value); };
+  };
+
+  it('records a failed marker write durably, and signs it, so the fence-equal state is provable', async () => {
+    const { commandLedger } = await import('./command-executor.js');
+    failOn(commandLedger, /^managed-enrollment/);
+    const response = await send(request('5', 'marker-failed'));
+    expect(response.status).toBe(503);
+    expect((await response.json() as { error: unknown }).error).toMatchObject({ code: 'LEDGER_UNAVAILABLE', executed: false });
+    expect(await commandLedger.commandTrace('marker-failed', 'node:fixture')).toMatchObject({ receipt: false, activeLock: false, fenceHighWater: '5', admissionFailed: true });
+    expect(effect).not.toHaveBeenCalled();
+  });
+
+  it('keeps the claim when even the record cannot be written: the claim is the evidence, and needs no new space', async () => {
+    const { commandLedger } = await import('./command-executor.js');
+    failOn(commandLedger, /^(receipt|admission-failed)/, 'ENOSPC');
+    const response = await send(request('5', 'disk-full'));
+    expect(response.status).toBe(503);
+    expect(await commandLedger.commandTrace('disk-full', 'node:fixture')).toMatchObject({ receipt: false, activeLock: true, fenceHighWater: '5', admissionFailed: false });
+    expect(effect).not.toHaveBeenCalled();
+  });
+
+  it('a record for another command, or one that does not parse, proves nothing', async () => {
+    const { commandLedger } = await import('./command-executor.js');
+    await seedFence('node:fixture', '5');
+    await writeFile(join(receiptsDir(), `admission-failed-${createHash('sha256').update('mine').digest('hex')}.json`), JSON.stringify({ commandId: 'other' }), { mode: 0o600 });
+    expect((await commandLedger.commandTrace('mine', 'node:fixture')).admissionFailed).toBe(false);
+  });
+});
+
+describe('the restart waits for the terminal receipt', () => {
+  it('runs what a handler deferred only after the receipt is durable, also when the receipt fails', async () => {
+    const { commandLedger } = await import('./command-executor.js');
+    const { managedExecution } = await import('../security/managed-context.js');
+    const seen: string[] = [];
+    effect.mockImplementation(async () => {
+      managedExecution.getStore()?.afterSettled?.push(async () => { seen.push((await commandLedger.receipt('deferred'))?.state ?? 'none'); });
+      return new Response(JSON.stringify({ success: true }), { headers: { 'content-type': 'application/json' } });
+    });
+    expect((await send(request('5', 'deferred'))).status).toBe(200);
+    expect(seen).toEqual(['completed']);
   });
 });
 

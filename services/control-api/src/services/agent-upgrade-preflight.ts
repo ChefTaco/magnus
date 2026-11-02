@@ -117,6 +117,8 @@ export async function mapLimit<T, R>(items: readonly T[], limit: number, work: (
   return results;
 }
 
+/** The first version that reports its fence, answers the trace and says what it refused. */
+export const CERTAIN_REFUSALS_SINCE = '1.1.8';
 export const PREFLIGHT_CONCURRENCY = 16;
 export const PREFLIGHT_TIMEOUT_MS = 4_000;
 
@@ -144,7 +146,7 @@ export async function preflightNode(target: PreflightTarget, query: PreflightQue
     if (answer.status !== 'ok') return { status: answer.status, checkedAt, problems: [], detail: answer.detail };
     const problems = evaluatePreflight(answer.report, { nodeId: target.nodeId, hostname: target.hostname, managed: target.managed, generations: await generationsOf(target.nodeId) });
     const proof = answer.report.fenceProof;
-    const fencesVerified = Boolean(proof && proof.nonce === nonce && proof.nodeFqdn === target.hostname && verifyCommandEvidence(
+    const fencesVerified = Boolean(proof && proof.nonce === nonce && proof.nodeFqdn.toLowerCase() === target.hostname.toLowerCase() && verifyCommandEvidence(
       fenceProofSigningPayload({ nonce, nodeFqdn: proof.nodeFqdn, fenceHighWater: answer.report.fenceHighWater ?? {} }), proof.signature, RESULT_SIGNING_SECRET, RESULT_SIGNING_PREVIOUS_SECRET));
     return { status: preflightStatus(problems), checkedAt, problems, report: answer.report, fencesVerified };
   } catch (error) {

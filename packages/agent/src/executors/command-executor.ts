@@ -295,7 +295,7 @@ commandRoutes.get('/receipts/:commandId/trace', async (c) => {
     const trace = await commandLedger.commandTrace(id, resourceKey);
     if (trace.marker.error) logger.warn(`Enrollment marker could not be read: ${trace.marker.error}`);
     const unsigned = { commandId: id, nodeFqdn: HOST_FQDN, nonce, ledgerExists: trace.ledgerExists, receipt: trace.receipt, activeLock: trace.activeLock, resourceKey,
-      fenceHighWater: trace.fenceHighWater, markerState: trace.marker.state, markerNodeId: trace.marker.marker?.nodeId ?? null };
+      fenceHighWater: trace.fenceHighWater, markerState: trace.marker.state, markerNodeId: trace.marker.marker?.nodeId ?? null, admissionFailedFence: trace.admissionFailedFence };
     return c.json({ success: true, data: { ...unsigned, signature: signCommandEvidence(commandAbsenceSigningPayload(unsigned), RESULT_SIGNING_SECRET) } });
   } catch (error) {
     logger.warn(`Command trace ${id} could not be read: ${error instanceof Error ? error.message : String(error)}`);
