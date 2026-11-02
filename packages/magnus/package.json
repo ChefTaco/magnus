@@ -1,6 +1,6 @@
 {
   "name": "@hivemagnus/magnus",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "description": "Install, upgrade and roll back a Magnus server and console with one command: `npx @hivemagnus/magnus init`, then `magnus upgrade`. Pins exact, tested component versions, backs up PostgreSQL before every migration and reverts automatically when the new version fails its health check.",
   "keywords": [
     "magnus",
@@ -47,7 +47,7 @@
     "clean": "node -e \"const fs=require('node:fs');fs.rmSync('dist',{recursive:true,force:true});fs.rmSync('tsconfig.tsbuildinfo',{force:true})\""
   },
   "dependencies": {
-    "@hivemagnus/magnus-contracts": "1.1.5"
+    "@hivemagnus/magnus-contracts": "1.1.6"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
@@ -56,15 +56,15 @@
   },
   "magnusRelease": {
     "schema": 1,
-    "version": "1.1.5",
+    "version": "1.1.6",
     "engines": {
       "node": "^24.22.1 || ^26.13.0"
     },
     "components": {
-      "@hivemagnus/magnus-server": "1.1.5",
-      "@hivemagnus/magnus-ui": "1.1.5",
-      "@hivemagnus/magnus-contracts": "1.1.5",
-      "@hivemagnus/magnus-agent": "1.1.5"
+      "@hivemagnus/magnus-server": "1.1.6",
+      "@hivemagnus/magnus-ui": "1.1.6",
+      "@hivemagnus/magnus-contracts": "1.1.6",
+      "@hivemagnus/magnus-agent": "1.1.6"
     },
     "breaking": false,
     "minUpgradeFrom": "1.0.0",
@@ -77,8 +77,8 @@
       "selfUpgradeProtocol": 1,
       "minLauncher": 1
     },
-    "summary": "Enrollment drain fixes: scheduler proofs no longer fail when a timer fires between the two inventory reads, only real Hermes processes count as uninstrumented runtimes, and refused drain proofs log and return a specific reason. No migrations and no new settings.",
-    "notesUrl": "https://github.com/ChefTaco/magnus/releases/tag/v1.1.5",
+    "summary": "Scheduler discovery fixes: a Hermes jobs.json keeps one remembered identity across job runs instead of one per run, and software that merely lives under a .hermes directory is no longer counted as a Hermes runtime. No migrations and no new settings.",
+    "notesUrl": "https://github.com/ChefTaco/magnus/releases/tag/v1.1.6",
     "allowScripts": {
       "@prisma/engines": true,
       "argon2": true,

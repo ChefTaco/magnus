@@ -6,6 +6,34 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [1.1.6] - 2026-11-02
+
+### Fixed
+
+- A native Hermes `cron/jobs.json` no longer adds a new remembered scheduler source every time Hermes runs a job.
+  Its identity was a digest of the whole file, which Hermes rewrites on each run (`last_run_at`, `last_status`,
+  `next_run_at`, claims), so the sticky discovery journal kept one `NATIVE_HERMES_SCHEDULES` and
+  `NATIVE_HERMES_UNSETTLED_CLAIMS` copy per run and the reported counts multiplied. A jobs.json source is now
+  identified by its path plus its job definitions, ignoring run state (`last_*`, `next_run_at`, `updated_at`,
+  run counters such as `repeat.completed`, and the claim fields); its claims by its path plus the set of jobs
+  holding a claim. Adding, editing or enabling a job still records a new source, and the counts come from the
+  live file. Snapshots remembered by earlier versions stay until an operator clears them; see
+  [Hermes schedule sources remembered before 1.1.6](packages/agent/MANAGED_SCHEDULER.md#hermes-schedule-sources-remembered-before-116).
+- Scheduler discovery no longer counts unrelated software installed under a `.hermes` or `hermes` directory
+  (for example a Node service, its `tsx` loader or `esbuild` under `~/.hermes/<app>/node_modules`) as an
+  uninstrumented Hermes runtime. Only the file name of the executable or of the interpreter's script (`hermes`,
+  `hermes-*` and `hermes_*` shims, `run_gateway.py`), a Hermes module (`-m hermes_cli.main`, `hermes_agent`...)
+  or a `--hermes-home` option identifies one. Interpreter options that take a value (`--require`, `--import`,
+  `-W`...) are no longer mistaken for the script.
+
+### New environment variables
+
+- None.
+
+### Migration impact
+
+- None.
+
 ## [1.1.5] - 2026-11-02
 
 ### Fixed
@@ -445,6 +473,7 @@ The initial release snapshot.
   Pass them to `npm install -g` with `--allow-scripts=...`, or list them under `allowScripts` in
   your project's `package.json`.
 
+[1.1.6]: https://github.com/ChefTaco/magnus/releases/tag/v1.1.6
 [1.1.5]: https://github.com/ChefTaco/magnus/releases/tag/v1.1.5
 [1.1.4]: https://github.com/ChefTaco/magnus/releases/tag/v1.1.4
 [1.1.3]: https://github.com/ChefTaco/magnus/releases/tag/v1.1.3
