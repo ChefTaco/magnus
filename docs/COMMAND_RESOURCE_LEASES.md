@@ -37,9 +37,28 @@ from then on.
   Atomic state changes stop a delayed sender from dispatching afterwards.
 - A lost reply, malformed result or crash while `running` leaves the lease `unknown`. Expiry,
   cancellation, heartbeats, a failed command status and a server restart do not release it.
+- A refusal the node can prove settles the lease as `not-dispatched`: the agent signs with its result
+  key that this exact request did not start and has no receipt (`STALE_FENCE`, `LEASE_EXPIRED`,
+  `RESOURCE_BUSY` and so on), bound to the request digest. An unsigned word, or one for another request,
+  proves nothing and the lease stays `unknown`.
 - Only a verified node result bound to the exact request and fence, or the node's acknowledgement
-  of a signed reconciliation receipt, settles an uncertain lease. A signed nonzero exit code proves
-  the command finished; it does not prove a service recovered.
+  of a signed reconciliation receipt, settles an uncertain lease that has a receipt. A signed nonzero exit
+  code proves the command finished; it does not prove a service recovered.
+- A lease stuck `unknown` with no local trace can be settled as `not-dispatched` once its deadline has
+  passed. The agent signs, under a fresh nonce, that it holds no receipt and no `active.lock` for the command
+  (`GET /api/v1/commands/receipts/<id>/trace`). A running receipt is durable before any handler starts, and
+  past the deadline a delayed request can pass neither the ledger nor `/claim`, so this absence proves no
+  execution. It is audited as `agent.lease.recovered`. Scheduler occurrences and skill publications keep their
+  own retained evidence and are never settled this way, and agents older than 1.1.8 keep the older behaviour. A
+  ledger directory wiped by hand defeats this evidence, as it does every other receipt.
+
+A node's ledger can be ahead of the server's fence generation, after a database restore or because an older
+build wrote timestamp-style values. The generation then moves up to high-water + 1 when a preflight or a signed
+`STALE_FENCE` reports it, under the node's advisory lock and audited as `agent.fence.advanced`. It never moves
+down. Only the node's own keys and decimal values under a cap are accepted: a malicious agent can only inflate
+its own counter. `magnus-server agents fence NODE VALUE` does the same by hand for agents that do not report it.
+Heartbeat values only drive the readiness display, because heartbeats authenticate with a credential shared by the
+fleet.
 
 There is no unsigned force-release. Do not delete lease history to clear a blocked node: history
 stays a permanent barrier against falling back to unleased admission, even with the feature flag

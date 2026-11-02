@@ -63,7 +63,7 @@ export const UPGRADE_REMEDIES = {
   ENROLLMENT_HOST_MISMATCH: { class: 'node', cause: 'The enrollment names another host than the inventory.', remedy: 'Correct the host name of the node in the inventory.' },
   ENROLLMENT_INCOMPLETE: { class: 'node', cause: 'The node\'s resource enrollment is not complete.', remedy: 'Enroll the node (docs/COMMAND_RESOURCE_LEASES.md).' },
   ENROLLMENT_MARKER_MISMATCH: { class: 'node', cause: 'The agent holds a local managed-enrollment marker the server does not share.', remedy: 'Complete the node\'s resource enrollment on the server (docs/COMMAND_RESOURCE_LEASES.md), or upgrade the agent by hand.' },
-  NODE_OFFLINE: { class: 'node', cause: 'The node is offline or has no recent heartbeat.', remedy: 'Bring the agent back, then retry the node.' },
+  NODE_OFFLINE: { class: 'node', transient: true, cause: 'The node is offline or has no recent heartbeat.', remedy: 'Bring the agent back, then retry the node.' },
   NODE_NOT_FOUND: { class: 'node', cause: 'The node is no longer in the inventory.', remedy: 'Register the node again if it should be managed.' },
   VERSION_UNKNOWN: { class: 'node', cause: 'The agent has not reported a usable version.', remedy: 'Wait for a heartbeat, or upgrade the agent by hand.' },
   SELF_UPGRADE_TIMEOUT: { class: 'node', cause: 'A step of the upgrade did not finish in its time budget on the node.', remedy: 'Check the network and disk speed of the node, then retry it.' },
