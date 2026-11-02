@@ -16,6 +16,11 @@ export interface UpgradeRemedy {
   ambiguous?: boolean;
   /** An expected state that does not make a run `partial`, such as a node already on the target. */
   informational?: boolean;
+  /**
+   * Nodes that all refuse with this, with nothing confirmed, point at what they have in common: the release.
+   * Off for any code that names a node-level cause of its own, which says nothing about the release however many nodes share it.
+   */
+  suspectable?: boolean;
   /** Not in the catalogue, for example from a newer agent: treated as node-level, and shown as unrecognised. */
   unknown?: boolean;
   cause: string;
@@ -52,11 +57,15 @@ export const UPGRADE_REMEDIES = {
   // Node-level: needs someone.
   AGENT_SILENT_AFTER_LOST_REPLY: { class: 'node', ambiguous: true, cause: 'The request may or may not have arrived, and the agent has stopped sending heartbeats.', remedy: 'Check the service on the node. A later report for this request is still recorded in the run.' },
   FENCE_UNREPORTED: { class: 'node', cause: 'This agent is older than 1.1.8, has handled managed requests before, and cannot say what fence it holds. If that fence is ahead of the server, its request fails as MANAGED_MUTATION_UNCERTAIN and strands a lease.', remedy: 'Before the wave, read .magnus/command-receipts/fence-*.json on the node and run `magnus-server agents fence NODE VALUE`. Nothing to do if the fence is not ahead.' },
-  LEDGER_MISSING: { class: 'node', cause: 'The agent has no command ledger, so its "no receipt" proves nothing about a lease held for it. The ledger may have moved, or the install may have been rebuilt.', remedy: 'Check AGENT_INSTALL_DIR and restore .magnus/command-receipts if it moved; the lease then settles by itself. If it is gone, Magnus has no way to settle the lease: establish by hand what the command did.' },
-  LEDGER_NO_FENCE: { class: 'node', cause: 'The agent ledger holds no fence for this node, so it cannot have seen any managed request, or it was replaced.', remedy: 'Check whether .magnus/command-receipts was replaced or restored. If so, establish by hand what the command did; Magnus has no way to settle the lease.' },
-  LEDGER_EVIDENCE_INCONSISTENT: { class: 'node', cause: 'The agent ledger accepted this lease\'s fence but holds no receipt and no claim for it, and a receipt is never removed.', remedy: 'Inspect .magnus/command-receipts on the node: a receipt is missing. Establish by hand what the command did; Magnus has no way to settle the lease.' },
+  LEDGER_MISSING: { class: 'node', cause: 'The agent has no command ledger, so its "no receipt" proves nothing about a lease held for it. The ledger may have moved, or the install may have been rebuilt.', remedy: 'Check AGENT_INSTALL_DIR and restore .magnus/command-receipts if it moved; the lease then settles by itself. If it is gone, Magnus has no way to settle the lease: establish by hand what the command did, then change the lease row in the database yourself.' },
+  LEDGER_NO_FENCE: { class: 'node', cause: 'The agent ledger holds neither a fence nor this node\'s enrollment marker, so nothing shows it is the ledger this command would have used.', remedy: 'Check whether .magnus/command-receipts was replaced, and restore it if so; the lease then settles by itself. If it cannot be restored, Magnus has no way to settle the lease: establish by hand what the command did, then change the lease row in the database yourself.' },
+  LEDGER_EVIDENCE_INCONSISTENT: { class: 'node', cause: 'The agent ledger accepted this lease\'s fence, but holds no receipt, no claim and no record of a failed admission for it. Either a receipt was removed, or an admission failed on an agent build that kept no such record.', remedy: 'Inspect .magnus/command-receipts on the node and the agent log around the lease\'s time. Magnus has no way to settle the lease: establish by hand what the command did, then change the lease row in the database yourself.' },
   ENROLLMENT_MARKER_UNKNOWN: { class: 'node', cause: 'The agent could not read its managed-enrollment marker, so a mismatch cannot be ruled out.', remedy: 'Check .magnus/command-receipts/managed-enrollment.json on the node: its mode, owner and content.' },
-  SELF_UPGRADE_ENV_DISK: { class: 'node', cause: 'The node ran out of disk space or quota while installing the new version.', remedy: 'Free disk space on the node, then retry it.' },
+  SELF_UPGRADE_ENV_TLS: { class: 'node', cause: 'npm would not trust the registry\'s certificate on this node: a wrong clock, an expired certificate or an intercepting proxy.', remedy: 'Check the clock on the node and its CA trust for the registry, then retry it.' },
+  SELF_UPGRADE_ENV_AUTH: { class: 'node', cause: 'The registry refused this node\'s request (401 or 403).', remedy: 'Check the npm credentials and registry settings on the node, or use MAGNUS_AGENT_UPGRADE_SOURCE_DIR, then retry it.' },
+  SELF_UPGRADE_ENV_RESOURCE: { class: 'node', cause: 'The node ran out of memory or file handles, npm was killed, or a file was busy. A killed npm is told apart by how the process ended; a lifecycle script killed inside npm still reads as a package fault.', remedy: 'Check the memory on the node and its kernel log, then retry it.' },
+  RETRY_HELD_SUSPECTED: { class: 'node', cause: 'The run this one retries stopped because older agents answered ambiguously with nothing confirmed. Each further attempt on an older agent can strand another lease, so this retry leaves them alone.', remedy: 'Read the agent log of the nodes that answered, and run `magnus-server agents fence NODE VALUE` where a fence is ahead. Then retry with acknowledgeSuspicion (--acknowledge-suspicion).' },
+  SELF_UPGRADE_ENV_DISK: { class: 'node', cause: 'The node ran out of disk space or quota, or hit an I/O error, while installing the new version.', remedy: 'Free disk space on the node, then retry it.' },
   SELF_UPGRADE_ENV_ACCESS: { class: 'node', cause: 'The node refused a write while installing the new version.', remedy: 'Run `sudo magnus-agent install-service` again on the node, which repairs ownership, then retry it.' },
   RESOURCE_ENROLLMENT_REQUIRED: { class: 'node', cause: 'Admission refused the request because the node\'s resource enrollment is not complete.', remedy: 'Complete the node\'s resource enrollment (docs/COMMAND_RESOURCE_LEASES.md).' },
   FENCE_OVERFLOW: { class: 'node', cause: 'The agent reports a resource fence above the highest value the server will adopt.', remedy: 'Stop the agent, inspect .magnus/command-receipts/fence-*.json on the node, and repair that file by hand. The server does not change its generation.' },
@@ -67,7 +76,7 @@ export const UPGRADE_REMEDIES = {
   LEDGER_UNRESOLVED: { class: 'node', cause: 'The agent ledger holds a command with an unresolved outcome, which blocks every later managed request.', remedy: 'Reconcile that command with signed evidence (docs/COMMAND_RESOURCE_LEASES.md).' },
   LEASE_HELD: { class: 'node', cause: 'A command lease on the node is reserved, running or unknown.', remedy: 'Wait for it to finish. On a 1.1.8 agent, a lease stuck `unknown` with no receipt is settled by the readiness monitor, a run, or `magnus-server agents doctor --heal`; one with a receipt needs signed reconciliation. On an older agent, see MANAGED_MUTATION_UNCERTAIN.' },
   WORK_HELD: { class: 'node', cause: 'Participant work, such as a console terminal or SSH session, is still held on the node.', remedy: 'Finish or reconcile that work, then retry the node.' },
-  UNMANAGED_MUTATION: { class: 'node', cause: 'The agent is enrolled for managed requests and refused a request without a valid claim.', remedy: 'Complete the node\'s resource enrollment on the server (docs/COMMAND_RESOURCE_LEASES.md), or upgrade the agent by hand.' },
+  UNMANAGED_MUTATION: { class: 'node', suspectable: true, cause: 'The agent is enrolled for managed requests and refused a request without a valid claim.', remedy: 'Complete the node\'s resource enrollment on the server (docs/COMMAND_RESOURCE_LEASES.md), or upgrade the agent by hand.' },
   RESOURCE_CLAIM_INVALID: { class: 'node', cause: 'The server would not confirm the agent\'s claim for this request.', remedy: 'Check the enrollment and inventory host name of the node, then retry.' },
   RESOURCE_TARGET_INVALID: { class: 'node', cause: 'Admission refused the node: its inventory address changed or its health is not fresh.', remedy: 'Wait for a fresh heartbeat, or repair the inventory address.' },
   ADMISSION_FENCE_CLOSED: { class: 'node', cause: 'A server release closed admission to this node.', remedy: 'Release the admission fence (POST /api/v1/resource-leases/admission/<nodeId>/release).' },
@@ -79,12 +88,12 @@ export const UPGRADE_REMEDIES = {
   NODE_OFFLINE: { class: 'node', transient: true, cause: 'The node is offline or has no recent heartbeat.', remedy: 'Bring the agent back, then retry the node.' },
   NODE_NOT_FOUND: { class: 'node', cause: 'The node is no longer in the inventory.', remedy: 'Register the node again if it should be managed.' },
   VERSION_UNKNOWN: { class: 'node', cause: 'The agent has not reported a usable version.', remedy: 'Wait for a heartbeat, or upgrade the agent by hand.' },
-  SELF_UPGRADE_TIMEOUT: { class: 'node', cause: 'A step of the upgrade did not finish in its time budget on the node.', remedy: 'Check the network and disk speed of the node, then retry it.' },
+  SELF_UPGRADE_TIMEOUT: { class: 'node', cause: 'An npm step of the upgrade did not finish in its time budget on the node. A new version that hangs when it is run reports SELF_UPGRADE_FAILED instead. A lifecycle script that hangs inside npm also ends up here: it cannot be told apart.', remedy: 'Check the network and disk speed of the node, then retry it. If every node hangs the same way, suspect the release.' },
   SELF_UPGRADE_UNAVAILABLE: { class: 'node', cause: 'The agent cannot upgrade itself now: its layout, launcher, directories or npm are not usable.', remedy: 'Read the detail. Running `sudo magnus-agent install-service` once on the node usually repairs it.' },
-  SELF_UPGRADE_LAUNCHER: { class: 'node', cause: 'The new version needs a newer launcher than the node has.', remedy: 'Run `sudo magnus-agent install-service` once on the node.' },
-  SELF_UPGRADE_ENGINE: { class: 'node', cause: 'The new version does not support the Node.js on this node.', remedy: 'Upgrade Node.js on the node.' },
-  SELF_UPGRADE_PACKAGE: { class: 'node', cause: 'The agent refused to install a package other than magnus-agent.', remedy: 'Report this: the server sent an unexpected package name.' },
-  SELF_UPGRADE_REFUSED: { class: 'node', cause: 'The agent refused the version change.', remedy: 'Read the detail. Crossing a major version is done by hand.' },
+  SELF_UPGRADE_LAUNCHER: { class: 'node', suspectable: true, cause: 'The new version needs a newer launcher than the node has.', remedy: 'Run `sudo magnus-agent install-service` once on the node.' },
+  SELF_UPGRADE_ENGINE: { class: 'node', suspectable: true, cause: 'The new version does not support the Node.js on this node.', remedy: 'Upgrade Node.js on the node.' },
+  SELF_UPGRADE_PACKAGE: { class: 'node', suspectable: true, cause: 'The agent refused to install a package other than magnus-agent.', remedy: 'Report this: the server sent an unexpected package name.' },
+  SELF_UPGRADE_REFUSED: { class: 'node', suspectable: true, cause: 'The agent refused the version change.', remedy: 'Read the detail. Crossing a major version is done by hand.' },
   PREFLIGHT_NOT_WRITABLE: { class: 'node', cause: 'The agent cannot write to its install directory.', remedy: 'Run `sudo magnus-agent install-service` again on the node, which repairs ownership.' },
   PREFLIGHT_DISK_LOW: { class: 'node', cause: 'The install directory has less free space than an upgrade needs.', remedy: 'Free disk space on the node.' },
   PREFLIGHT_NPM: { class: 'node', cause: 'npm is missing on the node or too old.', remedy: 'Install npm beside the agent\'s Node.js, or set MAGNUS_AGENT_NPM.' },
@@ -103,15 +112,15 @@ export const UPGRADE_REMEDIES = {
   NOT_SELF_UPGRADABLE: { class: 'node', informational: true, cause: 'This agent cannot upgrade itself: it is too old, or not set up with the launcher.', remedy: 'Run `sudo magnus-agent install-service` once on the node.' },
   PROTOCOL_TOO_OLD: { class: 'node', informational: true, cause: 'The agent speaks an older self-upgrade protocol.', remedy: 'Upgrade this agent by hand.' },
   SELF_UPGRADE_DISABLED: { class: 'node', informational: true, cause: 'An operator switched self-upgrade off on this node, or it runs in a container or the legacy layout.', remedy: 'Nothing to do if that is intended. Otherwise set MAGNUS_AGENT_SELF_UPGRADE=true, pull a newer image, or run `sudo magnus-agent install-service` once.' },
-  UPGRADE_IN_PROGRESS: { class: 'node', informational: true, cause: 'An upgrade is already staged or on trial on this node.', remedy: 'Wait for its trial to end.' },
-  ALREADY_REVERTED: { class: 'node', informational: true, cause: 'This node already switched back from this exact version.', remedy: 'Read the reason. To try again, use allowRetryReverted (--retry-reverted).' },
+  UPGRADE_IN_PROGRESS: { class: 'node', cause: 'An upgrade is staged or on trial on this node, and it can still switch back.', remedy: 'Wait for its trial to end, then retry the node if it did not confirm.' },
+  ALREADY_REVERTED: { class: 'node', cause: 'This node already switched back from this exact version.', remedy: 'Read the reason. To try again, use allowRetryReverted (--retry-reverted).' },
   PREFLIGHT_UNAVAILABLE: { class: 'node', informational: true, cause: 'An agent older than 1.1.8 has no preflight check; heartbeat data is used instead.', remedy: 'Nothing to do: the agent gains the check when it is upgraded.' },
   PREFLIGHT_UNREACHABLE: { class: 'node', informational: true, cause: 'The preflight check got no answer. The node stays in the run, and dispatch decides.', remedy: 'Nothing to do unless the node then fails with AGENT_UNREACHABLE.' },
 } as const satisfies Record<string, UpgradeRemedy>;
 
 export type UpgradeProblemCode = keyof typeof UPGRADE_REMEDIES;
 
-const FALLBACK: UpgradeRemedy = { class: 'node', unknown: true, cause: 'Unrecognised code: the agent or the server refused this node for a reason the catalogue does not list.', remedy: 'Read the detail and the agent log, then retry the node. An agent newer than the server can cause this.' };
+const FALLBACK: UpgradeRemedy = { class: 'node', unknown: true, suspectable: true, cause: 'Unrecognised code: the agent or the server refused this node for a reason the catalogue does not list.', remedy: 'Read the detail and the agent log, then retry the node. An agent newer than the server can cause this.' };
 
 /** Cause and remedy for a code; an unknown code (a newer agent, an unexpected 4xx) is a node-level problem. */
 export function upgradeRemedy(code: string | null | undefined): UpgradeRemedy {

@@ -695,7 +695,7 @@ class DashboardApiClient {
       this.post<AgentUpgradeCheck>('agents/upgrade', { ...data, dryRun: true }).then((r) => r.data!),
     run: (id: string) => this.get<AgentUpgradeRun>(`agents/upgrade/runs/${encodeURIComponent(id)}`).then((r) => r.data!),
     stop: (id: string) => this.post<AgentUpgradeRun>(`agents/upgrade/runs/${encodeURIComponent(id)}/stop`).then((r) => r.data!),
-    retry: (id: string, data: { allowRetryReverted?: boolean } = {}) =>
+    retry: (id: string, data: { allowRetryReverted?: boolean; acknowledgeSuspicion?: boolean } = {}) =>
       this.post<AgentUpgradeRun>(`agents/upgrade/runs/${encodeURIComponent(id)}/retry`, data).then((r) => r.data!),
   };
 

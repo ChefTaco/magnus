@@ -323,11 +323,11 @@ describe('the canary', () => {
     expect(world.log).toEqual(['a']);
   });
 
-  it('hands the role on past a lost reply, whose window ends without holding up the wave', async () => {
+  it('hands the role on past a lost reply once its whole watch is over', async () => {
     const { run, world } = await start({ a: { reply: ['lost'], after: 'never-reports' }, b: {}, c: {} });
     expect(run.canaryNodeId).toBe('b');
-    // Well before the watch of `a` ends, a window plus ten minutes after its request.
-    expect(world.dispatchAt.get('b')! - world.dispatchAt.get('a')!).toBeLessThan(5 * WINDOW_MS);
+    // A first canary whose reply was lost may still be staging, so its whole watch comes first.
+    expect(world.dispatchAt.get('b')! - world.dispatchAt.get('a')!).toBeGreaterThanOrEqual(WINDOW_MS + 10 * 60_000);
     expect(node(run, 'a')).toMatchObject({ state: 'ambiguous', code: 'MUTATION_OUTCOME_UNKNOWN', awaitingReport: true, attempts: 1 });
     expect(node(run, 'c')?.state).toBe('confirmed');
     expect(run.status).toBe('partial');

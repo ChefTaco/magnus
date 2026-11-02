@@ -72,6 +72,7 @@ const retrySchema = z.object({
   canaryNodeId: nodeId.optional(),
   allowRetryReverted: z.boolean().optional(),
   maxFailures: maxFailures.optional(),
+  acknowledgeSuspicion: z.boolean().optional(),
 }).strict();
 
 agentUpgradesRouter.post('/runs/:id/retry', requireRole('ADMIN'), async c => {

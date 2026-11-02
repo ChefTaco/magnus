@@ -43,7 +43,7 @@ import { getNodeManagerSecret } from '../utils/env.js';
 import { getNodeBaseUrl } from '../utils/node-url.js';
 import { SENTINEL_NODE_IDS } from '../utils/sentinel-nodes.js';
 import type { AuditAction } from '../types/auth.js';
-import { healNode, mapLimit, PREFLIGHT_CONCURRENCY, preflightNode, preflightStatus, selfUpgradeOffCode, type NodePreflight, type PreflightProblem, type PreflightQuery, type PreflightTarget } from './agent-upgrade-preflight.js';
+import { CERTAIN_REFUSALS_SINCE, healNode, mapLimit, PREFLIGHT_CONCURRENCY, preflightNode, preflightStatus, selfUpgradeOffCode, type NodePreflight, type PreflightProblem, type PreflightQuery, type PreflightTarget } from './agent-upgrade-preflight.js';
 import { logAuditEvent } from './audit-service.js';
 import { HELD_RESOURCE_STATES, hasFreshOnlineHealth, legacyAdmissionPossible, resourceLeasesRequested } from './command-resource-leases.js';
 import { enrollmentIsComplete } from './resource-enrollment.js';
@@ -210,6 +210,17 @@ function applyLateOutcome(entry: RunNode, state: 'confirmed' | 'reverted' | 'fai
 
 /** A report for a node nobody watches any more: its run ended, or its watch timed out while the run goes on. */
 async function recordLateOutcome(store: RunStore, runId: string, requestId: string, state: 'confirmed' | 'reverted' | 'failed', reason: string | null): Promise<void> {
+  // A read-modify-write of the stored run: one at a time per run here. Two servers can still overlap; the owner re-reads reports.
+  const previous = lateOutcomeQueue.get(runId) ?? Promise.resolve();
+  const turn = previous.catch(() => undefined).then(() => applyLateReport(store, runId, requestId, state, reason));
+  const tail = turn.finally(() => { if (lateOutcomeQueue.get(runId) === tail) lateOutcomeQueue.delete(runId); });
+  lateOutcomeQueue.set(runId, tail);
+  return tail;
+}
+
+const lateOutcomeQueue = new Map<string, Promise<void>>();
+
+async function applyLateReport(store: RunStore, runId: string, requestId: string, state: 'confirmed' | 'reverted' | 'failed', reason: string | null): Promise<void> {
   const live = executing.get(runId)?.run;
   const run = live ?? await store.get(runId);
   if (!run) return;
@@ -347,6 +358,8 @@ export function classifyCandidate(row: CandidateRow, target: string, options: El
   const no = (code: string, reason: string): UpgradeCandidate => ({ ...base, eligible: false, reason, code });
   if (!hasFreshOnlineHealth(row, now)) return no('NODE_OFFLINE', `offline or no recent heartbeat${row.lastHeartbeatAt ? ` (last ${row.lastHeartbeatAt.toISOString()})` : ''}`);
   if (!isVersion(version)) return no('VERSION_UNKNOWN', 'agent version unknown');
+  // A node on trial reports the new version already, and can still switch back.
+  if (report?.upgrade && (report.upgrade.state === 'staged' || report.upgrade.state === 'trial')) return no('UPGRADE_IN_PROGRESS', `an upgrade to ${report.upgrade.to} is in progress`);
   if (compareVersions(version, target) === 0) return no('ALREADY_CURRENT', 'already on this version');
   const decision = checkUpgradeAllowed(version, target);
   if (!decision.allowed) return decision.kind === 'downgrade' ? no('DOWNGRADE', `runs ${version}, newer than ${target}`) : no('MAJOR_VERSION', `${version} -> ${target} crosses a major version; upgrade this node by hand`);
@@ -354,7 +367,6 @@ export function classifyCandidate(row: CandidateRow, target: string, options: El
   if (report.protocol < AGENT_SELF_UPGRADE_PROTOCOL) return no('PROTOCOL_TOO_OLD', 'agent self-upgrade protocol too old');
   if (!report.enabled) return no(selfUpgradeOffCode(report), report.reason ?? 'self-upgrade disabled on this node');
   const upgrade = report.upgrade;
-  if (upgrade && (upgrade.state === 'staged' || upgrade.state === 'trial')) return no('UPGRADE_IN_PROGRESS', `an upgrade to ${upgrade.to} is in progress`);
   if (upgrade?.state === 'reverted' && upgrade.to === target && !options.allowRetryReverted)
     return no('ALREADY_REVERTED', `reverted ${target} at ${upgrade.updatedAt ?? report.observedAt}: ${upgrade.reason ?? 'no reason given'}; try again only with allowRetryReverted`);
   if (row.admissionFence) return no('ADMISSION_FENCE_CLOSED', `release ${row.admissionFence.releaseId} closed admission to this node at ${row.admissionFence.closedAt.toISOString()}; release the fence first`);
@@ -436,6 +448,8 @@ export interface RunNode {
   awaitingReport?: boolean;
   /** Whether a problem here is evidence about the release or about this node. */
   failureClass?: UpgradeFailureClass | null;
+  /** An old agent with lease history: it cannot say what fence it holds, so an ambiguous answer has another explanation. */
+  fenceUnreported?: boolean;
   /** Requests sent to this node; above 1 after an end-of-wave retry. */
   attempts?: number;
 }
@@ -682,7 +696,11 @@ export function defaultDeps(store: RunStore = defaultRunStore()): UpgradeDeps {
   };
 }
 
-export interface DispatchFailure { kind: 'refused' | 'failed' | 'unknown'; code: string; message: string }
+export interface DispatchFailure {
+  kind: 'refused' | 'failed' | 'unknown'; code: string; message: string;
+  /** The agent answered, so it has finished with the request; otherwise the request may still be running. */
+  answered?: boolean;
+}
 
 /** Whether a failed request left the node untouched (refused), hit a release problem (failed), or may have run (unknown). */
 export function classifyDispatchFailure(error: unknown): DispatchFailure {
@@ -694,7 +712,7 @@ export function classifyDispatchFailure(error: unknown): DispatchFailure {
     const agentCode = error.code ?? `HTTP_${error.agentStatus}`;
     const remedy = upgradeRemedy(agentCode);
     // A 5xx with no code of ours says nothing about how far the request got.
-    if (remedy.ambiguous || (!error.code && error.agentStatus >= 500)) return { kind: 'unknown', code: agentCode === `HTTP_${error.agentStatus}` ? 'MUTATION_OUTCOME_UNKNOWN' : agentCode, message };
+    if (remedy.ambiguous || (!error.code && error.agentStatus >= 500)) return { kind: 'unknown', code: agentCode === `HTTP_${error.agentStatus}` ? 'MUTATION_OUTCOME_UNKNOWN' : agentCode, message, answered: true };
     if (remedy.class === 'release') return { kind: 'failed', code: agentCode, message };
     return { kind: 'refused', code: agentCode, message };
   }
@@ -739,7 +757,6 @@ async function upgradeOne(run: UpgradeRun, entry: RunNode, deps: UpgradeDeps, co
   entry.state = 'requested';
   entry.attempts = (entry.attempts ?? 0) + 1;
   await deps.save(run);
-  const startedAt = deps.now();
   let unknown: DispatchFailure | null = null;
   try {
     await deps.request(entry.nodeId, { version: run.version, integrity: run.integrity, requestId: entry.requestId, packageName: AGENT_PACKAGE });
@@ -749,6 +766,8 @@ async function upgradeOne(run: UpgradeRun, entry: RunNode, deps: UpgradeDeps, co
     if (failure.kind === 'failed') return end('failed', failure.message, failure.code);
     unknown = failure;
   }
+  // Staging can take minutes before the reply: the trial and its window only start once the request has ended.
+  const startedAt = deps.now();
   entry.dispatchedAt = iso();
   let freeSlot: () => void = () => undefined;
   const slot = new Promise<void>(resolve => { freeSlot = resolve; });
@@ -801,11 +820,14 @@ async function watchNode(run: UpgradeRun, entry: RunNode, deps: UpgradeDeps, con
     if (unknown) {
       // Silent past its window: it will not report now. This is not AGENT_SILENT, which counts against the release:
       // nobody knows the request arrived. It ends the watch early, and it counts as ambiguous towards a suspicion.
-      if (lastHeartbeat && deps.now() - lastHeartbeat.getTime() > windowMs) {
+      if (lastHeartbeat && deps.now() - Math.max(lastHeartbeat.getTime(), startedAt) > windowMs) {
         return end('ambiguous', `outcome unknown (${unknown.message}); no heartbeat since ${lastHeartbeat.toISOString()}`, 'AGENT_SILENT_AFTER_LOST_REPLY', true);
       }
-      // Past the window the wave goes on without this node; its reports are still read here.
-      if (deps.now() - startedAt >= windowMs && entry.state === 'requested') {
+      // Past the window the wave goes on without this node; its reports are still read here. A first canary whose reply
+      // was lost may still be staging and then restarting, so nothing else is touched until its whole watch is over. An
+      // agent that ANSWERED uncertain has finished with the request, and a node reporting a trial is still going.
+      const inFlight = (!unknown.answered && !run.nodes.some(node => node.state === 'confirmed')) || upgrade?.requestId === entry.requestId && (upgrade.state === 'staged' || upgrade.state === 'trial');
+      if (!inFlight && deps.now() - startedAt >= windowMs && entry.state === 'requested') {
         Object.assign(entry, { state: 'watching', code: unknown.code, failureClass: 'node', awaitingReport: true,
           detail: `outcome unknown (${unknown.message}); still watching this request's reports` });
         freeSlot();
@@ -813,13 +835,12 @@ async function watchNode(run: UpgradeRun, entry: RunNode, deps: UpgradeDeps, con
       }
       continue;
     }
-    // Silent for longer than the agent's own trial window: it will not confirm, even if the extended deadline is not up.
-    if (lastHeartbeat && deps.now() - lastHeartbeat.getTime() > windowMs)
-      return end('failed', `no heartbeat since ${lastHeartbeat.toISOString()}`, 'AGENT_SILENT', true);
   }
   if (context.closed) return;
   const minutes = Math.round((deadline() - startedAt) / 60_000);
   if (unknown) return end('ambiguous', `outcome unknown (${unknown.message}); no report for this request within ${minutes} min`, unknown.code, true);
+  // No heartbeat since the reply: the new version never came up, as opposed to one that runs and does not confirm.
+  if (lastHeartbeat && lastHeartbeat.getTime() <= startedAt) return end('failed', `no heartbeat since ${lastHeartbeat.toISOString()}`, 'AGENT_SILENT', true);
   end('failed', `no confirmation within ${minutes} min`, 'CONFIRM_TIMEOUT', true);
 }
 
@@ -853,23 +874,40 @@ export function attentionList(run: UpgradeRun): RunAttention[] {
 /** One old agent with a stale fence looks exactly like this, so a suspicion always takes more than one node. */
 const suspicionThreshold = (run: UpgradeRun) => Math.max(run.maxFailures ?? DEFAULT_MAX_FAILURES, 2);
 
+const isCountedAmbiguous = (node: RunNode) => (node.state === 'watching' || node.state === 'ambiguous') && node.code !== 'RUN_INTERRUPTED';
+
+/**
+ * Ambiguous canaries with nothing confirmed, the only signal a fleet before 1.1.8
+ * gives about a bad release. A node that cannot report its fence has another
+ * explanation for its ambiguity, so it does not count while any other node may
+ * still confirm; those nodes go last in the queue for this reason. Once only they
+ * are left, they count: the walk stays bounded, at the cost that a fleet of nothing
+ * but stale old agents reads as suspected too, and the message says that.
+ */
+function ambiguousSuspicion(run: UpgradeRun): string | null {
+  if (run.nodes.some(node => node.state === 'confirmed')) return null;
+  const ambiguous = run.nodes.filter(isCountedAmbiguous);
+  const otherStillPending = run.nodes.some(node => node.state === 'pending' && !node.fenceUnreported);
+  const counted = otherStillPending ? ambiguous.filter(node => !node.fenceUnreported) : ambiguous;
+  if (counted.length < suspicionThreshold(run)) return null;
+  const staleFence = counted.some(node => node.fenceUnreported) ? '. These agents cannot report their fence, so each may instead hold a stale fence: read it on the node and run `magnus-server agents fence NODE VALUE`' : '';
+  return `the release is suspect but unproven: ${counted.length} canaries in a row answered without a usable outcome (${[...new Set(counted.map(node => node.code))].join(', ')}) and no node has confirmed; read the agent log on ${counted.slice(0, 3).map(node => node.name).join(', ')}${staleFence}`;
+}
+
 /**
  * With nothing confirmed, nodes that all behave the same point at what they have
- * in common. An agent before 1.1.8 can only answer a failed install as uncertain,
- * so this is the one signal such a fleet can give about a bad release. Not proof:
- * the message says so, and a node that confirms clears it.
+ * in common. Not proof: the message says so, and a node that confirms clears it.
+ * A refusal counts only when its code can point at the release at all.
  */
 export function releaseSuspicion(run: UpgradeRun): string | null {
   if (run.nodes.some(node => node.state === 'confirmed')) return null;
+  const ambiguous = ambiguousSuspicion(run);
+  if (ambiguous) return ambiguous;
   const threshold = suspicionThreshold(run);
-  const ambiguous = run.nodes.filter(node => (node.state === 'watching' || node.state === 'ambiguous') && node.code !== 'RUN_INTERRUPTED');
-  if (ambiguous.length >= threshold)
-    return `the release is suspect but unproven: ${ambiguous.length} canaries in a row answered without a usable outcome (${[...new Set(ambiguous.map(node => node.code))].join(', ')}) and no node has confirmed; read the agent log on ${ambiguous.slice(0, 3).map(node => node.name).join(', ')}`;
   const refusals = new Map<string, RunNode[]>();
   for (const node of run.nodes) {
     if (node.state !== 'refused' || !node.code) continue;
-    const remedy = upgradeRemedy(node.code);
-    if (!remedy.transient && !remedy.informational) refusals.set(node.code, [...refusals.get(node.code) ?? [], node]);
+    if (upgradeRemedy(node.code).suspectable) refusals.set(node.code, [...refusals.get(node.code) ?? [], node]);
   }
   for (const [code, nodes] of refusals)
     if (nodes.length >= threshold) return `a release problem is suspected: ${nodes.length} nodes refused with ${code} and none has confirmed`;
@@ -943,10 +981,8 @@ export async function executeUpgradeRun(run: UpgradeRun, deps: UpgradeDeps): Pro
     if (fatal) return finish('failed', `${describe(fatal)}: every node gets the same artifact, so the run stopped`);
     if (canaryPhase && failures[0]) return finish('failed', `canary ${failures[0].name} did not confirm (${failures[0].code}: ${failures[0].detail ?? ''}); the other nodes were not touched`);
     // Ambiguity stops the wave; identical refusals do not, since each of those nodes is known to be untouched.
-    if (confirmed().length === 0) {
-      const ambiguous = run.nodes.filter(node => (node.state === 'watching' || node.state === 'ambiguous') && node.code !== 'RUN_INTERRUPTED');
-      if (ambiguous.length >= suspicionThreshold(run)) return finish('failed', releaseSuspicion(run) ?? 'the release is suspect but unproven');
-    }
+    const suspected = ambiguousSuspicion(run);
+    if (suspected) return finish('failed', suspected);
     if (failures.length >= budget) return finish('failed', `${failures.length} release failure(s) reached the budget of ${budget}: ${failures.slice(0, 5).map(describe).join('; ')}; remaining nodes were skipped`);
     return null;
   };
@@ -1070,6 +1106,8 @@ export interface StartRunOptions {
   retryOf?: string;
   /** This run's budget of release failures (default MAGNUS_AGENT_UPGRADE_MAX_FAILURES). */
   maxFailures?: number;
+  /** Leave out agents that cannot report refusals as certain: a retry of a run that stopped on their ambiguity. */
+  holdOldAgents?: boolean;
   actorId: string;
   deps?: UpgradeDeps;
   store?: RunStore;
@@ -1144,6 +1182,15 @@ async function hostnamesOf(ids: string[]): Promise<Map<string, string>> {
   return new Map(rows.map(row => [row.id, row.hostname ?? '']));
 }
 
+/**
+ * 0: 1.1.8 or later, which says what it refused. 1: older, with no lease history.
+ * 2: older with lease history, which cannot say whether its fence would refuse this.
+ */
+function agentTier(candidate: UpgradeCandidate): 0 | 1 | 2 {
+  if (isVersion(candidate.version) && compareVersions(candidate.version, CERTAIN_REFUSALS_SINCE) >= 0) return 0;
+  return candidate.preflight?.problems.some(problem => problem.code === 'FENCE_UNREPORTED') ? 2 : 1;
+}
+
 export interface UpgradeCheckReport {
   version: string;
   release: ReleaseVerification;
@@ -1204,7 +1251,11 @@ export async function startUpgradeRun(options: StartRunOptions): Promise<{ run: 
     }
     const unknown = (options.nodeIds ?? []).filter(nodeId => !candidates.some(candidate => candidate.nodeId === nodeId));
     if (unknown.length) throw new HttpError(400, 'UNKNOWN_NODES', `Unknown or decommissioned node(s): ${unknown.slice(0, 20).join(', ')}`);
-    const eligible = candidates.filter(candidate => candidate.eligible);
+    if (options.holdOldAgents) candidates = candidates.map(candidate => candidate.eligible && agentTier(candidate) > 0 ? { ...candidate, eligible: false, code: 'RETRY_HELD_SUSPECTED',
+      reason: 'left out of this retry: the run before it stopped on ambiguous answers from older agents, and another attempt can strand another lease; retry with acknowledgeSuspicion to include it' } : candidate);
+    // Who goes first decides who can stop the wave: those that can answer plainly, then those that can only answer uncertain.
+    const eligible = candidates.filter(candidate => candidate.eligible).map((candidate, index) => ({ candidate, index }))
+      .sort((a, b) => agentTier(a.candidate) - agentTier(b.candidate) || a.index - b.index).map(entry => entry.candidate);
     if (options.canaryNodeId && !eligible.some(candidate => candidate.nodeId === options.canaryNodeId)) {
       const canary = candidates.find(candidate => candidate.nodeId === options.canaryNodeId);
       throw new HttpError(400, 'INVALID_CANARY', canary ? `Canary ${canary.name} cannot be upgraded now: ${canary.reason}` : 'canaryNodeId is not among the selected nodes');
@@ -1223,7 +1274,8 @@ export async function startUpgradeRun(options: StartRunOptions): Promise<{ run: 
       warnings: candidates.flatMap(candidate => (candidate.preflight?.problems ?? []).filter(problem => problem.code === 'FENCE_UNREPORTED')
         .map(problem => ({ nodeId: candidate.nodeId, name: candidate.name, code: problem.code, detail: problem.detail }))),
       excluded: candidates.filter(candidate => !candidate.eligible).map(candidate => ({ nodeId: candidate.nodeId, name: candidate.name, reason: candidate.reason ?? 'not eligible', code: candidate.code })),
-      nodes: eligible.map(candidate => ({ nodeId: candidate.nodeId, name: candidate.name, from: candidate.version, state: 'pending', requestId: randomUUID(), detail: null })),
+      nodes: eligible.map(candidate => ({ nodeId: candidate.nodeId, name: candidate.name, from: candidate.version, state: 'pending', requestId: randomUUID(), detail: null,
+        ...(agentTier(candidate) === 2 ? { fenceUnreported: true } : {}) })),
     };
     await store.index(run);
     await deps.save(run);
@@ -1262,7 +1314,7 @@ export async function stopUpgradeRun(id: string, actorId: string, store: RunStor
 }
 
 /** Retry the nodes a finished run did not upgrade, with the same version and integrity. */
-export async function retryUpgradeRun(id: string, options: Omit<StartRunOptions, 'version' | 'integrity' | 'nodeIds' | 'retryOf'>): Promise<ReturnType<typeof startUpgradeRun>> {
+export async function retryUpgradeRun(id: string, options: Omit<StartRunOptions, 'version' | 'integrity' | 'nodeIds' | 'retryOf' | 'holdOldAgents'> & { acknowledgeSuspicion?: boolean }): Promise<ReturnType<typeof startUpgradeRun>> {
   const store = options.store ?? defaultRunStore();
   const previous = await getUpgradeRun(id, store);
   if (!previous) throw new HttpError(404, 'NOT_FOUND', 'Upgrade run not found');
@@ -1272,7 +1324,11 @@ export async function retryUpgradeRun(id: string, options: Omit<StartRunOptions,
   const nodeIds = [...previous.nodes.filter(node => retry.has(node.state)).map(node => node.nodeId),
     ...(previous.excluded ?? []).filter(node => node.code && !upgradeRemedy(node.code).informational).map(node => node.nodeId)];
   if (!nodeIds.length) throw new HttpError(409, 'NOTHING_TO_RETRY', `Run ${id} has no failed, refused, skipped or interrupted nodes${options.allowRetryReverted ? '' : ' (reverted nodes need allowRetryReverted)'}`);
-  return startUpgradeRun({ ...options, store, version: previous.version, integrity: previous.integrity, nodeIds, retryOf: previous.id,
+  // Retrying a run that stopped on ambiguity must not walk the next old agents into the same stranded lease: someone has to look first.
+  const stoppedOnAmbiguity = Boolean(previous.suspectedRelease && previous.nodes.some(isCountedAmbiguous) && !previous.nodes.some(node => node.state === 'confirmed'));
+  const holdOldAgents = !options.acknowledgeSuspicion && (stoppedOnAmbiguity || Boolean(previous.excluded?.some(node => node.code === 'RETRY_HELD_SUSPECTED')));
+  const { acknowledgeSuspicion: _acknowledged, ...startOptions } = options;
+  return startUpgradeRun({ ...startOptions, store, holdOldAgents, version: previous.version, integrity: previous.integrity, nodeIds, retryOf: previous.id,
     maxFailures: options.maxFailures ?? previous.maxFailures,
     allowPrerelease: options.allowPrerelease ?? isPrerelease(previous.version) });
 }

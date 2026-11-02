@@ -14,6 +14,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { commandRequestDigest } from '../security/command-request.js';
 import { commandRefusalSigningPayload, commandResultSigningPayload, fenceProofSigningPayload } from '../security/command-result-signature.js';
 import { httpIdentity, httpReceiptBody } from '../security/managed-http.js';
+import { getNodeBaseUrl } from '../utils/node-url.js';
 
 const secret = 'upgrade-wave-result-fixture-at-least-32-characters';
 vi.mock('../utils/env.js', async original => ({ ...await original<object>(),
@@ -63,15 +64,20 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('an upgrade wave over real le
   });
 
   /** Create nodes with fake agents that answer at the HTTP boundary, each the way its version really does. */
-  async function fleet(spec: Record<string, { behaviour: Behaviour; ledgerFence?: bigint; enrollment?: 'draining' }>) {
+  async function fleet(spec: Record<string, { behaviour: Behaviour; ledgerFence?: bigint; enrollment?: 'draining'; version?: string; leaseHistory?: boolean }>, version = TARGET) {
     const run = randomUUID().slice(0, 6);
     const nodes = Object.entries(spec).map(([name, entry], index) => ({ id: `${prefix}-${run}-${name}`, port: 41000 + index, ...entry }));
     created.push(...nodes.map(node => node.id));
     for (const node of nodes) {
       await db.node.create({ data: { id: node.id, name: node.id, hostname: `${node.id}.invalid`, ipAddress: '127.0.0.1', port: node.port, os: 'fixture', arch: 'fixture', token: randomUUID(),
-        status: 'ONLINE', lastHeartbeatAt: new Date(), metadata: metadata(), agent: { create: { version: '1.1.7', status: 'RUNNING' } } } });
+        status: 'ONLINE', lastHeartbeatAt: new Date(), metadata: metadata(), agent: { create: { version: node.version ?? '1.1.7', status: 'RUNNING' } } } });
       await db.resourceEnrollment.create({ data: { nodeId: node.id, nodeFqdn: `${node.id}.invalid`, state: node.enrollment ?? 'enrolled', epoch: 1, barrierId: randomUUID(),
         ...(node.enrollment ? { startedAt: new Date('2026-06-03T10:00:00Z') } : { enrolledAt: new Date() }) } });
+      if (node.leaseHistory) {
+        const leases = await import('./command-resource-leases.js');
+        const admission = await leases.admitResourceCommand({ nodeId: node.id, actorId: 'fixture', baseUrl: getNodeBaseUrl('127.0.0.1', node.port) }, { commandId: `history-${randomUUID()}`, command: '/usr/bin/true', args: [], timeoutSeconds: 5 });
+        await leases.failResourceCommand(admission!);
+      }
     }
     const ledger = new Map(nodes.map(node => [node.id, node.ledgerFence ?? 0n]));
     const accepted: string[] = [];
@@ -118,7 +124,7 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('an upgrade wave over real le
       const result = { commandId: value.commandId, exitCode: 0, stdout: httpReceiptBody(value.method, value.path, 200, body), stderr: '', durationMs: 1, truncated: false, coordination: { ...value.coordination, requestSha256: digest } };
       const requestId = (JSON.parse(value.body) as { requestId: string }).requestId;
       await db.node.update({ where: { id: node.id }, data: { metadata: JSON.stringify({ agentSelfUpgrade: { protocol: 1, launcherProtocol: 1, layout: 'versioned', enabled: true,
-        upgrade: { state: node.behaviour === 'reverts' ? 'reverted' : 'confirmed', from: '1.1.7', to: TARGET, requestId, reason: node.behaviour === 'reverts' ? 'the new version stayed silent' : null }, observedAt: new Date().toISOString() } }) } });
+        upgrade: { state: node.behaviour === 'reverts' ? 'reverted' : 'confirmed', from: '1.1.7', to: version, requestId, reason: node.behaviour === 'reverts' ? 'the new version stayed silent' : null }, observedAt: new Date().toISOString() } }) } });
       const receipt = { ...result, signature: hmac(commandResultSigningPayload(result)) };
       if (node.behaviour === 'lost-then-confirms') {
         // The agent did the work and kept its signed receipt; only the reply never arrived.
@@ -133,7 +139,7 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('an upgrade wave over real le
     // These agents keep sending heartbeats, on the same accelerated clock as the run.
     const deps = { ...real, pollMs: 5_000, confirmTimeoutMs: 10_000, retryBackoffMs: [1], now: () => clock, observe: async (nodeId: string) => ({ ...await real.observe(nodeId), lastHeartbeatAt: new Date(clock) }),
       sleep: async (ms: number) => { clock += ms; await new Promise(resolve => setTimeout(resolve, 1)); } };
-    const started = await service.startUpgradeRun({ version: TARGET, integrity: INTEGRITY, nodeIds: nodes.map(node => node.id), actorId: 'admin', store, deps });
+    const started = await service.startUpgradeRun({ version, integrity: INTEGRITY, nodeIds: nodes.map(node => node.id), actorId: 'admin', store, deps });
     const result = await started.done;
     const id = (name: string) => nodes.find(node => node.id.endsWith(`-${name}`))!.id;
     return { run: result, started, id, accepted, ids: nodes.map(node => node.id), entry: (name: string) => result.nodes.find(node => node.nodeId === id(name)) };
@@ -202,6 +208,24 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('an upgrade wave over real le
       expect((await db.node.findUniqueOrThrow({ where: { id: routable } })).ipAddress).toBe('192.0.2.10');
       expect((await db.node.findUniqueOrThrow({ where: { id: loopback } })).ipAddress).toBe('198.51.100.66');
     });
+  });
+
+  it('second review, finding 2: two stale old agents named first do not stop healthy nodes, over real leases', async () => {
+    const stale = { behaviour: 'old-uncertain' as const, leaseHistory: true };
+    const { run, entry, id, accepted } = await fleet({ 'a-old': stale, 'b-old': stale, 'c-new': { behaviour: 'proof', version: '1.1.9' }, 'd-new': { behaviour: 'proof', version: '1.1.9' }, 'e-new': { behaviour: 'proof', version: '1.1.9' } }, '1.1.10');
+    expect(run.canaryNodeId).toBe(id('c-new'));
+    for (const name of ['c-new', 'd-new', 'e-new']) expect(entry(name)?.state).toBe('confirmed');
+    expect(accepted).toHaveLength(3);
+    expect(run).toMatchObject({ status: 'partial', suspectedRelease: null });
+    expect(run.warnings?.map(warning => warning.code)).toEqual(['FENCE_UNREPORTED', 'FENCE_UNREPORTED']);
+  });
+
+  it('second review, finding 2: a bad release on old agents with lease history stops, and strands no more on retry', async () => {
+    const stale = { behaviour: 'old-uncertain' as const, leaseHistory: true };
+    const { run, entry, ids } = await fleet({ 'a-old': stale, 'b-old': stale, 'c-old': stale, 'd-old': stale });
+    expect(run).toMatchObject({ status: 'failed', suspectedRelease: expect.stringMatching(/suspect but unproven/) });
+    expect(entry('c-old')).toMatchObject({ state: 'skipped', code: 'NOT_REACHED' });
+    expect((await db.commandResourceLease.findMany({ where: { nodeId: { in: ids }, state: 'unknown' } })).length).toBe(2);
   });
 
   it('finding 1: old agents that all answer uncertain stop at the budget, with the release suspect but unproven', async () => {

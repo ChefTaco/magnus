@@ -103,7 +103,7 @@ export function AgentUpgradeModal({ open, onClose, onFinished }: { open: boolean
     }
   };
   const stop = () => run && act(() => api.agentUpgrades.stop(run.id));
-  const retry = () => run && act(() => api.agentUpgrades.retry(run.id));
+  const retry = (acknowledgeSuspicion = false) => run && act(() => api.agentUpgrades.retry(run.id, acknowledgeSuspicion ? { acknowledgeSuspicion } : {}));
 
   const toggle = (nodeId: string) => setSelected((current) => {
     const next = new Set(current);
@@ -245,6 +245,11 @@ export function AgentUpgradeModal({ open, onClose, onFinished }: { open: boolean
             {retryable(run) && eligibility?.upgradesEnabled && (
               <Button variant="secondary" size="sm" onClick={() => void retry()} data-testid="agent-upgrade-retry" disabled={busy}
                 icon={<RotateCcw className="h-3.5 w-3.5" />}>Retry {retryCount(run)} node{retryCount(run) === 1 ? '' : 's'}</Button>
+            )}
+            {retryable(run) && eligibility?.upgradesEnabled && (run?.suspectedRelease || run?.excluded?.some((node) => node.code === 'RETRY_HELD_SUSPECTED')) && (
+              <Button variant="danger" size="sm" onClick={() => void retry(true)} data-testid="agent-upgrade-retry-acknowledged" disabled={busy}
+                title="Each attempt on an older agent can strand another lease. Read the agent log first."
+                icon={<RotateCcw className="h-3.5 w-3.5" />}>Retry older agents too</Button>
             )}
             {showCandidates && (
               <Button variant="secondary" size="sm" onClick={() => void runCheck()} data-testid="agent-upgrade-check-button" disabled={busy || checking}

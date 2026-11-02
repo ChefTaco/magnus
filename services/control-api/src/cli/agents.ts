@@ -31,6 +31,7 @@ Options:
   --allow-prerelease    Required for a prerelease version such as 1.2.0-rc.1
   --retry-reverted      Also offer nodes that already reverted this version
   --retry RUN_ID        Retry the nodes of a run that were not upgraded
+  --acknowledge-suspicion  With --retry: also retry older agents after a run that stopped on their ambiguous answers
   --dry-run             Show the full per-node report and start nothing
 
 doctor: the same read-only check for every node: what each agent reports about
@@ -57,6 +58,7 @@ interface AgentsOptions {
   canary?: string;
   allowPrerelease?: true;
   retryReverted?: true;
+  acknowledgeSuspicion?: true;
   retry?: string;
   stop?: string;
   dryRun: boolean;
@@ -99,6 +101,7 @@ export function parseAgentsArgs(args: readonly string[]): AgentsOptions | 'help'
     else if (name === '--retry') options.retry = value();
     else if (name === '--allow-prerelease') options.allowPrerelease = true;
     else if (name === '--retry-reverted') options.retryReverted = true;
+    else if (name === '--acknowledge-suspicion') options.acknowledgeSuspicion = true;
     else if (name === '--dry-run') options.dryRun = true;
     else if (name === '--heal' && sub === 'doctor') options.heal = true;
     else if (name === '--max-failures') {
@@ -219,7 +222,7 @@ export async function commandAgents(args: readonly string[]): Promise<number> {
     let started: Awaited<ReturnType<Service['startUpgradeRun']>>;
     if (options.retry) {
       started = await service.retryUpgradeRun(options.retry, { actorId: 'system:magnus-server-cli', deps, canaryNodeId,
-        allowRetryReverted: options.retryReverted, allowPrerelease: options.allowPrerelease, ...(options.maxFailures ? { maxFailures: options.maxFailures } : {}) });
+        allowRetryReverted: options.retryReverted, allowPrerelease: options.allowPrerelease, acknowledgeSuspicion: options.acknowledgeSuspicion, ...(options.maxFailures ? { maxFailures: options.maxFailures } : {}) });
       console.log(`Retrying run ${options.retry} as ${started.run.id}: ${started.run.nodes.length} agent(s) to ${started.run.version}`);
     } else {
       const release = await service.resolveAgentRelease({ version: options.to, integrity: options.integrity });
