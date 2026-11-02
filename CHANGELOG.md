@@ -6,6 +6,26 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [1.1.4] - 2026-11-02
+
+### Fixed
+
+- `magnus-server restore` (and `magnus restore` for 1.1.3 and later servers) puts the original schema back when
+  `pg_restore` cannot be started after the schema was moved aside. Before, a missing or unexecutable
+  `pg_restore` at that point left `public` empty, with the data only in the `magnus_pre_restore_*` schema.
+- A restore refuses to start while a `magnus_pre_restore_*` schema from an interrupted earlier restore exists,
+  and says how to put it back, instead of moving the current schema aside on top of it.
+- A restore that committed is no longer reported as failed when only dropping the previous copy fails; it warns
+  with the command to drop it.
+
+### New environment variables
+
+- None.
+
+### Migration impact
+
+- None.
+
 ## [1.1.3] - 2026-11-02
 
 ### Changed
@@ -399,6 +419,7 @@ The initial release snapshot.
   Pass them to `npm install -g` with `--allow-scripts=...`, or list them under `allowScripts` in
   your project's `package.json`.
 
+[1.1.4]: https://github.com/ChefTaco/magnus/releases/tag/v1.1.4
 [1.1.3]: https://github.com/ChefTaco/magnus/releases/tag/v1.1.3
 [1.1.2]: https://github.com/ChefTaco/magnus/releases/tag/v1.1.2
 [1.1.1]: https://github.com/ChefTaco/magnus/releases/tag/v1.1.1

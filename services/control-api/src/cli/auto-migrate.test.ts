@@ -158,11 +158,73 @@ describe('migration files and backups', () => {
     const run = async (_command: string, args: readonly string[]) => (args[0] === '--list'
       ? { code: 0, stdout: '', stderr: '' } : { code: restoreCode, stdout: '', stderr: 'pg_restore: error: boom' });
     await restoreDatabase({ databaseUrl: 'postgresql://u:p@db/x', file, client: client as never, run, now: new Date('2026-11-01T00:00:00Z') });
-    expect(queries[0]).toMatch(/ALTER SCHEMA public RENAME TO %I', 'magnus_pre_restore_20261101000000'/);
-    expect(queries[1]).toBe('DROP SCHEMA "magnus_pre_restore_20261101000000" CASCADE;');
+    expect(queries[0]).toMatch(/FROM pg_namespace WHERE nspname LIKE/);
+    expect(queries[1]).toMatch(/ALTER SCHEMA public RENAME TO %I', 'magnus_pre_restore_20261101000000'/);
+    expect(queries[2]).toBe('DROP SCHEMA "magnus_pre_restore_20261101000000" CASCADE;');
     queries.length = 0;
     restoreCode = 1;
     await expect(restoreDatabase({ databaseUrl: 'postgresql://u:p@db/x', file, client: client as never, run })).rejects.toThrow(/database is unchanged/);
-    expect(queries[1]).toMatch(/DROP SCHEMA public CASCADE; ALTER SCHEMA "magnus_pre_restore_\d+" RENAME TO public/);
+    expect(queries[2]).toMatch(/DROP SCHEMA public CASCADE; ALTER SCHEMA "magnus_pre_restore_\d+" RENAME TO public/);
+  });
+
+  it('puts the original schema back when pg_restore cannot be started after the swap', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'magnus-restore-'));
+    const file = join(dir, 'x.dump');
+    writeFileSync(file, 'PGDMP');
+    const queries: string[] = [];
+    const client = { query: async (sql: string) => { queries.push(sql); return { rows: [] }; } };
+    // The --list preflight works; the real restore fails to spawn (binary removed, EACCES, ENOMEM).
+    const run = async (_command: string, args: readonly string[]) => {
+      if (args[0] === '--list') return { code: 0, stdout: '', stderr: '' };
+      throw Object.assign(new Error('spawn pg_restore ENOENT'), { code: 'ENOENT' });
+    };
+    await expect(restoreDatabase({ databaseUrl: 'postgresql://u:p@db/x', file, client: client as never, run, now: new Date('2026-11-01T00:00:00Z') }))
+      .rejects.toThrow(/could not be run \(spawn pg_restore ENOENT\); the database is unchanged/);
+    expect(queries.at(-1)).toBe('BEGIN; DROP SCHEMA public CASCADE; ALTER SCHEMA "magnus_pre_restore_20261101000000" RENAME TO public; COMMIT;');
+  });
+
+  it('keeps the schema aside and says so when putting it back fails too', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'magnus-restore-'));
+    const file = join(dir, 'x.dump');
+    writeFileSync(file, 'PGDMP');
+    const client = { query: async (sql: string) => {
+      if (sql.startsWith('BEGIN; DROP SCHEMA public')) throw new Error('connection lost');
+      return { rows: [] };
+    } };
+    const run = async (_command: string, args: readonly string[]) => {
+      if (args[0] === '--list') return { code: 0, stdout: '', stderr: '' };
+      throw new Error('spawn pg_restore EACCES');
+    };
+    await expect(restoreDatabase({ databaseUrl: 'postgresql://u:p@db/x', file, client: client as never, run, now: new Date('2026-11-01T00:00:00Z') }))
+      .rejects.toThrow(/putting the original schema back failed too; it is kept as magnus_pre_restore_20261101000000: connection lost/);
+  });
+
+  it('refuses to restore over a schema an interrupted restore left aside', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'magnus-restore-'));
+    const file = join(dir, 'x.dump');
+    writeFileSync(file, 'PGDMP');
+    const queries: string[] = [];
+    const client = { query: async (sql: string) => {
+      queries.push(sql);
+      return { rows: sql.includes('FROM pg_namespace') ? [{ nspname: 'magnus_pre_restore_20261031000000' }] : [] };
+    } };
+    const run = async () => ({ code: 0, stdout: '', stderr: '' });
+    await expect(restoreDatabase({ databaseUrl: 'postgresql://u:p@db/x', file, client: client as never, run }))
+      .rejects.toThrow(/earlier restore left the schema magnus_pre_restore_20261031000000 behind/);
+    expect(queries.some(sql => sql.includes('RENAME TO'))).toBe(false);
+  });
+
+  it('reports a committed restore as done when only dropping the old copy fails', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'magnus-restore-'));
+    const file = join(dir, 'x.dump');
+    writeFileSync(file, 'PGDMP');
+    const lines: string[] = [];
+    const client = { query: async (sql: string) => {
+      if (sql.startsWith('DROP SCHEMA "magnus_pre_restore_')) throw new Error('lock timeout');
+      return { rows: [] };
+    } };
+    const run = async () => ({ code: 0, stdout: '', stderr: '' });
+    await restoreDatabase({ databaseUrl: 'postgresql://u:p@db/x', file, client: client as never, run, log: line => lines.push(line), now: new Date('2026-11-01T00:00:00Z') });
+    expect(lines.join('\n')).toMatch(/restore succeeded but the previous schema magnus_pre_restore_20261101000000 could not be dropped/);
   });
 });
