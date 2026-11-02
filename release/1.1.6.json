@@ -1,0 +1,9 @@
+{
+  "summary": "Scheduler discovery fixes: a Hermes jobs.json keeps one remembered identity across job runs instead of one per run, and software that merely lives under a .hermes directory is no longer counted as a Hermes runtime. No migrations and no new settings.",
+  "breaking": false,
+  "minUpgradeFrom": "1.0.0",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}

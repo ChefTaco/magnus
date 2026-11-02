@@ -18,6 +18,10 @@ integrations is optional and stays inert until you configure it.
 - Command execution with timeouts, signed results and a durable command ledger.
 - Cron management, including finite managed schedules (see
   [MANAGED_SCHEDULER.md](https://github.com/ChefTaco/magnus/blob/main/packages/agent/MANAGED_SCHEDULER.md)).
+  Nodes upgraded from before 1.1.6 may keep one stale remembered Hermes schedule
+  source per past Hermes run; see
+  [Hermes schedule sources remembered before 1.1.6](https://github.com/ChefTaco/magnus/blob/main/packages/agent/MANAGED_SCHEDULER.md#hermes-schedule-sources-remembered-before-116)
+  for the cleanup.
 - File read and write with symlink-resolved path checks. Agent state and
   secrets can never be read or written through the API.
 - Skill publication, listing and removal, for example from

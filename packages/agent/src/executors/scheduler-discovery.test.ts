@@ -382,12 +382,31 @@ describe('native and user scheduler discovery', () => {
   it('recognises Hermes runtimes by what they execute, not by argument text', () => {
     for (const args of [['hermes', 'gateway', 'run'], ['/opt/hermes-agent/venv/bin/python3', '/opt/hermes-agent/venv/bin/hermes', 'gateway'],
       ['python3', '-u', '/srv/run_gateway.py'], ['python', '-m', 'hermes_cli.main', 'gateway'], ['python3', '-mhermes_cli.main'],
-      ['python', '/custom/hermes/gateway.py'], ['python', 'gateway.py', '--hermes-home=/custom/profile'], ['node', '--', '/srv/hermes/index.js']])
+      ['python', 'gateway.py', '--hermes-home=/custom/profile'], ['node', '--', '/srv/app/hermes.js'],
+      ['/srv/hermes-agent/venv/bin/hermes', 'cron', 'tick'], ['/opt/hermes-agent/venv/bin/hermes-gateway'], ['hermes.exe', 'dashboard'],
+      ['python3', '-m', 'hermes_agent'], ['python3', '-m', 'hermes'], ['/usr/bin/python3.11', '-W', 'ignore', '/srv/run_gateway.py'],
+      ['python3', '/opt/hermes-agent/venv/bin/hermes_cli'], ['node', '--require', '/srv/preload.cjs', '/srv/hermes.mjs']])
       expect(hermesRuntimeCommand(args)).toBe(true);
     for (const args of [['grep', '-i', 'hermes', '/var/log/syslog'], ['jq', '.[] | select(.kind == "NATIVE_HERMES_RUNTIME_UNINSTRUMENTED")'],
       ['sh', '-c', 'sleep 15', 'report-for-hermes'], ['bash', '-c', 'systemctl --user status hermes-gateway'], ['python3', '-c', 'import hermes_cli'],
       ['sudo', '-S', 'bash', '-c', 'hermes gateway status'], ['systemctl', '--user', 'show', 'hermes-gateway.service'], ['python3', 'other.py', 'hermes'], []])
       expect(hermesRuntimeCommand(args)).toBe(false);
+  });
+  it('does not treat unrelated software installed under a .hermes or hermes directory as a Hermes runtime', () => {
+    const app = '/srv/account/.hermes/app';
+    for (const args of [
+      ['node', `${app}/node_modules/.bin/tsx`, 'src/agent/index.ts'],
+      ['/usr/bin/node', '--require', `${app}/node_modules/tsx/dist/preflight.cjs`, '--import', `file://${app}/node_modules/tsx/dist/loader.mjs`, 'src/agent/index.ts'],
+      [`${app}/node_modules/@esbuild/linux-x64/bin/esbuild`, '--service=0.25.0', '--ping'],
+      [`${app}/node_modules/.bin/tsx`, 'src/agent/index.ts'],
+      ['python', '/custom/hermes/gateway.py'], ['node', '--', '/srv/hermes/index.js'], ['/opt/hermes/bin/worker'],
+      ['python3', '-m', 'hermesian'], ['python3', '-m', 'tools.hermes_cli'], ['/srv/.hermes/venv/bin/python3', '/srv/.hermes/scripts/backup.py'],
+    ]) expect(hermesRuntimeCommand(args)).toBe(false);
+  });
+  it('recognises every command the dashboard recogniser accepts', () => {
+    for (const args of [['python', '-m', 'hermes_cli.main', 'dashboard'], ['/srv/venv/bin/hermes', 'dashboard'],
+      ['/srv/venv/bin/python3', '/srv/venv/bin/hermes', 'dashboard', '--port', '9120']])
+      expect(hermesRuntimeCommand(args)).toBe(true);
   });
   it('does not record a process that only mentions Hermes in its arguments', async () => {
     const write = async (pid: string, args: string[]) => {
@@ -426,6 +445,80 @@ describe('native and user scheduler discovery', () => {
     await rm(join(cron, 'jobs.json'));
     const later = await schedulerInventory({ ...configuration, scheduler: new ManagedScheduler(configuration.scheduler.root) });
     expect(later.quiescent).toBe(false); expect(later.blockers.map(row => row.kind)).toContain('NATIVE_HERMES_UNSETTLED_CLAIMS');
+  });
+  describe('native Hermes jobs.json identity', () => {
+    const job = (id: string, extra: Record<string, unknown> = {}) => ({ id, name: 'job ' + id, prompt: 'summarise ' + id,
+      schedule: { kind: 'cron', expr: '0 * * * *', display: '0 * * * *' }, schedule_display: '0 * * * *', repeat: { times: null, completed: 0 },
+      enabled: true, state: 'scheduled', deliver: 'local', skills: [], model: null, created_at: '2026-10-01T00:00:00Z',
+      next_run_at: '2026-11-02T01:00:00Z', last_run_at: null, last_status: null, last_error: null, ...extra });
+    const setup = async () => {
+      const home = join(root, 'home'); const cron = join(home, '.hermes/cron'); await mkdir(cron, { recursive: true });
+      const journal = join(root, 'journal');
+      const inventory = () => schedulerInventory({ scheduler: new ManagedScheduler(journal), homes: [home],
+        spool: join(root, 'absent-spool'), systemCrontab: join(root, 'absent-cron'), systemDirectories: [], timers: quiet });
+      const write = (jobs: unknown[], updatedAt = '2026-11-01T00:00:00Z') =>
+        writeFile(join(cron, 'jobs.json'), JSON.stringify({ jobs, updated_at: updatedAt }));
+      const remembered = async () => (await new ManagedScheduler(journal).observeDiscovery([], [])).foreignSources
+        .filter(row => row.kind.startsWith('NATIVE_HERMES_'));
+      const blocker = (value: Awaited<ReturnType<typeof inventory>>, kind: string) => value.blockers.filter(row => row.kind === kind);
+      return { inventory, write, remembered, blocker };
+    };
+    it('keeps one identity and identical evidence across run-state rewrites', async () => {
+      const { inventory, write, remembered } = await setup();
+      await write([job('a'), job('b', { enabled: false }), job('c', { paused: true })]);
+      const first = await inventory();
+      expect(first.blockers).toEqual([expect.objectContaining({ kind: 'NATIVE_HERMES_SCHEDULES', count: 1 })]);
+      for (let run = 1; run <= 5; run++) {
+        await write([job('a', { last_run_at: `2026-11-02T0${run}:00:00Z`, last_status: run % 2 ? 'ok' : 'error', last_error: run % 2 ? null : 'timeout',
+          next_run_at: `2026-11-02T0${run + 1}:00:00Z`, repeat: { times: null, completed: run }, last_delivery_error: null }),
+        job('c', { paused: true, last_run_at: '2026-10-01T00:00:00Z' }), job('b', { enabled: false, last_status: 'ok' })], `2026-11-02T0${run}:00:01Z`);
+        const later = await inventory();
+        expect(later.blockers).toEqual(first.blockers); expect(later.sources).toEqual(first.sources);
+      }
+      expect(await remembered()).toHaveLength(1);
+    });
+    it('records a new identity when a job definition changes', async () => {
+      const { inventory, write, remembered, blocker } = await setup();
+      await write([job('a'), job('b', { enabled: false })]);
+      const first = blocker(await inventory(), 'NATIVE_HERMES_SCHEDULES'); let known = 1;
+      for (const jobs of [[job('a', { prompt: 'edited' }), job('b', { enabled: false })], [job('a'), job('b', { enabled: false }), job('d')],
+        [job('a', { schedule: { kind: 'cron', expr: '5 * * * *', display: '5 * * * *' } }), job('b', { enabled: false })],
+        [job('a', { deliver: 'telegram' }), job('b', { enabled: false })], [job('a', { repeat: { times: 3, completed: 0 } }), job('b', { enabled: false })]]) {
+        await write(jobs); await inventory();
+        expect((await remembered()).filter(row => row.kind === 'NATIVE_HERMES_SCHEDULES')).toHaveLength(++known);
+      }
+      await write([job('a'), job('b')]);
+      const enabled = blocker(await inventory(), 'NATIVE_HERMES_SCHEDULES');
+      expect(enabled.find(row => row.sourceSha256 !== first[0]?.sourceSha256)).toMatchObject({ count: 2 });
+      expect((await remembered()).filter(row => row.kind === 'NATIVE_HERMES_SCHEDULES')).toHaveLength(7);
+    });
+    it('counts enabled schedules and claims from the live file', async () => {
+      const { inventory, write, remembered, blocker } = await setup();
+      await write([job('a', { enabled: false }), job('b', { paused: true }), job('c', { enabled: false, run_claim: { pid: 7, at: 1 } }),
+        job('d', { last_status: 'running' })]);
+      const value = await inventory();
+      expect(blocker(value, 'NATIVE_HERMES_SCHEDULES')).toEqual([expect.objectContaining({ count: 1 })]);
+      expect(blocker(value, 'NATIVE_HERMES_UNSETTLED_CLAIMS')).toEqual([expect.objectContaining({ count: 2 })]);
+      // A new claim by the same jobs is the same unsettled source, not a new one.
+      await write([job('a', { enabled: false }), job('b', { paused: true }), job('c', { enabled: false, run_claim: { pid: 9, at: 2 } }),
+        job('d', { last_status: 'working', last_run_at: '2026-11-02T00:00:00Z' })], '2026-11-02T00:00:02Z');
+      expect(blocker(await inventory(), 'NATIVE_HERMES_UNSETTLED_CLAIMS')).toEqual(blocker(value, 'NATIVE_HERMES_UNSETTLED_CLAIMS'));
+      expect((await remembered()).filter(row => row.kind === 'NATIVE_HERMES_UNSETTLED_CLAIMS')).toHaveLength(1);
+      // A different set of claimed jobs is a different source.
+      await write([job('a', { enabled: false, fire_claim: { at: 3 } }), job('b', { paused: true }), job('c', { enabled: false }), job('d')]);
+      const changed = await inventory();
+      expect((await remembered()).filter(row => row.kind === 'NATIVE_HERMES_UNSETTLED_CLAIMS')).toHaveLength(2);
+      expect(changed.blockers.filter(row => row.kind === 'NATIVE_HERMES_UNSETTLED_CLAIMS').map(row => row.count).sort()).toEqual([1, 2]);
+    });
+    it('binds the identity to the jobs.json path', async () => {
+      const { inventory, write, blocker } = await setup();
+      await write([job('a')]);
+      const first = blocker(await inventory(), 'NATIVE_HERMES_SCHEDULES')[0]!;
+      const profile = join(root, 'home/.hermes/profiles/second/cron'); await mkdir(profile, { recursive: true });
+      await writeFile(join(profile, 'jobs.json'), JSON.stringify({ jobs: [job('a')], updated_at: '2026-11-01T00:00:00Z' }));
+      const both = blocker(await inventory(), 'NATIVE_HERMES_SCHEDULES');
+      expect(both).toHaveLength(2); expect(both.map(row => row.sourceSha256)).toContain(first.sourceSha256);
+    });
   });
   it('counts system crontab schedules without treating environment assignments as executions', async () => {
     const crontab = join(root, 'system-crontab');

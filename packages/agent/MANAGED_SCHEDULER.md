@@ -91,6 +91,54 @@ does not settle that observed work; only a future reviewed owner-adapter
 settlement contract can discharge it. No generic clear/expiry endpoint exists. Inactive custom homes with no discoverable
 trigger remain an explicit coverage limit requiring operator review.
 
+A native Hermes `cron/jobs.json` is remembered by its path and its job
+definitions. Run state that Hermes rewrites on every run (`last_*` fields such as
+`last_run_at`, `last_status` and `last_error`; `next_run_at`; `updated_at`;
+`run_count`, `runs`, `failure_count`, `consecutive_failures`; `repeat.completed`;
+the `fire_claim` and `run_claim` values) is not part of that identity. Every other
+field is, including fields Magnus does not know, so adding, editing, enabling or
+pausing a job records a new source. `NATIVE_HERMES_UNSETTLED_CLAIMS` is remembered
+by the path and the set of jobs holding a claim (`fire_claim`, `run_claim`, or a
+`running`/`working` last status); a new claim by the same jobs is the same source.
+Counts come from the live file. A process counts as a Hermes runtime only by the
+file name of its executable or of its interpreter's script (`hermes`, `hermes-*`,
+`hermes_*`, `run_gateway.py`), a Hermes module (`-m hermes_cli.main`), or a
+`--hermes-home` option; a `.hermes` directory in a path does not make one.
+
+### Hermes schedule sources remembered before 1.1.6
+
+Before 1.1.6 a jobs.json was remembered by a digest of the whole file, so each
+Hermes run left one more `NATIVE_HERMES_SCHEDULES` (and, while a job was running,
+`NATIVE_HERMES_UNSETTLED_CLAIMS`) entry in the journal. Those digests cannot be
+mapped to a path or told apart from current entries, and remembered sources never
+expire, so 1.1.6 keeps them: the inventory still reports them until they are
+cleared. The agent does not drop them itself, because that would weaken the
+guarantee that observed foreign work stays a blocker until it is settled.
+
+During an enrollment drain, settle each stale entry through the signed
+reconciliation path, `POST /api/v1/cron/scheduler-sources/reconcile` (an
+administrator decision bound to the drain barrier and the entry's exact kind,
+digest and count). That is the audited route and it leaves a receipt.
+
+Outside a drain there is no settlement path; an operator clears the stale entries
+by hand after confirming no Hermes job on the node is still running:
+
+1. Upgrade the agent to 1.1.6 or later and let one inventory run
+   (`GET /cron/managed-inventory`), so every live jobs.json is remembered under
+   its new identity.
+2. Check every Hermes home on the node: no job holds a `fire_claim` or
+   `run_claim`, and no Hermes run is in progress.
+3. Stop the agent (`sudo systemctl stop magnus-agent`) and copy
+   `$AGENT_INSTALL_DIR/.magnus/managed-scheduler/scheduler-discovery.json`
+   (`/opt/magnus-agent` by default) aside, keeping its owner and mode `0600`.
+4. Remove the `foreignSources` entries whose `kind` is `NATIVE_HERMES_SCHEDULES`
+   or `NATIVE_HERMES_UNSETTLED_CLAIMS`, and nothing else. Keep `hermesRoots`, the
+   settlement receipts and tombstones. For example:
+   `jq '.foreignSources |= map(select(.kind != "NATIVE_HERMES_SCHEDULES" and .kind != "NATIVE_HERMES_UNSETTLED_CLAIMS"))'`,
+   written back with the same owner and mode.
+5. Start the agent. The next inventory records each live jobs.json, and any
+   current claims, once under its 1.1.6 identity.
+
 A foreign scheduler migration must be separately opted into with a plan binding
 the exact source digest, owner/profile, original enabled state and schedule,
 finite destination definition/revision, and all outstanding execution receipt
