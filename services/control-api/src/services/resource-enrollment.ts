@@ -26,9 +26,13 @@ export function canonical(value: unknown): string {
 }
 export function enrollmentSigningPayload(value: unknown): string { return 'magnus.resource-enrollment.v1\n' + canonical(value); }
 function fail(code: string, message: string): never { throw new HttpError(409, code, message); }
+/** Read-only predicate shared with upgrade eligibility: the enrollment row admits resource execution. */
+export function enrollmentIsComplete(row: { state: string; nodeFqdn: string } | null | undefined, nodeFqdn: string): boolean {
+  return Boolean(row) && row!.state === 'enrolled' && row!.nodeFqdn === nodeFqdn;
+}
 export async function assertEnrollmentComplete(tx: Tx, nodeId: string, nodeFqdn: string): Promise<void> {
   const row = await tx.resourceEnrollment.findUnique({ where: { nodeId } });
-  if (!row || row.state !== 'enrolled' || row.nodeFqdn !== nodeFqdn)
+  if (!enrollmentIsComplete(row, nodeFqdn))
     fail('RESOURCE_ENROLLMENT_REQUIRED', 'Verified participant drain enrollment is required before resource execution');
 }
 export function dashboardEnrollmentSecret(): string {
@@ -103,7 +107,9 @@ export async function inspectEnrollment(nodeId: string) {
       apiBlockers: row?.state === 'enrolled' || participants.some(p => p.participant === 'api' && p.status === 'verified' && p.epoch === row?.epoch
         && p.challengeExpiresAt.getTime() > Date.now()) ? [] :
         ['preinstrumentation-work-unverified', 'local-descendants-unverified', 'noninventory-bootstrap-unsupported', 'ssh-descendants-unverified'],
-      dashboard: await participantSnapshot(tx, nodeId, 'dashboard') };
+      dashboard: await participantSnapshot(tx, nodeId, 'dashboard'),
+      // Since this process started; empty after a restart.
+      lastFailures: lastParticipantFailures(nodeId) };
   });
 }
 export const drainDescriptorSchema = z.object({ version: z.literal(1), participant: z.enum(PARTICIPANTS),
@@ -143,16 +149,44 @@ export const apiDrainAttestationSchema = drainDescriptorSchema.extend({
 export function apiDrainAttestationSigningPayload(value: Omit<z.infer<typeof apiDrainAttestationSchema>, 'signature'>): string {
   return 'magnus.resource-enrollment-api-attestation.v1\n' + canonical(value);
 }
+/**
+ * Response bounds. Drain receipts are small, except the scheduler's: it lists
+ * up to 1024 external blockers (schema maximum), each about 200 bytes of JSON
+ * (an 80-character kind, a 64-hex digest, a count and the keys), so a control
+ * host with many system timers needs about 210 KiB. 256 KiB covers that with
+ * margin and stays bounded.
+ */
+export const PARTICIPANT_RECEIPT_LIMITS = { default: 16_384, scheduler: 256 * 1024 } as const;
+
+/** A participant refresh that failed, as a fixed reason code (never the raw provider error or body). */
+export class ParticipantEvidenceError extends Error {
+  constructor(readonly code: string, readonly agentCode: string | null = null) { super(code); }
+}
+const failures = new Map<string, { participant: string; cause: string; agentCode: string | null; at: string }>();
+/** The last refresh failure of each participant on a node, as seen by this server process. */
+export function lastParticipantFailures(nodeId: string) {
+  return [...failures.entries()].filter(([key]) => key.startsWith(`${nodeId}\n`)).map(([, value]) => value);
+}
+
 /** Bounded response consumption, including dishonest or absent content-length. */
-async function readReceipt(response: Response): Promise<unknown> {
+export async function readParticipantReceipt(response: Response, limit: number = PARTICIPANT_RECEIPT_LIMITS.default): Promise<unknown> {
   if (response.status !== 200 || !response.body) {
-    await response.body?.cancel().catch(() => undefined); throw new Error('Participant response unavailable');
+    // An optional machine-readable code from the participant (`{ error: { code } }`) is kept; nothing else is.
+    let agentCode: string | null = null;
+    if (response.body && response.status >= 400) {
+      const text = await response.text().catch(() => '');
+      try {
+        const code = (JSON.parse(text.slice(0, 4096)) as { error?: { code?: unknown } } | null)?.error?.code;
+        if (typeof code === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(code)) agentCode = code;
+      } catch { /* no code */ }
+    } else await response.body?.cancel().catch(() => undefined);
+    throw new ParticipantEvidenceError(`participant-http-${response.status}`, agentCode);
   }
   const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let size = 0;
   try {
     while (true) { const { value, done } = await reader.read(); if (done) break;
-      size += value.byteLength; if (size > 16_384) throw new Error('Participant response exceeded bound'); chunks.push(value); }
-    return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
+      size += value.byteLength; if (size > limit) throw new ParticipantEvidenceError('participant-response-too-large'); chunks.push(value); }
+    try { return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown; } catch { throw new ParticipantEvidenceError('participant-response-invalid'); }
   } finally { await reader.cancel().catch(() => undefined); }
 }
 export async function refreshEnrollmentParticipant(nodeId: string, participant: Participant) {
@@ -177,21 +211,24 @@ export async function refreshEnrollmentParticipant(nodeId: string, participant: 
     let url: string; let headers: Record<string, string>; let key: string;
     if (participant === 'agent' || participant === 'scheduler') {
       key = RESULT_SIGNING_SECRET;
-      if (key.length < 32) throw new Error('Agent receipt credential unavailable');
-      if (new URL(prepared.baseUrl).protocol !== 'https:') throw new Error('Verified HTTPS agent endpoint required');
+      if (key.length < 32) throw new ParticipantEvidenceError('receipt-credential-unavailable');
+      if (new URL(prepared.baseUrl).protocol !== 'https:') throw new ParticipantEvidenceError('https-endpoint-required');
       url = prepared.baseUrl.replace(/\/$/, '') + (participant === 'scheduler'
         ? '/api/v1/cron/enrollment-drain' : '/api/v1/commands/enrollment-drain');
       headers = { 'x-node-token': getNodeManagerSecret() };
     } else {
       key = dashboardEnrollmentSecret(); const origin = new URL(process.env['DASHBOARD_PUBLIC_ORIGIN'] ?? '');
       if (origin.protocol !== 'https:' || origin.username || origin.password || origin.pathname !== '/' || origin.search || origin.hash)
-        throw new Error('Fixed HTTPS dashboard origin unavailable');
+        throw new ParticipantEvidenceError('dashboard-origin-unavailable');
       url = origin.origin + '/api/internal/resource-enrollment/drain'; headers = { 'x-resource-drain-key': key };
     }
     const response = await fetch(url, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(participant !== 'dashboard' ? 25_000 : 5_000),
-      headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify(prepared.descriptor) });
-    const raw = await readReceipt(response);
-    receipt = participant === 'scheduler' ? schedulerBoundaryReceiptSchema.parse(raw) : drainReceiptSchema.parse(raw);
+      headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify(prepared.descriptor) })
+      .catch(() => { throw new ParticipantEvidenceError('participant-unreachable'); });
+    const raw = await readParticipantReceipt(response, participant === 'scheduler' ? PARTICIPANT_RECEIPT_LIMITS.scheduler : PARTICIPANT_RECEIPT_LIMITS.default);
+    const parsed = participant === 'scheduler' ? schedulerBoundaryReceiptSchema.safeParse(raw) : drainReceiptSchema.safeParse(raw);
+    if (!parsed.success) throw new ParticipantEvidenceError('participant-receipt-invalid');
+    receipt = parsed.data;
     const { signature, ...unsigned } = receipt;
     const { status: _status, activeCount: _active, unknownCount: _unknown, evidenceSha256: _evidence,
       ...remaining } = unsigned;
@@ -200,11 +237,16 @@ export async function refreshEnrollmentParticipant(nodeId: string, participant: 
       : remaining;
     if (canonical(descriptor) !== canonical(prepared.descriptor) || receipt.expiresAt <= Date.now()
       || !timingSafeEqual(Buffer.from(signature, 'hex'), createHmac('sha256', key).update(enrollmentSigningPayload(unsigned)).digest()))
-      throw new Error('Participant receipt failed exact challenge authentication');
-  } catch {
-    // No raw provider error/body is exposed. Outstanding challenge remains pending.
-    return { participant, status: 'pending', reason: 'participant-evidence-unavailable' };
+      throw new ParticipantEvidenceError('participant-receipt-unauthenticated');
+  } catch (error) {
+    // No raw provider error/body is exposed, only a fixed cause (and the participant's own code, if it sent one).
+    // Outstanding challenge remains pending.
+    const cause = error instanceof ParticipantEvidenceError ? error.code : 'participant-evidence-unavailable';
+    const agentCode = error instanceof ParticipantEvidenceError ? error.agentCode : null;
+    failures.set(`${nodeId}\n${participant}`, { participant, cause, agentCode, at: new Date().toISOString() });
+    return { participant, status: 'pending', reason: 'participant-evidence-unavailable', cause, agentCode };
   }
+  failures.delete(`${nodeId}\n${participant}`);
   return getDb().$transaction(async tx => {
     await lockResourceNode(tx, nodeId);
     const { row } = await identity(tx, nodeId);

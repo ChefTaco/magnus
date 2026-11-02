@@ -428,7 +428,8 @@ heartbeatRouter.post('/', async (c) => {
     });
   }
 
-  if (existing && body.selfUpgrade !== undefined) {
+  // Also without a (valid) report, so an agent that stopped reporting one does not stay UPDATING.
+  if (existing) {
     await recordSelfUpgradeReport({ id: nodeId, name: existing.name }, body).catch((err: unknown) => {
       console.error(`[agent-upgrade] could not record the self-upgrade report of ${existing.name}:`, err instanceof Error ? err.message : err);
     });

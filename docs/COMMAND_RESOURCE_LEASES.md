@@ -84,11 +84,25 @@ Because of this check, mutations on unenrolled nodes need a reachable, compatibl
 the server before the agents, and make sure each node's inventory hostname matches its
 `HOST_FQDN`.
 
+Which history counts differs between paths, on purpose (`services/control-api/src/services/resource-ownership.ts`):
+legacy-admission and managed cron treat any enrollment beyond `legacy`, any command lease, any managed
+cron definition and any participant work (also work released by signed reconciliation) as leaving the
+legacy path, and agents keep that answer as a sticky marker. Command admission and participant
+reservation count only the enrollment row and command lease history, because participant work is
+reserved on legacy nodes by design. A node with participant or cron history but no completed
+enrollment therefore has an agent that refuses direct requests; complete its enrollment drain.
+
 Enrollment requires a proven drain of four fixed participants: the agent, the API server, the
 console and the managed scheduler. The server pulls signed evidence from each one; operators
 cannot submit counts or acknowledgements on a participant's behalf. Agent evidence is signed with
 `RESULT_SIGNING_SECRET` and console evidence with `RESOURCE_ENROLLMENT_DASHBOARD_SECRET`, which must
 differ from every other key.
+
+`GET /enrollment/:nodeId` also lists `lastFailures`: each participant's last refresh failure on this
+server process as a fixed code (`participant-unreachable`, `participant-http-<status>`,
+`participant-response-too-large`, `participant-receipt-invalid`, `participant-receipt-unauthenticated`
+and so on), plus the participant's own error code when it sent one. Scheduler receipts may be up to
+256 KiB; other participant receipts up to 16 KiB.
 
 Administrator routes, all under `/api/v1/resource-leases`:
 

@@ -263,14 +263,23 @@ export const AGENT_SELF_UPGRADE_PROTOCOL = 1;
 
 export const agentUpgradeStateSchema = z.enum(['idle', 'staged', 'trial', 'confirmed', 'reverted', 'failed']);
 
+/** Known states plus any future one, so a newer agent's report is never dropped whole. */
+const reportedUpgradeState = z.union([agentUpgradeStateSchema, z.string().regex(/^[a-z][a-z0-9_-]{0,31}$/)]);
+
 export const agentUpgradeReportSchema = z.object({
-  state: agentUpgradeStateSchema,
+  state: reportedUpgradeState,
   from: z.string().nullable().optional(),
   to: z.string().nullable().optional(),
   requestId: z.string().max(128).nullable().optional(),
-  reason: z.string().max(500).nullable().optional(),
+  reason: z.string().max(1000).nullable().optional(),
   attempt: z.number().int().nonnegative().optional(),
   updatedAt: z.string().optional(),
+});
+
+/** The agent's local sticky managed-enrollment marker, as it reports it. */
+export const agentManagedEnrollmentSchema = z.object({
+  nodeId: z.string().min(1).max(128),
+  nodeFqdn: z.string().min(1).max(253),
 });
 
 export const agentSelfUpgradeStatusSchema = z.object({
@@ -278,12 +287,11 @@ export const agentSelfUpgradeStatusSchema = z.object({
   launcherProtocol: z.number().int().nonnegative().nullable(),
   layout: z.enum(['versioned', 'legacy', 'container']),
   enabled: z.boolean(),
-  reason: z.string().max(300).nullable().optional(),
+  reason: z.string().max(1000).nullable().optional(),
   upgrade: agentUpgradeReportSchema.nullable().optional(),
-  /** The launcher's trial window in seconds (versioned layout). */
-  confirmSeconds: z.number().int().positive().nullable().optional(),
-  /** The agent's sticky local enrollment marker, to detect agent/server enrollment disagreement. */
-  managedEnrollment: z.object({ nodeId: z.string(), nodeFqdn: z.string() }).nullable().optional(),
+  /** Seconds a new version has on trial before the launcher switches back (MAGNUS_AGENT_UPGRADE_CONFIRM_SECONDS). */
+  confirmSeconds: z.number().int().positive().max(86_400).nullable().optional(),
+  managedEnrollment: agentManagedEnrollmentSchema.nullable().optional(),
 });
 
 export const agentUpgradeRequestSchema = z.object({
@@ -296,6 +304,7 @@ export const agentUpgradeRequestSchema = z.object({
 export type AgentUpgradeState = z.infer<typeof agentUpgradeStateSchema>;
 export type AgentUpgradeReport = z.infer<typeof agentUpgradeReportSchema>;
 export type AgentSelfUpgradeStatus = z.infer<typeof agentSelfUpgradeStatusSchema>;
+export type AgentManagedEnrollment = z.infer<typeof agentManagedEnrollmentSchema>;
 export type AgentUpgradeRequest = z.infer<typeof agentUpgradeRequestSchema>;
 
 // Database restore. A dump is restored into an empty `public` schema so that
