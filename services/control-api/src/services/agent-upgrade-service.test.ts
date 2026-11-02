@@ -6,6 +6,7 @@ const db = vi.hoisted(() => ({
   agent: { findUnique: vi.fn(), updateMany: vi.fn() },
   commandResourceLease: { groupBy: vi.fn(async () => []) },
   resourceParticipantWork: { groupBy: vi.fn(async () => []) },
+  managedCronDefinition: { groupBy: vi.fn(async () => []) },
 }));
 vi.mock('../db/client.js', () => ({ getDb: () => db }));
 vi.mock('../config/features.js', () => ({ upgradeSettings: () => ({ agentUpgrades: true, agentUpgradeConcurrency: 2, updateRegistry: 'https://registry.example.com' }) }));
@@ -65,6 +66,8 @@ describe('agent upgrade eligibility', () => {
     expect(reason).toMatch(/agent and server disagree about resource enrollment/);
     expect(reason).toMatch(/no enrollment row/);
     expect(classifyCandidate(row({ metadata: report(marker), resourceEnrollment: enrolled }), '1.1.1').eligible).toBe(true);
+    expect(classifyCandidate(row({ metadata: report(marker), participantHistory: true }), '1.1.1', { leasesRequested: false }).reason)
+      .toMatch(/answers this agent as enrolled because of participant work history/);
   });
 
   it('holds back nodes that reverted this exact version unless asked', () => {

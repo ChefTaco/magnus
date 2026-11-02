@@ -35,6 +35,7 @@ import type { AuditAction } from '../types/auth.js';
 import { logAuditEvent } from './audit-service.js';
 import { HELD_RESOURCE_STATES, hasFreshOnlineHealth, legacyAdmissionPossible, resourceLeasesRequested } from './command-resource-leases.js';
 import { enrollmentIsComplete } from './resource-enrollment.js';
+import { stickyEnrollmentCause } from './resource-ownership.js';
 
 export const AGENT_PACKAGE = '@hivemagnus/magnus-agent';
 const HEARTBEAT_MS = 30_000;
@@ -268,6 +269,9 @@ export interface CandidateRow {
   heldLeases?: number;
   /** Any command lease ever, which takes the node off the legacy path for good. */
   leaseHistory?: boolean;
+  managedCronHistory?: boolean;
+  /** Participant work in any state (legacy-admission counts it: see resource-ownership.ts). */
+  participantHistory?: boolean;
 }
 
 export interface EligibilityOptions {
@@ -305,7 +309,10 @@ export function classifyCandidate(row: CandidateRow, target: string, options: El
   const marker = report.managedEnrollment;
   if (marker && (!enrollmentIsComplete(enrollment, marker.nodeFqdn) || marker.nodeId !== row.id || marker.nodeFqdn !== hostname)) {
     const server = enrollment ? `a ${enrollment.state} enrollment for ${enrollment.nodeFqdn}` : 'no enrollment row';
-    return no(`agent and server disagree about resource enrollment: the agent holds a managed-enrollment marker for ${marker.nodeFqdn} but the server has ${server}; `
+    const cause = stickyEnrollmentCause(enrollment, { lease: Boolean(row.leaseHistory), managedCron: Boolean(row.managedCronHistory),
+      participantWork: Boolean(row.participantHistory) });
+    return no(`agent and server disagree about resource enrollment: the agent holds a managed-enrollment marker for ${marker.nodeFqdn} but the server has ${server}`
+      + `${cause ? ` (the server answers this agent as enrolled because of ${cause})` : ''}; `
       + `complete the node's resource enrollment on the server (${ENROLLMENT_DOC}), or upgrade this agent by hand on the node`);
   }
   // Same rule as admission: off the legacy path once leases are on, enrollment started, or any lease exists.
@@ -335,14 +342,19 @@ export async function listUpgradeCandidates(target: string, nodeIds?: readonly s
     orderBy: { name: 'asc' },
   });
   const ids = rows.map(row => row.id);
-  const [leases, work] = ids.length ? await Promise.all([
+  const [leases, work, crons] = ids.length ? await Promise.all([
     db.commandResourceLease.groupBy({ by: ['nodeId', 'state'], where: { nodeId: { in: ids } }, _count: { _all: true } }),
-    db.resourceParticipantWork.groupBy({ by: ['nodeId'], where: { nodeId: { in: ids }, state: { in: [...HELD_RESOURCE_STATES] } }, _count: { _all: true } }),
-  ]) : [[], []];
+    db.resourceParticipantWork.groupBy({ by: ['nodeId', 'state'], where: { nodeId: { in: ids } }, _count: { _all: true } }),
+    db.managedCronDefinition.groupBy({ by: ['nodeId'], where: { nodeId: { in: ids } }, _count: { _all: true } }),
+  ]) : [[], [], []];
+  const held = (items: Array<{ nodeId: string; state: string; _count: { _all: number } }>, nodeId: string) =>
+    items.filter(item => item.nodeId === nodeId && HELD_RESOURCE_STATES.includes(item.state)).reduce((sum, item) => sum + item._count._all, 0);
   return rows.map(row => classifyCandidate({ ...row,
     leaseHistory: leases.some(lease => lease.nodeId === row.id),
-    heldLeases: leases.filter(lease => lease.nodeId === row.id && HELD_RESOURCE_STATES.includes(lease.state)).reduce((sum, lease) => sum + lease._count._all, 0),
-    heldWork: work.find(item => item.nodeId === row.id)?._count._all ?? 0,
+    heldLeases: held(leases, row.id),
+    heldWork: held(work, row.id),
+    participantHistory: work.some(item => item.nodeId === row.id),
+    managedCronHistory: crons.some(item => item.nodeId === row.id),
   }, target, options));
 }
 

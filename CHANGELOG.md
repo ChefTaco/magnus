@@ -4,6 +4,49 @@ All notable changes to this project are documented in this file. The format is b
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- Server: agent upgrade runs no longer stop at a node that refused before anything changed (resource
+  enrollment, admission fence, busy, unreachable, managed-mutation guard). Such nodes are recorded
+  as `refused` with the agent's error code and message, and the run goes on; a refused canary hands
+  the role to the next node. Reverts, release problems and agents that go silent still stop the run.
+- Server: eligibility uses the same checks as dispatch (admission fence, enrollment state and host
+  name, held work and leases, fresh heartbeat), names the blocker (for example "resource enrollment
+  stuck in draining since <date>"), flags agents whose local managed-enrollment marker the server
+  does not share, and is checked again right before each node.
+- Server: a run whose server restarted or whose CLI was interrupted shows as `interrupted` instead
+  of blocking new runs for seven days. Two runs can no longer start at once.
+- Server: a node only counts as upgraded once its agent reports the request as confirmed. A lost
+  reply no longer fails the node; the heartbeat report for the request decides. The wait follows the
+  agent's own trial window.
+- Server: `nodeIds: []` no longer upgrades the whole fleet; unknown node ids are rejected and
+  selected nodes that are not eligible are listed with the reason.
+- Server: an agent stays `UPDATING` no longer once it goes offline or stops reporting an upgrade, and
+  gets back the status it had before.
+- Server: self-upgrade heartbeat reports with an unknown future upgrade state or a long reason are
+  kept instead of being dropped; reports that do not parse are logged.
+- Server: scheduler drain receipts may be up to 256 KiB (was 16 KiB), enough for the schema maximum
+  of 1024 external blockers on hosts with many system timers.
+- Console: the upgrade dialog shows the server's error message instead of "Request failed with
+  status code 409", refused and excluded nodes with their reasons, and the last run when reopened.
+
+### Added
+
+- Server: `POST /api/v1/agents/upgrade/runs/{id}/stop` and `/retry`, optional `canaryNodeId`,
+  `allowPrerelease` and `allowRetryReverted`; `magnus-server agents stop`, `agents upgrade --retry`,
+  `--canary`, `--allow-prerelease` and `--retry-reverted`. Console Stop and Retry buttons.
+- Server: audit actions `agent.upgrade_run.started|finished|stopped|stop_requested` and
+  `agent.upgrade.node_refused|node_failed|node_confirmed|node_reverted`.
+- Server: enrollment inspection lists each participant's last refresh failure as a fixed reason code
+  (and the participant's own error code, if it sent one).
+- Contracts: the self-upgrade heartbeat report may carry `confirmSeconds` and `managedEnrollment`.
+
+### New environment variables
+
+- None.
+
 ## [1.1.2] - 2026-11-02
 
 ### Changed

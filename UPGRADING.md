@@ -152,11 +152,60 @@ It moves the install into `/opt/magnus-agent/versions/<X>`, links `./current`, i
 
 - From the console: open **Nodes**, then **Upgrade agents**. Agents that cannot upgrade now are
   greyed out with the reason: offline, not set up with `install-service`, self-upgrade switched off,
-  already current, or another major version.
-- From the server host: `magnus-server agents upgrade [--to X.Y.Z] [--nodes a,b] [--dry-run]`.
+  already current, another major version, already reverted this version, a closed release admission
+  fence, an incomplete resource enrollment (for example "resource enrollment stuck in draining
+  since <date>"), unsettled participant work or command leases, or an agent whose local
+  managed-enrollment marker the server does not share (see below).
+- From the server host: `magnus-server agents upgrade [--to X.Y.Z] [--nodes a,b] [--canary NODE] [--dry-run]`.
 
 One agent goes first as a canary. Once it confirms, the rest follow, a few at a time
-(`MAGNUS_AGENT_UPGRADE_CONCURRENCY`). The run stops at the first agent that does not confirm.
+(`MAGNUS_AGENT_UPGRADE_CONCURRENCY`). Each node is checked again right before it is asked; a node
+that became ineligible is skipped with the reason.
+
+Outcomes per node:
+
+| State | Meaning | Run |
+| --- | --- | --- |
+| `confirmed` | The agent reported this request's version as confirmed after its trial | continues |
+| `refused` | Nothing changed on the node: the server did not send the request (admission, enrollment, unreachable agent) or the agent declined it (busy, already current, launcher missing, managed-mutation guard) | continues; a refused canary hands the role to the next node |
+| `reverted` | The new version did not report in time and the agent switched back | stops |
+| `failed` | A release problem (integrity, install, source), or the agent went silent after the request | stops |
+| `skipped` | Not reached, or ineligible at its turn | — |
+
+The run summary lists the counts and every refusal with its code and message, for example
+`3 confirmed, 1 refused, 0 failed, 0 skipped; refused: node-b (SELF_UPGRADE_BUSY: …)`.
+
+- **Stop**: the console's Stop button, `POST /api/v1/agents/upgrade/runs/<id>/stop` or
+  `magnus-server agents stop <id>` stops the run before its next batch. Ctrl-C in
+  `magnus-server agents upgrade` does the same; a second Ctrl-C leaves at once.
+- **Interrupted runs**: the server (or CLI) that runs an upgrade renews a lease on it. If it
+  restarts or is killed, the run shows as `interrupted` within a few minutes, its asked nodes are
+  settled from their last heartbeat report, and a new run can start. A report that arrives later
+  for such a node is still recorded into the run.
+- **Retry**: the console's Retry button, `POST /api/v1/agents/upgrade/runs/<id>/retry` or
+  `magnus-server agents upgrade --retry <id>` starts a new run with the same version and integrity
+  for the failed, refused, skipped and interrupted nodes. Nodes that reverted this version are only
+  offered again with `allowRetryReverted` (`--retry-reverted`).
+- Prerelease versions need `allowPrerelease` (`--allow-prerelease`). A target the registry does not
+  have is shown as unverified.
+- The server waits for each agent's own trial window (`MAGNUS_AGENT_UPGRADE_CONFIRM_SECONDS`, which
+  1.1.3 agents report), two heartbeats and a restart margin, and gives up earlier on an agent that
+  stopped sending heartbeats.
+
+If the reply to an upgrade request is lost, the server keeps watching: the agent's heartbeat report
+for that request decides. On a node with resource leases, the command lease for that request
+(`agent-upgrade-<requestId>`) stays `unknown` until it is reconciled with signed evidence, as for
+any other managed request: `POST /api/v1/commands/agent-upgrade-<requestId>/reconcile-resource`
+adopts the agent's signed receipt (see docs/COMMAND_RESOURCE_LEASES.md). The upgrade run never
+releases a lease by itself.
+
+**"Agent and server disagree about resource enrollment".** An agent stores a local
+managed-enrollment marker once the server has told it the node is enrolled, and from then on it
+refuses direct requests. The server tells it so when the node has any enrollment beyond `legacy`
+or any durable ownership history, including participant work such as console terminal or SSH
+sessions. A node with such history but no completed enrollment ends up with a marker on the agent
+and no enrollment on the server. Complete the node's enrollment drain on the server
+(docs/COMMAND_RESOURCE_LEASES.md), or upgrade that agent by hand on the node.
 
 On each node, the upgrade goes like this:
 

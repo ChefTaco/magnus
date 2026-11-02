@@ -12,6 +12,7 @@ import { managedCronSchema, managedCronRegistrationSchema, managedCronStageAckSc
 import { lockResourceNode } from './resource-node-lock.js';
 import { assertNodeAdmissionOpen } from './admission-fence.js';
 import { assertEnrollmentComplete } from './resource-enrollment.js';
+import { readOwnershipHistory, stickyEnrollmentObserved } from './resource-ownership.js';
 import { admitResourceCommand, markResourceDispatched, settleResourceResult, resourceLeasesRequested, type ResourceAdmission } from './command-resource-leases.js';
 import { commandRequestDigest, type CommandRequest } from '../security/command-request.js';
 import { verifyCommandResultSignature, type SignedCommandResult } from '../security/command-result-signature.js';
@@ -41,14 +42,9 @@ export async function cronMutationMode(nodeId: string): Promise<'legacy' | 'mana
     await lockResourceNode(tx, nodeId);
     const node = await tx.node.findUnique({ where: { id: nodeId } });
     if (!node) throw new HttpError(404, 'NODE_NOT_FOUND', 'Inventory node not found');
-    const [enrollment, leaseHistory, definitionHistory, participantHistory] = await Promise.all([
-      tx.resourceEnrollment.findUnique({ where: { nodeId }, select: { state: true } }),
-      tx.commandResourceLease.findFirst({ where: { nodeId }, select: { id: true } }),
-      tx.managedCronDefinition.findFirst({ where: { nodeId }, select: { cronJobId: true } }),
-      tx.resourceParticipantWork.findFirst({ where: { nodeId }, select: { workId: true } }),
-    ]);
-    const managed = resourceLeasesRequested() || Boolean(enrollment && enrollment.state !== 'legacy')
-      || Boolean(leaseHistory || definitionHistory || participantHistory);
+    const [enrollment, history] = await Promise.all([
+      tx.resourceEnrollment.findUnique({ where: { nodeId }, select: { state: true } }), readOwnershipHistory(tx, nodeId)]);
+    const managed = resourceLeasesRequested() || stickyEnrollmentObserved(enrollment, history);
     if (managed) await assertEnrollmentComplete(tx, nodeId, node.hostname);
     return managed ? 'managed' : 'legacy';
   });

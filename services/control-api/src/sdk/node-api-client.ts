@@ -564,7 +564,9 @@ export class NodeApiClient {
     let dispatched = false;
     try {
       return (await this.mutateWithEvidence<ApiResponse<{ accepted: boolean; from: string; to: string; integrity: string; requestId: string;
-        restartInSeconds: number }>>('POST', 'agent-upgrade', request, 15 * 60_000, undefined, undefined, false,
+        restartInSeconds: number }>>('POST', 'agent-upgrade', request, 15 * 60_000,
+      // A stable command id lets an operator find (and reconcile) the lease of a request whose reply was lost.
+      /^[a-zA-Z0-9._-]{1,100}$/.test(request.requestId) ? `agent-upgrade-${request.requestId}` : undefined, undefined, false,
       { pingFirst: true, onDispatch: () => { dispatched = true; } })).response;
     } catch (error) {
       throw classifyAgentRequestError(error, dispatched);
