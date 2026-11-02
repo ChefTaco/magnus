@@ -6,6 +6,14 @@ import { CONTROL_API_URL, HOST_FQDN, NODE_MANAGER_SECRET, RESULT_SIGNING_SECRET,
 import { controlApiFetch } from '../tls.js';
 import { commandLedger, executionSupervisor } from './command-executor.js';
 import { mutationBarrier } from './mutation-barrier.js';
+import { logger } from '../utils/logger.js';
+
+/** Fixed, non-secret reasons an agent drain proof was refused. */
+export type DrainFailureReason = 'authority-unavailable' | 'authority-binding' | 'fence-failed' | 'supervisor-required'
+  | 'supervisor-unverified' | 'inventory-failed' | 'challenge-expired' | 'receipt-failed';
+class DrainFailure extends Error {
+  constructor(readonly reason: DrainFailureReason, message: string) { super(message); }
+}
 
 const descriptorSchema = z.object({ version: z.literal(1), participant: z.literal('agent'),
   nodeId: z.string().min(1).max(128), nodeFqdn: z.string().min(1).max(253), epoch: z.number().int().positive(),
@@ -69,6 +77,8 @@ enrollmentDrainRoutes.post('/enrollment-drain', async c => {
   if (descriptor.nodeFqdn !== HOST_FQDN || descriptor.expiresAt <= Date.now()
     || descriptor.expiresAt > Date.now() + 300_000 || RESULT_SIGNING_SECRET.length < 32
     || RESULT_SIGNING_SECRET === NODE_MANAGER_SECRET) return c.json({ success: false, error: { code: 'INVALID_DRAIN_CHALLENGE' } }, 409);
+  // The step in progress names the refusal when a dependency throws.
+  let step: DrainFailureReason = 'authority-unavailable'; const started = Date.now();
   try {
     const request = { nodeFqdn: HOST_FQDN, nonce: randomUUID() };
     const response = await controlApiFetch(CONTROL_API_URL.replace(/\/+$/, '') + '/api/v1/resource-leases/enrollment/node-status', {
@@ -82,15 +92,18 @@ enrollmentDrainRoutes.post('/enrollment-drain', async c => {
     if (envelope.success !== true || status.nonce !== request.nonce || status.nodeFqdn !== descriptor.nodeFqdn
       || status.nodeId !== descriptor.nodeId || status.state !== 'draining' || status.epoch !== descriptor.epoch
       || status.barrierId !== descriptor.barrierId || status.agentChallenge?.challengeId !== descriptor.challengeId
-      || status.agentChallenge.expiresAt !== descriptor.expiresAt) throw new Error('Drain authority binding differs');
+      || status.agentChallenge.expiresAt !== descriptor.expiresAt) throw new DrainFailure('authority-binding', 'Drain authority binding differs');
     const identity = { nodeId: descriptor.nodeId, nodeFqdn: descriptor.nodeFqdn, epoch: descriptor.epoch, barrierId: descriptor.barrierId };
+    step = 'fence-failed';
     await mutationBarrier.drain(identity);
-    if (!MAGNUS_EXECUTION_SUPERVISOR_ENABLED) throw new Error('Supervised execution is required for enrollment proof');
+    if (!MAGNUS_EXECUTION_SUPERVISOR_ENABLED) throw new DrainFailure('supervisor-required', 'Supervised execution is required for enrollment proof');
+    step = 'inventory-failed';
     const supervisor = await executionSupervisor.inventory();
-    if (!supervisor.supported || !supervisor.quiescent) throw new Error('Supervisor work remains unverified');
+    if (!supervisor.supported || !supervisor.quiescent) throw new DrainFailure('supervisor-unverified', 'Supervisor work remains unverified');
     const mutations = await mutationBarrier.snapshot(identity);
     const commands = await commandLedger.drainSnapshot();
-    if (descriptor.expiresAt <= Date.now()) throw new Error('Drain challenge expired while collecting evidence');
+    if (descriptor.expiresAt <= Date.now()) throw new DrainFailure('challenge-expired', 'Drain challenge expired while collecting evidence');
+    step = 'receipt-failed';
     const activeCount = mutations.activeCount + commands.activeCount;
     const unknownCount = mutations.unknownCount + commands.unknownCount;
     const receipt = { ...descriptor, status: activeCount || unknownCount ? 'pending' : 'drained', activeCount, unknownCount,
@@ -98,8 +111,12 @@ enrollmentDrainRoutes.post('/enrollment-drain', async c => {
     const signature = createHmac('sha256', RESULT_SIGNING_SECRET).update('magnus.resource-enrollment.v1\n' + canonicalDrainJson(receipt)).digest('hex');
     c.header('Cache-Control', 'no-store');
     return c.json({ ...receipt, signature });
-  } catch {
-    return c.json({ success: false, error: { code: 'DRAIN_EVIDENCE_UNAVAILABLE',
+  } catch (error) {
+    const reason = error instanceof DrainFailure ? error.reason : step;
+    // The local log keeps the real cause; the response carries only the fixed reason.
+    logger.warn('Agent enrollment drain refused', { reason, error: error instanceof Error ? error.message : String(error),
+      epoch: descriptor.epoch, barrierId: descriptor.barrierId, elapsedMs: Date.now() - started });
+    return c.json({ success: false, error: { code: 'DRAIN_EVIDENCE_UNAVAILABLE', reason,
       message: 'Drain evidence is incomplete; no enrollment acknowledgment issued' } }, 409);
   }
 });

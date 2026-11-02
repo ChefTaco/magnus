@@ -5,7 +5,7 @@ import { createServer, type Server } from 'node:net';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { aggregateSchedulerBlockers, boundedSchedulerRead, boundedTimerInlineSources, discoverSchedulerSources, parseSchedulerAccounts,
-  schedulerContentDigest, schedulerMembersDigest } from './scheduler-discovery.js';
+  hermesRuntimeCommand, schedulerContentDigest, schedulerMembersDigest, stableServiceProperties, stableTimerUnitList } from './scheduler-discovery.js';
 import { schedulerInventory } from './scheduler-inventory.js';
 import { ManagedScheduler } from './managed-scheduler.js';
 let root: string; let servers: Server[];
@@ -127,6 +127,55 @@ describe('native and user scheduler discovery', () => {
     const missingService = await discoverSchedulerSources({ ...options(), run });
     expect(missingService.blockers.some(row => row.kind === 'SYSTEM_TIMER_DEFINITION')).toBe(false);
     expect(missingService.issues.some(value => value.startsWith('SYSTEM_TIMER_IDENTITY_UNRECONCILABLE'))).toBe(true);
+  });
+  it('strips only the trailing last-run status from systemd command records', () => {
+    const ran = (time: string, pid: number) => 'ExecStart={ path=/usr/bin/job ; argv[]=/usr/bin/job --flag ; ignore_errors=no ; '
+      + `start_time=[${time}] ; stop_time=[${time}] ; pid=${pid} ; code=exited ; status=0 }`;
+    expect(stableServiceProperties(ran('Mon 2026-11-02 08:22:00 UTC', 41))).toBe(stableServiceProperties(ran('Mon 2026-11-02 08:23:00 UTC', 42)));
+    expect(stableServiceProperties(ran('Mon 2026-11-02 08:22:00 UTC', 41))).toBe('ExecStart={ path=/usr/bin/job ; argv[]=/usr/bin/job --flag ; ignore_errors=no }');
+    expect(stableServiceProperties('ExecStartPre={ path=/bin/a ; argv[]=/bin/a ; ignore_errors=yes ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }'))
+      .toBe('ExecStartPre={ path=/bin/a ; argv[]=/bin/a ; ignore_errors=yes }');
+    // The command definition itself stays bound, including look-alike text inside argv.
+    const tricky = 'ExecStart={ path=/bin/sh ; argv[]=/bin/sh /opt/x.sh pid=1 ; ignore_errors=no ; pid=7 ; code=exited ; status=0 }';
+    expect(stableServiceProperties(tricky)).toBe('ExecStart={ path=/bin/sh ; argv[]=/bin/sh /opt/x.sh pid=1 ; ignore_errors=no }');
+    expect(stableServiceProperties(ran('t', 1).replace('/usr/bin/job --flag', '/usr/bin/job --other')))
+      .not.toBe(stableServiceProperties(ran('t', 1)));
+    // Unknown trailing fields and other properties are kept byte for byte.
+    for (const line of ['ExecStart={ path=/bin/a ; argv[]=/bin/a ; ignore_errors=no ; future=1 }', 'Environment=pid=1', 'User=root'])
+      expect(stableServiceProperties(line)).toBe(line);
+    expect(stableTimerUnitList('a.timer loaded active waiting A timer\nb.timer loaded active running B\n'))
+      .toBe(stableTimerUnitList('a.timer loaded active running Renamed\nb.timer loaded active waiting B\n'));
+    expect(stableTimerUnitList('a.timer loaded active waiting A')).not.toBe(stableTimerUnitList('a.timer loaded inactive dead A'));
+  });
+  it('keeps timer source evidence stable when a timer fires between and during observations', async () => {
+    const units = join(root, 'system-units'); await mkdir(units);
+    const unit = join(units, 'tick.timer'); await writeFile(unit, '[Timer]\nOnCalendar=minutely\n');
+    const service = join(units, 'tick.service'); await writeFile(service, '[Service]\nExecStart=/bin/true\n');
+    let runs = 0; let argv = '/bin/true';
+    const run = async (_command: string, args: string[]) => {
+      if (args.includes('user@*.service')) return '';
+      // Each observation sees a newer last run and a changing timer sub-state.
+      if (args.includes('list-units')) return `tick.timer loaded active ${runs % 2 ? 'running' : 'waiting'} Tick\n`;
+      if (args.includes('list-unit-files')) return 'tick.timer enabled enabled\n';
+      if (args.includes('show') && args.includes('tick.service')) {
+        runs++;
+        return `Id=tick.service\nNames=tick.service\nLoadState=loaded\nFragmentPath=${service}\nDropInPaths=\n`
+          + `ExecStart={ path=/bin/true ; argv[]=${argv} ; ignore_errors=no ; start_time=[Mon 2026-11-02 08:${String(runs).padStart(2, '0')}:00 UTC] ; `
+          + `stop_time=[Mon 2026-11-02 08:${String(runs).padStart(2, '0')}:01 UTC] ; pid=${1000 + runs} ; code=exited ; status=0 }\n`;
+      }
+      if (args.includes('show')) return `Id=tick.timer\nNames=tick.timer\nLoadState=loaded\nFragmentPath=${unit}\nDropInPaths=\nActiveState=active\nUnitFileState=enabled\nUnit=tick.service\n`;
+      return '';
+    };
+    const first = await discoverSchedulerSources({ ...options(), run });
+    const second = await discoverSchedulerSources({ ...options(), run });
+    expect(runs).toBeGreaterThanOrEqual(4);
+    expect(first.issues).toEqual([]); expect(second.issues).toEqual([]);
+    expect(second.sources).toEqual(first.sources); expect(second.blockers).toEqual(first.blockers);
+    expect(first.blockers.filter(row => row.kind === 'SYSTEM_TIMER_DEFINITION')).toHaveLength(1);
+    // A changed command definition is still a different source.
+    argv = '/bin/true --changed';
+    const changed = await discoverSchedulerSources({ ...options(), run });
+    expect(changed.sources).not.toEqual(first.sources);
   });
   it('keeps a timer source unreconcilable when its contents cannot be bound', async () => {
     const units = join(root, 'system-units'); await mkdir(units); const unit = join(units, 'blocked.timer'); execFileSync('/usr/bin/mkfifo', [unit]);
@@ -329,6 +378,30 @@ describe('native and user scheduler discovery', () => {
     await rm(join(path, 'stat')); const unresolved = await discoverSchedulerSources(options());
     expect(unresolved.blockers.some(row => row.kind === 'NATIVE_HERMES_RUNTIME_UNINSTRUMENTED')).toBe(false);
     expect(unresolved.issues.some(value => value.startsWith('NATIVE_HERMES_RUNTIME_IDENTITY_UNRECONCILABLE'))).toBe(true);
+  });
+  it('recognises Hermes runtimes by what they execute, not by argument text', () => {
+    for (const args of [['hermes', 'gateway', 'run'], ['/opt/hermes-agent/venv/bin/python3', '/opt/hermes-agent/venv/bin/hermes', 'gateway'],
+      ['python3', '-u', '/srv/run_gateway.py'], ['python', '-m', 'hermes_cli.main', 'gateway'], ['python3', '-mhermes_cli.main'],
+      ['python', '/custom/hermes/gateway.py'], ['python', 'gateway.py', '--hermes-home=/custom/profile'], ['node', '--', '/srv/hermes/index.js']])
+      expect(hermesRuntimeCommand(args)).toBe(true);
+    for (const args of [['grep', '-i', 'hermes', '/var/log/syslog'], ['jq', '.[] | select(.kind == "NATIVE_HERMES_RUNTIME_UNINSTRUMENTED")'],
+      ['sh', '-c', 'sleep 15', 'report-for-hermes'], ['bash', '-c', 'systemctl --user status hermes-gateway'], ['python3', '-c', 'import hermes_cli'],
+      ['sudo', '-S', 'bash', '-c', 'hermes gateway status'], ['systemctl', '--user', 'show', 'hermes-gateway.service'], ['python3', 'other.py', 'hermes'], []])
+      expect(hermesRuntimeCommand(args)).toBe(false);
+  });
+  it('does not record a process that only mentions Hermes in its arguments', async () => {
+    const write = async (pid: string, args: string[]) => {
+      const path = join(root, 'proc', pid); await mkdir(path); await writeFile(join(path, 'cmdline'), args.join('\0') + '\0');
+      const fields = Array.from({ length: 19 }, () => '1'); fields[18] = '77' + pid; await writeFile(join(path, 'stat'), `${pid} (x) S ${fields.join(' ')}`);
+      await writeFile(join(path, 'environ'), '');
+    };
+    await write('51', ['jq', '.[] | select(.kind == "NATIVE_HERMES_RUNTIME_UNINSTRUMENTED")']);
+    await write('52', ['sudo', '-S', 'bash', '-c', 'grep -c hermes /proc/*/cmdline']);
+    const quietScan = await discoverSchedulerSources(options());
+    expect(quietScan.blockers).toEqual([]); expect(quietScan.issues).toEqual([]);
+    await write('53', ['hermes', 'gateway', 'run']);
+    const runtime = await discoverSchedulerSources(options());
+    expect(runtime.blockers).toEqual([expect.objectContaining({ kind: 'NATIVE_HERMES_RUNTIME_UNINSTRUMENTED', count: 1 })]);
   });
   it('accepts reviewed additional roots only from a private additive canonical record', async () => {
     const coverageRoot = join(root, 'coverage'); const extra = join(root, 'extra'); await mkdir(coverageRoot, { mode: 0o700 }); await mkdir(extra);

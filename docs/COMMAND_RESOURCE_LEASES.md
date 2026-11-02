@@ -101,8 +101,12 @@ differ from every other key.
 `GET /enrollment/:nodeId` also lists `lastFailures`: each participant's last refresh failure on this
 server process as a fixed code (`participant-unreachable`, `participant-http-<status>`,
 `participant-response-too-large`, `participant-receipt-invalid`, `participant-receipt-unauthenticated`
-and so on), plus the participant's own error code when it sent one. Scheduler receipts may be up to
-256 KiB; other participant receipts up to 16 KiB.
+and so on), plus the participant's own error code and fixed reason when it sent them. Agents send a
+reason with a refused drain proof: `authority-unavailable`, `authority-binding`, `fence-failed`,
+`inventory-failed`, `challenge-expired` or `receipt-failed`; the scheduler adds `inventory-changed`
+and `ownership-changed`, and the agent `supervisor-required` and `supervisor-unverified`. The agent
+logs the underlying cause as a warning on its own host. Scheduler receipts may be up to 256 KiB;
+other participant receipts up to 16 KiB.
 
 Administrator routes, all under `/api/v1/resource-leases`:
 

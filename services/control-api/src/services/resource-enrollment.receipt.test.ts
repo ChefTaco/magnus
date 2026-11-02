@@ -21,5 +21,11 @@ describe('participant receipt bounds', () => {
     await expect(readParticipantReceipt(new Response(JSON.stringify({ error: { code: 'bad code; rm' } }), { status: 500 })))
       .rejects.toMatchObject({ agentCode: null });
     await expect(readParticipantReceipt(new Response('not json'))).rejects.toMatchObject({ code: 'participant-response-invalid' });
+    await expect(readParticipantReceipt(new Response(JSON.stringify({ error: { code: 'SCHEDULER_DRAIN_EVIDENCE_UNAVAILABLE',
+      reason: 'inventory-changed', message: 'detail' } }), { status: 409 })))
+      .rejects.toMatchObject({ agentCode: 'SCHEDULER_DRAIN_EVIDENCE_UNAVAILABLE', agentReason: 'inventory-changed' });
+    for (const reason of ['/etc/crontab', 'Inventory Changed', 'x'.repeat(49), 7])
+      await expect(readParticipantReceipt(new Response(JSON.stringify({ error: { code: 'X', reason } }), { status: 409 })))
+        .rejects.toMatchObject({ agentReason: null });
   });
 });
