@@ -64,14 +64,17 @@ const receiptSchema = z.object({
 type Receipt = z.infer<typeof receiptSchema>;
 export type CommandAdmissionCode = 'RESOURCE_BUSY' | 'OUTCOME_UNKNOWN' | 'IDEMPOTENCY_CONFLICT' | 'STALE_FENCE' | 'LEASE_EXPIRED'
   | 'LEDGER_UNAVAILABLE' | 'INVALID_RECONCILIATION' | 'UNMANAGED_MUTATION' | 'RESOURCE_CLAIM_INVALID';
+/** What went wrong underneath an admission error, for a WARN line. */
+export const admissionCause = (error: CommandAdmissionError): string => error.cause === undefined ? '' : ` (cause: ${error.cause instanceof Error ? error.cause.message : String(error.cause)})`;
 export class CommandAdmissionError extends Error {
   /** The callback demonstrably never ran and this command id has no receipt: a certain refusal. */
   notStarted: boolean;
   /** STALE_FENCE: the fence this ledger already accepted for the key, so the server can move past it. */
   readonly highWater?: { resourceKey: string; fence: string };
   constructor(readonly code: CommandAdmissionCode, message: string,
-    details: { notStarted?: boolean; highWater?: { resourceKey: string; fence: string } } = {}) {
-    super(message);
+    details: { notStarted?: boolean; highWater?: { resourceKey: string; fence: string }; cause?: unknown } = {}) {
+    // The reply keeps a fixed code and message; the cause stays here for the caller's log.
+    super(message, details.cause === undefined ? undefined : { cause: details.cause });
     this.notStarted = details.notStarted ?? false;
     if (details.highWater) this.highWater = details.highWater;
   }
@@ -236,7 +239,7 @@ export class CommandLedger {
       return (await this.receipt(assertion.commandId))!;
     } catch (error) {
       if (error instanceof CommandAdmissionError) throw error;
-      throw new CommandAdmissionError('LEDGER_UNAVAILABLE', 'Reconciliation could not be persisted; inspect the receipt before retrying the same decision');
+      throw new CommandAdmissionError('LEDGER_UNAVAILABLE', 'Reconciliation could not be persisted; inspect the receipt before retrying the same decision', { cause: error });
     } finally { await mutex?.close(); }
   }
 
@@ -487,7 +490,7 @@ export class CommandLedger {
       }
       throw new CommandAdmissionError(started ? 'OUTCOME_UNKNOWN' : 'LEDGER_UNAVAILABLE',
         started ? 'Execution receipt is uncertain; retained for reconciliation and never replayed' : 'Command ledger unavailable; inspect its receipt before retrying',
-        { notStarted: certain });
+        { notStarted: certain, cause: error });
     } finally {
       if (admitted) this.active.delete(input.commandId);
       try {

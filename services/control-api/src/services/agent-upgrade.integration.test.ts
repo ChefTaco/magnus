@@ -108,7 +108,9 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('an upgrade wave over real le
     }));
     const store = service.memoryRunStore();
     let clock = Date.now();
-    const deps = { ...service.defaultDeps(store), pollMs: 5_000, confirmTimeoutMs: 10_000, retryBackoffMs: [1], now: () => clock,
+    const real = service.defaultDeps(store);
+    // These agents keep sending heartbeats, on the same accelerated clock as the run.
+    const deps = { ...real, pollMs: 5_000, confirmTimeoutMs: 10_000, retryBackoffMs: [1], now: () => clock, observe: async (nodeId: string) => ({ ...await real.observe(nodeId), lastHeartbeatAt: new Date(clock) }),
       sleep: async (ms: number) => { clock += ms; await new Promise(resolve => setTimeout(resolve, 1)); } };
     const started = await service.startUpgradeRun({ version: TARGET, integrity: INTEGRITY, nodeIds: nodes.map(node => node.id), actorId: 'admin', store, deps });
     const result = await started.done;

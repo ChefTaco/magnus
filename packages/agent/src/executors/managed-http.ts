@@ -6,7 +6,7 @@ import { CONTROL_API_URL, HOST_FQDN, NODE_MANAGER_SECRET, RESULT_SIGNING_SECRET,
 import { controlApiFetch } from '../tls.js';
 import { commandLedger, executeBodySchema } from './command-executor.js';
 import { refusalError, refusalStatus } from './command-refusal.js';
-import { CommandAdmissionError, commandFenceSchema, commandRequestDigest, isArdentScopedCommand, type CommandIdentity } from './command-ledger.js';
+import { admissionCause, CommandAdmissionError, commandFenceSchema, commandRequestDigest, isArdentScopedCommand, type CommandIdentity } from './command-ledger.js';
 import { managedExecution } from '../security/managed-context.js';
 import { legacyAdmissionResponseSchema, managedClaimSchema, MANAGED_CLAIM_HEADER, httpIdentity, httpReceiptBody, type ManagedClaim } from '../security/managed-http.js';
 import { nativeCompletionDescriptor, nativeCompletionResourceKey } from '../security/native-completion-registry.js';
@@ -234,10 +234,10 @@ export function registerManagedHttp(app: Hono): void {
     } catch (error) {
       // A refusal the ledger can name keeps its name; only what is really uncertain is reported as uncertain.
       if (error instanceof CommandAdmissionError && error.code !== 'OUTCOME_UNKNOWN') {
-        logger.warn(`Managed request ${value.commandId} ${value.method} ${value.path} refused: ${error.code}: ${error.message}${error.highWater ? ` (${error.highWater.resourceKey} is at fence ${error.highWater.fence}, the request has ${value.coordination.fence})` : ''}`);
+        logger.warn(`Managed request ${value.commandId} ${value.method} ${value.path} refused: ${error.code}: ${error.message}${admissionCause(error)}${error.highWater ? ` (${error.highWater.resourceKey} is at fence ${error.highWater.fence}, the request has ${value.coordination.fence})` : ''}`);
         return refuse(error.code, error.message, { notStarted: error.notStarted, ...(error.highWater ? { highWater: error.highWater } : {}) });
       }
-      logger.warn(`Managed request ${value.commandId} ${value.method} ${value.path} is uncertain: ${error instanceof Error ? error.message : String(error)}`);
+      logger.warn(`Managed request ${value.commandId} ${value.method} ${value.path} is uncertain: ${error instanceof Error ? error.message : String(error)}${error instanceof CommandAdmissionError ? admissionCause(error) : ''}`);
       return c.json({ success: false, error: { code: 'MANAGED_MUTATION_UNCERTAIN', message: 'Inspect the exact resource receipt before further work; no automatic replay' } }, 409);
     }
     finally { enrolling = false; }

@@ -299,6 +299,9 @@ export interface UpgradeCandidate {
   managed?: boolean;
   /** Result of the latest preflight check, when there is one. */
   preflight?: NodePreflight | null;
+  /** Any command lease ever, and those still reserved, running or unknown. */
+  leaseHistory?: boolean;
+  heldLeases?: number;
 }
 
 export interface CandidateRow {
@@ -340,7 +343,7 @@ export function classifyCandidate(row: CandidateRow, target: string, options: El
   const enrollmentState = row.resourceEnrollment ?? null;
   // Same rule as admission: off the legacy path once leases are on, enrollment started, or any lease exists.
   const managed = !legacyAdmissionPossible(enrollmentState, options.leasesRequested ?? resourceLeasesRequested()) || Boolean(row.leaseHistory);
-  const base = { nodeId: row.id, name: row.name, version, upgrade: report?.upgrade ?? null, layout: report?.layout ?? null, managed };
+  const base = { nodeId: row.id, name: row.name, version, upgrade: report?.upgrade ?? null, layout: report?.layout ?? null, managed, leaseHistory: Boolean(row.leaseHistory), heldLeases: row.heldLeases ?? 0 };
   const no = (code: string, reason: string): UpgradeCandidate => ({ ...base, eligible: false, reason, code });
   if (!hasFreshOnlineHealth(row, now)) return no('NODE_OFFLINE', `offline or no recent heartbeat${row.lastHeartbeatAt ? ` (last ${row.lastHeartbeatAt.toISOString()})` : ''}`);
   if (!isVersion(version)) return no('VERSION_UNKNOWN', 'agent version unknown');
@@ -476,6 +479,8 @@ export interface UpgradeRun {
   excluded?: Array<{ nodeId: string; name: string; reason: string; code?: string | null }>;
   /** Release failures that stop the run (MAGNUS_AGENT_UPGRADE_MAX_FAILURES, or this run's override). */
   maxFailures?: number;
+  /** What the check found that does not stop a node, for someone to read before the wave. */
+  warnings?: Array<{ nodeId: string; name: string; code: string; detail: string }>;
   /** Every node needing attention, with a code and a remedy. Filled when the run ends. */
   attention?: RunAttention[];
   nodes: RunNode[];
@@ -794,6 +799,11 @@ async function watchNode(run: UpgradeRun, entry: RunNode, deps: UpgradeDeps, con
       versionSince = null;
     }
     if (unknown) {
+      // Silent past its window: it will not report now. This is not AGENT_SILENT, which counts against the release:
+      // nobody knows the request arrived. It ends the watch early, and it counts as ambiguous towards a suspicion.
+      if (lastHeartbeat && deps.now() - lastHeartbeat.getTime() > windowMs) {
+        return end('ambiguous', `outcome unknown (${unknown.message}); no heartbeat since ${lastHeartbeat.toISOString()}`, 'AGENT_SILENT_AFTER_LOST_REPLY', true);
+      }
       // Past the window the wave goes on without this node; its reports are still read here.
       if (deps.now() - startedAt >= windowMs && entry.state === 'requested') {
         Object.assign(entry, { state: 'watching', code: unknown.code, failureClass: 'node', awaitingReport: true,
@@ -1094,8 +1104,9 @@ export async function checkCandidates(release: Pick<AgentRelease, 'version' | 'e
   let candidates = await list();
   const ask = deps.preflight;
   if (!ask) return candidates;
-  const askable = (candidate: UpgradeCandidate) => candidate.code !== 'NODE_OFFLINE' && candidate.code !== 'VERSION_UNKNOWN'
-    && (options.everyOnlineNode || candidate.eligible || candidate.code === 'LEASE_HELD');
+  // A held lease earns its heal attempt whichever earlier code the node stopped at, including on one already on the target.
+  const askable = (candidate: UpgradeCandidate) => candidate.code !== 'NODE_OFFLINE'
+    && (options.everyOnlineNode || candidate.eligible || Boolean(candidate.heldLeases));
   const rows = candidates.filter(askable);
   const hostnames = await hostnamesOf(rows.map(candidate => candidate.nodeId));
   const target = (candidate: UpgradeCandidate): PreflightTarget => ({ nodeId: candidate.nodeId, hostname: hostnames.get(candidate.nodeId) ?? '', managed: candidate.managed ?? false });
@@ -1103,7 +1114,11 @@ export async function checkCandidates(release: Pick<AgentRelease, 'version' | 'e
   const results = new Map(await mapLimit(rows, PREFLIGHT_CONCURRENCY, async candidate => {
     let preflight = await ask(target(candidate), query).catch((error: unknown): NodePreflight => ({ status: 'unreachable', checkedAt: new Date().toISOString(), problems: [],
       detail: error instanceof Error ? error.message : String(error) }));
-    if (options.heal && deps.heal && (preflight.report || candidate.code === 'LEASE_HELD')) {
+    // It has handled managed requests, and cannot say whether its fence would refuse this one.
+    if (preflight.status === 'unavailable' && candidate.leaseHistory && !preflight.problems.some(problem => problem.code === 'FENCE_UNREPORTED'))
+      preflight = { ...preflight, problems: [...preflight.problems, { code: 'FENCE_UNREPORTED', blocking: false,
+        detail: `${candidate.name} cannot report its fence and has lease history; if its fence is ahead, run \`magnus-server agents fence ${candidate.name} VALUE\` before the wave` }] };
+    if (options.heal && deps.heal && (preflight.report || candidate.heldLeases)) {
       const repaired = await deps.heal(target(candidate), preflight).catch((error: unknown) => {
         console.warn(`[agent-upgrade] repair of ${candidate.name} failed: ${error instanceof Error ? error.message : String(error)}`);
         return null;
@@ -1205,6 +1220,8 @@ export async function startUpgradeRun(options: StartRunOptions): Promise<{ run: 
       canaryNodeId: eligible[0]!.nodeId, owner: INSTANCE_ID, leaseExpiresAt: new Date(deps.now() + LEASE_MS).toISOString(), stopRequestedBy: null,
       retryOf: options.retryOf ?? null, allowRetryReverted: options.allowRetryReverted ?? false,
       maxFailures: options.maxFailures ?? settings.agentUpgradeMaxFailures,
+      warnings: candidates.flatMap(candidate => (candidate.preflight?.problems ?? []).filter(problem => problem.code === 'FENCE_UNREPORTED')
+        .map(problem => ({ nodeId: candidate.nodeId, name: candidate.name, code: problem.code, detail: problem.detail }))),
       excluded: candidates.filter(candidate => !candidate.eligible).map(candidate => ({ nodeId: candidate.nodeId, name: candidate.name, reason: candidate.reason ?? 'not eligible', code: candidate.code })),
       nodes: eligible.map(candidate => ({ nodeId: candidate.nodeId, name: candidate.name, from: candidate.version, state: 'pending', requestId: randomUUID(), detail: null })),
     };

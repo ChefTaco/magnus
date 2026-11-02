@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process';
 import { z } from 'zod';
 import { HOST_FQDN, RESULT_SIGNING_SECRET, MAGNUS_EXECUTION_SUPERVISOR_ENABLED } from '../env.js';
 import { startSpan } from '../collectors/otel-collector.js';
-import { CommandLedger, CommandAdmissionError, commandFenceSchema, commandReconciliationSchema, commandRequestDigest, type CommandReceiptResult } from './command-ledger.js';
+import { admissionCause, CommandLedger, CommandAdmissionError, commandFenceSchema, commandReconciliationSchema, commandRequestDigest, type CommandReceiptResult } from './command-ledger.js';
 import { commandAbsenceSigningPayload, signCommandEvidence, signCommandResult } from '../security/command-result-signature.js';
 import { refusalError, refusalStatus } from './command-refusal.js';
 import { ExecutionSupervisor } from './execution-supervisor.js';
@@ -121,7 +121,7 @@ commandRoutes.post('/execute', async (c) => {
     return c.json({ success: true, data: result });
   } catch (error) {
     if (!(error instanceof CommandAdmissionError)) throw error;
-    logger.warn(`Command ${parsed.data.commandId} refused: ${error.code}: ${error.message}`);
+    logger.warn(`Command ${parsed.data.commandId} refused: ${error.code}: ${error.message}${admissionCause(error)}`);
     return c.json({ success: false, error: await refusalError({ commandId: parsed.data.commandId, requestSha256: commandRequestDigest(parsed.data), leaseId: managedExecution.getStore()?.claim?.leaseId }, error.code, error.message,
       { notStarted: error.notStarted, ...(error.highWater ? { highWater: error.highWater } : {}) }) }, refusalStatus(error.code));
   }
@@ -315,6 +315,7 @@ commandRoutes.post('/receipts/:commandId/reconcile', async (c) => {
     return c.json({ success: true, data: await commandLedger.reconcile(parsed.data) });
   } catch (error) {
     if (!(error instanceof CommandAdmissionError)) throw error;
+    logger.warn(`Reconciliation of ${parsed.data.commandId} refused: ${error.code}: ${error.message}${admissionCause(error)}`);
     return c.json({ success: false, error: { code: error.code, message: error.message } },
       error.code === 'LEDGER_UNAVAILABLE' ? 503 : error.code === 'INVALID_RECONCILIATION' ? 403 : 409);
   }

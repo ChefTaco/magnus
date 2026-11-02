@@ -40,6 +40,58 @@ const stubReportDb = () => {
 
 beforeEach(() => { logAuditEvent.mockClear(); vi.spyOn(console, 'warn').mockImplementation(() => undefined); });
 
+describe('finding 6: a node that cannot report its fence, with lease history', () => {
+  const row = (id: string, version: string) => ({ id, name: id, hostname: `${id}.example.com`, status: 'ONLINE', lastHeartbeatAt: new Date(), agent: { version },
+    metadata: JSON.stringify({ agentSelfUpgrade: { protocol: 1, launcherProtocol: 1, layout: 'versioned', enabled: true, observedAt: new Date().toISOString() } }), resourceEnrollment: { state: 'enrolled', nodeFqdn: `${id}.example.com`, startedAt: null, updatedAt: new Date() }, admissionFence: null });
+  const unavailable = async (_target: unknown) => ({ status: 'unavailable' as const, checkedAt: new Date().toISOString(), problems: [], detail: 'this agent has no preflight check' });
+
+  it('warns before the wave, naming agents fence, and does not block the node', async () => {
+    db.node.findMany.mockImplementation(async () => [row('old', '1.1.7'), row('fresh', '1.1.7')]);
+    db.commandResourceLease.groupBy.mockImplementation((async () => [{ nodeId: 'old', state: 'released', _count: { _all: 3 } }]) as never);
+    const report = await service.checkUpgrade({ version: '1.1.8', integrity: INTEGRITY, deps: deps({ preflight: unavailable }) });
+    const old = report.nodes.find(node => node.nodeId === 'old');
+    expect(old?.eligible).toBe(true);
+    expect(old?.preflight?.problems).toEqual([expect.objectContaining({ code: 'FENCE_UNREPORTED', blocking: false, detail: expect.stringMatching(/agents fence/) })]);
+    expect(report.nodes.find(node => node.nodeId === 'fresh')?.preflight?.problems).toEqual([]);
+    const store = service.memoryRunStore();
+    const { run, done } = await service.startUpgradeRun({ version: '1.1.8', integrity: INTEGRITY, actorId: 'admin', store, deps: deps({ preflight: unavailable, observe: async () => ({ version: '1.1.8', report: null }) }) });
+    expect(run.warnings).toEqual([expect.objectContaining({ nodeId: 'old', code: 'FENCE_UNREPORTED' })]);
+    await done;
+    db.commandResourceLease.groupBy.mockImplementation((async () => []) as never);
+  });
+
+  it('states the real exit, and does not say only older agents answer this way', () => {
+    const { cause, remedy } = upgradeRemedy('MANAGED_MUTATION_UNCERTAIN');
+    expect(cause).toMatch(/any version/i);
+    expect(remedy).toMatch(/agents fence/);
+    expect(remedy).toMatch(/by hand/);
+    expect(remedy).toMatch(/reconcile-resource/);
+    expect(remedy).not.toMatch(/automatic/i);
+  });
+});
+
+describe('finding 7: every selected node with a held lease gets its heal attempt', () => {
+  const row = (id: string, version: string, extra = {}) => ({ id, name: id, hostname: `${id}.example.com`, status: 'ONLINE', lastHeartbeatAt: new Date(), agent: { version },
+    metadata: JSON.stringify({ agentSelfUpgrade: { protocol: 1, launcherProtocol: 1, layout: 'versioned', enabled: true, observedAt: new Date().toISOString() } }), resourceEnrollment: { state: 'enrolled', nodeFqdn: `${id}.example.com`, startedAt: null, updatedAt: new Date() }, admissionFence: null, ...extra });
+  const nothing = { status: 'unavailable' as const, checkedAt: '2026-11-02T00:00:00.000Z', problems: [] };
+
+  it('does not let an earlier code return before it: already current, marker or drain', async () => {
+    const draining = { state: 'draining', nodeFqdn: 'drain.example.com', startedAt: new Date(0), updatedAt: new Date(0) };
+    db.node.findMany.mockImplementation(async () => [row('current', '1.1.8'), row('drain', '1.1.7', { resourceEnrollment: draining }), row('clean', '1.1.8')]);
+    db.commandResourceLease.groupBy.mockImplementation((async () => [{ nodeId: 'current', state: 'unknown', _count: { _all: 1 } }, { nodeId: 'drain', state: 'unknown', _count: { _all: 1 } }]) as never);
+    const healed: string[] = [];
+    const store = service.memoryRunStore();
+    const heal = async (target: { nodeId: string }) => { healed.push(target.nodeId); return { healed: [], problems: [] }; };
+    await service.startUpgradeRun({ version: '1.1.8', integrity: INTEGRITY, actorId: 'admin', store, deps: deps({ preflight: async () => nothing, heal }) }).catch(() => undefined);
+    expect(healed.sort()).toEqual(['current', 'drain']);
+    healed.length = 0;
+    // The console's Check repairs nothing.
+    await service.checkUpgrade({ version: '1.1.8', integrity: INTEGRITY, deps: deps({ preflight: async () => nothing, heal }) });
+    expect(healed).toEqual([]);
+    db.commandResourceLease.groupBy.mockImplementation((async () => []) as never);
+  });
+});
+
 describe('finding 2: a run is succeeded only if every selected node is confirmed or informational', () => {
   it('reports a thrown eligibility check as a coded transient skip, and retries it', async () => {
     let thrown = 0;
@@ -309,6 +361,21 @@ describe('finding 4: problems must not hide behind "self-upgrade is off"', () =>
     const { run, done } = await service.retryUpgradeRun('prev', { actorId: 'admin', store, deps: deps({ observe: async () => ({ version: '1.1.8', report: null }) }) });
     expect(run.nodes.map(node => node.nodeId)).toEqual(['n']);
     await done;
+  });
+});
+
+describe('ambiguous and silent', () => {
+  it('gives up on a node that went silent after a lost reply, without the extra margin, and not as release evidence', async () => {
+    let clockAtEnd = 0;
+    const base = deps();
+    const run = await service.executeUpgradeRun(makeRun(['a']), { ...base,
+      request: async () => { throw new AgentResponseError(409, { code: 'MANAGED_MUTATION_UNCERTAIN', message: 'x' }); },
+      observe: async () => ({ version: '1.1.7', report: null, lastHeartbeatAt: new Date(base.now() - 10 * 60_000) }),
+      save: async () => { clockAtEnd = base.now(); } });
+    expect(run.nodes[0]).toMatchObject({ state: 'ambiguous', code: 'AGENT_SILENT_AFTER_LOST_REPLY', failureClass: 'node', awaitingReport: true, detail: expect.stringMatching(/no heartbeat since/) });
+    expect(run.nodes[0]?.finishedAt).toBeTruthy();
+    expect(clockAtEnd - 1e12).toBeLessThan(5 * 60_000);
+    expect(run.nodes.some(node => node.code === 'AGENT_SILENT')).toBe(false);
   });
 });
 

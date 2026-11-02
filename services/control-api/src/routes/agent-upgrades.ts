@@ -25,7 +25,9 @@ agentUpgradesRouter.get('/eligibility', async c => {
   return c.json({ success: true, data: {
     version: target.data, serverVersion: AGENT_VERSION, upgradesEnabled: upgradeSettings().agentUpgrades,
     disabledReason: upgradeSettings().agentUpgrades ? null : 'MAGNUS_AGENT_UPGRADES=false on the server',
-    prerelease: isPrerelease(target.data), release, nodes: withCachedPreflight(nodes, target.data), latestRun,
+    prerelease: isPrerelease(target.data), release,
+    // Reports hold paths, fences and command ids: only the role that can run upgrades sees them.
+    nodes: getUser(c).role === 'ADMIN' ? withCachedPreflight(nodes, target.data) : nodes.map(({ preflight: _preflight, ...node }) => node), latestRun,
   } });
 });
 

@@ -338,7 +338,7 @@ describe('agent upgrade runs', () => {
       ? { version: '1.1.1', report: { upgrade: { state: 'confirmed', requestId: 'req-b' } } as StoredSelfUpgrade }
       : { version: '1.1.0', report: null, lastHeartbeatAt: new Date(0) } });
     const run = await executeUpgradeRun(makeRun(['a', 'b']), deps);
-    expect(run.nodes[0]).toMatchObject({ state: 'ambiguous', code: 'MUTATION_OUTCOME_UNKNOWN', failureClass: 'node', awaitingReport: true });
+    expect(run.nodes[0]).toMatchObject({ state: 'ambiguous', code: 'AGENT_SILENT_AFTER_LOST_REPLY', failureClass: 'node', awaitingReport: true });
     expect(run.nodes[1]?.state).toBe('confirmed');
     expect(run.status).toBe('partial');
   });

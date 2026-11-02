@@ -197,6 +197,20 @@ describe('a failed self-upgrade over the real route, ledger and managed-http', (
   });
 });
 
+describe('the cause behind LEDGER_UNAVAILABLE', () => {
+  it('stays on the error, so the caller logs it', async () => {
+    const { logger } = await import('../utils/logger.js');
+    const warn = vi.spyOn(logger, 'warn');
+    await mkdir(receiptsDir(), { recursive: true, mode: 0o700 });
+    // A fence record that does not belong to its key: the ledger cannot trust it.
+    await writeFile(join(receiptsDir(), `fence-${createHash('sha256').update('node:fixture').digest('hex')}.json`), JSON.stringify({ resourceKey: 'node:another', fence: '5' }), { mode: 0o600 });
+    const response = await send(request('5', 'bad-record'));
+    expect(response.status).toBe(503);
+    expect((await response.json() as { error: unknown }).error).toMatchObject({ code: 'LEDGER_UNAVAILABLE', executed: false });
+    expect(warn.mock.calls.flat().join(' ')).toMatch(/Invalid fencing record/);
+  });
+});
+
 describe('a machine-readable reason for why self-upgrade is off', () => {
   it('tells an operator switch-off from a problem', async () => {
     const { selfUpgradeStatus } = await import('../upgrade/self-upgrade.js');

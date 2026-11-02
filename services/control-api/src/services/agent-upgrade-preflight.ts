@@ -154,6 +154,15 @@ export async function preflightNode(target: PreflightTarget, query: PreflightQue
   }
 }
 
+/** Ask one node about its leases stuck `unknown`, and settle what its signed account proves. Safe to repeat. */
+export async function recoverNodeLeases(nodeId: string, actorId: string, now = Date.now()): Promise<LeaseRecovery[]> {
+  const node = await getDb().node.findUnique({ where: { id: nodeId }, select: { id: true, ipAddress: true, port: true, hostname: true } });
+  if (!node) return [];
+  const client = clientFor(node);
+  return recoverAbsentLeases(node.id, node.hostname, (commandId, nonce, resourceKey) => client.getCommandTrace(commandId, nonce, resourceKey, PREFLIGHT_TIMEOUT_MS), actorId, now,
+    (commandId, expected) => client.getCommandReceipt(commandId, expected));
+}
+
 /** What a check repaired, in words. Fence and lease repairs are safe to repeat; each change is audited. */
 export async function healNode(target: PreflightTarget, preflight: NodePreflight, actorId = 'system:agent-upgrade'): Promise<{ healed: string[]; leases: LeaseRecovery[]; problems: PreflightProblem[] }> {
   const healed: string[] = [];
@@ -168,16 +177,10 @@ export async function healNode(target: PreflightTarget, preflight: NodePreflight
     const index = problems.findIndex(problem => problem.code === 'FENCE_AHEAD' && problem.detail.includes(` for ${resourceKey};`));
     if (index >= 0) problems.splice(index, 1);
   }
-  let leases: LeaseRecovery[] = [];
-  const node = await getDb().node.findUnique({ where: { id: target.nodeId }, select: { id: true, ipAddress: true, port: true, hostname: true } });
-  if (node) {
-    const client = clientFor(node);
-    leases = await recoverAbsentLeases(node.id, node.hostname, (commandId, nonce, resourceKey) => client.getCommandTrace(commandId, nonce, resourceKey, PREFLIGHT_TIMEOUT_MS), actorId, Date.now(),
-      (commandId, expected) => client.getCommandReceipt(commandId, expected));
-    for (const lease of leases) {
-      if (lease.outcome === 'settled') healed.push(`settled lease ${lease.commandId} as not dispatched: the agent holds no receipt for it`);
-      if (lease.outcome === 'unverified' && lease.code) problems.push({ code: lease.code, detail: `lease ${lease.commandId}: ${lease.detail ?? 'unverified'}`, blocking: false });
-    }
+  const leases = await recoverNodeLeases(target.nodeId, actorId);
+  for (const lease of leases) {
+    if (lease.outcome === 'settled') healed.push(`settled lease ${lease.commandId} as not dispatched: the agent holds no receipt for it`);
+    if (lease.outcome === 'unverified' && lease.code) problems.push({ code: lease.code, detail: `lease ${lease.commandId}: ${lease.detail ?? 'unverified'}`, blocking: false });
   }
   return { healed, leases, problems };
 }

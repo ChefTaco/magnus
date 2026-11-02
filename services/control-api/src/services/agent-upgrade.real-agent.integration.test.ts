@@ -241,4 +241,52 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('the real agent against the r
     expect(await generation()).toBe(before);
     expect(await leaseState(commandId)).toBe('unknown');
   });
+
+  describe('finding 7: the readiness monitor', () => {
+    const monitor = () => import('./agent-upgrade-readiness.js');
+    const setAgent = (version: string) => db.agent.update({ where: { nodeId }, data: { version } });
+
+    it('settles a lease stuck past its deadline, audited, on an agent with the trace route', async () => {
+      const { commandId, fence } = await stuckLease();
+      await seedFence(fence + 5n);
+      const { checkUpgradeReadiness, resetLeaseRecoveryLimits } = await monitor();
+      resetLeaseRecoveryLimits();
+      await checkUpgradeReadiness();
+      expect(await db.commandResourceLease.findUniqueOrThrow({ where: { commandId } })).toMatchObject({ state: 'released', settlement: 'not-dispatched' });
+      expect(auditLog).toHaveBeenCalledWith(expect.objectContaining({ action: 'agent.lease.recovered', targetId: nodeId, details: expect.objectContaining({ commandId }) }));
+    });
+
+    it('never settles without ledger evidence', async () => {
+      const { commandId } = await stuckLease();
+      const { checkUpgradeReadiness, resetLeaseRecoveryLimits } = await monitor();
+      resetLeaseRecoveryLimits();
+      await checkUpgradeReadiness();
+      expect(await leaseState(commandId)).toBe('unknown');
+    });
+
+    it('is rate-limited per node, and asks nothing of an agent older than the route', async () => {
+      const { commandId, fence } = await stuckLease();
+      const { checkUpgradeReadiness, resetLeaseRecoveryLimits, LEASE_RECOVERY_INTERVAL_MS } = await monitor();
+      resetLeaseRecoveryLimits();
+      const now = Date.now();
+      await checkUpgradeReadiness(now);
+      await seedFence(fence + 5n);
+      await checkUpgradeReadiness(now + 1000);
+      expect(await leaseState(commandId)).toBe('unknown');
+      await setAgent('1.1.7');
+      await checkUpgradeReadiness(now + LEASE_RECOVERY_INTERVAL_MS + 1000);
+      expect(await leaseState(commandId)).toBe('unknown');
+      await setAgent(agentVersion);
+      await checkUpgradeReadiness(now + 2 * LEASE_RECOVERY_INTERVAL_MS + 2000);
+      expect(await leaseState(commandId)).toBe('released');
+    });
+
+    it('a run reaches a held lease on a node already on the target', async () => {
+      const { commandId, fence } = await stuckLease();
+      await seedFence(fence + 5n);
+      const store = service.memoryRunStore();
+      await expect(service.startUpgradeRun({ version: agentVersion, integrity: INTEGRITY, nodeIds: [nodeId], actorId: 'admin', store, deps: fastDeps() })).rejects.toMatchObject({ code: 'NO_ELIGIBLE_AGENTS' });
+      expect(await leaseState(commandId)).toBe('released');
+    });
+  });
 });

@@ -4,12 +4,13 @@
  * server's own state, so an operator sees drift weeks before an upgrade, and a
  * monitor that notifies when a node has been not ready for a day.
  */
-import { upgradeRemedy } from '@hivemagnus/magnus-contracts';
+import { compareVersions, isVersion, upgradeRemedy } from '@hivemagnus/magnus-contracts';
 import { getDb } from '../db/index.js';
 import { SENTINEL_NODE_IDS } from '../utils/sentinel-nodes.js';
+import { recoverNodeLeases } from './agent-upgrade-preflight.js';
 import { storedSelfUpgrade } from './agent-upgrade-service.js';
 import { checkReportedFence, fenceIsAhead, isOwnFenceKey } from './command-fence-repair.js';
-import { HELD_RESOURCE_STATES } from './command-resource-leases.js';
+import { ABSENT_RECEIPT_MARGIN_MS, HELD_RESOURCE_STATES } from './command-resource-leases.js';
 import { enrollmentIsComplete } from './resource-enrollment.js';
 import { createNotificationInTransaction } from './notification-service.js';
 import { matchingMaintenance } from './maintenance-service.js';
@@ -99,8 +100,40 @@ export const NOT_READY_NOTIFY_MS = DAY_MS;
 const CHECK_INTERVAL_MS = 10 * 60_000;
 let timer: ReturnType<typeof setInterval> | null = null;
 
+/** How often one node is asked about its stuck leases. */
+export const LEASE_RECOVERY_INTERVAL_MS = 60 * 60_000;
+/** The first version whose agents answer the signed trace. Older ones keep their leases until reconciled. */
+const TRACE_ROUTE_SINCE = '1.1.8';
+const lastLeaseRecovery = new Map<string, number>();
+export function resetLeaseRecoveryLimits(): void { lastLeaseRecovery.clear(); }
+
+/**
+ * Settle leases nobody will come back for: no run may ever start for a node that
+ * already runs the target. Past the deadline plus a margin, on agents that answer
+ * the trace, at most once an hour per node; only signed ledger evidence settles
+ * one, and each settlement is audited by recoverAbsentLeases.
+ */
+async function recoverStuckLeases(now: number): Promise<void> {
+  const db = getDb();
+  const stuck = await db.commandResourceLease.findMany({ where: { state: 'unknown', deadline: { lt: new Date(now - ABSENT_RECEIPT_MARGIN_MS) } }, select: { nodeId: true }, distinct: ['nodeId'] });
+  if (!stuck.length) return;
+  const nodes = await db.node.findMany({ where: { id: { in: stuck.map(row => row.nodeId) }, status: { in: ['ONLINE', 'DEGRADED'] } }, select: { id: true, name: true, agent: { select: { version: true } } } });
+  for (const node of nodes) {
+    const version = node.agent?.version ?? '';
+    if (!isVersion(version) || compareVersions(version, TRACE_ROUTE_SINCE) < 0) continue;
+    if (now - (lastLeaseRecovery.get(node.id) ?? -Infinity) < LEASE_RECOVERY_INTERVAL_MS) continue;
+    lastLeaseRecovery.set(node.id, now);
+    const results = await recoverNodeLeases(node.id, 'system:upgrade-readiness', now).catch((error: unknown) => {
+      console.warn(`[upgrade-readiness] lease recovery on ${node.name} failed: ${error instanceof Error ? error.message : String(error)}`);
+      return [];
+    });
+    for (const lease of results) if (lease.outcome === 'unverified') console.warn(`[upgrade-readiness] lease ${lease.commandId} on ${node.name} stays held: ${lease.code}: ${lease.detail}`);
+  }
+}
+
 export async function checkUpgradeReadiness(now = Date.now()): Promise<void> {
   const db = getDb();
+  await recoverStuckLeases(now).catch((error: unknown) => console.warn(`[upgrade-readiness] lease recovery failed: ${error instanceof Error ? error.message : String(error)}`));
   const nodes = await db.node.findMany({ where: { id: { notIn: SENTINEL_NODE_IDS }, status: { in: ['ONLINE', 'DEGRADED'] } }, select: { id: true, name: true, hostname: true, metadata: true } });
   const readiness = await readinessOfNodes(nodes, now);
   for (const node of nodes) {
