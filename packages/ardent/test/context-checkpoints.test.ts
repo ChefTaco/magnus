@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -28,6 +28,7 @@ function fixture() {
       { backend: 'codex', model: 'gpt-6.1-sol', reasoning_effort: 'low' }], prompt_budget_tokens: 32000,
       output_reserve_tokens: 8000, checkpoint_max_tokens: 4000, recent_max_tokens: 8000, trigger_ratio: 0.7 } });
   const policy: LoadedModelPolicy = { ...parseModelPolicy(bytes), path: join(dir, 'policy.json') };
+  writeFileSync(policy.path, bytes, { mode: 0o600 });
   const preview = { id: 'preview:test', session_id: session.id, caller: 'alice', context: 'direct' as const, prompt: '' };
   const summarize: CompactionCall = async (_route, prompt) => {
     const input = JSON.parse(prompt) as { exchanges: Array<{ user: { id: number; text: string } }> };
@@ -38,6 +39,21 @@ function fixture() {
 }
 
 describe('durable context checkpoints', () => {
+  it('rejects publication when the host policy changes during summarization', async () => {
+    const f = fixture();
+    f.add('first'); f.add('second'); f.add('third');
+    const manager = new ContextCheckpoints(f.store, async (...args) => {
+      const summary = await f.summarize(...args);
+      writeFileSync(f.policy.path, JSON.stringify({ ...f.policy.policy, revision: 2 }), { mode: 0o600 });
+      return summary;
+    });
+    await expect(manager.prepare(f.preview, 'Current policy', [], f.policy, AbortSignal.timeout(5000), { force: true, apply: true }))
+      .rejects.toThrow('Model policy changed during compaction');
+    expect(f.store.db.prepare('SELECT count(*) AS total FROM context_checkpoints').get()).toEqual({ total: 0 });
+    expect(f.store.db.prepare('SELECT count(*) AS total FROM emberfold_checkpoint_metadata').get()).toEqual({ total: 0 });
+    expect(manager.status(f.session.id, 'alice', 'direct')).toMatchObject({ active_checkpoint_id: null });
+    f.store.close();
+  });
   it('publishes a digest-bound head while keeping complete recent exchanges and the full journal', async () => {
     const f = fixture();
     f.add('first'); f.add('second'); f.add('third');
@@ -235,6 +251,9 @@ describe('durable context checkpoints', () => {
     const high: LoadedModelPolicy = { ...parseModelPolicy(JSON.stringify({ ...f.policy.policy, revision: 2,
       compaction: { ...f.policy.policy.compaction, routes: f.policy.policy.compaction.routes.map(route =>
         ({ ...route, reasoning_effort: 'high' })) } })), path: join(dirs.at(-1)!, 'policy-high.json') };
+    const highBytes = JSON.stringify(high.policy);
+    writeFileSync(high.path, highBytes, { mode: 0o600 });
+    high.sha256 = parseModelPolicy(highBytes).sha256;
     f.add('fourth'); f.add('fifth'); f.add('sixth');
     const used: string[] = [];
     const upgraded = new ContextCheckpoints(f.store, async (route, prompt, signal) => {

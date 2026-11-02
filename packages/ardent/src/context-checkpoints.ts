@@ -1,17 +1,19 @@
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 import { CheckpointSchema, checkpointDigest, type Checkpoint } from '@hivemagnus/emberfold';
 import { LegacyCheckpointManager, legacySourceDigest as sourceDigest,
   type CheckpointStorage, type ContextTask, type LegacyMessage, type LegacyExchange,
   type LegacyCheckpoint, type CompactionCall } from '@hivemagnus/emberfold/compat';
 import type { TaskStore } from './store.js';
+import { parseModelPolicy } from './model-policy.js';
 export { SummarySchema, tokenEstimate } from '@hivemagnus/emberfold/compat';
 export type { ContextSummary, CompactionCall } from '@hivemagnus/emberfold/compat';
 const MessageRow = z.object({ sequence: z.number().int().positive(), session_id: z.string(), task_id: z.string(),
   role: z.enum(['user', 'assistant']), content: z.string(), created_ms: z.number().int(), state: z.string().optional() });
 
 class ArdentCheckpointStorage implements CheckpointStorage {
-  constructor(readonly store: TaskStore) {
+  constructor(readonly store: TaskStore, readonly policyPath?: string) {
     store.db.exec('CREATE TABLE IF NOT EXISTS emberfold_checkpoint_metadata (checkpoint_id TEXT PRIMARY KEY REFERENCES context_checkpoints(id), metadata_json TEXT NOT NULL)');
   }
   session(task: ContextTask): { id: string; caller: string; context: string } {
@@ -77,6 +79,10 @@ class ArdentCheckpointStorage implements CheckpointStorage {
   publish(checkpoint: LegacyCheckpoint, expectedHead: string | null, signal: AbortSignal, metadata: Checkpoint): void {
         this.store.db.transaction(() => {
           if (signal.aborted) throw new Error('Compaction cancelled before publication');
+          if (!this.policyPath) throw new Error('Model policy publication pin is unavailable');
+          const currentPolicy = parseModelPolicy(readFileSync(this.policyPath, 'utf8'));
+          if (currentPolicy.sha256 !== checkpoint.policy_sha256 || currentPolicy.policy.revision !== checkpoint.policy_revision)
+            throw new Error('Model policy changed during compaction');
           const current = this.store.db.prepare('SELECT checkpoint_id FROM context_checkpoint_heads WHERE session_id=?').get(checkpoint.session_id);
           const currentId = current ? z.object({ checkpoint_id: z.string() }).parse(current).checkpoint_id : null;
           if (currentId !== expectedHead) throw new Error('Checkpoint head changed during compaction');
@@ -97,4 +103,8 @@ class ArdentCheckpointStorage implements CheckpointStorage {
 }
 export class ContextCheckpoints extends LegacyCheckpointManager {
   constructor(readonly store: TaskStore, compactor: CompactionCall) { super(new ArdentCheckpointStorage(store), compactor); }
+  override prepare(...args: Parameters<LegacyCheckpointManager['prepare']>): ReturnType<LegacyCheckpointManager['prepare']> {
+    const { path } = z.object({ path: z.string().min(1) }).parse(args[3]);
+    return new LegacyCheckpointManager(new ArdentCheckpointStorage(this.store, path), this.compactor).prepare(...args);
+  }
 }

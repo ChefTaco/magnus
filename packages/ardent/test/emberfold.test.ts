@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -25,6 +25,9 @@ describe('Emberfold additive checkpoint integration', () => {
       primary: { codex: { model: 'fixture', reasoning_effort: 'low' }, llamacpp: { mode: 'profile' } },
       compaction: { enabled: true, routes: [{ backend: 'codex', model: 'fixture', reasoning_effort: 'low' }], prompt_budget_tokens: 32000,
         output_reserve_tokens: 8000, checkpoint_max_tokens: 4000, recent_max_tokens: 8000, trigger_ratio: 0.7 } })), path: join(directory, 'policy.json') };
+    const policyBytes = JSON.stringify(policy.policy);
+    writeFileSync(policy.path, policyBytes, { mode: 0o600 });
+    policy.sha256 = parseModelPolicy(policyBytes).sha256;
     const summarize = async () => JSON.stringify({ items: [{ kind: 'open_item', text: 'Work remains unverified', source_message_ids: [1], historical_status: 'historical_unverified' }] });
     const preview = { id: 'preview:fixture', session_id: session.id, caller: 'alice', context: 'direct' as const, prompt: '' };
     const originals = JSON.stringify(store.db.prepare('SELECT * FROM session_messages ORDER BY sequence').all());

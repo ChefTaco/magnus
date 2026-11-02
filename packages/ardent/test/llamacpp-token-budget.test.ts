@@ -1,5 +1,5 @@
 import { createServer, type Server } from 'node:http';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -99,6 +99,9 @@ describe('llama.cpp input token counting', () => {
       compaction: { enabled: true, routes: [{ backend: 'codex', model: 'gpt-6-luna', reasoning_effort: 'high' }],
         prompt_budget_tokens: 8192, output_reserve_tokens: 2048, checkpoint_max_tokens: 512,
         recent_max_tokens: 1024, trigger_ratio: 0.7 } })), path: join(dir, 'policy.json') };
+    const policyBytes = JSON.stringify(policy.policy);
+    writeFileSync(policy.path, policyBytes, { mode: 0o600 });
+    policy.sha256 = parseModelPolicy(policyBytes).sha256;
     const used: string[] = [];
     const manager = new ContextCheckpoints(store, async (route, prompt) => {
       used.push(`${route.backend}:${route.model}:${route.reasoning_effort}`);

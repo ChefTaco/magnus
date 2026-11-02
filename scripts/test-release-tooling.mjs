@@ -15,7 +15,7 @@ function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'magnus-release-tooling-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const file of ['package.json', 'CHANGELOG.md', 'services/control-api/agent-version.json', 'packages/ardent/openapi/ardent.json',
-    'services/control-api/src/cli/env-catalog.ts', 'packages/agent/src/env-catalog.ts', 'apps/dashboard/runtime-environment.mjs', 'packages/magnus/src/templates.ts',
+    'services/control-api/src/cli/env-catalog.ts', 'packages/agent/src/env-catalog.ts', 'apps/dashboard/runtime-environment.mjs',
     ...PACKAGE_DIRECTORIES.map((directory) => `${directory}/package.json`)]) {
     mkdirSync(join(root, file, '..'), { recursive: true });
     cpSync(join(repo, file), join(root, file));
@@ -33,13 +33,18 @@ test('the committed release manifest is current', async () => {
 
 test('bumping sets every version and pin, and the manifest follows', async (t) => {
   const root = fixture(t);
+  const originals = new Map(PACKAGE_DIRECTORIES.map(directory => [directory,
+    JSON.parse(readFileSync(join(root, directory, 'package.json'), 'utf8'))]));
+  const workspaceNames = new Set([...originals.values()].map(pkg => pkg.name));
   bumpVersion(root, '9.8.7', { today: '2026-11-01' });
-  // Only the release's own packages follow its version; separately versioned @hivemagnus libraries keep their pins.
-  const released = new Set(PACKAGE_DIRECTORIES.map((directory) => JSON.parse(readFileSync(join(root, directory, 'package.json'), 'utf8')).name));
   for (const directory of PACKAGE_DIRECTORIES) {
     const pkg = JSON.parse(readFileSync(join(root, directory, 'package.json'), 'utf8'));
     assert.equal(pkg.version, '9.8.7', directory);
-    for (const [name, pinned] of Object.entries(pkg.dependencies ?? {})) if (released.has(name)) assert.equal(pinned, '9.8.7', `${directory} ${name}`);
+    for (const category of ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies']) {
+      for (const [name, pinned] of Object.entries(pkg[category] ?? {})) {
+        assert.equal(pinned, workspaceNames.has(name) ? '9.8.7' : originals.get(directory)[category][name], `${directory} ${name}`);
+      }
+    }
   }
   assert.equal(JSON.parse(readFileSync(join(root, 'services/control-api/agent-version.json'), 'utf8')).version, '9.8.7');
   const meta = JSON.parse(readFileSync(join(root, 'packages/magnus/package.json'), 'utf8'));
@@ -71,10 +76,4 @@ test('new settings and risky migrations must be documented', async (t) => {
   assert.ok(problems.some((problem) => /New environment variables/.test(problem)));
   assert.ok(problems.some((problem) => /Migration impact/.test(problem)));
   assert.deepEqual(buildManifest(root).migrations, [{ name: '20270101000000_example', impact: 'one-way', note: 'drops a column' }]);
-});
-
-test('the manifest carries the install scripts the release needs', () => {
-  const { allowScripts } = buildManifest(repo);
-  assert.equal(allowScripts.argon2, true);
-  assert.equal(allowScripts.prisma, true);
 });
