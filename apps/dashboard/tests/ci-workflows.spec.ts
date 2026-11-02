@@ -183,4 +183,10 @@ test('agent upgrade dialog greys out agents that cannot upgrade themselves', asy
   await expect(candidates.getByLabel('Upgrade Browser CI node', { exact: true })).toBeDisabled();
   await expect(candidates).toContainText('agent version unknown');
   await expect(page.getByTestId('agent-upgrade-start')).toBeEnabled();
+  // Check reports on every selected node and starts nothing. The fixture agent answers no preflight, and stays selectable.
+  await page.getByTestId('agent-upgrade-check-button').click();
+  const report = page.getByTestId('agent-upgrade-check');
+  await expect(report).toContainText('Browser CI upgradable', { timeout: 30_000 });
+  await expect(report).toContainText(/preflight (unreachable|unavailable)/);
+  await expect(page.getByTestId('agent-upgrade-run')).toHaveCount(0);
 });

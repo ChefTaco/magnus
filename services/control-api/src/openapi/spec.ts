@@ -737,7 +737,7 @@ const paths: Record<string, Record<string, unknown>> = {
     get: {
       tags: ['Nodes'],
       summary: 'List nodes',
-      description: 'Returns all fleet nodes with agent info and health metadata. Supports pagination and status filtering.',
+      description: 'Returns all fleet nodes with agent info and health metadata. Supports pagination and status filtering. Each node has `upgradeReadiness`: `status` (ok, not-ready, or unknown for agents that do not report it) and `problems` with a code, a detail, a cause and a remedy, such as an enrollment stuck draining, a marker the server does not share, a fence ahead of the server, an unresolved ledger, low disk or missing npm.',
       security: apiSecretAuth,
       parameters: [
         qp('page', 'Page number (1-based)', { type: 'integer' }),
@@ -2255,7 +2255,7 @@ const paths: Record<string, Record<string, unknown>> = {
     get: {
       tags: ['Agent upgrades'],
       summary: 'Which agents can take a version',
-      description: 'For every node: its agent version and whether it can upgrade itself to `version` (default: the agent version bundled with this server) now, or why not: offline, not set up with `magnus-agent install-service`, MAGNUS_AGENT_SELF_UPGRADE=false, another major version, already current, already reverted this version, a closed release admission fence, a resource enrollment that is not complete (for example "stuck in draining since <date>"), held participant work or command leases, or an agent whose sticky managed-enrollment marker the server does not share. `release.verified` is false when the registry does not have the version.',
+      description: 'For every node: its agent version and whether it can upgrade itself to `version` (default: the agent version bundled with this server) now, or why not: offline, not set up with `magnus-agent install-service`, MAGNUS_AGENT_SELF_UPGRADE=false, another major version, already current, already reverted this version, a closed release admission fence, a resource enrollment that is not complete (for example "stuck in draining since <date>"), held participant work or command leases, or an agent whose sticky managed-enrollment marker the server does not share. Each blocked node has a `code` from the upgrade problem catalogue. `preflight` is the latest result of the agent check for this version, when one is recent, and only for ADMIN. `release.verified` is false when the registry does not have the version.',
       security: apiSecretAuth,
       parameters: [qp('version', 'Target agent version (X.Y.Z)'), qp('allowRetryReverted', '`true` to offer nodes that already reverted this version')],
       responses: { 200: success('Eligibility', { type: 'object', properties: {
@@ -2263,7 +2263,7 @@ const paths: Record<string, Record<string, unknown>> = {
         prerelease: { type: 'boolean' },
         release: { type: 'object', properties: { verified: { type: 'boolean' }, integrity: { type: ['string', 'null'] }, reason: { type: ['string', 'null'] } } },
         nodes: { type: 'array', items: { type: 'object', properties: { nodeId: { type: 'string' }, name: { type: 'string' },
-          version: { type: 'string' }, eligible: { type: 'boolean' }, reason: { type: ['string', 'null'] } } } },
+          version: { type: 'string' }, eligible: { type: 'boolean' }, reason: { type: ['string', 'null'] }, code: { type: ['string', 'null'] }, preflight: { type: ['object', 'null'], description: 'status: ok, warning, blocked, unavailable (older agent) or unreachable; problems: code, detail, blocking' } } } },
         latestRun: { type: ['object', 'null'] },
       } }), 400: err400, 401: err401 },
     },
@@ -2272,7 +2272,7 @@ const paths: Record<string, Record<string, unknown>> = {
     post: {
       tags: ['Agent upgrades'],
       summary: 'Upgrade agents',
-      description: 'Starts an upgrade run (ADMIN, MAGNUS_AGENT_UPGRADES=true): one canary, then MAGNUS_AGENT_UPGRADE_CONCURRENCY agents at a time. Each agent installs the exact version and npm integrity and switches back by itself if the new version does not report a heartbeat in time. A revert, a release problem (integrity, install failure) or an agent that goes silent after the request stops the run. An agent that refuses before changing anything is recorded as `refused` and the run goes on; a refused canary hands the role to the next node. Only one run at a time. Selected nodes that are not eligible are listed in `excluded`; unknown node ids are a 400.',
+      description: 'Starts an upgrade run (ADMIN, MAGNUS_AGENT_UPGRADES=true): every selected node is checked first, then one canary, then MAGNUS_AGENT_UPGRADE_CONCURRENCY agents at a time. Each agent installs the exact version and npm integrity and switches back by itself if the new version does not report a heartbeat in time. With `dryRun` it returns 200 with the full per-node report and starts nothing. Only evidence about the release stops a run: an integrity or source failure at once, a release failure on the canary, `maxFailures` ambiguous canaries with nothing confirmed (at least two, reported as suspect but unproven in `suspectedRelease`; nodes that cannot report their fence go last and do not count while another may still confirm), and after the canary `maxFailures` reverts, failed installs or trials that never confirm. A problem of one node is recorded and the run goes on: a refused canary hands the role to the next node, transient refusals are tried again at the end of the wave, and a node whose reply was lost is watched by request id (`watching`, then `ambiguous`) without holding a batch slot past its window. The final status is `succeeded`, `partial` (node-level problems, nothing against the release), `failed` (release evidence), `stopped` or `interrupted`, and `attention` lists each node with a code, a cause and a remedy; a run is `succeeded` only if every selected node is confirmed or has an informational reason. `warnings` lists what the check found that does not stop a node. Only one run at a time. Selected nodes that are not eligible are listed in `excluded`; unknown node ids are a 400.',
       security: apiSecretAuth,
       requestBody: { required: false, content: { 'application/json': { schema: { type: 'object', properties: {
         version: { type: 'string', description: 'Agent version (default: the one bundled with this server)' },
@@ -2281,8 +2281,10 @@ const paths: Record<string, Record<string, unknown>> = {
         canaryNodeId: { type: 'string', description: 'Upgrade this node first' },
         allowPrerelease: { type: 'boolean', description: 'Required for a prerelease version' },
         allowRetryReverted: { type: 'boolean', description: 'Also upgrade nodes that already reverted this version' },
+        dryRun: { type: 'boolean', description: 'Report on every selected node and start nothing' },
+        maxFailures: { type: 'integer', minimum: 1, maximum: 1000, description: 'Release failures that stop this run (default MAGNUS_AGENT_UPGRADE_MAX_FAILURES)' },
       } } } } },
-      responses: { 202: success('Run started'), 400: err400, 401: err401, 403: err403, 409: err409 },
+      responses: { 200: success('Dry run report'), 202: success('Run started'), 400: err400, 401: err401, 403: err403, 409: err409 },
     },
   },
   '/agents/upgrade/runs/latest': {
@@ -2317,11 +2319,11 @@ const paths: Record<string, Record<string, unknown>> = {
     post: {
       tags: ['Agent upgrades'],
       summary: 'Retry an upgrade run',
-      description: 'ADMIN. Starts a new run with the same version and integrity for the failed, refused, skipped and interrupted nodes of a finished run (reverted nodes only with allowRetryReverted).',
+      description: 'ADMIN. Starts a new run with the same version and integrity for the nodes of a finished run that were not upgraded: failed, refused, skipped, ambiguous and interrupted ones, and those the check held back (reverted nodes only with allowRetryReverted).',
       security: apiSecretAuth,
       parameters: [pp('id', 'Run ID')],
       requestBody: { required: false, content: { 'application/json': { schema: { type: 'object', properties: {
-        canaryNodeId: { type: 'string' }, allowRetryReverted: { type: 'boolean' },
+        canaryNodeId: { type: 'string' }, allowRetryReverted: { type: 'boolean' }, maxFailures: { type: 'integer', minimum: 1, maximum: 1000 }, acknowledgeSuspicion: { type: 'boolean', description: 'After a run that stopped on ambiguous answers from older agents, include older agents again; without this they are held back with RETRY_HELD_SUSPECTED' },
       } } } } },
       responses: { 202: success('Run started'), 400: err400, 401: err401, 403: err403, 404: err404, 409: err409 },
     },

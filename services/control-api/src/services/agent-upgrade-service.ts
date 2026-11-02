@@ -1,13 +1,22 @@
 /**
  * Server-driven agent upgrades (MAGNUS_AGENT_UPGRADES). The server pins one
- * exact version and its npm integrity, asks one canary agent to stage it,
- * waits until that agent reports the version on trial as confirmed, then
- * upgrades the rest a few at a time. A revert, a release problem or a node
- * that goes silent after the request stops the run; a node that refuses
- * before anything changed (busy, enrollment, unreachable) is recorded as
- * `refused` and the wave goes on. Agents decide for themselves whether they
- * can upgrade (MAGNUS_AGENT_SELF_UPGRADE, launcher layout) and report it with
- * every heartbeat, so the console can grey out the ones that cannot.
+ * exact version and its npm integrity, checks every selected node before
+ * touching any of them, asks one canary agent to stage it, waits until that
+ * agent reports the version on trial as confirmed, then upgrades the rest a
+ * few at a time.
+ *
+ * Only evidence about the RELEASE stops a wave: an integrity or source failure
+ * at once, a revert, failed install or unconfirmed trial on the canary, and
+ * after the canary as many of those as MAGNUS_AGENT_UPGRADE_MAX_FAILURES.
+ * Whatever is true of one node (refusals, busy, unreachable, enrollment,
+ * ambiguous transport) is recorded with a code and a remedy, and the wave goes
+ * on. Transient refusals are tried again at the end of the wave. Ambiguous
+ * nodes are watched by request id without holding a batch slot past their
+ * window, and are never retried automatically.
+ *
+ * Agents decide for themselves whether they can upgrade
+ * (MAGNUS_AGENT_SELF_UPGRADE, launcher layout) and report it with every
+ * heartbeat, so the console can grey out the ones that cannot.
  *
  * Eligibility uses the same read-only predicates as resource admission
  * (admission fence, enrollment, held work and leases, fresh health), so a node
@@ -21,7 +30,9 @@ import {
   compareVersions,
   isVersion,
   parseVersion,
+  upgradeRemedy,
   type AgentSelfUpgradeStatus,
+  type UpgradeFailureClass,
 } from '@hivemagnus/magnus-contracts';
 import { upgradeSettings } from '../config/features.js';
 import { AGENT_VERSION } from '../config/version.js';
@@ -32,6 +43,7 @@ import { getNodeManagerSecret } from '../utils/env.js';
 import { getNodeBaseUrl } from '../utils/node-url.js';
 import { SENTINEL_NODE_IDS } from '../utils/sentinel-nodes.js';
 import type { AuditAction } from '../types/auth.js';
+import { CERTAIN_REFUSALS_SINCE, healNode, mapLimit, PREFLIGHT_CONCURRENCY, preflightNode, preflightStatus, selfUpgradeOffCode, type NodePreflight, type PreflightProblem, type PreflightQuery, type PreflightTarget } from './agent-upgrade-preflight.js';
 import { logAuditEvent } from './audit-service.js';
 import { HELD_RESOURCE_STATES, hasFreshOnlineHealth, legacyAdmissionPossible, resourceLeasesRequested } from './command-resource-leases.js';
 import { enrollmentIsComplete } from './resource-enrollment.js';
@@ -46,21 +58,21 @@ const CONFIRM_MARGIN_MS = 2 * 60_000;
 /** A request whose reply was lost may still be installing. */
 const UNKNOWN_DISPATCH_MARGIN_MS = 10 * 60_000;
 const POLL_MS = 5_000;
+/** MAGNUS_AGENT_UPGRADE_MAX_FAILURES default, for runs stored without their own budget. */
+const DEFAULT_MAX_FAILURES = 2;
+const LEASE_HELD_NOTE = 'not tried again: the lease of this request is still held';
 const RUN_TTL_SECONDS = 7 * 24 * 60 * 60;
 /** The owner renews its lease every LEASE_MS / 3; a lease this old means the owner is gone. */
 const LEASE_MS = 90_000;
 /** Runs written by servers without leases count as abandoned after this long. */
 const UNLEASED_RUN_MS = 2 * 60 * 60_000;
 const MAX_LOCAL_RUNS = 20;
+/** Waits before each end-of-wave retry of transient refusals; so at most two more attempts per node. */
+const AUTO_RETRY_BACKOFF_MS = [30_000, 120_000] as const;
+/** A preflight result this old is not shown as current in the eligibility list. */
+const PREFLIGHT_CACHE_MS = 10 * 60_000;
 /** This process, as the owner of the runs it executes. */
 export const INSTANCE_ID = randomUUID();
-
-/** Agent error codes that mean the node was not touched. */
-export const UNTOUCHED_CODES = new Set(['SELF_UPGRADE_BUSY', 'SELF_UPGRADE_CURRENT', 'SELF_UPGRADE_UNAVAILABLE', 'SELF_UPGRADE_PACKAGE',
-  'SELF_UPGRADE_REFUSED', 'SELF_UPGRADE_LAUNCHER', 'SELF_UPGRADE_ENGINE', 'SELF_UPGRADE_TIMEOUT',
-  'RESOURCE_BUSY', 'UNMANAGED_MUTATION', 'ENROLLMENT_AUTHORITY_UNAVAILABLE', 'RESOURCE_CLAIM_INVALID']);
-/** Agent error codes that point at the release itself: the wave stops. */
-export const RELEASE_PROBLEM_CODES = new Set(['SELF_UPGRADE_INTEGRITY', 'SELF_UPGRADE_FAILED', 'SELF_UPGRADE_SOURCE']);
 
 // ── Heartbeat side: what each agent reports ──
 
@@ -73,9 +85,18 @@ function parseMetadata(raw: string | null | undefined): Record<string, unknown> 
   try {
     const parsed = JSON.parse(raw ?? '{}') as unknown;
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
-  } catch {
+  } catch (error) {
+    console.warn(`[agent-upgrade] node metadata is not JSON: ${error instanceof Error ? error.message : String(error)}`);
     return {};
   }
+}
+
+const onceWarnings = new Map<string, number>();
+/** The same message at most once an hour, so a Redis outage does not flood the log. */
+function warnOnce(message: string): void {
+  if (Date.now() - (onceWarnings.get(message) ?? 0) < 60 * 60_000) return;
+  onceWarnings.set(message, Date.now());
+  console.warn(`[agent-upgrade] ${message}`);
 }
 
 const parseWarnings = new Map<string, number>();
@@ -147,7 +168,9 @@ export async function recordSelfUpgradeReport(node: { id: string; name: string }
   const nodeVersion = typeof body.nodeVersion === 'string' ? body.nodeVersion.slice(0, 32) : null;
   const next = { ...parsed, nodeVersion, observedAt: new Date().toISOString() };
   const nextMetadata: Record<string, unknown> = { ...metadata, agentSelfUpgrade: next, nodeVersion };
-  let changed = !(previous && JSON.stringify({ ...previous, observedAt: '' }) === JSON.stringify({ ...next, observedAt: '' })
+  // Free disk moves with every report; only crossing the threshold is a change worth a write.
+  const comparable = (value: StoredSelfUpgrade) => JSON.stringify({ ...value, observedAt: '', disk: value.disk?.low });
+  let changed = !(previous && comparable(previous) === comparable(next)
     && Date.now() - Date.parse(previous.observedAt) < 10 * 60_000);
   const state = parsed.upgrade?.state;
   const updating = state === 'staged' || state === 'trial';
@@ -177,17 +200,45 @@ export async function recordSelfUpgradeReport(node: { id: string; name: string }
   }
 }
 
-/** A report for a node whose run already ended without knowing its outcome. */
-async function recordLateOutcome(store: RunStore, runId: string, requestId: string, state: 'confirmed' | 'reverted' | 'failed', reason: string | null): Promise<void> {
-  const run = await store.get(runId);
-  if (!run || run.status === 'running') return; // the owner is watching and records it itself
-  const entry = run.nodes.find(node => node.requestId === requestId);
-  if (!entry || !(entry.awaitingReport || entry.state === 'requested')) return;
+function applyLateOutcome(entry: RunNode, state: 'confirmed' | 'reverted' | 'failed', reason: string | null): void {
   entry.state = state;
-  entry.code = state === 'confirmed' ? null : entry.code;
-  entry.detail = `${state === 'confirmed' ? 'confirmed' : state === 'reverted' ? `reverted: ${reason ?? 'the agent switched back'}` : `failed: ${reason ?? 'the agent reported a failure'}`} (reported after the run ended)`;
+  entry.code = state === 'confirmed' ? null : state === 'reverted' ? 'SELF_UPGRADE_REVERTED' : 'SELF_UPGRADE_FAILED';
+  entry.failureClass = state === 'confirmed' ? null : 'release';
+  entry.detail = `${state === 'confirmed' ? 'confirmed' : state === 'reverted' ? `reverted: ${reason ?? 'the agent switched back'}` : `failed: ${reason ?? 'the agent reported a failure'}`} (reported after the run stopped watching)`;
   entry.awaitingReport = false;
+}
+
+/** A report for a node nobody watches any more: its run ended, or its watch timed out while the run goes on. */
+async function recordLateOutcome(store: RunStore, runId: string, requestId: string, state: 'confirmed' | 'reverted' | 'failed', reason: string | null): Promise<void> {
+  // A read-modify-write of the stored run: one at a time per run here. Two servers can still overlap; the owner re-reads reports.
+  const previous = lateOutcomeQueue.get(runId) ?? Promise.resolve();
+  const turn = previous.catch(() => undefined).then(() => applyLateReport(store, runId, requestId, state, reason));
+  const tail = turn.finally(() => { if (lateOutcomeQueue.get(runId) === tail) lateOutcomeQueue.delete(runId); });
+  lateOutcomeQueue.set(runId, tail);
+  return tail;
+}
+
+const lateOutcomeQueue = new Map<string, Promise<void>>();
+
+async function applyLateReport(store: RunStore, runId: string, requestId: string, state: 'confirmed' | 'reverted' | 'failed', reason: string | null): Promise<void> {
+  const live = executing.get(runId)?.run;
+  const run = live ?? await store.get(runId);
+  if (!run) return;
+  if (run.status === 'running' && !live) return; // another server owns it and records it itself
+  const entry = run.nodes.find(node => node.requestId === requestId);
+  if (!entry) return;
+  // In a live run a node still being asked is its watcher's to record. Anything that gave up waiting is open,
+  // whatever state it ended in: a timed-out trial that confirms later must stop counting against the budget.
+  if (!(entry.awaitingReport || (run.status !== 'running' && (entry.state === 'requested' || entry.state === 'watching')))) return;
+  applyLateOutcome(entry, state, reason);
+  if (run.status === 'running') return; // the owner counts it at its next decision
   run.summary = summarizeRun(run);
+  run.attention = attentionList(run);
+  run.suspectedRelease = releaseSuspicion(run);
+  if (run.status === 'succeeded' || run.status === 'partial' || run.status === 'failed') {
+    run.status = finalStatus(run);
+    run.message = `${run.status === 'succeeded' ? 'all nodes upgraded after late reports' : 'updated by a late report'} (${run.summary})`;
+  }
   await store.save(run);
 }
 
@@ -196,6 +247,8 @@ async function recordLateOutcome(store: RunStore, runId: string, requestId: stri
 export interface AgentRelease {
   version: string;
   integrity: string;
+  /** The version's `engines.node` when the registry was asked. */
+  engines?: string | null;
 }
 
 export const isPrerelease = (version: string) => (parseVersion(version)?.prerelease.length ?? 0) > 0;
@@ -218,10 +271,10 @@ export async function resolveAgentRelease(options: { version?: string; integrity
   }
   if (response.status === 404) throw new HttpError(404, 'AGENT_VERSION_NOT_PUBLISHED', `${AGENT_PACKAGE}@${version} is not published on ${registry}`);
   if (!response.ok) throw new HttpError(502, 'REGISTRY_ERROR', `${registry} answered ${response.status} for ${AGENT_PACKAGE}@${version}`);
-  const document = await response.json() as { dist?: { integrity?: string } };
+  const document = await response.json() as { dist?: { integrity?: string }; engines?: { node?: unknown } };
   const integrity = document.dist?.integrity;
   if (!integrity?.startsWith('sha512-')) throw new HttpError(502, 'REGISTRY_ERROR', `${AGENT_PACKAGE}@${version} has no sha512 integrity`);
-  return { version, integrity };
+  return { version, integrity, engines: typeof document.engines?.node === 'string' ? document.engines.node : null };
 }
 
 export interface ReleaseVerification { verified: boolean; integrity: string | null; reason: string | null }
@@ -249,8 +302,17 @@ export interface UpgradeCandidate {
   version: string;
   eligible: boolean;
   reason: string | null;
+  /** Catalogue code of `reason` (contracts: UPGRADE_REMEDIES). */
+  code: string | null;
   upgrade: StoredSelfUpgrade['upgrade'] | null;
   layout: StoredSelfUpgrade['layout'] | null;
+  /** Requests to this node go through admission and its ledger. */
+  managed?: boolean;
+  /** Result of the latest preflight check, when there is one. */
+  preflight?: NodePreflight | null;
+  /** Any command lease ever, and those still reserved, running or unknown. */
+  leaseHistory?: boolean;
+  heldLeases?: number;
 }
 
 export interface CandidateRow {
@@ -289,21 +351,25 @@ export function classifyCandidate(row: CandidateRow, target: string, options: El
   const now = options.now ?? Date.now();
   const version = row.agent?.version ?? 'unknown';
   const report = storedSelfUpgrade(row.metadata);
-  const base = { nodeId: row.id, name: row.name, version, upgrade: report?.upgrade ?? null, layout: report?.layout ?? null };
-  const no = (reason: string) => ({ ...base, eligible: false, reason });
-  if (!hasFreshOnlineHealth(row, now)) return no(`offline or no recent heartbeat${row.lastHeartbeatAt ? ` (last ${row.lastHeartbeatAt.toISOString()})` : ''}`);
-  if (!isVersion(version)) return no('agent version unknown');
-  if (compareVersions(version, target) === 0) return no('already on this version');
+  const enrollmentState = row.resourceEnrollment ?? null;
+  // Same rule as admission: off the legacy path once leases are on, enrollment started, or any lease exists.
+  const managed = !legacyAdmissionPossible(enrollmentState, options.leasesRequested ?? resourceLeasesRequested()) || Boolean(row.leaseHistory);
+  const base = { nodeId: row.id, name: row.name, version, upgrade: report?.upgrade ?? null, layout: report?.layout ?? null, managed, leaseHistory: Boolean(row.leaseHistory), heldLeases: row.heldLeases ?? 0 };
+  const no = (code: string, reason: string): UpgradeCandidate => ({ ...base, eligible: false, reason, code });
+  if (!hasFreshOnlineHealth(row, now)) return no('NODE_OFFLINE', `offline or no recent heartbeat${row.lastHeartbeatAt ? ` (last ${row.lastHeartbeatAt.toISOString()})` : ''}`);
+  if (!isVersion(version)) return no('VERSION_UNKNOWN', 'agent version unknown');
+  // A node on trial reports the new version already, and can still switch back.
+  if (report?.upgrade && (report.upgrade.state === 'staged' || report.upgrade.state === 'trial')) return no('UPGRADE_IN_PROGRESS', `an upgrade to ${report.upgrade.to} is in progress`);
+  if (compareVersions(version, target) === 0) return no('ALREADY_CURRENT', 'already on this version');
   const decision = checkUpgradeAllowed(version, target);
-  if (!decision.allowed) return no(decision.kind === 'downgrade' ? `runs ${version}, newer than ${target}` : `${version} -> ${target} crosses a major version; upgrade this node by hand`);
-  if (!report) return no(`magnus-agent ${version} cannot upgrade itself (needs 1.1.0 or later and \`sudo magnus-agent install-service\`)`);
-  if (report.protocol < AGENT_SELF_UPGRADE_PROTOCOL) return no('agent self-upgrade protocol too old');
-  if (!report.enabled) return no(report.reason ?? 'self-upgrade disabled on this node');
+  if (!decision.allowed) return decision.kind === 'downgrade' ? no('DOWNGRADE', `runs ${version}, newer than ${target}`) : no('MAJOR_VERSION', `${version} -> ${target} crosses a major version; upgrade this node by hand`);
+  if (!report) return no('NOT_SELF_UPGRADABLE', `magnus-agent ${version} cannot upgrade itself (needs 1.1.0 or later and \`sudo magnus-agent install-service\`)`);
+  if (report.protocol < AGENT_SELF_UPGRADE_PROTOCOL) return no('PROTOCOL_TOO_OLD', 'agent self-upgrade protocol too old');
+  if (!report.enabled) return no(selfUpgradeOffCode(report), report.reason ?? 'self-upgrade disabled on this node');
   const upgrade = report.upgrade;
-  if (upgrade && (upgrade.state === 'staged' || upgrade.state === 'trial')) return no(`an upgrade to ${upgrade.to} is in progress`);
   if (upgrade?.state === 'reverted' && upgrade.to === target && !options.allowRetryReverted)
-    return no(`reverted ${target} at ${upgrade.updatedAt ?? report.observedAt}: ${upgrade.reason ?? 'no reason given'}; try again only with allowRetryReverted`);
-  if (row.admissionFence) return no(`release ${row.admissionFence.releaseId} closed admission to this node at ${row.admissionFence.closedAt.toISOString()}; release the fence first`);
+    return no('ALREADY_REVERTED', `reverted ${target} at ${upgrade.updatedAt ?? report.observedAt}: ${upgrade.reason ?? 'no reason given'}; try again only with allowRetryReverted`);
+  if (row.admissionFence) return no('ADMISSION_FENCE_CLOSED', `release ${row.admissionFence.releaseId} closed admission to this node at ${row.admissionFence.closedAt.toISOString()}; release the fence first`);
   const enrollment = row.resourceEnrollment ?? null;
   const hostname = row.hostname ?? '';
   const marker = report.managedEnrollment;
@@ -311,23 +377,21 @@ export function classifyCandidate(row: CandidateRow, target: string, options: El
     const server = enrollment ? `a ${enrollment.state} enrollment for ${enrollment.nodeFqdn}` : 'no enrollment row';
     const cause = stickyEnrollmentCause(enrollment, { lease: Boolean(row.leaseHistory), managedCron: Boolean(row.managedCronHistory),
       participantWork: Boolean(row.participantHistory) });
-    return no(`agent and server disagree about resource enrollment: the agent holds a managed-enrollment marker for ${marker.nodeFqdn} but the server has ${server}`
+    return no('ENROLLMENT_MARKER_MISMATCH', `agent and server disagree about resource enrollment: the agent holds a managed-enrollment marker for ${marker.nodeFqdn} but the server has ${server}`
       + `${cause ? ` (the server answers this agent as enrolled because of ${cause})` : ''}; `
       + `complete the node's resource enrollment on the server (${ENROLLMENT_DOC}), or upgrade this agent by hand on the node`);
   }
-  // Same rule as admission: off the legacy path once leases are on, enrollment started, or any lease exists.
-  const managed = !legacyAdmissionPossible(enrollment, options.leasesRequested ?? resourceLeasesRequested()) || Boolean(row.leaseHistory);
   if (managed) {
     if (!enrollmentIsComplete(enrollment, hostname)) {
-      if (!enrollment) return no(`resource leases apply to this node (${row.leaseHistory ? 'it has lease history' : 'MAGNUS_RESOURCE_LEASES_ENABLED=true'}) but it is not enrolled; enroll it first (${ENROLLMENT_DOC})`);
-      if (enrollment.state === 'draining') return no(`resource enrollment stuck in draining since ${day(enrollment.startedAt ?? enrollment.updatedAt)}; finish the drain (POST /api/v1/resource-leases/enrollment/${row.id}/complete) first`);
-      if (enrollment.state === 'enrolled') return no(`resource enrollment is for ${enrollment.nodeFqdn} but the inventory host name is ${hostname || 'unknown'}; fix the inventory host name first`);
-      return no(`resource enrollment is ${enrollment.state} while resource leases apply to this node; enroll it first (${ENROLLMENT_DOC})`);
+      if (!enrollment) return no('ENROLLMENT_MISSING', `resource leases apply to this node (${row.leaseHistory ? 'it has lease history' : 'MAGNUS_RESOURCE_LEASES_ENABLED=true'}) but it is not enrolled; enroll it first (${ENROLLMENT_DOC})`);
+      if (enrollment.state === 'draining') return no('ENROLLMENT_DRAINING', `resource enrollment stuck in draining since ${day(enrollment.startedAt ?? enrollment.updatedAt)}; finish the drain (POST /api/v1/resource-leases/enrollment/${row.id}/complete) first`);
+      if (enrollment.state === 'enrolled') return no('ENROLLMENT_HOST_MISMATCH', `resource enrollment is for ${enrollment.nodeFqdn} but the inventory host name is ${hostname || 'unknown'}; fix the inventory host name first`);
+      return no('ENROLLMENT_INCOMPLETE', `resource enrollment is ${enrollment.state} while resource leases apply to this node; enroll it first (${ENROLLMENT_DOC})`);
     }
-    if (row.heldWork) return no(`${row.heldWork} participant work item(s) still held on this node; reconcile them first`);
-    if (row.heldLeases) return no(`${row.heldLeases} command lease(s) unsettled on this node (reserved, running or unknown); reconcile them first`);
+    if (row.heldWork) return no('WORK_HELD', `${row.heldWork} participant work item(s) still held on this node; reconcile them first`);
+    if (row.heldLeases) return no('LEASE_HELD', `${row.heldLeases} command lease(s) unsettled on this node (reserved, running or unknown); reconcile them first`);
   }
-  return { ...base, eligible: true, reason: null };
+  return { ...base, eligible: true, reason: null, code: null };
 }
 
 /** Candidates for `target`; `nodeIds: []` selects nothing (never the whole fleet). */
@@ -360,8 +424,14 @@ export async function listUpgradeCandidates(target: string, nodeIds?: readonly s
 
 // ── Runs ──
 
-export type NodeRunState = 'pending' | 'requested' | 'confirmed' | 'reverted' | 'failed' | 'refused' | 'skipped';
-export type RunStatus = 'running' | 'succeeded' | 'failed' | 'stopped' | 'interrupted';
+/**
+ * `watching`: the reply was lost and the node's window passed; its batch slot is
+ * free while the run keeps reading its reports. `ambiguous`: the run stopped
+ * watching without learning the outcome; a later report is still recorded.
+ */
+export type NodeRunState = 'pending' | 'requested' | 'watching' | 'ambiguous' | 'confirmed' | 'reverted' | 'failed' | 'refused' | 'skipped';
+/** `partial`: no evidence against the release, but some nodes need attention. `failed`: evidence against the release. */
+export type RunStatus = 'running' | 'succeeded' | 'partial' | 'failed' | 'stopped' | 'interrupted';
 
 export interface RunNode {
   nodeId: string;
@@ -376,6 +446,26 @@ export interface RunNode {
   finishedAt?: string | null;
   /** Ended without a known outcome; a later heartbeat report for its requestId is recorded into the run. */
   awaitingReport?: boolean;
+  /** Whether a problem here is evidence about the release or about this node. */
+  failureClass?: UpgradeFailureClass | null;
+  /** An old agent with lease history: it cannot say what fence it holds, so an ambiguous answer has another explanation. */
+  fenceUnreported?: boolean;
+  /** Requests sent to this node; above 1 after an end-of-wave retry. */
+  attempts?: number;
+}
+
+/** A node someone has to look at when the run ends. */
+export interface RunAttention {
+  nodeId: string;
+  name: string;
+  state: NodeRunState | 'excluded';
+  code: string;
+  failureClass: UpgradeFailureClass;
+  detail: string | null;
+  cause: string;
+  remedy: string;
+  /** The code is not in the catalogue: `cause` and `remedy` are generic. */
+  unknownCode?: boolean;
 }
 
 export interface UpgradeRun {
@@ -397,8 +487,16 @@ export interface UpgradeRun {
   stopRequestedBy?: string | null;
   retryOf?: string | null;
   allowRetryReverted?: boolean;
+  /** Why the run reads as failed without a proven release failure. Cleared when a node confirms after all. */
+  suspectedRelease?: string | null;
   /** Selected nodes that were not eligible when the run started. */
-  excluded?: Array<{ nodeId: string; name: string; reason: string }>;
+  excluded?: Array<{ nodeId: string; name: string; reason: string; code?: string | null }>;
+  /** Release failures that stop the run (MAGNUS_AGENT_UPGRADE_MAX_FAILURES, or this run's override). */
+  maxFailures?: number;
+  /** What the check found that does not stop a node, for someone to read before the wave. */
+  warnings?: Array<{ nodeId: string; name: string; code: string; detail: string }>;
+  /** Every node needing attention, with a code and a remedy. Filled when the run ends. */
+  attention?: RunAttention[];
   nodes: RunNode[];
 }
 
@@ -469,7 +567,10 @@ export function defaultRunStore(): RunStore {
   const memory = memoryRunStore();
   const redis = async () => (await import('../queue/redis.js')).getRedis();
   const either = async <T>(remote: () => Promise<T>, local: () => Promise<T>): Promise<T> => {
-    try { return await remote(); } catch { return local(); }
+    try { return await remote(); } catch (error) {
+      warnOnce(`run store: ${error instanceof Error ? error.message : String(error)}`);
+      return local();
+    }
   };
   sharedStore = {
     async save(run) {
@@ -525,7 +626,19 @@ export interface UpgradeDeps {
   /** Current report, agent version and last heartbeat of one node. */
   observe: (nodeId: string) => Promise<Observation>;
   /** Eligibility right before dispatch: null, or why the node is skipped now. */
-  check: (nodeId: string, run: UpgradeRun) => Promise<string | null>;
+  check: (nodeId: string, run: UpgradeRun) => Promise<string | { reason: string; code: string | null } | null>;
+  /** A retry sends a new request id, since a command id can own only one lease; reports for it must find the run. */
+  index?: (run: UpgradeRun) => Promise<void>;
+  /** The agent's preflight report and what it says about the node; absent in callers with no agents to ask. */
+  preflight?: (target: PreflightTarget, query: PreflightQuery) => Promise<NodePreflight>;
+  /** Repair what the server owns (fence generations, leases with no trace on the agent). */
+  heal?: (target: PreflightTarget, preflight: NodePreflight) => Promise<{ healed: string[]; problems: PreflightProblem[] }>;
+  /** A node confirmed after its reply was lost: read its signed receipt, so the lease of that request does not stay held. */
+  settleLostReply?: (nodeId: string, requestId: string) => Promise<void>;
+  /** Whether this request's lease settled. A held lease makes a retry pointless: admission would refuse it. */
+  leaseSettled?: (nodeId: string, requestId: string) => Promise<boolean>;
+  /** Waits before each end-of-wave retry. */
+  retryBackoffMs?: readonly number[];
   sleep: (ms: number) => Promise<void>;
   now: () => number;
   save: (run: UpgradeRun) => Promise<void>;
@@ -559,7 +672,8 @@ export function defaultDeps(store: RunStore = defaultRunStore()): UpgradeDeps {
     },
     check: async (nodeId, run) => {
       const [candidate] = await listUpgradeCandidates(run.version, [nodeId], { allowRetryReverted: run.allowRetryReverted });
-      return candidate ? candidate.eligible ? null : candidate.reason : 'node is no longer in the inventory';
+      if (!candidate) return { reason: 'node is no longer in the inventory', code: 'NODE_NOT_FOUND' };
+      return candidate.eligible ? null : { reason: candidate.reason ?? 'not eligible', code: candidate.code };
     },
     sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
     now: () => Date.now(),
@@ -567,10 +681,26 @@ export function defaultDeps(store: RunStore = defaultRunStore()): UpgradeDeps {
     stopRequested: async runId => await store.stopRequested(runId).catch(() => null),
     confirmTimeoutMs: confirmWindowMs(null),
     pollMs: POLL_MS,
+    index: run => store.index(run),
+    leaseSettled: async (_nodeId, requestId) => {
+      const lease = await getDb().commandResourceLease.findUnique({ where: { commandId: `agent-upgrade-${requestId}` }, select: { state: true } });
+      return !lease || lease.state === 'released';
+    },
+    settleLostReply: async (nodeId, requestId) => {
+      const node = await getDb().node.findUnique({ where: { id: nodeId }, select: { id: true, ipAddress: true, port: true } });
+      // Settles through the signed result of the receipt; a receipt without one changes nothing.
+      if (node) await clientFor(node).getCommandReceipt(`agent-upgrade-${requestId}`);
+    },
+    preflight: (target, query) => preflightNode(target, query),
+    heal: (target, preflight) => healNode(target, preflight),
   };
 }
 
-export interface DispatchFailure { kind: 'refused' | 'failed' | 'unknown'; code: string; message: string }
+export interface DispatchFailure {
+  kind: 'refused' | 'failed' | 'unknown'; code: string; message: string;
+  /** The agent answered, so it has finished with the request; otherwise the request may still be running. */
+  answered?: boolean;
+}
 
 /** Whether a failed request left the node untouched (refused), hit a release problem (failed), or may have run (unknown). */
 export function classifyDispatchFailure(error: unknown): DispatchFailure {
@@ -580,9 +710,11 @@ export function classifyDispatchFailure(error: unknown): DispatchFailure {
     return { kind: 'refused', code: typeof code === 'string' ? code : 'NOT_DISPATCHED', message };
   if (error instanceof AgentResponseError) {
     const agentCode = error.code ?? `HTTP_${error.agentStatus}`;
-    if (agentCode === 'MUTATION_OUTCOME_UNKNOWN') return { kind: 'unknown', code: agentCode, message };
-    if (UNTOUCHED_CODES.has(agentCode)) return { kind: 'refused', code: agentCode, message };
-    return { kind: 'failed', code: agentCode, message: RELEASE_PROBLEM_CODES.has(agentCode) ? message : `agent answered HTTP ${error.agentStatus}: ${message}` };
+    const remedy = upgradeRemedy(agentCode);
+    // A 5xx with no code of ours says nothing about how far the request got.
+    if (remedy.ambiguous || (!error.code && error.agentStatus >= 500)) return { kind: 'unknown', code: agentCode === `HTTP_${error.agentStatus}` ? 'MUTATION_OUTCOME_UNKNOWN' : agentCode, message, answered: true };
+    if (remedy.class === 'release') return { kind: 'failed', code: agentCode, message };
+    return { kind: 'refused', code: agentCode, message };
   }
   if (error instanceof DispatchOutcomeUnknownError) return { kind: 'unknown', code: error.code, message };
   return { kind: 'unknown', code: typeof code === 'string' ? code : 'MUTATION_OUTCOME_UNKNOWN', message };
@@ -591,24 +723,40 @@ export function classifyDispatchFailure(error: unknown): DispatchFailure {
 const audit = (action: AuditAction, run: UpgradeRun, details: Record<string, unknown>, targetType = 'fleet', targetId = run.id) =>
   logAuditEvent({ action, actorId: run.actorId, targetType, targetId, details: { runId: run.id, version: run.version, ...details } }).catch(() => undefined);
 
-/** Ask one node to upgrade and wait for its confirmed (or reverted) report. */
-async function upgradeOne(run: UpgradeRun, entry: RunNode, deps: UpgradeDeps): Promise<void> {
+/** Shared by the batches of one run and the watches they outlive. */
+interface RunContext {
+  /** Watches of ambiguous nodes that gave up their batch slot. */
+  watchers: Set<Promise<void>>;
+  /** The run ended: remaining watches stop, and heartbeat reports take over. */
+  closed: boolean;
+  /** What a node's last attempt ended as, while an automatic retry is under way. */
+  retrying: Map<string, { state: NodeRunState; code: string | null; detail: string | null }>;
+}
+
+/** Ask one node to upgrade and wait for its confirmed (or reverted) report. An ambiguous node holds its slot only for its window. */
+async function upgradeOne(run: UpgradeRun, entry: RunNode, deps: UpgradeDeps, context: RunContext): Promise<void> {
   const iso = () => new Date(deps.now()).toISOString();
   const end = (state: NodeRunState, detail: string | null, code: string | null = null, awaitingReport = false) => {
-    Object.assign(entry, { state, detail: detail?.slice(0, 1000) ?? null, code, finishedAt: iso(), awaitingReport });
+    Object.assign(entry, { state, detail: detail?.slice(0, 1000) ?? null, code, finishedAt: iso(), awaitingReport, failureClass: code ? upgradeRemedy(code).class : null });
     if (state === 'refused' || state === 'failed' || (state === 'confirmed' && detail?.startsWith('confirmed by version')))
       void audit(`agent.upgrade.node_${state}` as AuditAction, run, { node: entry.name, requestId: entry.requestId, code, detail }, 'node', entry.nodeId);
   };
-  let reason: string | null;
+  let verdict: Awaited<ReturnType<UpgradeDeps['check']>>;
   try {
-    reason = await deps.check(entry.nodeId, run);
+    verdict = await deps.check(entry.nodeId, run);
   } catch (error) {
-    reason = `eligibility check failed: ${error instanceof Error ? error.message : String(error)}`;
+    verdict = { reason: `eligibility check failed: ${error instanceof Error ? error.message : String(error)}`, code: 'CHECK_FAILED' };
   }
-  if (reason) return void Object.assign(entry, { state: 'skipped', detail: reason, finishedAt: iso() });
+  if (verdict) {
+    const skipped = typeof verdict === 'string' ? { reason: verdict, code: 'NOT_ELIGIBLE' } : { reason: verdict.reason, code: verdict.code ?? 'NOT_ELIGIBLE' };
+    // A retry that cannot go ahead says so, and the node keeps what its real attempt ended as.
+    const prior = context.retrying.get(entry.nodeId);
+    if (prior && prior.state === 'refused') return void Object.assign(entry, { ...prior, detail: `${prior.detail ?? ''}; not tried again: ${skipped.reason}`.slice(0, 1000), failureClass: prior.code ? upgradeRemedy(prior.code).class : null, finishedAt: iso() });
+    return void Object.assign(entry, { state: 'skipped', detail: skipped.reason, code: skipped.code, failureClass: upgradeRemedy(skipped.code).class, finishedAt: iso() });
+  }
   entry.state = 'requested';
+  entry.attempts = (entry.attempts ?? 0) + 1;
   await deps.save(run);
-  const startedAt = deps.now();
   let unknown: DispatchFailure | null = null;
   try {
     await deps.request(entry.nodeId, { version: run.version, integrity: run.integrity, requestId: entry.requestId, packageName: AGENT_PACKAGE });
@@ -618,14 +766,30 @@ async function upgradeOne(run: UpgradeRun, entry: RunNode, deps: UpgradeDeps): P
     if (failure.kind === 'failed') return end('failed', failure.message, failure.code);
     unknown = failure;
   }
+  // Staging can take minutes before the reply: the trial and its window only start once the request has ended.
+  const startedAt = deps.now();
   entry.dispatchedAt = iso();
+  let freeSlot: () => void = () => undefined;
+  const slot = new Promise<void>(resolve => { freeSlot = resolve; });
+  const watch = watchNode(run, entry, deps, context, end, startedAt, unknown, freeSlot).catch((error: unknown) => {
+    end(unknown ? 'ambiguous' : 'failed', `watching this node failed: ${error instanceof Error ? error.message : String(error)}`, unknown?.code ?? 'CONFIRM_TIMEOUT', true);
+  }).finally(() => { freeSlot(); context.watchers.delete(watch); });
+  context.watchers.add(watch);
+  await slot;
+}
+
+/** Follow one dispatched node until it reports. `freeSlot` runs once an ambiguous node has had its window. */
+async function watchNode(run: UpgradeRun, entry: RunNode, deps: UpgradeDeps, context: RunContext,
+  end: (state: NodeRunState, detail: string | null, code?: string | null, awaitingReport?: boolean) => void,
+  startedAt: number, unknown: DispatchFailure | null, freeSlot: () => void): Promise<void> {
   let windowMs = deps.confirmTimeoutMs;
   let versionSince: number | null = null;
   let lastHeartbeat: Date | null = null;
   const deadline = () => Math.max(startedAt + windowMs + (unknown ? UNKNOWN_DISPATCH_MARGIN_MS : 0),
     versionSince === null ? 0 : versionSince + windowMs + deps.pollMs);
-  while (deps.now() < deadline()) {
+  while (deps.now() < deadline() && !context.closed) {
     await deps.sleep(deps.pollMs);
+    if (context.closed) return;
     let observation: Observation;
     try {
       observation = await deps.observe(entry.nodeId);
@@ -638,7 +802,12 @@ async function upgradeOne(run: UpgradeRun, entry: RunNode, deps: UpgradeDeps): P
     if (report?.confirmSeconds) windowMs = confirmWindowMs(report);
     const upgrade = report?.upgrade;
     if (upgrade?.requestId === entry.requestId) {
-      if (upgrade.state === 'confirmed') return end('confirmed', unknown ? 'confirmed (the reply to the request was lost)' : null);
+      if (upgrade.state === 'confirmed') {
+        if (unknown) await deps.settleLostReply?.(entry.nodeId, entry.requestId).catch((error: unknown) => {
+          console.warn(`[agent-upgrade] lease of ${entry.name} stays held: ${error instanceof Error ? error.message : String(error)}`);
+        });
+        return end('confirmed', unknown ? 'confirmed (the reply to the request was lost)' : null);
+      }
       if (upgrade.state === 'reverted') return end('reverted', upgrade.reason ?? 'the agent switched back to its previous version', 'SELF_UPGRADE_REVERTED');
       if (upgrade.state === 'failed') return end('failed', upgrade.reason ?? 'the agent reported the upgrade as failed', 'SELF_UPGRADE_FAILED');
     } else if (!upgrade?.requestId && version === run.version) {
@@ -648,12 +817,30 @@ async function upgradeOne(run: UpgradeRun, entry: RunNode, deps: UpgradeDeps): P
     } else {
       versionSince = null;
     }
-    // Silent for longer than the agent's own trial window: it will not confirm, even if the extended deadline is not up.
-    if (lastHeartbeat && deps.now() - lastHeartbeat.getTime() > windowMs)
-      return end('failed', `no heartbeat since ${lastHeartbeat.toISOString()}`, 'AGENT_SILENT', true);
+    if (unknown) {
+      // Silent past its window: it will not report now. This is not AGENT_SILENT, which counts against the release:
+      // nobody knows the request arrived. It ends the watch early, and it counts as ambiguous towards a suspicion.
+      if (lastHeartbeat && deps.now() - Math.max(lastHeartbeat.getTime(), startedAt) > windowMs) {
+        return end('ambiguous', `outcome unknown (${unknown.message}); no heartbeat since ${lastHeartbeat.toISOString()}`, 'AGENT_SILENT_AFTER_LOST_REPLY', true);
+      }
+      // Past the window the wave goes on without this node; its reports are still read here. A first canary whose reply
+      // was lost may still be staging and then restarting, so nothing else is touched until its whole watch is over. An
+      // agent that ANSWERED uncertain has finished with the request, and a node reporting a trial is still going.
+      const inFlight = (!unknown.answered && !run.nodes.some(node => node.state === 'confirmed')) || upgrade?.requestId === entry.requestId && (upgrade.state === 'staged' || upgrade.state === 'trial');
+      if (!inFlight && deps.now() - startedAt >= windowMs && entry.state === 'requested') {
+        Object.assign(entry, { state: 'watching', code: unknown.code, failureClass: 'node', awaitingReport: true,
+          detail: `outcome unknown (${unknown.message}); still watching this request's reports` });
+        freeSlot();
+        await deps.save(run);
+      }
+      continue;
+    }
   }
+  if (context.closed) return;
   const minutes = Math.round((deadline() - startedAt) / 60_000);
-  if (unknown) return end('failed', `outcome unknown (${unknown.message}); no report for this request within ${minutes} min`, unknown.code, true);
+  if (unknown) return end('ambiguous', `outcome unknown (${unknown.message}); no report for this request within ${minutes} min`, unknown.code, true);
+  // No heartbeat since the reply: the new version never came up, as opposed to one that runs and does not confirm.
+  if (lastHeartbeat && lastHeartbeat.getTime() <= startedAt) return end('failed', `no heartbeat since ${lastHeartbeat.toISOString()}`, 'AGENT_SILENT', true);
   end('failed', `no confirmation within ${minutes} min`, 'CONFIRM_TIMEOUT', true);
 }
 
@@ -661,56 +848,202 @@ async function upgradeOne(run: UpgradeRun, entry: RunNode, deps: UpgradeDeps): P
 export function summarizeRun(run: UpgradeRun): string {
   const count = (state: NodeRunState) => run.nodes.filter(node => node.state === state).length;
   const reverted = count('reverted');
+  const ambiguous = count('ambiguous') + count('watching');
   const refused = run.nodes.filter(node => node.state === 'refused');
-  return `${count('confirmed')} confirmed, ${refused.length} refused, ${count('failed')} failed, ${reverted ? `${reverted} reverted, ` : ''}${count('skipped')} skipped`
+  return `${count('confirmed')} confirmed, ${refused.length} refused, ${count('failed')} failed, ${reverted ? `${reverted} reverted, ` : ''}${ambiguous ? `${ambiguous} unknown, ` : ''}${count('skipped')} skipped`
     + (refused.length ? `; refused: ${refused.map(node => `${node.name} (${node.code ? `${node.code}: ` : ''}${node.detail ?? 'no reason given'})`).join('; ')}` : '');
 }
 
-const halts = (node: RunNode) => node.state === 'failed' || node.state === 'reverted';
+const isReleaseFailure = (node: RunNode) => (node.state === 'failed' || node.state === 'reverted') && upgradeRemedy(node.code).class === 'release';
+
+/** An expected state: a refusal or skip whose code says the node needs nobody. */
+const isExpected = (node: RunNode) => (node.state === 'refused' || node.state === 'skipped') && Boolean(node.code && upgradeRemedy(node.code).informational);
+
+/** Every selected node someone has to look at: everything not confirmed, unless its code says it is expected. */
+export function attentionList(run: UpgradeRun): RunAttention[] {
+  const item = (node: { nodeId: string; name: string }, state: RunAttention['state'], code: string, detail: string | null): RunAttention => {
+    const remedy = upgradeRemedy(code);
+    return { nodeId: node.nodeId, name: node.name, state, code, failureClass: remedy.class, detail, cause: remedy.cause, remedy: remedy.remedy, ...(remedy.unknown ? { unknownCode: true } : {}) };
+  };
+  return [
+    ...run.nodes.filter(node => node.state !== 'confirmed' && !isExpected(node)).map(node => item(node, node.state, node.code ?? 'NOT_REACHED', node.detail)),
+    ...(run.excluded ?? []).filter(node => !(node.code && upgradeRemedy(node.code).informational)).map(node => item(node, 'excluded', node.code ?? 'NOT_ELIGIBLE', node.reason)),
+  ];
+}
+
+/** One old agent with a stale fence looks exactly like this, so a suspicion always takes more than one node. */
+const suspicionThreshold = (run: UpgradeRun) => Math.max(run.maxFailures ?? DEFAULT_MAX_FAILURES, 2);
+
+const isCountedAmbiguous = (node: RunNode) => (node.state === 'watching' || node.state === 'ambiguous') && node.code !== 'RUN_INTERRUPTED';
 
 /**
- * Canary first, then batches of `concurrency`. A refused canary hands the
- * role to the next node. Stops at the first revert or failure, or between
- * batches when someone asked to stop.
+ * Ambiguous canaries with nothing confirmed, the only signal a fleet before 1.1.8
+ * gives about a bad release. A node that cannot report its fence has another
+ * explanation for its ambiguity, so it does not count while any other node may
+ * still confirm; those nodes go last in the queue for this reason. Once only they
+ * are left, they count: the walk stays bounded, at the cost that a fleet of nothing
+ * but stale old agents reads as suspected too, and the message says that.
+ */
+function ambiguousSuspicion(run: UpgradeRun): string | null {
+  if (run.nodes.some(node => node.state === 'confirmed')) return null;
+  const ambiguous = run.nodes.filter(isCountedAmbiguous);
+  const otherStillPending = run.nodes.some(node => node.state === 'pending' && !node.fenceUnreported);
+  const counted = otherStillPending ? ambiguous.filter(node => !node.fenceUnreported) : ambiguous;
+  if (counted.length < suspicionThreshold(run)) return null;
+  const staleFence = counted.some(node => node.fenceUnreported) ? '. These agents cannot report their fence, so each may instead hold a stale fence: read it on the node and run `magnus-server agents fence NODE VALUE`' : '';
+  return `the release is suspect but unproven: ${counted.length} canaries in a row answered without a usable outcome (${[...new Set(counted.map(node => node.code))].join(', ')}) and no node has confirmed; read the agent log on ${counted.slice(0, 3).map(node => node.name).join(', ')}${staleFence}`;
+}
+
+/**
+ * With nothing confirmed, nodes that all behave the same point at what they have
+ * in common. Not proof: the message says so, and a node that confirms clears it.
+ * A refusal counts only when its code can point at the release at all.
+ */
+export function releaseSuspicion(run: UpgradeRun): string | null {
+  if (run.nodes.some(node => node.state === 'confirmed')) return null;
+  const ambiguous = ambiguousSuspicion(run);
+  if (ambiguous) return ambiguous;
+  const threshold = suspicionThreshold(run);
+  const refusals = new Map<string, RunNode[]>();
+  for (const node of run.nodes) {
+    if (node.state !== 'refused' || !node.code) continue;
+    if (upgradeRemedy(node.code).suspectable) refusals.set(node.code, [...refusals.get(node.code) ?? [], node]);
+  }
+  for (const [code, nodes] of refusals)
+    if (nodes.length >= threshold) return `a release problem is suspected: ${nodes.length} nodes refused with ${code} and none has confirmed`;
+  return null;
+}
+
+/**
+ * Evidence against the release decides first; then whether any node still needs
+ * someone. `succeeded` means every selected node is confirmed or has an
+ * informational reason; finish and late reports both come through here.
+ */
+export function finalStatus(run: UpgradeRun): RunStatus {
+  if (run.nodes.some(isReleaseFailure) || releaseSuspicion(run)) return 'failed';
+  return attentionList(run).length ? 'partial' : 'succeeded';
+}
+
+/**
+ * Canary first, then batches of `concurrency`. Until a node confirms, nodes go
+ * one at a time: any release failure stops the run, and a node-level problem
+ * hands the canary role to the next node. After that the run stops only at an
+ * integrity or source failure, or when release failures reach the budget.
+ * Transient refusals are tried again at the end, and the run ends once the
+ * nodes it still watches have reported or run out of time.
  */
 export async function executeUpgradeRun(run: UpgradeRun, deps: UpgradeDeps): Promise<UpgradeRun> {
+  const context: RunContext = { watchers: new Set(), closed: false, retrying: new Map() };
+  const budget = run.maxFailures ?? DEFAULT_MAX_FAILURES;
   const finish = async (status: RunStatus, message: string) => {
-    for (const node of run.nodes) if (node.state === 'pending') Object.assign(node, { state: 'skipped', detail: status === 'stopped' ? 'run stopped' : 'not reached' });
+    context.closed = true;
+    const at = new Date(deps.now()).toISOString();
+    for (const node of run.nodes) {
+      if (node.state === 'pending') Object.assign(node, { state: 'skipped', detail: status === 'stopped' ? 'run stopped' : 'not reached', code: status === 'stopped' ? 'RUN_STOPPED' : 'NOT_REACHED' });
+      if (node.state === 'watching') Object.assign(node, { state: 'ambiguous', finishedAt: at, detail: `${node.detail ?? 'outcome unknown'}; a later report is recorded here` });
+    }
     run.status = status;
     run.summary = summarizeRun(run);
+    run.attention = attentionList(run);
+    run.suspectedRelease = releaseSuspicion(run);
     run.message = `${message} (${run.summary})`;
-    run.finishedAt = new Date(deps.now()).toISOString();
+    run.finishedAt = at;
     await deps.save(run);
     await audit(status === 'stopped' ? 'agent.upgrade_run.stopped' : 'agent.upgrade_run.finished', run, { status, summary: run.summary,
-      stoppedBy: run.stopRequestedBy ?? null });
+      stoppedBy: run.stopRequestedBy ?? null, attention: run.attention.map(node => `${node.name}: ${node.code}`).slice(0, 50) });
     return run;
   };
   const pending = () => run.nodes.filter(node => node.state === 'pending');
+  const confirmed = () => run.nodes.filter(node => node.state === 'confirmed');
   const stopped = async () => {
     const actor = await deps.stopRequested(run.id).catch(() => null);
     if (actor) run.stopRequestedBy = actor;
     return actor;
   };
+  /** A node that gave up waiting may have reported since: the stored report is the same on every server. */
+  const readLateReports = async () => {
+    for (const node of run.nodes.filter(entry => entry.awaitingReport && entry.state !== 'watching')) {
+      const upgrade = await deps.observe(node.nodeId).then(observation => observation.report?.upgrade, () => null);
+      if (upgrade?.requestId !== node.requestId) continue;
+      if (upgrade.state === 'confirmed' || upgrade.state === 'reverted' || upgrade.state === 'failed') applyLateOutcome(node, upgrade.state, upgrade.reason ?? null);
+    }
+  };
+  const leaseSettled = (node: RunNode) => (deps.leaseSettled?.(node.nodeId, node.requestId) ?? Promise.resolve(true)).catch((error: unknown) => {
+    console.warn(`[agent-upgrade] lease of ${node.name} could not be read: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
+  });
+  const stoppedByOperator = () => finish('stopped', `stopped by ${run.stopRequestedBy}`);
+  const describe = (node: RunNode) => `${node.name} (${node.code ?? node.state}: ${node.detail ?? ''})`;
+  /** What the evidence so far says: null, or why the run ends now. */
+  const evidenceStop = (canaryPhase: boolean) => {
+    const failures = run.nodes.filter(isReleaseFailure);
+    const fatal = failures.find(node => upgradeRemedy(node.code).stopsRun);
+    if (fatal) return finish('failed', `${describe(fatal)}: every node gets the same artifact, so the run stopped`);
+    if (canaryPhase && failures[0]) return finish('failed', `canary ${failures[0].name} did not confirm (${failures[0].code}: ${failures[0].detail ?? ''}); the other nodes were not touched`);
+    // Ambiguity stops the wave; identical refusals do not, since each of those nodes is known to be untouched.
+    const suspected = ambiguousSuspicion(run);
+    if (suspected) return finish('failed', suspected);
+    if (failures.length >= budget) return finish('failed', `${failures.length} release failure(s) reached the budget of ${budget}: ${failures.slice(0, 5).map(describe).join('; ')}; remaining nodes were skipped`);
+    return null;
+  };
+  /** Work through the pending nodes; a returned promise means the run ended. */
+  const drain = async (): Promise<UpgradeRun | null> => {
+    for (let queue = pending(); queue.length; queue = pending()) {
+      if (await stopped()) return stoppedByOperator();
+      const canaryPhase = confirmed().length === 0;
+      const batch = queue.slice(0, canaryPhase ? 1 : run.concurrency);
+      if (canaryPhase) run.canaryNodeId = batch[0]!.nodeId;
+      await Promise.all(batch.map(node => upgradeOne(run, node, deps, context)));
+      await deps.save(run);
+      await readLateReports();
+      const stop = evidenceStop(canaryPhase && confirmed().length === 0);
+      if (stop) return stop;
+    }
+    return null;
+  };
   try {
-    let canary: RunNode | undefined;
-    while ((canary = pending()[0])) {
-      if (await stopped()) return finish('stopped', `stopped by ${run.stopRequestedBy}`);
-      run.canaryNodeId = canary.nodeId;
-      await upgradeOne(run, canary, deps);
+    if (!run.nodes.length) return await finish(finalStatus(run), 'no eligible nodes');
+    let ended = await drain();
+    if (ended) return ended;
+    // Refusals that clear by themselves, once or twice, with a pause. Never anything ambiguous or release-class.
+    for (const wait of deps.retryBackoffMs ?? AUTO_RETRY_BACKOFF_MS) {
+      const transient = run.nodes.filter(node => (node.state === 'refused' || node.state === 'skipped') && node.code && upgradeRemedy(node.code).transient);
+      // A lease still held makes a retry pointless: admission would refuse it, and hide why with LEASE_HELD.
+      const again: RunNode[] = [];
+      for (const node of transient) {
+        if (await leaseSettled(node)) again.push(node);
+        else if (!node.detail?.includes(LEASE_HELD_NOTE)) node.detail = `${node.detail ?? ''}; ${LEASE_HELD_NOTE}`.slice(0, 1000);
+      }
+      if (!again.length) break;
+      await deps.sleep(wait);
+      if (await stopped()) return await stoppedByOperator();
+      // A command id owns one lease for good, so each attempt is a new request.
+      for (const node of again) {
+        context.retrying.set(node.nodeId, { state: node.state, code: node.code ?? null, detail: node.detail });
+        Object.assign(node, { state: 'pending', requestId: randomUUID(), detail: null, code: null, failureClass: null, finishedAt: null, dispatchedAt: null });
+      }
+      await deps.index?.(run);
       await deps.save(run);
-      if (canary.state === 'confirmed') break;
-      if (halts(canary)) return finish('failed', `canary ${canary.name} did not confirm (${canary.state}: ${canary.detail ?? ''}); the other nodes were not touched`);
+      ended = await drain();
+      if (ended) return ended;
     }
-    for (let batch = pending().slice(0, run.concurrency); batch.length; batch = pending().slice(0, run.concurrency)) {
-      if (await stopped()) return finish('stopped', `stopped by ${run.stopRequestedBy}`);
-      await Promise.all(batch.map(node => upgradeOne(run, node, deps)));
-      await deps.save(run);
-      const bad = batch.find(halts);
-      if (bad) return finish('failed', `${bad.name} did not confirm (${bad.state}: ${bad.detail ?? ''}); remaining nodes were skipped`);
+    // Nodes whose reply was lost keep their chance to report; their late outcomes still count.
+    while (context.watchers.size) {
+      await deps.sleep(deps.pollMs);
+      if (await stopped()) return await stoppedByOperator();
+      await readLateReports();
+      const stop = evidenceStop(confirmed().length === 0);
+      if (stop) return await stop;
     }
-    const confirmed = run.nodes.filter(node => node.state === 'confirmed').length;
-    if (!run.nodes.length) return finish('succeeded', 'no eligible nodes');
-    return confirmed ? finish('succeeded', `${confirmed} agent(s) upgraded to ${run.version}`) : finish('failed', 'no agent was upgraded');
+    await readLateReports();
+    const upgraded = confirmed().length;
+    const status = finalStatus(run);
+    const suspicion = releaseSuspicion(run);
+    return await finish(status, status === 'succeeded' ? `${upgraded} agent(s) upgraded to ${run.version}`
+      : suspicion ? suspicion
+      : status === 'failed' ? `${run.nodes.filter(isReleaseFailure).length} node(s) failed in a way that points at the release; ${upgraded} agent(s) upgraded`
+      : upgraded ? `${upgraded} agent(s) upgraded to ${run.version}; ${run.attention?.length ?? attentionList(run).length} node(s) need attention`
+      : `no agent was upgraded; ${attentionList(run).length} node(s) need attention, and nothing points at the release`);
   } catch (error) {
     return finish('failed', `run aborted: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -730,19 +1063,20 @@ export async function reconcileInterruptedRun(run: UpgradeRun, observe: UpgradeD
   if (!leaseExpired(run, now)) return run;
   const at = new Date(now).toISOString();
   for (const node of run.nodes) {
-    if (node.state === 'pending') Object.assign(node, { state: 'skipped', detail: 'run interrupted before this node', finishedAt: at });
-    if (node.state !== 'requested') continue;
+    if (node.state === 'pending') Object.assign(node, { state: 'skipped', detail: 'run interrupted before this node', code: 'NOT_REACHED', finishedAt: at });
+    if (node.state !== 'requested' && node.state !== 'watching') continue;
     const upgrade = await observe(node.nodeId).then(observation => observation.report?.upgrade, () => null);
     const mine = upgrade?.requestId === node.requestId ? upgrade : null;
-    if (mine?.state === 'confirmed') Object.assign(node, { state: 'confirmed', detail: 'confirmed (recorded after the run was interrupted)', code: null });
-    else if (mine?.state === 'reverted') Object.assign(node, { state: 'reverted', detail: mine.reason ?? 'the agent switched back', code: 'SELF_UPGRADE_REVERTED' });
-    else if (mine?.state === 'failed') Object.assign(node, { state: 'failed', detail: mine.reason ?? 'the agent reported a failure', code: 'SELF_UPGRADE_FAILED' });
-    else Object.assign(node, { state: 'failed', code: 'RUN_INTERRUPTED', awaitingReport: true,
+    if (mine?.state === 'confirmed') Object.assign(node, { state: 'confirmed', detail: 'confirmed (recorded after the run was interrupted)', code: null, failureClass: null, awaitingReport: false });
+    else if (mine?.state === 'reverted') Object.assign(node, { state: 'reverted', detail: mine.reason ?? 'the agent switched back', code: 'SELF_UPGRADE_REVERTED', failureClass: 'release', awaitingReport: false });
+    else if (mine?.state === 'failed') Object.assign(node, { state: 'failed', detail: mine.reason ?? 'the agent reported a failure', code: 'SELF_UPGRADE_FAILED', failureClass: 'release', awaitingReport: false });
+    else Object.assign(node, { state: 'ambiguous', code: 'RUN_INTERRUPTED', failureClass: 'node', awaitingReport: true,
       detail: `the server stopped watching${mine ? ` while the agent reported ${mine.state}` : ''}; a later report for this request is recorded here` });
     node.finishedAt = at;
   }
   run.status = 'interrupted';
   run.summary = summarizeRun(run);
+  run.attention = attentionList(run);
   run.message = `interrupted: the server that ran it stopped renewing its lease (restart or interrupted CLI) (${run.summary})`;
   run.finishedAt = at;
   await save(run);
@@ -770,9 +1104,122 @@ export interface StartRunOptions {
   allowPrerelease?: boolean;
   allowRetryReverted?: boolean;
   retryOf?: string;
+  /** This run's budget of release failures (default MAGNUS_AGENT_UPGRADE_MAX_FAILURES). */
+  maxFailures?: number;
+  /** Leave out agents that cannot report refusals as certain: a retry of a run that stopped on their ambiguity. */
+  holdOldAgents?: boolean;
   actorId: string;
   deps?: UpgradeDeps;
   store?: RunStore;
+}
+
+const latestPreflights = new Map<string, { version: string; preflight: NodePreflight }>();
+
+/** The newest result per node for this version, for the eligibility list. Older ones say nothing about now. */
+export function withCachedPreflight(candidates: UpgradeCandidate[], version: string, now = Date.now()): UpgradeCandidate[] {
+  return candidates.map(candidate => {
+    const cached = latestPreflights.get(candidate.nodeId);
+    return cached?.version === version && now - Date.parse(cached.preflight.checkedAt) < PREFLIGHT_CACHE_MS ? { ...candidate, preflight: cached.preflight } : candidate;
+  });
+}
+
+export interface CheckOptions {
+  /** Also ask nodes a run would leave alone anyway, such as ones already on the target. */
+  everyOnlineNode?: boolean;
+  /** Repair what the server owns before judging: fence generations, leases with no trace on the agent. */
+  heal?: boolean;
+  allowRetryReverted?: boolean | undefined;
+}
+
+/**
+ * Who can take `release` now: the read-only admission predicates, then each
+ * agent's preflight report. A blocked node carries its reason and code, and the
+ * others proceed. Nothing here takes a lease; without `heal` it changes nothing.
+ */
+export async function checkCandidates(release: Pick<AgentRelease, 'version' | 'engines'>, nodeIds: readonly string[] | undefined, deps: Pick<UpgradeDeps, 'preflight' | 'heal'>,
+  options: CheckOptions = {}): Promise<UpgradeCandidate[]> {
+  const list = () => listUpgradeCandidates(release.version, nodeIds, { allowRetryReverted: options.allowRetryReverted });
+  let candidates = await list();
+  const ask = deps.preflight;
+  if (!ask) return candidates;
+  // A held lease earns its heal attempt whichever earlier code the node stopped at, including on one already on the target.
+  const askable = (candidate: UpgradeCandidate) => candidate.code !== 'NODE_OFFLINE'
+    && (options.everyOnlineNode || candidate.eligible || Boolean(candidate.heldLeases));
+  const rows = candidates.filter(askable);
+  const hostnames = await hostnamesOf(rows.map(candidate => candidate.nodeId));
+  const target = (candidate: UpgradeCandidate): PreflightTarget => ({ nodeId: candidate.nodeId, hostname: hostnames.get(candidate.nodeId) ?? '', managed: candidate.managed ?? false });
+  const query: PreflightQuery = { target: release.version, engines: release.engines ?? null };
+  const results = new Map(await mapLimit(rows, PREFLIGHT_CONCURRENCY, async candidate => {
+    let preflight = await ask(target(candidate), query).catch((error: unknown): NodePreflight => ({ status: 'unreachable', checkedAt: new Date().toISOString(), problems: [],
+      detail: error instanceof Error ? error.message : String(error) }));
+    // It has handled managed requests, and cannot say whether its fence would refuse this one.
+    if (preflight.status === 'unavailable' && candidate.leaseHistory && !preflight.problems.some(problem => problem.code === 'FENCE_UNREPORTED'))
+      preflight = { ...preflight, problems: [...preflight.problems, { code: 'FENCE_UNREPORTED', blocking: false,
+        detail: `${candidate.name} cannot report its fence and has lease history; if its fence is ahead, run \`magnus-server agents fence ${candidate.name} VALUE\` before the wave` }] };
+    if (options.heal && deps.heal && (preflight.report || candidate.heldLeases)) {
+      const repaired = await deps.heal(target(candidate), preflight).catch((error: unknown) => {
+        console.warn(`[agent-upgrade] repair of ${candidate.name} failed: ${error instanceof Error ? error.message : String(error)}`);
+        return null;
+      });
+      if (repaired) preflight = { ...preflight, problems: repaired.problems, status: preflight.report ? preflightStatus(repaired.problems) : preflight.status,
+        ...(repaired.healed.length ? { healed: repaired.healed } : {}) };
+    }
+    latestPreflights.set(candidate.nodeId, { version: release.version, preflight });
+    return [candidate.nodeId, preflight] as const;
+  }));
+  if ([...results.values()].some(preflight => preflight.healed?.length)) candidates = await list();
+  return candidates.map(candidate => {
+    const preflight = results.get(candidate.nodeId);
+    if (!preflight) return candidate;
+    const blocker = preflight.problems.find(problem => problem.blocking);
+    return { ...candidate, preflight, ...(candidate.eligible && blocker ? { eligible: false, reason: blocker.detail, code: blocker.code } : {}) };
+  });
+}
+
+async function hostnamesOf(ids: string[]): Promise<Map<string, string>> {
+  if (!ids.length) return new Map();
+  const rows = await getDb().node.findMany({ where: { id: { in: ids } }, select: { id: true, hostname: true } });
+  return new Map(rows.map(row => [row.id, row.hostname ?? '']));
+}
+
+/**
+ * 0: 1.1.8 or later, which says what it refused. 1: older, with no lease history.
+ * 2: older with lease history, which cannot say whether its fence would refuse this.
+ */
+function agentTier(candidate: UpgradeCandidate): 0 | 1 | 2 {
+  if (isVersion(candidate.version) && compareVersions(candidate.version, CERTAIN_REFUSALS_SINCE) >= 0) return 0;
+  return candidate.preflight?.problems.some(problem => problem.code === 'FENCE_UNREPORTED') ? 2 : 1;
+}
+
+export interface UpgradeCheckReport {
+  version: string;
+  release: ReleaseVerification;
+  eligible: number;
+  blocked: number;
+  nodes: Array<UpgradeCandidate & { cause: string | null; remedy: string | null }>;
+}
+
+/** The dry run behind `dryRun`, the console's Check and `agents doctor`: the full per-node report, before anything starts. */
+export async function checkUpgrade(options: Pick<StartRunOptions, 'version' | 'integrity' | 'nodeIds' | 'allowRetryReverted' | 'deps'> & { heal?: boolean; everyOnlineNode?: boolean }): Promise<UpgradeCheckReport> {
+  const version = options.version ?? AGENT_VERSION;
+  if (!isVersion(version)) throw new HttpError(400, 'INVALID_VERSION', `${version} is not an X.Y.Z version`);
+  let release: ReleaseVerification;
+  let engines: string | null = null;
+  try {
+    const resolved = await resolveAgentRelease({ version, integrity: options.integrity });
+    release = { verified: true, integrity: resolved.integrity, reason: null };
+    engines = resolved.engines ?? null;
+  } catch (error) {
+    // The nodes can still be judged without knowing the release's engines.
+    release = { verified: false, integrity: null, reason: error instanceof Error ? error.message : String(error) };
+  }
+  const deps = options.deps ?? defaultDeps();
+  const candidates = await checkCandidates({ version, engines }, options.nodeIds, deps, { everyOnlineNode: options.everyOnlineNode ?? true, heal: options.heal ?? false, allowRetryReverted: options.allowRetryReverted });
+  const nodes = candidates.map(candidate => {
+    const remedy = candidate.code ? upgradeRemedy(candidate.code) : null;
+    return { ...candidate, cause: remedy?.cause ?? null, remedy: remedy?.remedy ?? null };
+  });
+  return { version, release, eligible: nodes.filter(node => node.eligible).length, blocked: nodes.filter(node => !node.eligible && node.code && !upgradeRemedy(node.code).informational).length, nodes };
 }
 
 /** Validate, take the fleet-wide run lock, create the run and start it in the background. */
@@ -791,10 +1238,24 @@ export async function startUpgradeRun(options: StartRunOptions): Promise<{ run: 
     const running = await latestUpgradeRun(store);
     if (running?.status === 'running') throw new HttpError(409, 'AGENT_UPGRADE_RUNNING', `Upgrade run ${running.id} is still in progress`);
     const release = await resolveAgentRelease({ version, integrity: options.integrity });
-    const candidates = await listUpgradeCandidates(release.version, options.nodeIds, { allowRetryReverted: options.allowRetryReverted });
+    const baseDeps = options.deps ?? defaultDeps(store);
+    const deps: UpgradeDeps = { ...baseDeps, index: baseDeps.index ?? (next => store.index(next)) };
+    // Checking a large fleet can outlast the lock's TTL.
+    const holdLock = setInterval(() => void store.renew(token).catch(() => false), LEASE_MS / 3);
+    holdLock.unref?.();
+    let candidates: UpgradeCandidate[];
+    try {
+      candidates = await checkCandidates(release, options.nodeIds, deps, { heal: true, allowRetryReverted: options.allowRetryReverted });
+    } finally {
+      clearInterval(holdLock);
+    }
     const unknown = (options.nodeIds ?? []).filter(nodeId => !candidates.some(candidate => candidate.nodeId === nodeId));
     if (unknown.length) throw new HttpError(400, 'UNKNOWN_NODES', `Unknown or decommissioned node(s): ${unknown.slice(0, 20).join(', ')}`);
-    const eligible = candidates.filter(candidate => candidate.eligible);
+    if (options.holdOldAgents) candidates = candidates.map(candidate => candidate.eligible && agentTier(candidate) > 0 ? { ...candidate, eligible: false, code: 'RETRY_HELD_SUSPECTED',
+      reason: 'left out of this retry: the run before it stopped on ambiguous answers from older agents, and another attempt can strand another lease; retry with acknowledgeSuspicion to include it' } : candidate);
+    // Who goes first decides who can stop the wave: those that can answer plainly, then those that can only answer uncertain.
+    const eligible = candidates.filter(candidate => candidate.eligible).map((candidate, index) => ({ candidate, index }))
+      .sort((a, b) => agentTier(a.candidate) - agentTier(b.candidate) || a.index - b.index).map(entry => entry.candidate);
     if (options.canaryNodeId && !eligible.some(candidate => candidate.nodeId === options.canaryNodeId)) {
       const canary = candidates.find(candidate => candidate.nodeId === options.canaryNodeId);
       throw new HttpError(400, 'INVALID_CANARY', canary ? `Canary ${canary.name} cannot be upgraded now: ${canary.reason}` : 'canaryNodeId is not among the selected nodes');
@@ -804,14 +1265,17 @@ export async function startUpgradeRun(options: StartRunOptions): Promise<{ run: 
       throw new HttpError(409, 'NO_ELIGIBLE_AGENTS', `No selected agent can be upgraded now${reasons ? ` (${reasons})` : ''}`);
     }
     if (options.canaryNodeId) eligible.unshift(...eligible.splice(eligible.findIndex(candidate => candidate.nodeId === options.canaryNodeId), 1));
-    const deps = options.deps ?? defaultDeps(store);
     const run: UpgradeRun = {
       id, version: release.version, integrity: release.integrity, actorId: options.actorId, status: 'running',
       startedAt: new Date(deps.now()).toISOString(), finishedAt: null, concurrency: settings.agentUpgradeConcurrency, message: null, summary: null,
       canaryNodeId: eligible[0]!.nodeId, owner: INSTANCE_ID, leaseExpiresAt: new Date(deps.now() + LEASE_MS).toISOString(), stopRequestedBy: null,
       retryOf: options.retryOf ?? null, allowRetryReverted: options.allowRetryReverted ?? false,
-      excluded: candidates.filter(candidate => !candidate.eligible).map(candidate => ({ nodeId: candidate.nodeId, name: candidate.name, reason: candidate.reason ?? 'not eligible' })),
-      nodes: eligible.map(candidate => ({ nodeId: candidate.nodeId, name: candidate.name, from: candidate.version, state: 'pending', requestId: randomUUID(), detail: null })),
+      maxFailures: options.maxFailures ?? settings.agentUpgradeMaxFailures,
+      warnings: candidates.flatMap(candidate => (candidate.preflight?.problems ?? []).filter(problem => problem.code === 'FENCE_UNREPORTED')
+        .map(problem => ({ nodeId: candidate.nodeId, name: candidate.name, code: problem.code, detail: problem.detail }))),
+      excluded: candidates.filter(candidate => !candidate.eligible).map(candidate => ({ nodeId: candidate.nodeId, name: candidate.name, reason: candidate.reason ?? 'not eligible', code: candidate.code })),
+      nodes: eligible.map(candidate => ({ nodeId: candidate.nodeId, name: candidate.name, from: candidate.version, state: 'pending', requestId: randomUUID(), detail: null,
+        ...(agentTier(candidate) === 2 ? { fenceUnreported: true } : {}) })),
     };
     await store.index(run);
     await deps.save(run);
@@ -850,14 +1314,21 @@ export async function stopUpgradeRun(id: string, actorId: string, store: RunStor
 }
 
 /** Retry the nodes a finished run did not upgrade, with the same version and integrity. */
-export async function retryUpgradeRun(id: string, options: Omit<StartRunOptions, 'version' | 'integrity' | 'nodeIds' | 'retryOf'>): Promise<ReturnType<typeof startUpgradeRun>> {
+export async function retryUpgradeRun(id: string, options: Omit<StartRunOptions, 'version' | 'integrity' | 'nodeIds' | 'retryOf' | 'holdOldAgents'> & { acknowledgeSuspicion?: boolean }): Promise<ReturnType<typeof startUpgradeRun>> {
   const store = options.store ?? defaultRunStore();
   const previous = await getUpgradeRun(id, store);
   if (!previous) throw new HttpError(404, 'NOT_FOUND', 'Upgrade run not found');
   if (previous.status === 'running') throw new HttpError(409, 'AGENT_UPGRADE_RUNNING', `Upgrade run ${id} is still in progress`);
-  const retry = new Set<NodeRunState>(['failed', 'refused', 'skipped', 'requested', ...options.allowRetryReverted ? ['reverted' as const] : []]);
-  const nodeIds = previous.nodes.filter(node => retry.has(node.state)).map(node => node.nodeId);
+  const retry = new Set<NodeRunState>(['failed', 'refused', 'skipped', 'requested', 'watching', 'ambiguous', ...options.allowRetryReverted ? ['reverted' as const] : []]);
+  // Nodes the preflight held back come back too: what blocked them may be repaired now.
+  const nodeIds = [...previous.nodes.filter(node => retry.has(node.state)).map(node => node.nodeId),
+    ...(previous.excluded ?? []).filter(node => node.code && !upgradeRemedy(node.code).informational).map(node => node.nodeId)];
   if (!nodeIds.length) throw new HttpError(409, 'NOTHING_TO_RETRY', `Run ${id} has no failed, refused, skipped or interrupted nodes${options.allowRetryReverted ? '' : ' (reverted nodes need allowRetryReverted)'}`);
-  return startUpgradeRun({ ...options, store, version: previous.version, integrity: previous.integrity, nodeIds, retryOf: previous.id,
+  // Retrying a run that stopped on ambiguity must not walk the next old agents into the same stranded lease: someone has to look first.
+  const stoppedOnAmbiguity = Boolean(previous.suspectedRelease && previous.nodes.some(isCountedAmbiguous) && !previous.nodes.some(node => node.state === 'confirmed'));
+  const holdOldAgents = !options.acknowledgeSuspicion && (stoppedOnAmbiguity || Boolean(previous.excluded?.some(node => node.code === 'RETRY_HELD_SUSPECTED')));
+  const { acknowledgeSuspicion: _acknowledged, ...startOptions } = options;
+  return startUpgradeRun({ ...startOptions, store, holdOldAgents, version: previous.version, integrity: previous.integrity, nodeIds, retryOf: previous.id,
+    maxFailures: options.maxFailures ?? previous.maxFailures,
     allowPrerelease: options.allowPrerelease ?? isPrerelease(previous.version) });
 }

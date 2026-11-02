@@ -5,11 +5,13 @@ import { z } from 'zod';
 import { CONTROL_API_URL, HOST_FQDN, NODE_MANAGER_SECRET, RESULT_SIGNING_SECRET, MAGNUS_EXECUTION_SUPERVISOR_ENABLED } from '../env.js';
 import { controlApiFetch } from '../tls.js';
 import { commandLedger, executeBodySchema } from './command-executor.js';
-import { commandFenceSchema, commandRequestDigest, isArdentScopedCommand, type CommandIdentity } from './command-ledger.js';
+import { refusalError, refusalStatus } from './command-refusal.js';
+import { admissionCause, CommandAdmissionError, commandFenceSchema, commandRequestDigest, isArdentScopedCommand, type CommandIdentity } from './command-ledger.js';
 import { managedExecution } from '../security/managed-context.js';
 import { legacyAdmissionResponseSchema, managedClaimSchema, MANAGED_CLAIM_HEADER, httpIdentity, httpReceiptBody, type ManagedClaim } from '../security/managed-http.js';
 import { nativeCompletionDescriptor, nativeCompletionResourceKey } from '../security/native-completion-registry.js';
 import { signCommandResult } from '../security/command-result-signature.js';
+import { logger } from '../utils/logger.js';
 import { mutationBarrier, type MutationToken } from './mutation-barrier.js';
 import { recoverSkillPublication } from './skill-publication.js';
 
@@ -65,15 +67,35 @@ export const managedMutationGuard: MiddlewareHandler = async (c, next) => {
     || /^\/commands\/receipts\/[a-zA-Z0-9._-]+\/reconcile$/.test(path)) return next();
   const encoded = c.req.header(MANAGED_CLAIM_HEADER);
   if (path === '/commands/execute' && encoded) {
-    if (activeLegacy || enrolling) return c.json({ success: false, error: { code: 'RESOURCE_BUSY' } }, 409);
+    let input: CommandIdentity | undefined;
+    let leaseId: string | undefined;
+    try { leaseId = managedClaimSchema.parse(JSON.parse(encoded)).leaseId; } catch (error) {
+      logger.warn(`Managed command claim does not parse: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    const refused = async (code: string, message: string) => {
+      // Only a well-formed request can be bound to a signed refusal.
+      const parsed = executeBodySchema.safeParse(input ?? await c.req.json().catch(() => null));
+      const error = parsed.success
+        ? await refusalError({ commandId: parsed.data.commandId, requestSha256: commandRequestDigest(parsed.data), leaseId }, code, message, { notStarted: true })
+        : { code, message };
+      return c.json({ success: false, error }, 409);
+    };
+    if (activeLegacy || enrolling) return refused('RESOURCE_BUSY', 'Another request owns the node execution slot; nothing ran');
     enrolling = true;
+    let confirmed = false;
     try {
       const claim = managedClaimSchema.parse(JSON.parse(encoded));
-      const input = await c.req.json<CommandIdentity>();
+      input = await c.req.json<CommandIdentity>();
       await confirm(claim, input);
+      confirmed = true;
       return await managedExecution.run({ claim, commandId: input.commandId, requestSha256: commandRequestDigest(input),
         ...(input.coordination ? { coordination: input.coordination } : {}), signal: c.req.raw.signal }, () => next());
-    } catch { return c.json({ success: false, error: { code: 'RESOURCE_CLAIM_INVALID', message: 'A current authoritative resource claim is required' } }, 409); }
+    } catch (error) {
+      logger.warn(`Managed command claim failed: ${error instanceof Error ? error.message : String(error)}`);
+      const message = 'A current authoritative resource claim is required';
+      // After confirmation the handler may have started: stay uncertain.
+      return confirmed ? c.json({ success: false, error: { code: 'RESOURCE_CLAIM_INVALID', message } }, 409) : refused('RESOURCE_CLAIM_INVALID', message);
+    }
     finally { enrolling = false; }
   }
   if (enrolling) return c.json({ success: false, error: { code: 'RESOURCE_BUSY' } }, 409);
@@ -103,7 +125,9 @@ export const managedMutationGuard: MiddlewareHandler = async (c, next) => {
       && c.res.status !== 202 && !(c.res.status >= 300 && c.res.status < 400);
     if (path === '/commands/execute' && c.req.method === 'POST' && c.res.status === 200
       && MAGNUS_EXECUTION_SUPERVISOR_ENABLED) completed = true;
-  } catch { return c.json({ success: false,
+  } catch (error) {
+    logger.warn(`Mutation ${c.req.method} ${path} ${dispatched ? 'outcome is uncertain' : 'was not admitted'}: ${error instanceof Error ? error.message : String(error)}`);
+    return c.json({ success: false,
     error: dispatched
       ? { code: 'MUTATION_OUTCOME_UNKNOWN', message: 'Mutation outcome is uncertain; reconcile before retrying' }
       : { code: 'ENROLLMENT_AUTHORITY_UNAVAILABLE', message: 'Legacy mutation admission could not be verified' } }, 409); }
@@ -122,18 +146,18 @@ export function registerManagedHttp(app: Hono): void {
     if (value.recoveryOnly && (value.method !== 'POST' || value.path !== '/skills/install'))
       return c.json({ success: false, error: { code: 'INVALID_RECOVERY_ONLY',
         message: 'Recovery-only execution is limited to exact skill publication evidence' } }, 409);
+    const identity = { ...httpIdentity(value.commandId, value.method, value.path, value.body, value.timeoutSeconds), coordination: value.coordination };
+    const digest = commandRequestDigest(identity);
+    const refuse = async (code: string, message: string, details: { notStarted: boolean; highWater?: { resourceKey: string; fence: string } }) =>
+      c.json({ success: false, error: await refusalError({ commandId: value.commandId, requestSha256: digest, leaseId: value.claim.leaseId }, code, message, details) }, refusalStatus(code));
     const descriptor = nativeCompletionDescriptor(value.method, value.path);
-    if (!descriptor) return c.json({ success: false,
-      error: { code: 'UNREVIEWED_MUTATION', message: 'This mutation needs a separately reviewed completion boundary' } }, 409);
+    if (!descriptor) return refuse('UNREVIEWED_MUTATION', 'This mutation needs a separately reviewed completion boundary', { notStarted: true });
     if (value.timeoutSeconds > descriptor.timeoutCeilingSeconds
       || value.coordination.resourceKey !== nativeCompletionResourceKey(descriptor, value.claim.nodeId))
-      return c.json({ success: false, error: { code: 'UNREVIEWED_MUTATION',
-        message: 'Native mutation exceeds its reviewed completion or resource boundary' } }, 409);
-    if (activeLegacy || enrolling) return c.json({ success: false, error: { code: 'RESOURCE_BUSY' } }, 409);
+      return refuse('UNREVIEWED_MUTATION', 'Native mutation exceeds its reviewed completion or resource boundary', { notStarted: true });
+    if (activeLegacy || enrolling) return refuse('RESOURCE_BUSY', 'Another request owns the node execution slot; nothing ran', { notStarted: true });
     enrolling = true;
     try {
-      const identity = { ...httpIdentity(value.commandId, value.method, value.path, value.body, value.timeoutSeconds), coordination: value.coordination };
-      const digest = commandRequestDigest(identity);
       const prior = await commandLedger.receipt(value.commandId);
       if (value.recoveryOnly) {
         if (prior && (prior.requestSha256 !== digest || !['unknown', 'completed'].includes(prior.state)))
@@ -154,8 +178,18 @@ export function registerManagedHttp(app: Hono): void {
         const adopted = await commandLedger.settleRecoveredResult(identity, signed, value.claim);
         return c.json({ success: true, data: { response: recovered, receipt: adopted.result } });
       }
-      await confirm(value.claim, identity);
+      try {
+        await confirm(value.claim, identity);
+      } catch (error) {
+        // Before the ledger: no handler can have started for this request.
+        logger.warn(`Managed request ${value.commandId} was not confirmed: ${error instanceof Error ? error.message : String(error)}`);
+        throw new CommandAdmissionError('RESOURCE_CLAIM_INVALID', 'The server did not confirm the exact resource owner; nothing ran', { notStarted: !prior });
+      }
       let response: { status: number; body: string } | undefined;
+      const afterSettled: Array<() => void | Promise<void>> = [];
+      const settled = async () => {
+        for (const task of afterSettled.splice(0)) await Promise.resolve().then(task).catch((error: unknown) => logger.warn(`After ${value.commandId} settled: ${error instanceof Error ? error.message : String(error)}`));
+      };
       const receipt = await commandLedger.execute(identity, async digest => {
         const start = Date.now();
         // Durable fence/enrollment/receipt writes may outlast the authority
@@ -172,7 +206,7 @@ export function registerManagedHttp(app: Hono): void {
             code: 'LEASE_EXPIRED', message: 'Native mutation lease expired before handler start; no handler executed',
           } }), { status: 409, headers: { 'content-type': 'application/json' } });
         } else result = await managedExecution.run({ claim: value.claim, commandId: value.commandId, requestSha256: digest,
-            coordination: value.coordination, signal: c.req.raw.signal }, () => app.request(`http://localhost/api/v1${value.path}`, {
+            coordination: value.coordination, signal: c.req.raw.signal, afterSettled }, () => app.request(`http://localhost/api/v1${value.path}`, {
           method: value.method, headers: { 'content-type': 'application/json', 'x-node-token': NODE_MANAGER_SECRET },
           signal: c.req.raw.signal,
           ...(value.body ? { body: value.body } : {}),
@@ -198,10 +232,18 @@ export function registerManagedHttp(app: Hono): void {
           durationMs: Date.now() - start, truncated: false,
           coordination: { ...value.coordination, requestSha256: digest } };
         return { ...signed, signature: signCommandResult(signed, RESULT_SIGNING_SECRET) };
-      }, value.claim);
+      }, value.claim).finally(settled);
       if (!response) return c.json({ success: false, error: { code: 'RESULT_ALREADY_RECORDED', message: 'Read the existing signed receipt without replay' } }, 409);
       return c.json({ success: true, data: { response, receipt } });
-    } catch { return c.json({ success: false, error: { code: 'MANAGED_MUTATION_UNCERTAIN', message: 'Inspect the exact resource receipt before further work; no automatic replay' } }, 409); }
+    } catch (error) {
+      // A refusal the ledger can name keeps its name; only what is really uncertain is reported as uncertain.
+      if (error instanceof CommandAdmissionError && error.code !== 'OUTCOME_UNKNOWN') {
+        logger.warn(`Managed request ${value.commandId} ${value.method} ${value.path} refused: ${error.code}: ${error.message}${admissionCause(error)}${error.highWater ? ` (${error.highWater.resourceKey} is at fence ${error.highWater.fence}, the request has ${value.coordination.fence})` : ''}`);
+        return refuse(error.code, error.message, { notStarted: error.notStarted, ...(error.highWater ? { highWater: error.highWater } : {}) });
+      }
+      logger.warn(`Managed request ${value.commandId} ${value.method} ${value.path} is uncertain: ${error instanceof Error ? error.message : String(error)}${error instanceof CommandAdmissionError ? admissionCause(error) : ''}`);
+      return c.json({ success: false, error: { code: 'MANAGED_MUTATION_UNCERTAIN', message: 'Inspect the exact resource receipt before further work; no automatic replay' } }, 409);
+    }
     finally { enrolling = false; }
   });
 }

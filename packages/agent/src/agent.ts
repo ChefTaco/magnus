@@ -7,6 +7,7 @@ import { controlApiFetch } from './tls.js';
 import { startSpan, formatTraceparent } from './collectors/otel-collector.js';
 import { collectHermesState } from './executors/hermes-manager.js';
 import { existsSync } from 'node:fs';
+import { heartbeatDrift } from './upgrade/preflight.js';
 import { confirmTrial, controlApiUnreachable, recordTrialAlive, selfUpgradeStatus, trialOf } from './upgrade/self-upgrade.js';
 import { commandLedger } from './executors/command-executor.js';
 const HEARTBEAT_INTERVAL_MS = 30_000; // 30s
@@ -86,8 +87,10 @@ async function collectHealthWithDeadline(): ReturnType<typeof collectSystemHealt
 
 /** Self-upgrade status for the heartbeat, with the sticky local enrollment marker. */
 async function heartbeatSelfUpgrade(): Promise<ReturnType<typeof selfUpgradeStatus>> {
-  const enrollment = await commandLedger.managedEnrollment().catch(() => null);
-  return { ...selfUpgradeStatus(AGENT_VERSION), managedEnrollment: enrollment ? { nodeId: enrollment.nodeId, nodeFqdn: enrollment.nodeFqdn } : null };
+  const marker = await commandLedger.enrollmentMarker();
+  if (marker.error) logger.warn(`Local enrollment marker could not be read: ${marker.error}`);
+  return { ...selfUpgradeStatus(AGENT_VERSION), ...heartbeatDrift(commandLedger),
+    managedEnrollment: marker.marker ? { nodeId: marker.marker.nodeId, nodeFqdn: marker.marker.nodeFqdn } : null, managedEnrollmentState: marker.state };
 }
 
 /** Stop the heartbeat loop. */

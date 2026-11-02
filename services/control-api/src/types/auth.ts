@@ -54,6 +54,8 @@ export type AuditAction =
   | 'agent.upgrade.node_failed'
   | 'agent.upgrade.node_confirmed'
   | 'agent.upgrade.node_reverted'
+  | 'agent.fence.advanced'
+  | 'agent.lease.recovered'
   | 'application.canary'
   | 'storage.investigate'
   | 'maintenance.create'

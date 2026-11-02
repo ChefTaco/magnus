@@ -4,7 +4,8 @@
 #   1. `magnus init` the published FROM release (default 1.0.3) as system services
 #   2. `magnus upgrade` to the working tree's packed release: migrations, health, runtime version
 #   3. install an agent with `install-service --unprivileged`; it enrolls and reports itself
-#   4. `magnus-server agents upgrade` to a synthetic release: confirmed
+#   4. pre-seed a high fence on the agent: `agents doctor --heal` moves the server past it;
+#      `magnus-server agents upgrade` to a synthetic release: confirmed
 #   5. upgrade to a synthetic agent that never heartbeats: the launcher reverts it
 #   6. upgrade the server to a synthetic broken release with a migration: backup, auto-revert, restore hint
 #   7. `magnus restore` the pre-upgrade dump: the broken release's migration is gone, the server healthy
@@ -44,6 +45,8 @@ json() { node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const 
 magnus() { "${SUDO[@]}" "MAGNUS_PROJECT_DIR=$PROJECT" "$NODE_BIN" "$PROJECT/current/node_modules/@hivemagnus/magnus/dist/cli.js" "$@"; }
 # The services run as this user, which owns the project's env files.
 server_cli() { "$NODE_BIN" "$PROJECT/current/node_modules/@hivemagnus/magnus-server/dist/cli.js" "$@" --env-file "$PROJECT/config/magnus-server.env"; }
+# One query against a named database, as JSON rows.
+psql_url() { DB="$1" node -e "const pg=require('$ROOT/node_modules/pg');const c=new pg.Client({connectionString:process.env.DB});c.connect().then(()=>c.query(process.argv[1])).then(r=>{console.log(JSON.stringify(r.rows));return c.end()}).catch(e=>{console.error(e.message);process.exit(1)})" "$2"; }
 psql_admin() { node -e "const pg=require('$ROOT/node_modules/pg');const c=new pg.Client({connectionString:process.env.E2E_DATABASE_ADMIN_URL});c.connect().then(()=>c.query(process.argv[1])).then(r=>{console.log(JSON.stringify(r.rows));return c.end()}).catch(e=>{console.error(e.message);process.exit(1)})" "$1"; }
 
 cleanup() {
@@ -139,6 +142,24 @@ wait_for "the agent to enroll with the launcher layout" 120 agent_ready
 
 synthetic() { node "$ROOT/scripts/e2e/synthetic-release.mjs" --from "$PACKS" --out "$SYNTH" "$@" >/dev/null; chmod -R a+rX "$SYNTH"; }
 integrity() { node -e "const c=require('node:crypto');console.log('sha512-'+c.createHash('sha512').update(require('node:fs').readFileSync(process.argv[1])).digest('base64'))" "$1"; }
+
+step "A ledger with a fence far above the server's: the check reports it, and a repair moves the server past it"
+NODE_ID=$(psql_url "$DATABASE_URL" "SELECT id FROM nodes WHERE metadata LIKE '%agentSelfUpgrade%' LIMIT 1" | node -e "process.stdin.on('data',d=>console.log(JSON.parse(d)[0].id))")
+FENCE_KEY="node:$NODE_ID"
+FENCE_VALUE=1789962351090
+FENCE_FILE=fence-$(printf '%s' "$FENCE_KEY" | sha256sum | cut -d' ' -f1).json
+LEDGER=$AGENT_DIR/.magnus/command-receipts
+sudo -u magnus-agent mkdir -p "$LEDGER"
+sudo chmod 700 "$LEDGER"
+printf '{"resourceKey":"%s","fence":"%s"}' "$FENCE_KEY" "$FENCE_VALUE" | sudo -u magnus-agent tee "$LEDGER/$FENCE_FILE" >/dev/null
+sudo chmod 600 "$LEDGER/$FENCE_FILE"
+fence_generation() { psql_url "$DATABASE_URL" "SELECT generation::text AS g FROM command_resource_fences WHERE \"resourceKey\" = '$FENCE_KEY'"; }
+server_cli agents doctor --nodes "$NODE_ID" --to $AGENT_OK --integrity "sha512-$(printf 'A%.0s' {1..86})==" | tee "$WORK/doctor-1.log" || fail "agents doctor"
+grep -q "FENCE_AHEAD" "$WORK/doctor-1.log" || fail "agents doctor did not report the fence ahead"
+[[ $(fence_generation) == "[]" ]] || fail "agents doctor changed the fence without --heal"
+server_cli agents doctor --heal --nodes "$NODE_ID" --to $AGENT_OK --integrity "sha512-$(printf 'A%.0s' {1..86})==" | tee "$WORK/doctor-2.log" || fail "agents doctor --heal"
+grep -q "moved the fence" "$WORK/doctor-2.log" || fail "agents doctor --heal did not repair the fence"
+fence_generation | grep -q "\"$((FENCE_VALUE + 1))\"" || fail "the fence generation is not past the agent's"
 
 step "Agent upgrade $VERSION -> $AGENT_OK (confirms)"
 # The unpublished $VERSION contracts come from the source directory as well.

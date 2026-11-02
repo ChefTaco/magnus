@@ -37,9 +37,53 @@ from then on.
   Atomic state changes stop a delayed sender from dispatching afterwards.
 - A lost reply, malformed result or crash while `running` leaves the lease `unknown`. Expiry,
   cancellation, heartbeats, a failed command status and a server restart do not release it.
+- A refusal the node can prove settles the lease as `not-dispatched`: the agent signs with its result
+  key that this exact request did not start and that nothing local refers to it (`STALE_FENCE`, `LEASE_EXPIRED`,
+  `RESOURCE_BUSY` and so on), bound to the request digest, the lease and the node. An unsigned word, or one for
+  another request, lease or node, proves nothing and the lease stays `unknown`.
 - Only a verified node result bound to the exact request and fence, or the node's acknowledgement
-  of a signed reconciliation receipt, settles an uncertain lease. A signed nonzero exit code proves
-  the command finished; it does not prove a service recovered.
+  of a signed reconciliation receipt, settles an uncertain lease that has a receipt. A signed nonzero exit
+  code proves the command finished; it does not prove a service recovered.
+- A lease stuck `unknown` with no receipt can be settled as `not-dispatched` once its deadline has passed by a
+  minute, by a run, `magnus-server agents doctor --heal` or the readiness monitor (once an hour per node). The agent
+  signs, under a fresh nonce, what its ledger holds for the command (`GET /api/v1/commands/receipts/<id>/trace`):
+  whether the ledger exists, a receipt, this command's claim, the fence high-water, the enrollment marker and any record of a
+  failed admission. The ledger writes the claim, the fence, the marker and a durable running receipt, in that order, and only then
+  starts the handler. Past the deadline a delayed request can pass neither the ledger nor `/claim`. So with no receipt:
+  | Ledger holds | Means | Lease |
+  |---|---|---|
+  | This node's marker, no fence, no claim | The marker shows it is this node's ledger; no request passed the fence | settles |
+  | High-water below the lease's fence | It never passed admission | settles |
+  | High-water above it | A later fence won, or the request was refused as stale | settles |
+  | High-water equal, with this command's claim | A crash or failed write between the claim and the receipt | settles |
+  | High-water equal, with its record of a failed admission for this fence | The agent recorded that a write failed before the handler | settles |
+  | High-water equal, with neither | A receipt was removed, or a build without such records failed the admission | `LEDGER_EVIDENCE_INCONSISTENT`, held |
+  | No fence and no marker | Nothing shows this is the ledger the command would have used | `LEDGER_NO_FENCE`, held |
+  | No ledger | Nothing at all | `LEDGER_MISSING`, held |
+  | A marker for another node, or one it cannot read | | held |
+- A receipt leaves signed reconciliation as the only way out. Scheduler occurrences and skill publications keep
+  their own retained evidence and are never settled this way, and agents older than 1.1.8 have no such route: their
+  leases stay held until the agent is upgraded by hand.
+- If a held lease has no receipt, signed reconciliation does not apply either, since the agent refuses it. Restore the ledger if
+  it moved, and the lease settles by itself. Otherwise there is no way out in Magnus: someone has to establish what the command
+  did on the node, and change the lease row in the database by hand.
+- What this cannot detect: a ledger that was wiped and then used again, whose higher fence with no receipt looks the
+  same as a later fence winning, or one wiped and then told its enrollment again, which looks like the first row. A receipt
+  deleted by hand on a ledger whose high-water has since moved on looks the same too.
+  The check proves a ledger is there and has seen this node, not that its history is complete.
+
+A node's ledger can be ahead of the server's fence generation, after a database restore or because an older
+build wrote timestamp-style values. The generation then moves up to high-water + 1 when a preflight signed for a fresh nonce, or a signed `STALE_FENCE`
+bound to this node's lease, reports it, under the node's advisory lock and audited as `agent.fence.advanced`. It never
+moves down. Only the node's own keys and decimal values under a cap are accepted. `magnus-server agents fence NODE VALUE`
+does the same by hand for agents that do not report it. Heartbeat values only drive the readiness display.
+
+The result key and the node credential are shared by the fleet, so a signature says what an agent claims, not which
+agent it is. The limit is the connection: the server opens it to the node's inventory address, over TLS it verifies. A
+heartbeat with the fleet credential can change that address only while it is loopback or unroutable, or to the DNS name of
+that node's own agent certificate. So a holder of the fleet secrets, with a certificate the server trusts, can answer
+for a node in that state: inflate its counters, which costs only numbering, and settle its leases that left no
+receipt there. It can already do more than that with those secrets, such as signing command results.
 
 There is no unsigned force-release. Do not delete lease history to clear a blocked node: history
 stays a permanent barrier against falling back to unleased admission, even with the feature flag

@@ -50,8 +50,23 @@ export interface AgentSelfUpgrade {
   upgrade?: AgentUpgradeReport | null;
   confirmSeconds?: number;
   managedEnrollment?: { nodeId: string; nodeFqdn: string } | null;
+  fenceHighWater?: Record<string, string>;
   nodeVersion?: string | null;
   observedAt?: string;
+}
+
+export interface PreflightProblem {
+  code: string;
+  detail: string;
+  blocking: boolean;
+}
+
+export interface NodePreflight {
+  status: 'ok' | 'warning' | 'blocked' | 'unavailable' | 'unreachable';
+  checkedAt: string;
+  problems: PreflightProblem[];
+  detail?: string;
+  healed?: string[];
 }
 
 export interface UpgradeCandidate {
@@ -60,11 +75,48 @@ export interface UpgradeCandidate {
   version: string;
   eligible: boolean;
   reason: string | null;
+  code?: string | null;
   upgrade: AgentUpgradeReport | null;
   layout: AgentSelfUpgrade['layout'] | null;
+  preflight?: NodePreflight | null;
 }
 
-export type NodeRunState = 'pending' | 'requested' | 'confirmed' | 'reverted' | 'failed' | 'refused' | 'skipped';
+/** POST /agents/upgrade with dryRun: the per-node report, nothing started. */
+export interface AgentUpgradeCheck {
+  dryRun: true;
+  version: string;
+  release: { verified: boolean; integrity: string | null; reason: string | null };
+  eligible: number;
+  blocked: number;
+  nodes: Array<UpgradeCandidate & { cause: string | null; remedy: string | null }>;
+}
+
+export interface ReadinessProblem {
+  code: string;
+  detail: string;
+  cause: string;
+  remedy: string;
+}
+
+export interface UpgradeReadiness {
+  status: 'ok' | 'not-ready' | 'unknown';
+  problems: ReadinessProblem[];
+  observedAt: string | null;
+}
+
+export type NodeRunState = 'pending' | 'requested' | 'watching' | 'ambiguous' | 'confirmed' | 'reverted' | 'failed' | 'refused' | 'skipped';
+
+export interface RunAttention {
+  nodeId: string;
+  name: string;
+  state: NodeRunState | 'excluded';
+  code: string;
+  failureClass: 'release' | 'node';
+  detail: string | null;
+  cause: string;
+  remedy: string;
+  unknownCode?: boolean;
+}
 
 export interface AgentUpgradeRunNode {
   nodeId: string;
@@ -74,12 +126,14 @@ export interface AgentUpgradeRunNode {
   detail: string | null;
   code?: string | null;
   awaitingReport?: boolean;
+  failureClass?: 'release' | 'node' | null;
+  attempts?: number;
 }
 
 export interface AgentUpgradeRun {
   id: string;
   version: string;
-  status: 'running' | 'succeeded' | 'failed' | 'stopped' | 'interrupted';
+  status: 'running' | 'succeeded' | 'partial' | 'failed' | 'stopped' | 'interrupted';
   startedAt: string;
   finishedAt: string | null;
   concurrency: number;
@@ -88,7 +142,12 @@ export interface AgentUpgradeRun {
   canaryNodeId?: string | null;
   stopRequestedBy?: string | null;
   retryOf?: string | null;
-  excluded?: Array<{ nodeId: string; name: string; reason: string }>;
+  excluded?: Array<{ nodeId: string; name: string; reason: string; code?: string | null }>;
+  maxFailures?: number;
+  attention?: RunAttention[];
+  /** The release is suspect but unproven; cleared when a node confirms after all. */
+  suspectedRelease?: string | null;
+  warnings?: Array<{ nodeId: string; name: string; code: string; detail: string }>;
   nodes: AgentUpgradeRunNode[];
 }
 

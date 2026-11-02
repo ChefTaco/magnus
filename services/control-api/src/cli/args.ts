@@ -33,7 +33,7 @@ Commands:
   restore FILE  Replace the database with a dump (stop the server first; asks unless --yes)
   upgrade       Upgrade a \`magnus init\` project (runs \`magnus upgrade\`; see --help there)
   rollback      Switch a \`magnus init\` project back to the previous version
-  agents        Agent fleet commands: \`agents upgrade [--to X.Y.Z] [--nodes a,b] [--dry-run]\`
+  agents        Agent fleet commands: \`agents upgrade [--to X.Y.Z] [--nodes a,b] [--dry-run]\`, \`agents doctor [--nodes a,b]\`
   env-schema    Print the documented environment variables
   help          Show this help
   version       Print the version

@@ -56,7 +56,8 @@ enrollmentDrainRoutes.get('/host-local-writer-proof', async c => {
       .update(HOST_LOCAL_WRITER_DOMAIN + canonicalDrainJson(receipt)).digest('hex');
     c.header('Cache-Control', 'no-store');
     return c.json({ success: true, data: { ...receipt, signature } });
-  } catch {
+  } catch (error) {
+    logger.warn('Host-local writer proof failed', { error: error instanceof Error ? error.message : String(error) });
     return c.json({ success: false, error: { code: 'WRITER_PROOF_UNAVAILABLE' } }, 409);
   }
 });
@@ -65,7 +66,8 @@ enrollmentDrainRoutes.get('/mutation-inventory', async c => {
     const inventory = await mutationBarrier.unknownInventory();
     c.header('Cache-Control', 'no-store');
     return c.json({ success: true, data: inventory });
-  } catch {
+  } catch (error) {
+    logger.warn('Mutation inventory failed', { error: error instanceof Error ? error.message : String(error) });
     return c.json({ success: false, error: { code: 'MUTATION_INVENTORY_UNAVAILABLE',
       message: 'Retained mutation inventory cannot be validated' } }, 409);
   }

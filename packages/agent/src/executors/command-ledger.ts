@@ -3,7 +3,7 @@ import type { ManagedClaim } from '../security/managed-http.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { spawn } from 'node:child_process';
-import { lstat, mkdir, open, rename, unlink } from 'node:fs/promises';
+import { lstat, mkdir, open, readdir, rename, unlink } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
 import { HOST_FQDN, NODE_MANAGER_SECRET, RESULT_SIGNING_SECRET } from '../env.js';
@@ -62,9 +62,43 @@ const receiptSchema = z.object({
   result: resultSchema.optional(), reconciliation: commandReconciliationSchema.optional(),
 }).strict();
 type Receipt = z.infer<typeof receiptSchema>;
+export type CommandAdmissionCode = 'RESOURCE_BUSY' | 'OUTCOME_UNKNOWN' | 'IDEMPOTENCY_CONFLICT' | 'STALE_FENCE' | 'LEASE_EXPIRED'
+  | 'LEDGER_UNAVAILABLE' | 'INVALID_RECONCILIATION' | 'UNMANAGED_MUTATION' | 'RESOURCE_CLAIM_INVALID';
+/** What went wrong underneath an admission error, for a WARN line. */
+export const admissionCause = (error: CommandAdmissionError): string => error.cause === undefined ? '' : ` (cause: ${error.cause instanceof Error ? error.cause.message : String(error.cause)})`;
 export class CommandAdmissionError extends Error {
-  constructor(readonly code: 'RESOURCE_BUSY' | 'OUTCOME_UNKNOWN' | 'IDEMPOTENCY_CONFLICT' | 'STALE_FENCE' | 'LEASE_EXPIRED' | 'LEDGER_UNAVAILABLE' | 'INVALID_RECONCILIATION' | 'UNMANAGED_MUTATION', message: string) { super(message); }
+  /** The callback demonstrably never ran and this command id has no receipt: a certain refusal. */
+  notStarted: boolean;
+  /** STALE_FENCE: the fence this ledger already accepted for the key, so the server can move past it. */
+  readonly highWater?: { resourceKey: string; fence: string };
+  constructor(readonly code: CommandAdmissionCode, message: string,
+    details: { notStarted?: boolean; highWater?: { resourceKey: string; fence: string }; cause?: unknown } = {}) {
+    // The reply keeps a fixed code and message; the cause stays here for the caller's log.
+    super(message, details.cause === undefined ? undefined : { cause: details.cause });
+    this.notStarted = details.notStarted ?? false;
+    if (details.highWater) this.highWater = details.highWater;
+  }
 }
+const enrollmentMarkerSchema = z.object({ version: z.literal(1), nodeId: z.string().min(1).max(128), nodeFqdn: z.string().min(1).max(253) }).strict();
+export type EnrollmentMarker = { state: 'absent' | 'present' | 'unknown'; marker: z.infer<typeof enrollmentMarkerSchema> | null; error?: string };
+export interface CommandTrace { ledgerExists: boolean; receipt: boolean; activeLock: boolean; fenceHighWater: string | null; marker: EnrollmentMarker;
+  /** This request passed the fence, then a later write failed, and the callback did not start. */
+  admissionFailed: boolean; admissionFailedFence: string | null }
+/** Read-only view of the ledger for preflight checks and heartbeats. */
+export interface LedgerHealth {
+  readable: boolean;
+  activeLock: { commandId: string; receipt: string } | null;
+  nonTerminalReceipts: number;
+  unresolvedReceipts: number;
+  truncated: boolean;
+  fenceHighWater: Record<string, string>;
+  error: string | null;
+}
+/** Bounds one scan: receipts are never pruned, and a heartbeat must stay cheap. */
+const HEALTH_SCAN_LIMIT = 5000;
+const HEALTH_FENCE_LIMIT = 64;
+/** `state` precedes the potentially large result in every receipt this ledger writes. */
+const RECEIPT_STATE = /"state":"([a-z]+)"/;
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 export function commandRequestDigest(input: CommandIdentity): string {
   return hash(JSON.stringify({ commandId: input.commandId, command: input.command, args: input.args,
@@ -146,6 +180,23 @@ export class CommandLedger {
     } catch (error) { await unlink(temporary).catch(() => {}); throw error; }
   }
   private receiptName(id: string) { return 'receipt-'+hash(id)+'.json'; }
+  private failedAdmissionName(id: string) { return 'admission-failed-'+hash(id)+'.json'; }
+  /**
+   * A write after the fence failed, so the fence is ahead with no receipt, and the
+   * callback did not start. Say so durably, or that state looks like a receipt that
+   * went missing. If not even this can be written, keep the claim instead: it is
+   * already on disk, needs no new space, and says the same (recoverClaim clears it).
+   * A receipt that did land must keep its claim too, or it can never be reconciled.
+   */
+  private async keepEvidenceOfFailedAdmission(input: CommandIdentity): Promise<boolean> {
+    try {
+      if (await this.read<unknown>(this.receiptName(input.commandId)) !== undefined) return true;
+      await this.write(this.failedAdmissionName(input.commandId), { commandId: input.commandId, fence: input.coordination!.fence });
+      return false;
+    } catch { // no-reason-needed: the original failure is what is reported; keeping the claim is the fallback
+      return true;
+    }
+  }
   async receipt(id: string) {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(id)) throw new Error('Invalid command identifier');
     await this.initialize();
@@ -207,7 +258,7 @@ export class CommandLedger {
       return (await this.receipt(assertion.commandId))!;
     } catch (error) {
       if (error instanceof CommandAdmissionError) throw error;
-      throw new CommandAdmissionError('LEDGER_UNAVAILABLE', 'Reconciliation could not be persisted; inspect the receipt before retrying the same decision');
+      throw new CommandAdmissionError('LEDGER_UNAVAILABLE', 'Reconciliation could not be persisted; inspect the receipt before retrying the same decision', { cause: error });
     } finally { await mutex?.close(); }
   }
 
@@ -215,7 +266,7 @@ export class CommandLedger {
     await this.initialize();
     const value = await this.read<unknown>('managed-enrollment.json');
     if (value === undefined) return null;
-    return z.object({ version: z.literal(1), nodeId: z.string().min(1).max(128), nodeFqdn: z.string().min(1).max(253) }).strict().parse(value);
+    return enrollmentMarkerSchema.parse(value);
   }
 
   /** A drain cannot equate an idle process or expired fence with settled effects. */
@@ -288,13 +339,107 @@ export class CommandLedger {
       if (!prior || BigInt(fence.fence) > BigInt(prior.fence))
         await this.write(fenceName, { resourceKey: fence.resourceKey, fence: fence.fence });
       else if (prior && BigInt(fence.fence) < BigInt(prior.fence))
-        throw new CommandAdmissionError('STALE_FENCE', 'A successor fence already owns this resource');
+        throw new CommandAdmissionError('STALE_FENCE', 'A successor fence already owns this resource',
+          { highWater: { resourceKey: fence.resourceKey, fence: prior.fence } });
       if (!enrolled) await this.write('managed-enrollment.json', { version: 1, nodeId: enrollment.nodeId, nodeFqdn: enrollment.nodeFqdn });
       this.checkResult(result, input.commandId, digest, fence); const now = Date.now();
       await this.write(this.receiptName(input.commandId), { version: 1, commandId: input.commandId, requestSha256: digest,
         state: 'completed', acceptedAt: now, finishedAt: now, coordination: fence, result });
       return (await this.receipt(input.commandId))!;
     } finally { await mutex.close(); }
+  }
+
+  /**
+   * The sticky marker as it is, without creating anything. An unreadable marker
+   * is `unknown`, not absent: reporting nothing could hide a mismatch.
+   */
+  async enrollmentMarker(): Promise<EnrollmentMarker> {
+    try {
+      const raw = await this.read<unknown>('managed-enrollment.json');
+      if (raw === undefined) return { state: 'absent', marker: null };
+      return { state: 'present', marker: enrollmentMarkerSchema.parse(raw) };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT' || (error as NodeJS.ErrnoException).code === 'ENOTDIR') return { state: 'absent', marker: null };
+      return { state: 'unknown', marker: null, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  /**
+   * What this ledger holds about a command, read only and without the mutex. On its
+   * own "no receipt" proves nothing: a ledger that is gone holds nothing either. So
+   * this also says whether there is a ledger, what fence it last accepted for the
+   * key and what its marker says. Ordering in execute(): active.lock, fence, durable
+   * running receipt, and only then the callback, so a claim without a receipt
+   * never started.
+   */
+  async commandTrace(id: string, resourceKey?: string): Promise<CommandTrace> {
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(id)) throw new Error('Invalid command identifier');
+    let ledgerExists = true;
+    try {
+      ledgerExists = (await lstat(this.root)).isDirectory();
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT' && (error as NodeJS.ErrnoException).code !== 'ENOTDIR') throw error;
+      ledgerExists = false;
+    }
+    const marker = await this.enrollmentMarker();
+    if (!ledgerExists) return { ledgerExists, receipt: false, activeLock: false, fenceHighWater: null, marker, admissionFailed: false, admissionFailedFence: null };
+    const raw = await this.read<unknown>('active.lock');
+    const receipt = await this.read<unknown>(this.receiptName(id));
+    const fence = resourceKey ? await this.read<{ resourceKey?: unknown; fence?: unknown }>('fence-'+hash(resourceKey)+'.json') : undefined;
+    const failed = await this.read<{ commandId?: unknown; fence?: unknown }>(this.failedAdmissionName(id));
+    const admissionFailedFence = failed?.commandId === id && typeof failed.fence === 'string' && /^[0-9]{1,20}$/.test(failed.fence) ? failed.fence : null;
+    return { ledgerExists, receipt: receipt !== undefined, activeLock: raw !== undefined && lockSchema.parse(raw).commandId === id,
+      admissionFailed: admissionFailedFence !== null, admissionFailedFence,
+      fenceHighWater: fence?.resourceKey === resourceKey && typeof fence?.fence === 'string' && /^[0-9]{1,20}$/.test(fence.fence) ? fence.fence : null, marker };
+  }
+
+  /**
+   * Read-only health for preflight checks and heartbeats. Takes no mutex and
+   * creates nothing, so asking never competes with a running command.
+   */
+  async health(): Promise<LedgerHealth> {
+    const health: LedgerHealth = { readable: true, activeLock: null, nonTerminalReceipts: 0, unresolvedReceipts: 0, truncated: false, fenceHighWater: {}, error: null };
+    let names: string[];
+    try {
+      names = await readdir(this.root);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return health;
+      return { ...health, readable: false, error: 'the ledger directory cannot be read' };
+    }
+    try {
+      const receiptState = async (name: string) => {
+        const file = await open(join(this.root, name), constants.O_RDONLY | constants.O_NOFOLLOW);
+        try {
+          const { buffer, bytesRead } = await file.read({ buffer: Buffer.alloc(1024), position: 0 });
+          return RECEIPT_STATE.exec(buffer.toString('utf8', 0, bytesRead))?.[1] ?? null;
+        } finally { await file.close(); }
+      };
+      const running = new Set([...this.active].map(id => this.receiptName(id)));
+      const receipts = names.filter(name => name.startsWith('receipt-'));
+      health.truncated = receipts.length > HEALTH_SCAN_LIMIT;
+      for (const name of receipts.slice(0, HEALTH_SCAN_LIMIT)) {
+        const state = await receiptState(name);
+        if (state === 'completed' || state === 'reconciled') continue;
+        health.nonTerminalReceipts += 1;
+        if (!running.has(name)) health.unresolvedReceipts += 1;
+      }
+      for (const name of names.filter(entry => entry.startsWith('fence-')).slice(0, HEALTH_FENCE_LIMIT)) {
+        const record = await this.read<{ resourceKey?: unknown; fence?: unknown }>(name);
+        if (typeof record?.resourceKey === 'string' && typeof record.fence === 'string' && /^[0-9]{1,20}$/.test(record.fence)) health.fenceHighWater[record.resourceKey] = record.fence;
+      }
+      const raw = await this.read<unknown>('active.lock');
+      if (raw !== undefined) {
+        const claim = lockSchema.parse(raw);
+        const state = await receiptState(this.receiptName(claim.commandId)).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === 'ENOENT') return 'none';
+          throw error;
+        });
+        health.activeLock = { commandId: claim.commandId, receipt: state === 'running' ? (this.active.has(claim.commandId) ? 'running' : 'unknown') : state ?? 'invalid' };
+      }
+      return health;
+    } catch (error) {
+      return { ...health, readable: false, error: `the ledger holds an unreadable record (${error instanceof Error ? error.name : 'error'})` };
+    }
   }
 
   /** Persist an authoritative observation; never clears an active/unknown claim. */
@@ -314,7 +459,7 @@ export class CommandLedger {
     // Snapshot before awaiting; callers cannot mutate accepted scope or identity.
     input = structuredClone(input);
     const digest = commandRequestDigest(input);
-    let held = false, started = false, admitted = false;
+    let held = false, started = false, admitted = false, noReceipt = false, fenceWritten = false, keepClaim = false;
     let mutex;
     const previous = async () => {
       const row = await this.receipt(input.commandId);
@@ -326,6 +471,7 @@ export class CommandLedger {
     try {
       if (this.authority.resultSecret.length < 32) throw new Error('Result signing unavailable');
       const replay = await previous(); if (replay) return replay;
+      noReceipt = true;
       mutex = await this.acquire();
       await this.recoverClaim();
       const enrolled = await this.managedEnrollment();
@@ -343,8 +489,10 @@ export class CommandLedger {
         const name = 'fence-'+hash(fence.resourceKey)+'.json';
         const prior = await this.read<{resourceKey: string; fence: string}>(name);
         if (prior && (prior.resourceKey !== fence.resourceKey || !/^[1-9][0-9]{0,18}$/.test(prior.fence))) throw new Error('Invalid fencing record');
-        if (prior && BigInt(fence.fence) <= BigInt(prior.fence)) throw new CommandAdmissionError('STALE_FENCE', 'Stale resource fence cannot execute');
+        if (prior && BigInt(fence.fence) <= BigInt(prior.fence)) throw new CommandAdmissionError('STALE_FENCE', 'Stale resource fence cannot execute',
+          { highWater: { resourceKey: fence.resourceKey, fence: prior.fence } });
         await this.write(name, { resourceKey: fence.resourceKey, fence: fence.fence });
+        fenceWritten = true;
       }
       if (enrollment && !enrolled) await this.write('managed-enrollment.json', { version: 1, nodeId: enrollment.nodeId, nodeFqdn: enrollment.nodeFqdn });
       const receipt: Receipt = { version: 1, commandId: input.commandId, requestSha256: digest,
@@ -357,13 +505,20 @@ export class CommandLedger {
       started = false;
       return result;
     } catch (error) {
-      if (error instanceof CommandAdmissionError) throw error;
+      // `started` stays true from just before the callback until its terminal receipt is durable.
+      const certain = !started && noReceipt;
+      if (error instanceof CommandAdmissionError) {
+        if (certain && !['OUTCOME_UNKNOWN', 'IDEMPOTENCY_CONFLICT'].includes(error.code)) error.notStarted = true;
+        throw error;
+      }
+      if (certain && fenceWritten) keepClaim = await this.keepEvidenceOfFailedAdmission(input);
       throw new CommandAdmissionError(started ? 'OUTCOME_UNKNOWN' : 'LEDGER_UNAVAILABLE',
-        started ? 'Execution receipt is uncertain; retained for reconciliation and never replayed' : 'Command ledger unavailable; inspect its receipt before retrying');
+        started ? 'Execution receipt is uncertain; retained for reconciliation and never replayed' : 'Command ledger unavailable; inspect its receipt before retrying',
+        { notStarted: certain, cause: error });
     } finally {
       if (admitted) this.active.delete(input.commandId);
       try {
-        if (held && !started) await this.releaseClaim();
+        if (held && !started && !keepClaim) await this.releaseClaim();
       } catch {
         // A durable terminal receipt remains authoritative if lock cleanup fails.
         // The next holder verifies it and completes cleanup under the mutex.

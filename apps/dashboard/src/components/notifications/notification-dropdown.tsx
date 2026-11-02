@@ -51,6 +51,7 @@ function typeIcon(type: string): React.ReactElement {
     case 'node.offline':
       return <Server className="h-3.5 w-3.5 text-danger" />;
     case 'node.degraded':
+    case 'node.upgrade_not_ready':
       return <Server className="h-3.5 w-3.5 text-warning" />;
     case 'node.recovered':
       return <HeartPulse className="h-3.5 w-3.5 text-success" />;

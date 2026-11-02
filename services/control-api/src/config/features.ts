@@ -70,12 +70,15 @@ export interface UpgradeSettings {
   agentUpgrades: boolean;
   /** Agents upgraded at once after the first (canary) agent confirms. */
   agentUpgradeConcurrency: number;
+  /** Release failures that stop a wave after its canary (MAGNUS_AGENT_UPGRADE_MAX_FAILURES). */
+  agentUpgradeMaxFailures: number;
   /** The retired git-checkout self-update endpoints. */
   legacyGitSelfUpdate: boolean;
 }
 
 export function upgradeSettings(env: NodeJS.ProcessEnv = process.env): UpgradeSettings {
   const concurrency = Number.parseInt(env['MAGNUS_AGENT_UPGRADE_CONCURRENCY'] ?? '', 10);
+  const maxFailures = Number.parseInt(env['MAGNUS_AGENT_UPGRADE_MAX_FAILURES'] ?? '', 10);
   return {
     autoMigrate: envSwitch(env['MAGNUS_AUTO_MIGRATE'], false),
     autoMigrateBackup: envSwitch(env['MAGNUS_AUTO_MIGRATE_BACKUP'], true),
@@ -84,6 +87,7 @@ export function upgradeSettings(env: NodeJS.ProcessEnv = process.env): UpgradeSe
     updateRegistry: (env['MAGNUS_UPDATE_REGISTRY']?.trim() || 'https://registry.npmjs.org').replace(/\/+$/, ''),
     agentUpgrades: envSwitch(env['MAGNUS_AGENT_UPGRADES'], true),
     agentUpgradeConcurrency: Number.isInteger(concurrency) && concurrency > 0 ? Math.min(concurrency, 50) : 5,
+    agentUpgradeMaxFailures: Number.isInteger(maxFailures) && maxFailures > 0 ? Math.min(maxFailures, 1000) : 2,
     legacyGitSelfUpdate: envSwitch(env['MAGNUS_LEGACY_GIT_SELF_UPDATE'], false),
   };
 }

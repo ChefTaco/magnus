@@ -18,6 +18,7 @@ import { getNodeBaseUrl } from '../utils/node-url.js';
 import { getNodeManagerSecret } from '../utils/env.js';
 import { ensureControlHostNode } from '../services/control-host-node.js';
 import { withReadRetry } from '../db/read-retry.js';
+import { readinessOfNodes } from '../services/agent-upgrade-readiness.js';
 import {
   parseTailscaleNodeKeyPosture,
   summarizeTailscaleNodeKeys,
@@ -156,10 +157,11 @@ nodesRouter.get('/', async (c) => {
 
   // Strip token from API response — never expose node secrets to the frontend
   const safeNodes = nodes.map(({ token: _token, ...rest }) => rest);
+  const readiness = await readinessOfNodes(safeNodes);
 
   return c.json({
     success: true,
-    data: safeNodes,
+    data: safeNodes.map(node => ({ ...node, upgradeReadiness: readiness.get(node.id) ?? null })),
     meta: { total, page, pageSize, hasMore: page * pageSize < total },
   });
 });
@@ -564,7 +566,8 @@ nodesRouter.get('/:nodeId', async (c) => {
   });
   if (!node) throw new HttpError(404, 'NOT_FOUND', 'Node not found');
   const { token: _token, ...safeNode } = node;
-  return c.json({ success: true, data: safeNode });
+  const readiness = await readinessOfNodes([safeNode]);
+  return c.json({ success: true, data: { ...safeNode, upgradeReadiness: readiness.get(safeNode.id) ?? null } });
 });
 
 // ── Register a new node ──

@@ -1,0 +1,11 @@
+{
+  "summary": "Agent upgrade waves stop only on evidence about the release: a problem of one node is recorded with a code and a remedy, and the wave goes on. Runs check every node first, repair stale fences by themselves, retry transient refusals, and end as succeeded, partial, failed, stopped or interrupted. Agents report refusals as certain and drift with every heartbeat. No migrations; one optional setting.",
+  "breaking": false,
+  "minUpgradeFrom": "1.0.0",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [
+    { "name": "MAGNUS_AGENT_UPGRADE_MAX_FAILURES", "component": "server", "description": "Failures pointing at the release that stop an agent upgrade run after its canary (default 2). Problems of one node never stop a run." }
+  ],
+  "removedEnv": [],
+  "migrations": []
+}

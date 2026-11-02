@@ -89,6 +89,12 @@ deploy/                 example systemd units
   version or escalates privileges.
 - Signed proof domains and route paths are wire contracts with the server.
   Change both sides together.
+- A refusal says `executed: false` only when the ledger proved the handler did not
+  start and the command id has no receipt (`executors/command-refusal.ts`). What may
+  have started stays uncertain. Never weaken this: the server settles leases on it.
+- A bare `catch {` that replies with an HTTP error fails `npm run check:reasons` in the
+  upgrade, ledger, managed-http, enrollment and scheduler paths: log the cause at WARN,
+  or add `// no-reason-needed: why`.
 - Do not reintroduce the retired IAM collector, PAM gate, sudo event shipper
   or `/api/iam/*` routes. Host-access IAM belongs to Hive.
 - Do not add a second LLM runtime inside the agent.

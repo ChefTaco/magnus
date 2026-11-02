@@ -282,16 +282,88 @@ export const agentManagedEnrollmentSchema = z.object({
   nodeFqdn: z.string().min(1).max(253),
 });
 
+/** Highest fence the agent's ledger accepted, per resource key. Decimal strings: a fence can exceed 2^53. */
+export const fenceHighWaterSchema = z.record(z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9:._-]{0,199}$/), z.string().regex(/^[0-9]{1,20}$/))
+  .refine(value => Object.keys(value).length <= 64, 'too many fence keys');
+
+export const agentLedgerHealthSchema = z.object({
+  readable: z.boolean(),
+  /** The command that owns active.lock, and the state of its receipt (`none` when it has no receipt). */
+  activeLock: z.object({ commandId: z.string().max(128), receipt: z.string().max(32) }).nullable().optional(),
+  /** Receipts that are neither completed nor reconciled, and those of them no process is running. */
+  nonTerminalReceipts: z.number().int().nonnegative().optional(),
+  unresolvedReceipts: z.number().int().nonnegative().optional(),
+  /** More receipts than one scan reads: the counts are a lower bound. */
+  truncated: z.boolean().optional(),
+  error: z.string().max(300).nullable().optional(),
+});
+
+export const agentDiskHealthSchema = z.object({
+  freeBytes: z.number().nonnegative(),
+  requiredBytes: z.number().nonnegative(),
+  low: z.boolean(),
+});
+
+export const agentNpmHealthSchema = z.object({
+  present: z.boolean(),
+  version: z.string().max(64).nullable().optional(),
+  problem: z.string().max(500).nullable().optional(),
+});
+
+export const agentMarkerStateSchema = z.enum(['absent', 'present', 'unknown']);
+
+/** Known reasons plus any future one, which the server treats as a problem and not as an expected state. */
+export const agentSelfUpgradeReasonCode = z.union([z.enum(['SWITCHED_OFF', 'CONTAINER', 'LEGACY_LAYOUT', 'NOT_WRITABLE', 'NPM']), z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/)]);
+
 export const agentSelfUpgradeStatusSchema = z.object({
   protocol: z.number().int().nonnegative(),
   launcherProtocol: z.number().int().nonnegative().nullable(),
   layout: z.enum(['versioned', 'legacy', 'container']),
   enabled: z.boolean(),
   reason: z.string().max(1000).nullable().optional(),
+  /** Why self-upgrade is off, for the server; `reason` is for people. Older agents leave it out. */
+  reasonCode: agentSelfUpgradeReasonCode.nullable().optional().catch(undefined),
   upgrade: agentUpgradeReportSchema.nullable().optional(),
   /** Seconds a new version has on trial before the launcher switches back (MAGNUS_AGENT_UPGRADE_CONFIRM_SECONDS). */
   confirmSeconds: z.number().int().positive().max(86_400).nullable().optional(),
   managedEnrollment: agentManagedEnrollmentSchema.nullable().optional(),
+  /** `unknown`: the marker could not be read, which says nothing about a mismatch either way. */
+  managedEnrollmentState: agentMarkerStateSchema.optional().catch(undefined),
+  // Drift evidence from 1.1.8 agents. Each drops alone when malformed, so a bad value never costs the whole report.
+  fenceHighWater: fenceHighWaterSchema.optional().catch(undefined),
+  ledger: agentLedgerHealthSchema.optional().catch(undefined),
+  disk: agentDiskHealthSchema.optional().catch(undefined),
+  npm: agentNpmHealthSchema.optional().catch(undefined),
+});
+
+/** The answer of an agent's read-only GET /api/v1/agent-upgrade/preflight. Each field drops alone when malformed, and a newer agent's extras are ignored. */
+export const agentUpgradePreflightSchema = z.object({
+  /** Read-only report format. */
+  preflightProtocol: z.number().int().nonnegative(),
+  version: z.string().max(64),
+  target: z.string().max(64).nullable().optional().catch(null),
+  layout: z.enum(['versioned', 'legacy', 'container']).optional().catch(undefined),
+  launcherProtocol: z.number().int().nonnegative().nullable().optional().catch(null),
+  enabled: z.boolean().optional().catch(undefined),
+  reason: z.string().max(1000).nullable().optional().catch(null),
+  reasonCode: agentSelfUpgradeReasonCode.nullable().optional().catch(undefined),
+  writable: z.object({ ok: z.boolean(), blocked: z.array(z.string().max(255)).max(16).optional() }).optional().catch(undefined),
+  disk: agentDiskHealthSchema.optional().catch(undefined),
+  npm: agentNpmHealthSchema.optional().catch(undefined),
+  /** versions/<from> is complete and ./current runs it, so a failed upgrade can switch back. */
+  fromVersionComplete: z.boolean().optional().catch(undefined),
+  ledger: agentLedgerHealthSchema.optional().catch(undefined),
+  fenceHighWater: fenceHighWaterSchema.optional().catch(undefined),
+  managedEnrollment: agentManagedEnrollmentSchema.nullable().optional().catch(null),
+  managedEnrollmentState: agentMarkerStateSchema.optional().catch(undefined),
+  /** `fenceHighWater`, signed by the agent for this nonce. Only a verified proof can move a server generation. */
+  fenceProof: z.object({ nonce: z.string().max(64), nodeFqdn: z.string().max(253), signature: z.string().regex(/^[a-f0-9]{64}$/) }).optional().catch(undefined),
+  engines: z.object({
+    node: z.string().max(64),
+    range: z.string().max(200).nullable(),
+    compatible: z.boolean().nullable(),
+    problem: z.string().max(500).nullable().optional(),
+  }).optional().catch(undefined),
 });
 
 export const agentUpgradeRequestSchema = z.object({
@@ -306,6 +378,10 @@ export type AgentUpgradeReport = z.infer<typeof agentUpgradeReportSchema>;
 export type AgentSelfUpgradeStatus = z.infer<typeof agentSelfUpgradeStatusSchema>;
 export type AgentManagedEnrollment = z.infer<typeof agentManagedEnrollmentSchema>;
 export type AgentUpgradeRequest = z.infer<typeof agentUpgradeRequestSchema>;
+export type AgentLedgerHealth = z.infer<typeof agentLedgerHealthSchema>;
+export type AgentDiskHealth = z.infer<typeof agentDiskHealthSchema>;
+export type AgentNpmHealth = z.infer<typeof agentNpmHealthSchema>;
+export type AgentUpgradePreflight = z.infer<typeof agentUpgradePreflightSchema>;
 
 // Database restore. A dump is restored into an empty `public` schema so that
 // tables a newer release created do not survive next to the restored ones:

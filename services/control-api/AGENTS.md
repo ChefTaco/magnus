@@ -87,6 +87,10 @@ integrations table together.
 - An agent with `MAGNUS_AGENT_PRIVILEGED=false` answers root-only routes with
   403 `AGENT_NOT_PRIVILEGED`; the SDK maps that to a non-retryable "feature
   disabled on this node" error (`isAgentNotPrivileged`). Do not retry it.
+- Upgrade problem codes live in `packages/contracts/src/upgrade-remedies.ts`. A new code gets its class,
+  cause and remedy there; `node scripts/check-upgrade-remedies.mjs --write` updates `UPGRADING.md`.
+- `commandResourceFence.generation` only ever moves up. `services/command-fence-repair.ts` is the only code
+  that adopts a value reported by an agent, and it accepts only that node's own keys, under a cap.
 - Schema changes need a new migration. Applied migrations are immutable;
   removed features may leave unused tables mapped in `schema.prisma`.
 - Tests use fake data only: `example.com` hosts, RFC 5737 or RFC 1918

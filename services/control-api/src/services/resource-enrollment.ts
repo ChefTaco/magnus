@@ -191,6 +191,9 @@ export async function readParticipantReceipt(response: Response, limit: number =
     try { return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown; } catch { throw new ParticipantEvidenceError('participant-response-invalid'); }
   } finally { await reader.cancel().catch(() => undefined); }
 }
+/** The reply is a fixed code; what was wrong with the stored evidence goes to the log. */
+const warnEvidence = (what: string, nodeId: string, error: unknown) => console.warn(`[resource-enrollment] ${what} of node ${nodeId} does not parse: ${error instanceof Error ? error.message : String(error)}`);
+
 export async function refreshEnrollmentParticipant(nodeId: string, participant: Participant) {
   // Fixed inventories and origins only: operator input cannot choose an endpoint or key.
   const prepared = await getDb().$transaction(async tx => {
@@ -284,7 +287,7 @@ export async function acceptSchedulerBoundaryAttestation(nodeId: string, raw: un
     const ack = await tx.resourceDrainParticipant.findUnique({ where: { nodeId_participant: { nodeId, participant: 'scheduler' } } });
     let receipt: z.infer<typeof schedulerBoundaryReceiptSchema>;
     try { receipt = schedulerBoundaryReceiptSchema.parse(JSON.parse(ack?.receiptJson ?? 'null')); }
-    catch { fail('SCHEDULER_BOUNDARY_EVIDENCE_INVALID', 'Current signed scheduler receipt is required'); }
+    catch (error) { warnEvidence('scheduler receipt', nodeId, error); fail('SCHEDULER_BOUNDARY_EVIDENCE_INVALID', 'Current signed scheduler receipt is required'); }
     const { signature: receiptSignature, ...receiptUnsigned } = receipt;
     const signed = createHmac('sha256', RESULT_SIGNING_SECRET).update(enrollmentSigningPayload(receiptUnsigned)).digest();
     const central = await participantSnapshot(tx, nodeId, 'scheduler');
@@ -359,7 +362,7 @@ export async function completeEnrollment(nodeId: string) {
         let reviewed: { receipt: z.infer<typeof schedulerBoundaryReceiptSchema>; assertion: z.infer<typeof schedulerBoundaryAttestationSchema> };
         try { reviewed = z.object({ receipt: schedulerBoundaryReceiptSchema, assertion: schedulerBoundaryAttestationSchema }).strict()
           .parse(JSON.parse(ack.receiptJson ?? 'null')); }
-        catch { fail('RESOURCE_DRAIN_INCOMPLETE', 'Reviewed scheduler receipt is unavailable'); }
+        catch (error) { warnEvidence('reviewed scheduler receipt', nodeId, error); fail('RESOURCE_DRAIN_INCOMPLETE', 'Reviewed scheduler receipt is unavailable'); }
         const { receipt, assertion } = reviewed;
         const { signature: nodeSignature, ...nodeUnsigned } = receipt;
         const { signature: reviewSignature, ...reviewUnsigned } = assertion;
@@ -384,7 +387,7 @@ export async function completeEnrollment(nodeId: string) {
       try { receipt = participant === 'api'
         ? apiDrainAttestationSchema.parse(JSON.parse(ack.receiptJson ?? 'null'))
         : drainReceiptSchema.parse(JSON.parse(ack.receiptJson ?? 'null')); }
-      catch { fail('RESOURCE_DRAIN_INCOMPLETE', 'Stored participant receipt is unavailable'); }
+      catch (error) { warnEvidence(`${participant} receipt`, nodeId, error); fail('RESOURCE_DRAIN_INCOMPLETE', 'Stored participant receipt is unavailable'); }
       const { signature, ...unsigned } = receipt;
       const key = participant === 'dashboard' ? dashboardEnrollmentSecret()
         : participant === 'api' ? reconciliationSecret() : RESULT_SIGNING_SECRET;
@@ -429,7 +432,8 @@ export async function dashboardParticipantReadiness() {
       await tx.resourceDrainParticipant.findFirst({ select: { nodeId: true } });
       await tx.resourceParticipantWork.findFirst({ select: { workId: true } });
     }, { maxWait: 2_000, timeout: 3_000 });
-  } catch {
+  } catch (error) {
+    console.warn(`[resource-enrollment] participant schema check failed: ${error instanceof Error ? error.message : String(error)}`);
     throw new HttpError(503, 'RESOURCE_PARTICIPANT_UNAVAILABLE', 'Durable participant schema is not ready');
   }
   return { version: 1 as const, participant: 'dashboard' as const, protocol: 'resource-enrollment-v1' as const, ready: true as const };

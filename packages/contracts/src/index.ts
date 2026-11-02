@@ -210,3 +210,4 @@ export type SecurityInventoryExport = z.infer<
 >;
 
 export * from './release.js';
+export * from './upgrade-remedies.js';

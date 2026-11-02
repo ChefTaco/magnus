@@ -9,12 +9,12 @@ const db = vi.hoisted(() => ({
   managedCronDefinition: { groupBy: vi.fn(async () => []) },
 }));
 vi.mock('../db/client.js', () => ({ getDb: () => db }));
-vi.mock('../config/features.js', () => ({ upgradeSettings: () => ({ agentUpgrades: true, agentUpgradeConcurrency: 2, updateRegistry: 'https://registry.example.com' }) }));
+vi.mock('../config/features.js', () => ({ upgradeSettings: () => ({ agentUpgrades: true, agentUpgradeConcurrency: 2, agentUpgradeMaxFailures: 2, updateRegistry: 'https://registry.example.com' }) }));
 const service = await import('./agent-upgrade-service.js');
 const { classifyCandidate, classifyDispatchFailure, executeUpgradeRun, memoryRunStore, reconcileInterruptedRun, recordSelfUpgradeReport,
   resolveAgentRelease, retryUpgradeRun, startUpgradeRun, stopUpgradeRun, summarizeRun, parseSelfUpgradeStatus, confirmWindowMs } = service;
 import type { CandidateRow, StoredSelfUpgrade, UpgradeDeps, UpgradeRun } from './agent-upgrade-service.js';
-const { AgentResponseError, DispatchOutcomeUnknownError, NotDispatchedError } = await import('../sdk/node-api-client.js');
+const { AgentResponseError, DispatchOutcomeUnknownError, NotDispatchedError, classifyAgentRequestError } = await import('../sdk/node-api-client.js');
 
 const INTEGRITY = 'sha512-' + 'A'.repeat(86) + '==';
 const report = (extra: Partial<StoredSelfUpgrade> = {}) => JSON.stringify({ agentSelfUpgrade: {
@@ -108,6 +108,21 @@ describe('self-upgrade reports', () => {
     expect(status).toBe('STOPPED');
   });
 
+  it('does not rewrite the node on every heartbeat because free disk moved', async () => {
+    let metadata = JSON.stringify({});
+    db.node.findUnique.mockImplementation(async () => ({ metadata }));
+    db.node.update.mockReset().mockImplementation(async ({ data }: { data: { metadata: string } }) => { metadata = data.metadata; });
+    db.agent.findUnique.mockImplementation(async () => ({ status: 'RUNNING' }));
+    const beat = (freeBytes: number, low = false) => recordSelfUpgradeReport({ id: 'n1', name: 'node-1' }, { nodeVersion: 'v24.22.1', selfUpgrade: { protocol: 1, launcherProtocol: 1, layout: 'versioned', enabled: true,
+      fenceHighWater: { 'node:n1': '5' }, disk: { freeBytes, requiredBytes: 100, low } } }, memoryRunStore());
+    await beat(1000);
+    await beat(999);
+    expect(db.node.update).toHaveBeenCalledTimes(1);
+    await beat(10, true);
+    expect(db.node.update).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(metadata).agentSelfUpgrade).toMatchObject({ fenceHighWater: { 'node:n1': '5' }, disk: { low: true } });
+  });
+
   it('records an outcome that arrives after its run ended, and audits it once', async () => {
     let metadata = JSON.stringify({});
     db.node.findUnique.mockImplementation(async () => ({ metadata }));
@@ -122,7 +137,8 @@ describe('self-upgrade reports', () => {
     const confirmed = { protocol: 1, launcherProtocol: 1, layout: 'versioned', enabled: true, upgrade: { state: 'confirmed', to: '1.1.1', requestId: 'req-a' } };
     await recordSelfUpgradeReport({ id: 'a', name: 'a' }, { selfUpgrade: confirmed }, store);
     await recordSelfUpgradeReport({ id: 'a', name: 'a' }, { selfUpgrade: confirmed }, store);
-    expect((await store.get('run'))!.nodes[0]).toMatchObject({ state: 'confirmed', awaitingReport: false, detail: expect.stringMatching(/after the run ended/) });
+    expect((await store.get('run'))!.nodes[0]).toMatchObject({ state: 'confirmed', awaitingReport: false, detail: expect.stringMatching(/after the run stopped watching/) });
+    expect((await store.get('run'))!.status).toBe('interrupted');
     expect(logAuditEvent.mock.calls.filter(([event]) => event.action === 'agent.upgrade.node_confirmed')).toHaveLength(1);
   });
 });
@@ -130,7 +146,7 @@ describe('self-upgrade reports', () => {
 describe('agent release resolution', () => {
   it('reads the exact integrity from the registry, or takes an explicit one', async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ dist: { integrity: INTEGRITY } })));
-    await expect(resolveAgentRelease({ version: '1.1.0', fetchImpl: fetchImpl as unknown as typeof fetch })).resolves.toEqual({ version: '1.1.0', integrity: INTEGRITY });
+    await expect(resolveAgentRelease({ version: '1.1.0', fetchImpl: fetchImpl as unknown as typeof fetch })).resolves.toEqual({ version: '1.1.0', integrity: INTEGRITY, engines: null });
     expect(String((fetchImpl.mock.calls[0] as unknown[])[0])).toMatch(/@hivemagnus%2Fmagnus-agent\/1\.1\.0$/);
     await expect(resolveAgentRelease({ version: '1.1.0', integrity: 'md5-x' })).rejects.toThrow(/sha512/);
     await expect(resolveAgentRelease({ version: 'latest' })).rejects.toThrow(/X\.Y\.Z/);
@@ -203,18 +219,31 @@ describe('agent upgrade runs', () => {
     expect(run.nodes[1]?.state).toBe('skipped');
   });
 
-  it('stops after a batch with a node that never confirms', async () => {
-    const deps = makeDeps({ a: 'confirm', b: 'silent', c: 'confirm', d: 'confirm' });
-    const run = await executeUpgradeRun(makeRun(['a', 'b', 'c', 'd']), deps);
-    expect(run.status).toBe('failed');
-    expect(run.nodes.find(node => node.nodeId === 'b')).toMatchObject({ state: 'failed', awaitingReport: true });
-    expect(run.nodes.find(node => node.nodeId === 'd')?.state).toBe('skipped');
+  it('stops at the budget of nodes that never confirm, not at the first', async () => {
+    const deps = makeDeps({ a: 'confirm', b: 'silent', c: 'confirm', d: 'confirm', e: 'confirm' });
+    const below = await executeUpgradeRun(makeRun(['a', 'b', 'c', 'd', 'e']), deps);
+    expect(below.status).toBe('failed');
+    expect(below.nodes.map(node => node.state)).toEqual(['confirmed', 'failed', 'confirmed', 'confirmed', 'confirmed']);
+    expect(below.nodes[1]).toMatchObject({ code: 'CONFIRM_TIMEOUT', failureClass: 'release', awaitingReport: true });
+    const reached = await executeUpgradeRun(makeRun(['a', 'b', 'c', 'd', 'e']), makeDeps({ a: 'confirm', b: 'silent', c: 'silent', d: 'confirm', e: 'confirm' }));
+    expect(reached).toMatchObject({ status: 'failed', message: expect.stringMatching(/2 release failure\(s\) reached the budget of 2/) });
+    expect(reached.nodes.slice(3).map(node => node.state)).toEqual(['skipped', 'skipped']);
+  });
+
+  it('honours a budget of one for this run', async () => {
+    const run = makeRun(['a', 'b', 'c', 'd']);
+    run.maxFailures = 1;
+    const result = await executeUpgradeRun(run, makeDeps({ a: 'confirm', b: 'revert', c: 'confirm', d: 'confirm' }));
+    expect(result).toMatchObject({ status: 'failed', message: expect.stringMatching(/budget of 1/) });
+    expect(result.nodes[3]?.state).toBe('skipped');
   });
 
   it('records a refusal with the agent code and message and keeps going; a refused canary hands the role on', async () => {
     const deps = makeDeps({ a: 'refuse', b: 'confirm', c: 'refuse', d: 'confirm' });
     const run = await executeUpgradeRun(makeRun(['a', 'b', 'c', 'd']), deps);
-    expect(run.status).toBe('succeeded');
+    expect(run.status).toBe('partial');
+    expect(run.attention?.map(item => [item.name, item.code])).toEqual([['a', 'UNMANAGED_MUTATION'], ['c', 'UNMANAGED_MUTATION']]);
+    expect(run.attention?.[0]?.remedy).toMatch(/Complete the node's resource enrollment/);
     expect(run.canaryNodeId).toBe('b');
     expect(run.nodes[0]).toMatchObject({ state: 'refused', code: 'UNMANAGED_MUTATION', detail: 'Enrolled node requires the reviewed managed mutation boundary' });
     expect(run.summary).toBe('2 confirmed, 2 refused, 0 failed, 0 skipped; refused: a (UNMANAGED_MUTATION: Enrolled node requires the reviewed managed mutation boundary); '
@@ -238,15 +267,15 @@ describe('agent upgrade runs', () => {
     expect(run.nodes[1]).toMatchObject({ state: 'failed', code: 'SELF_UPGRADE_INTEGRITY' });
   });
 
-  it('reports a run where every node refused as failed', async () => {
+  it('reports a run where every node refused the same way as a suspected release problem', async () => {
     const run = await executeUpgradeRun(makeRun(['a', 'b']), makeDeps({ a: 'refuse', b: 'refuse' }));
-    expect(run).toMatchObject({ status: 'failed', message: expect.stringMatching(/no agent was upgraded/) });
+    expect(run).toMatchObject({ status: 'failed', message: expect.stringMatching(/release problem is suspected: 2 nodes refused with UNMANAGED_MUTATION/) });
   });
 
   it('skips a node that became ineligible at its turn and goes on', async () => {
     const deps = makeDeps({ a: 'confirm', b: 'ineligible', c: 'confirm' });
     const run = await executeUpgradeRun(makeRun(['a', 'b', 'c']), deps);
-    expect(run.status).toBe('succeeded');
+    expect(run.status).toBe('partial');
     expect(run.nodes[1]).toMatchObject({ state: 'skipped', detail: 'offline or no recent heartbeat' });
     expect(deps.requested).toEqual(['a', 'c']);
   });
@@ -298,10 +327,20 @@ describe('agent upgrade runs', () => {
   });
 
   it('gives up early on an agent that stopped sending heartbeats', async () => {
-    const deps = makeDeps({ a: 'lost' }, { observe: async () => ({ version: '1.1.0', report: null, lastHeartbeatAt: new Date(0) }) });
+    const deps = makeDeps({ a: 'silent' }, { observe: async () => ({ version: '1.1.0', report: null, lastHeartbeatAt: new Date(-120_000) }) });
     const run = await executeUpgradeRun(makeRun(['a']), deps);
-    expect(run.nodes[0]).toMatchObject({ state: 'failed', code: 'AGENT_SILENT', awaitingReport: true });
+    expect(run.nodes[0]).toMatchObject({ state: 'failed', code: 'AGENT_SILENT', failureClass: 'release', awaitingReport: true });
     expect(deps.clock()).toBeLessThan(2 * 60_000);
+  });
+
+  it('does not read silence after a lost reply as evidence against the release', async () => {
+    const deps = makeDeps({ a: 'lost', b: 'confirm' }, { observe: async nodeId => nodeId === 'b'
+      ? { version: '1.1.1', report: { upgrade: { state: 'confirmed', requestId: 'req-b' } } as StoredSelfUpgrade }
+      : { version: '1.1.0', report: null, lastHeartbeatAt: new Date(0) } });
+    const run = await executeUpgradeRun(makeRun(['a', 'b']), deps);
+    expect(run.nodes[0]).toMatchObject({ state: 'ambiguous', code: 'AGENT_SILENT_AFTER_LOST_REPLY', failureClass: 'node', awaitingReport: true });
+    expect(run.nodes[1]?.state).toBe('confirmed');
+    expect(run.status).toBe('partial');
   });
 });
 
@@ -310,8 +349,18 @@ describe('dispatch failure classes', () => {
     expect(classifyDispatchFailure(new AgentResponseError(409, { code: 'SELF_UPGRADE_BUSY', message: 'busy' })).kind).toBe('refused');
     expect(classifyDispatchFailure(new AgentResponseError(500, { code: 'SELF_UPGRADE_FAILED', message: 'x' })).kind).toBe('failed');
     expect(classifyDispatchFailure(new AgentResponseError(409, { code: 'MUTATION_OUTCOME_UNKNOWN', message: 'x' })).kind).toBe('unknown');
-    expect(classifyDispatchFailure(new AgentResponseError(400, { code: 'VALIDATION_ERROR', message: 'x' })).kind).toBe('failed');
+    expect(classifyDispatchFailure(new AgentResponseError(409, { code: 'MANAGED_MUTATION_UNCERTAIN', message: 'x' })).kind).toBe('unknown');
+    expect(classifyDispatchFailure(new AgentResponseError(400, { code: 'VALIDATION_ERROR', message: 'x' })).kind).toBe('refused');
+    expect(classifyDispatchFailure(new AgentResponseError(418, null))).toMatchObject({ kind: 'refused', code: 'HTTP_418' });
+    expect(classifyDispatchFailure(new AgentResponseError(502, null))).toMatchObject({ kind: 'unknown', code: 'MUTATION_OUTCOME_UNKNOWN' });
     expect(classifyDispatchFailure(new Error('weird')).kind).toBe('unknown');
+  });
+
+  it('turns a refusal the agent proved into a refused node, whatever its HTTP status', () => {
+    const error = Object.assign(new Error('Request failed with status code 409'), { certainRefusal: { code: 'STALE_FENCE', message: 'nothing ran' } });
+    const sorted = classifyAgentRequestError(error, true);
+    expect(sorted).toBeInstanceOf(NotDispatchedError);
+    expect(classifyDispatchFailure(sorted)).toEqual({ kind: 'refused', code: 'STALE_FENCE', message: 'nothing ran' });
   });
 
   it('summarizes refusals', () => {
@@ -336,7 +385,7 @@ describe('run lifecycle', () => {
     db.node.findMany.mockImplementation(async () => [...candidates(['a', 'c']), row({ id: 'b', name: 'b', status: 'OFFLINE' })]);
     const { run, done } = await startUpgradeRun({ version: '1.1.1', integrity: INTEGRITY, nodeIds: ['a', 'b', 'c'], canaryNodeId: 'c', actorId: 'admin', store,
       deps: makeDeps({ a: 'confirm', c: 'confirm' }) });
-    expect(run.excluded).toEqual([{ nodeId: 'b', name: 'b', reason: expect.stringMatching(/offline/) }]);
+    expect(run.excluded).toEqual([{ nodeId: 'b', name: 'b', reason: expect.stringMatching(/offline/), code: 'NODE_OFFLINE' }]);
     expect(run.nodes.map(node => node.nodeId)).toEqual(['c', 'a']);
     await done;
   });
@@ -377,7 +426,7 @@ describe('run lifecycle', () => {
       : { version: '1.1.0', report: null };
     const result = await reconcileInterruptedRun(run, observe, async value => { saved.push(value); }, 10_000);
     expect(result.status).toBe('interrupted');
-    expect(result.nodes.map(node => node.state)).toEqual(['confirmed', 'failed', 'skipped']);
+    expect(result.nodes.map(node => node.state)).toEqual(['confirmed', 'ambiguous', 'skipped']);
     expect(result.nodes[1]).toMatchObject({ code: 'RUN_INTERRUPTED', awaitingReport: true });
     expect(saved).toHaveLength(1);
     const live = makeRun(['a']);
