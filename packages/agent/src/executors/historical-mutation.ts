@@ -2,6 +2,9 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
+import { HOST_FQDN } from '../env.js';
+import { logger } from '../utils/logger.js';
+import { loadReviewedHistoricalRecords, type ReviewedHistoricalRecords } from './reviewed-historical-records.js';
 
 const sha = z.string().regex(/^[a-f0-9]{64}$/);
 export const historicalDrainSchema = z.object({ nodeId: z.string().min(1).max(128),
@@ -27,10 +30,18 @@ export type HistoricalAssertion = z.infer<typeof historicalAssertionSchema>;
 export type HistoricalReceipt = z.infer<typeof historicalReceiptSchema>;
 export type HostBoot = z.infer<typeof bootSchema>;
 export interface HistoricalKeys { result: string; reconciliation: string }
-export type ReviewedHistoricalRecords = Readonly<Record<string, { nodeFqdn: string; recordSha256: string }>>;
+export type { ReviewedHistoricalRecords };
 /** Records an operator has independently inspected and approved for historical
- * settlement. Empty by default: each entry needs its own reviewed source change. */
-export const reviewedHistoricalRecords: ReviewedHistoricalRecords = Object.freeze({});
+ * settlement, from the root-controlled MAGNUS_AGENT_REVIEWED_HISTORICAL_RECORDS
+ * file, read once at startup. Empty when the file is absent or refused. */
+export const reviewedHistoricalRecordsLoad = loadReviewedHistoricalRecords({
+  path: process.env['MAGNUS_AGENT_REVIEWED_HISTORICAL_RECORDS']?.trim() || undefined, hostname: HOST_FQDN });
+if (reviewedHistoricalRecordsLoad.problem) {
+  logger.warn(`Reviewed historical records refused; historical settlements are not honoured: ${reviewedHistoricalRecordsLoad.problem}`);
+} else if (reviewedHistoricalRecordsLoad.count > 0) {
+  logger.info(`Loaded ${reviewedHistoricalRecordsLoad.count} reviewed historical record(s) for ${HOST_FQDN} from ${reviewedHistoricalRecordsLoad.path}`);
+}
+export const reviewedHistoricalRecords: ReviewedHistoricalRecords = reviewedHistoricalRecordsLoad.records;
 export const historicalHash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
 export function validateHistoricalKeys(keys: HistoricalKeys): void {

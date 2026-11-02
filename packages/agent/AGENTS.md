@@ -95,6 +95,12 @@ deploy/                 example systemd units
 - Tests use fake data only: `example.com` hosts, `192.0.2.0/24` addresses and
   `/home/operator` paths.
 
+- Reviewed historical mutation records come only from the root-controlled
+  file `MAGNUS_AGENT_REVIEWED_HISTORICAL_RECORDS`
+  (`src/executors/reviewed-historical-records.ts`). Never hard-code records
+  or host names in source, and never relax its owner, mode, symlink, size or
+  schema checks.
+
 ## Writer proofs
 
 The authenticated GET `/api/v1/commands/host-local-writer-proof` signs a

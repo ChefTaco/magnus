@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { MutationBarrier } from './mutation-barrier.js';
+import { loadReviewedHistoricalRecords } from './reviewed-historical-records.js';
+import { chmod } from 'node:fs/promises';
 import { signHistoricalAssertion, verifyHistoricalReceipt, type HistoricalObservation, type HostBoot, type ReviewedHistoricalRecords } from './historical-mutation.js';
 
 const keys = { result: 'owner-result-key-'.repeat(4), reconciliation: 'independent-controller-key-'.repeat(4) };
@@ -54,6 +56,25 @@ describe('historical mutation process quiescence', () => {
     await expect(restarted.begin('POST', '/codex/update')).rejects.toThrow('draining');
     clock += 1_000_000;
     expect(await restarted.snapshot(identity)).toMatchObject({ unknownCount: 0 });
+  });
+  it('honours settlements whose records come from the reviewed-records file, and none when it is refused', async () => {
+    afterBoot();
+    await barrier.settleHistorical(decision());
+    const dir = await mkdtemp(join(tmpdir(), 'historical-reviewed-'));
+    await chmod(dir, 0o755);
+    const path = join(dir, 'reviewed-historical-records.json');
+    await writeFile(path, JSON.stringify({ version: 1, records: reviewed }), { mode: 0o644 });
+    await chmod(path, 0o644);
+    const loaded = loadReviewedHistoricalRecords({ path, hostname: identity.nodeFqdn, ownerUid: process.getuid!() });
+    expect(loaded).toMatchObject({ problem: null, count: 2 });
+    const restarted = new MutationBarrier(root, identity.nodeFqdn, keys, async () => boot, loaded.records);
+    expect((await restarted.unknownInventory()).rows).toHaveLength(2);
+    await chmod(path, 0o666);
+    const refused = loadReviewedHistoricalRecords({ path, hostname: identity.nodeFqdn, ownerUid: process.getuid!() });
+    expect(refused.problem).toMatch(/writable/);
+    await expect(new MutationBarrier(root, identity.nodeFqdn, keys, async () => boot, refused.records).unknownInventory())
+      .rejects.toThrow('outside the exact reviewed records');
+    await rm(dir, { recursive: true, force: true });
   });
   it('rejects the owner result key as reconciliation authority and rejects tampering', async () => {
     afterBoot();
