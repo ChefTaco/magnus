@@ -2,8 +2,9 @@
 // A catch that answers with an HTTP error and drops the cause hides why a request
 // failed: four fleet-wide upgrade failures in one day were all the same error
 // relabelled that way. In the upgrade, ledger, managed-http, enrollment and scheduler
-// paths, a `catch` or a promise `.catch` that replies must log the cause or carry it
-// in the reply, or say why it need not with a `// no-reason-needed: why` comment.
+// paths, a `catch` or a rejection handler that replies must carry the error in a log
+// call or in every reply, or say why it need not with a `// no-reason-needed: why`
+// comment. A plain `throw new Error(...)` is not checked: most callers log those.
 //
 //   node scripts/check-swallowed-reasons.mjs
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
@@ -22,38 +23,93 @@ export const SCOPE = [
   ['services/control-api/src/sdk', /^node-api-client\./],
 ];
 
-const HTTP_REPLY = /\bc\.json\(|\bnew Response\(|\bnew HttpError\(|\bfail\(|\bthrow new [A-Za-z]*(Http|Response|Refusal)[A-Za-z]*Error\(/;
+const REPLY_CALLS = new Set(['c.json', 'refuse', 'refused', 'fail']);
+const REPLY_NEWS = /^(Response|[A-Za-z]*(Http|Refusal|Admission|Dispatched|AgentResponse|SelfUpgrade)[A-Za-z]*Error)$/;
+const LOG_CALL = /^(logger\.(warn|error)|console\.(warn|error)|warn[A-Z]\w*)$/;
 const MARKER = /\/\/[ \t]*no-reason-needed:[ \t]*\S/;
 
-const LOGGED = /\b(logger\.(warn|error)|console\.(warn|error)|warn[A-Z]\w*)\(/;
-
-/** A handler that replies and neither logs the error nor carries it in the reply hides the cause. */
-function hidesCause(body, name) {
-  if (!HTTP_REPLY.test(body) || MARKER.test(body) || LOGGED.test(body)) return false;
-  if (!name) return true;
-  // Only asking what type it is does not tell anyone what went wrong.
-  return !new RegExp(`\\b${name}\\b`).test(body.replaceAll(new RegExp(`\\b${name}\\s+instanceof\\b`, 'g'), ''));
+/** The identifiers an error is bound to: `e`, or those of a destructured pattern. */
+function bindingNames(name) {
+  if (!name) return [];
+  if (ts.isIdentifier(name)) return [name.text];
+  return name.elements.flatMap((element) => bindingNames(element.name));
 }
 
-/** The catch blocks and promise catches of one source text that reply with an HTTP error and give no reason. */
+/**
+ * Whether the error itself appears inside this expression, as code: a name in a
+ * string or a comment says nothing, and neither does asking what type it is.
+ */
+function mentions(node, names, source) {
+  let found = false;
+  const walk = (current) => {
+    if (found) return;
+    if (ts.isBinaryExpression(current) && current.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword) return;
+    if (ts.isIdentifier(current) && names.includes(current.text)) {
+      const parent = current.parent;
+      if (!(ts.isPropertyAccessExpression(parent) && parent.name === current) && !(ts.isPropertyAssignment(parent) && parent.name === current)) found = true;
+    }
+    ts.forEachChild(current, walk);
+  };
+  walk(node);
+  return found;
+}
+
+/** The replies and log calls of a handler, leaving out nested catches and functions: those speak for themselves. */
+function handlerCalls(body, source, names) {
+  const replies = [];
+  const logs = [];
+  const walk = (node) => {
+    if (ts.isCatchClause(node)) return;
+    if (ts.isFunctionLike(node) && node !== body) return;
+    if (ts.isCallExpression(node)) {
+      const callee = node.expression.getText(source);
+      if (REPLY_CALLS.has(callee)) replies.push(node);
+      if (LOG_CALL.test(callee)) logs.push(node);
+    }
+    if (ts.isNewExpression(node) && REPLY_NEWS.test(node.expression.getText(source))) replies.push(node);
+    ts.forEachChild(node, walk);
+  };
+  walk(body);
+  return { replies, logs };
+}
+
+/**
+ * A handler that replies hides the cause unless a log call carries the error, or
+ * every one of its replies does. A concise arrow's body is a reply itself.
+ */
+function hidesCause(body, names, source) {
+  if (MARKER.test(body.getFullText(source))) return false;
+  const { replies, logs } = handlerCalls(body, source, names);
+  if (!replies.length) return false;
+  if (logs.some((call) => call.arguments.some((argument) => mentions(argument, names, source)))) return false;
+  return !replies.every((call) => (call.arguments ?? []).some((argument) => mentions(argument, names, source)));
+}
+
+/** The catch blocks and rejection handlers of one source text that reply with an HTTP error and give no reason. */
 export function findSwallowedReasons(fileName, text) {
   const source = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const found = [];
+  const named = new Map();
+  const collect = (node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer && (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer))) named.set(node.name.text, node.initializer);
+    if (ts.isFunctionDeclaration(node) && node.name) named.set(node.name.text, node);
+    ts.forEachChild(node, collect);
+  };
+  collect(source);
   const report = (node, body) => {
     const { line } = source.getLineAndCharacterOfPosition(node.getStart(source));
-    found.push({ line: line + 1, excerpt: body.trim().split('\n')[0].slice(0, 100) });
+    found.push({ line: line + 1, excerpt: body.getFullText(source).trim().split('\n')[0].slice(0, 100) });
+  };
+  const checkHandler = (node, handler) => {
+    const fn = handler && ts.isIdentifier(handler) ? named.get(handler.text) : handler;
+    if (!fn || !(ts.isArrowFunction(fn) || ts.isFunctionExpression(fn) || ts.isFunctionDeclaration(fn)) || !fn.body) return;
+    if (hidesCause(fn.body, bindingNames(fn.parameters[0]?.name), source)) report(node, fn.body);
   };
   const visit = (node) => {
-    if (ts.isCatchClause(node)) {
-      const body = node.block.getFullText(source);
-      if (hidesCause(body, node.variableDeclaration?.name.getText(source))) report(node, body);
-    }
-    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === 'catch') {
-      const [handler] = node.arguments;
-      if (handler && (ts.isArrowFunction(handler) || ts.isFunctionExpression(handler))) {
-        const body = handler.body.getFullText(source);
-        if (hidesCause(body, handler.parameters[0]?.name.getText(source))) report(node, body);
-      }
+    if (ts.isCatchClause(node) && hidesCause(node.block, bindingNames(node.variableDeclaration?.name), source)) report(node, node.block);
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+      if (node.expression.name.text === 'catch') checkHandler(node, node.arguments[0]);
+      if (node.expression.name.text === 'then' && node.arguments.length > 1) checkHandler(node, node.arguments[1]);
     }
     ts.forEachChild(node, visit);
   };
