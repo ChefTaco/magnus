@@ -90,6 +90,8 @@ export async function probeStatus(url: string, options: ProbeOptions = {}, envir
     warned = true;
     (environment.warn ?? console.error)(`The certificate at ${target.host} does not match the project's TLS certificate; continuing with an unverified local status probe.`);
   }
-  const verifyLocalAnswer = !local;
-  return (await attempt(target, { rejectUnauthorized: verifyLocalAnswer })).status;
+  // Deliberately unverified, and only for an address on this machine: a credential-free liveness probe of the
+  // local service, of which only the HTTP status is read. Treating a rejected certificate as "down" would make
+  // a working install roll back or look stopped.
+  return (await attempt(target, { rejectUnauthorized: false })).status;
 }
