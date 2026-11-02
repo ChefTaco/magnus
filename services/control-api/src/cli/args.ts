@@ -1,5 +1,5 @@
 /** Argument parsing for the `magnus-server` CLI (no dependencies, strict). */
-export type CliCommand = 'start' | 'check' | 'migrate' | 'migrations' | 'backup' | 'upgrade' | 'rollback' | 'agents' | 'env-schema' | 'help' | 'version';
+export type CliCommand = 'start' | 'check' | 'migrate' | 'migrations' | 'backup' | 'restore' | 'upgrade' | 'rollback' | 'agents' | 'env-schema' | 'help' | 'version';
 
 export interface CliOptions {
   command: CliCommand;
@@ -12,6 +12,10 @@ export interface CliOptions {
   formatGiven: boolean;
   /** `backup`: label in the dump file name. */
   label?: string;
+  /** `restore`: the dump to restore. */
+  file?: string;
+  /** `restore`: do not ask for confirmation. */
+  yes: boolean;
   /** `upgrade`, `rollback` and `agents`: arguments passed through unparsed. */
   passthrough: string[];
 }
@@ -26,6 +30,7 @@ Commands:
   migrate       Apply pending migrations (prisma migrate deploy) and base data
   migrations    Show applied and pending migrations with their impact notes
   backup        Dump PostgreSQL (pg_dump -Fc) into MAGNUS_BACKUP_DIR and print the restore command
+  restore FILE  Replace the database with a dump (stop the server first; asks unless --yes)
   upgrade       Upgrade a \`magnus init\` project (runs \`magnus upgrade\`; see --help there)
   rollback      Switch a \`magnus init\` project back to the previous version
   agents        Agent fleet commands: \`agents upgrade [--to X.Y.Z] [--nodes a,b] [--dry-run]\`
@@ -38,16 +43,17 @@ Options:
   --migrate           start: apply pending migrations before listening (MAGNUS_AUTO_MIGRATE adds a backup and lock)
   --format <fmt>      env-schema (default json), check and migrations (default table): json or table
   --label <text>      backup: label in the dump file name
+  --yes               restore: do not ask for confirmation
   -h, --help          Show this help
   -v, --version       Print the version
 `;
 
-const COMMANDS = new Set<CliCommand>(['start', 'check', 'migrate', 'migrations', 'backup', 'upgrade', 'rollback', 'agents', 'env-schema', 'help', 'version']);
+const COMMANDS = new Set<CliCommand>(['start', 'check', 'migrate', 'migrations', 'backup', 'restore', 'upgrade', 'rollback', 'agents', 'env-schema', 'help', 'version']);
 /** Commands whose remaining arguments belong to another tool. */
 const PASSTHROUGH = new Set<CliCommand>(['upgrade', 'rollback', 'agents']);
 
 export function parseArgs(argv: readonly string[]): CliOptions {
-  const options: CliOptions = { command: 'start', envFiles: [], migrate: false, format: 'json', formatGiven: false, passthrough: [] };
+  const options: CliOptions = { command: 'start', envFiles: [], migrate: false, format: 'json', formatGiven: false, passthrough: [], yes: false };
   let commandSeen = false;
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index]!;
@@ -79,5 +85,6 @@ export function parseArgs(argv: readonly string[]): CliOptions {
       commandSeen = true;
     } else throw new UsageError(`unknown command "${arg}"`);
   }
+  if (options.command === 'restore' && !options.file) throw new UsageError('restore needs the dump file');
   return options;
 }

@@ -55,9 +55,11 @@ async function migrate(): Promise<void> {
   } catch {
     return fatal('Migration error: the prisma CLI package is not installed next to magnus-server.');
   }
+  // MAGNUS_MIGRATE_DATABASE_URL: a direct connection for migrations when DATABASE_URL goes through a pooler.
+  const migrateUrl = process.env['MAGNUS_MIGRATE_DATABASE_URL']?.trim();
   const code = await new Promise<number>((resolvePromise, reject) => {
     const child = spawn(process.execPath, [prismaCli, 'migrate', 'deploy', '--config', PRISMA_CONFIG], {
-      cwd: PACKAGE_ROOT, env: process.env, stdio: 'inherit',
+      cwd: PACKAGE_ROOT, env: migrateUrl ? { ...process.env, DATABASE_URL: migrateUrl } : process.env, stdio: 'inherit',
     });
     child.on('error', reject);
     child.on('close', exitCode => resolvePromise(exitCode ?? 1));
@@ -139,12 +141,20 @@ async function commandMigrations(format: 'json' | 'table'): Promise<number> {
   try {
     const state = await readMigrationState(client, MIGRATIONS_DIR);
     if (format === 'json') {
-      console.log(JSON.stringify({ version: await version(), packaged: state.packaged, applied: [...state.applied].sort(), pending: state.pending, fresh: state.fresh }, null, 2));
+      const size = await client.query<{ bytes: string; version: string }>('SELECT pg_database_size(current_database())::text AS bytes, current_setting(\'server_version_num\') AS version')
+        .then(result => result.rows[0]).catch(() => undefined);
+      console.log(JSON.stringify({
+        version: await version(), packaged: state.packaged, applied: [...state.applied].sort(), pending: state.pending, fresh: state.fresh,
+        failed: state.failed, unknown: state.unknown,
+        databaseBytes: size ? Number(size.bytes) : null, postgresMajor: size ? Math.floor(Number(size.version) / 10_000) : null,
+      }, null, 2));
     } else {
       for (const name of state.packaged) {
         const pending = state.pending.find(migration => migration.name === name);
         console.log(`  ${pending ? '…' : '✓'} ${name}${pending ? ` (pending, ${pending.impact}${pending.note ? `: ${pending.note}` : ''})` : ''}`);
       }
+      for (const migration of state.unknown) console.log(`  ? ${migration.name} (applied by a newer release; unknown to this version)`);
+      for (const name of state.failed) console.log(`  ✗ ${name} (failed; see \`prisma migrate resolve\` or restore a dump)`);
       console.log(state.pending.length === 0 ? 'All migrations applied.' : `${state.pending.length} pending; run \`magnus-server migrate\`.`);
     }
     return 0;
@@ -156,17 +166,19 @@ async function commandMigrations(format: 'json' | 'table'): Promise<number> {
 /** `pg_dump -Fc` into MAGNUS_BACKUP_DIR; prints JSON with the file and restore command. */
 async function commandBackup(label: string | undefined): Promise<number> {
   const { resolveDatabaseUrl } = await import('./db/client.js');
-  const { backupDatabase } = await import('./cli/migrations.js');
-  const { defaultBackupDir } = await import('./cli/auto-migrate.js');
+  const { backupDatabase, backupKeep, readMigrationState } = await import('./cli/migrations.js');
+  const { defaultBackupDir, migrateDatabaseUrl } = await import('./cli/auto-migrate.js');
   const { magnusHome } = await import('./utils/magnus-home.js');
   const pg = (await import('pg')).default;
-  const databaseUrl = resolveDatabaseUrl();
+  const databaseUrl = migrateDatabaseUrl(process.env, resolveDatabaseUrl());
   const client = new pg.Client({ connectionString: databaseUrl, connectionTimeoutMillis: 10_000 });
   await client.connect();
   try {
+    const state = await readMigrationState(client, MIGRATIONS_DIR).catch(() => null);
     const result = await backupDatabase({
       databaseUrl, client, backupDir: defaultBackupDir(process.env, magnusHome()),
       label: label ?? `manual-${await version()}`, pgDump: process.env['MAGNUS_PG_DUMP'],
+      lastApplied: state?.lastApplied ?? null, keep: backupKeep(),
     });
     console.log(JSON.stringify(result));
     return 0;
@@ -175,17 +187,69 @@ async function commandBackup(label: string | undefined): Promise<number> {
   }
 }
 
+/** Replace the database with a dump; refuses while this host's server is running. */
+async function commandRestore(file: string, yes: boolean): Promise<number> {
+  const { resolveDatabaseUrl } = await import('./db/client.js');
+  const { pgRestoreFor, restoreDatabase } = await import('./cli/migrations.js');
+  const { migrateDatabaseUrl } = await import('./cli/auto-migrate.js');
+  const { runningServer } = await import('./utils/runtime-file.js');
+  const running = runningServer();
+  if (running) fatal(`The server (pid ${running.pid}, ${running.version}) is still running; stop it before restoring (for example: systemctl stop magnus-server, or docker compose stop magnus-server).`);
+  const path = resolve(file);
+  if (!yes) {
+    if (!process.stdin.isTTY) fatal('Restoring replaces the whole database; pass --yes to confirm non-interactively.');
+    const { createInterface } = await import('node:readline/promises');
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const answer = await rl.question(`Replace the database with ${path}? Changes made since the dump are lost [y/N] `).finally(() => rl.close());
+    if (!/^y(es)?$/i.test(answer.trim())) return 1;
+  }
+  const pg = (await import('pg')).default;
+  const databaseUrl = migrateDatabaseUrl(process.env, resolveDatabaseUrl());
+  const client = new pg.Client({ connectionString: databaseUrl, connectionTimeoutMillis: 10_000 });
+  await client.connect();
+  try {
+    await restoreDatabase({ databaseUrl, file: path, client, pgRestore: pgRestoreFor(process.env['MAGNUS_PG_DUMP']), log: line => console.log(line) });
+    console.log(`Restored ${path}. Start the server version that matches the dump.`);
+    return 0;
+  } catch (error) {
+    return fatal(`Restore failed: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    await client.end().catch(() => undefined);
+  }
+}
+
+/** Warn at startup when a newer release migrated the database (best effort). */
+async function warnSchemaAhead(): Promise<void> {
+  try {
+    const { resolveDatabaseUrl } = await import('./db/client.js');
+    const { readMigrationState } = await import('./cli/migrations.js');
+    const pg = (await import('pg')).default;
+    const client = new pg.Client({ connectionString: resolveDatabaseUrl(), connectionTimeoutMillis: 5_000 });
+    await client.connect();
+    try {
+      const state = await readMigrationState(client, MIGRATIONS_DIR);
+      if (state.unknown.length > 0) {
+        console.warn(`[startup] warning: the database has ${state.unknown.length} migration(s) this version does not know (a newer release applied them): `
+          + `${state.unknown.map(m => m.name).join(', ')}. If this version misbehaves, upgrade again or restore the dump taken before that upgrade.`);
+      }
+      if (state.failed.length > 0) console.warn(`[startup] warning: failed migration(s) ${state.failed.join(', ')}; run \`magnus-server migrations\`.`);
+    } finally {
+      await client.end().catch(() => undefined);
+    }
+  } catch { /* the server reports database problems itself */ }
+}
+
 /** `MAGNUS_AUTO_MIGRATE=true`: back up and migrate under an advisory lock before listening. */
 async function startupAutoMigrate(): Promise<void> {
   const { upgradeSettings } = await import('./config/features.js');
   const settings = upgradeSettings();
-  if (!settings.autoMigrate) return;
+  if (!settings.autoMigrate) return warnSchemaAhead();
   const { resolveDatabaseUrl } = await import('./db/client.js');
-  const { autoMigrate, defaultBackupDir } = await import('./cli/auto-migrate.js');
+  const { autoMigrate, defaultBackupDir, migrateDatabaseUrl } = await import('./cli/auto-migrate.js');
   const { magnusHome } = await import('./utils/magnus-home.js');
   try {
     await autoMigrate({
-      databaseUrl: resolveDatabaseUrl(),
+      databaseUrl: migrateDatabaseUrl(process.env, resolveDatabaseUrl()),
       migrationsDir: MIGRATIONS_DIR,
       backupDir: defaultBackupDir(process.env, magnusHome()),
       version: await version(),
@@ -232,6 +296,9 @@ async function run(argv: readonly string[]): Promise<number> {
     case 'backup':
       loadEnvFiles(options.envFiles);
       return commandBackup(options.label);
+    case 'restore':
+      loadEnvFiles(options.envFiles);
+      return commandRestore(options.file!, options.yes);
     case 'upgrade':
     case 'rollback': {
       const { delegateToProject } = await import('./cli/upgrade.js');
