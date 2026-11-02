@@ -9,7 +9,15 @@
 #   docker compose -f docker/compose.yml --env-file docker/.env up -d
 #
 # The server dumps the database into its backups volume and applies pending
-# migrations at startup (MAGNUS_AUTO_MIGRATE). See UPGRADING.md.
+# migrations at startup (MAGNUS_AUTO_MIGRATE). A release with a slow or one-way
+# migration stops at startup instead (MAGNUS_AUTO_MIGRATE_ALLOW_SLOW), which
+# takes the server down until you act: watch unattended pulls. Restoring a dump:
+#
+#   docker compose -f docker/compose.yml --env-file docker/.env stop magnus-ui magnus-server
+#   docker compose -f docker/compose.yml --env-file docker/.env run --rm --no-deps \
+#     --entrypoint magnus-server magnus-server restore /var/lib/magnus/backups/<file>.dump --yes
+#
+# See UPGRADING.md.
 name: magnus
 
 services:

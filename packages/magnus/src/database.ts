@@ -1,6 +1,6 @@
 /** Pre-migration dumps and restores for both database kinds a project can use. */
 import { closeSync, chmodSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { compareVersions, restoreAsideSchema, restoreFinishSql, restoreRevertSql, restoreSwapSql } from '@hivemagnus/magnus-contracts';
 import { readEnvFile } from './env-file.js';
 import { mustRun, type Io } from './io.js';
@@ -171,16 +171,20 @@ export async function restoreDatabase(io: Io, project: Project, file: string): P
     await serverCli(io, project, version, ['restore', file, '--yes']);
     return;
   }
-  // Only servers before 1.1.3 are installed: the same steps with the host's client tools.
-  const url = new URL(readEnvFile(project.envFile('server'))['DATABASE_URL'] ?? '');
+  // Only servers before 1.1.3 are installed: the same steps with the host's client tools
+  // (next to MAGNUS_PG_DUMP, so pg_restore is as new as the pg_dump that wrote the file).
+  const serverEnv = readEnvFile(project.envFile('server'));
+  const url = new URL(serverEnv['MAGNUS_MIGRATE_DATABASE_URL'] ?? serverEnv['DATABASE_URL'] ?? '');
   const password = decodeURIComponent(url.password);
   url.password = '';
   const env = { ...io.env, ...(password ? { PGPASSWORD: password } : {}) };
-  await mustRun(io, 'pg_restore', ['--list', file], { capture: true, env });
-  const psql = (sql: string) => mustRun(io, 'psql', ['-v', 'ON_ERROR_STOP=1', '-q', '-d', url.toString(), '-c', sql], { capture: true, env });
+  const pgDump = serverEnv['MAGNUS_PG_DUMP'] ?? io.env['MAGNUS_PG_DUMP'];
+  const tool = (name: string) => (pgDump?.includes('/') ? join(dirname(pgDump), name) : name);
+  await mustRun(io, tool('pg_restore'), ['--list', file], { capture: true, env });
+  const psql = (sql: string) => mustRun(io, tool('psql'), ['-v', 'ON_ERROR_STOP=1', '-q', '-d', url.toString(), '-c', sql], { capture: true, env });
   await psql(restoreSwapSql(aside));
   try {
-    await mustRun(io, 'pg_restore', ['--single-transaction', '--exit-on-error', '--no-owner', '-d', url.toString(), file], { capture: true, env });
+    await mustRun(io, tool('pg_restore'), ['--single-transaction', '--exit-on-error', '--no-owner', '-d', url.toString(), file], { capture: true, env });
   } catch (error) {
     await psql(restoreRevertSql(aside)).catch(() => {
       throw new Error(`pg_restore failed and the original schema could not be put back; it is kept as ${aside}.`);

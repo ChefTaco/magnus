@@ -4,6 +4,73 @@ All notable changes to this project are documented in this file. The format is b
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- `magnus upgrade` records the upgrade in progress in `magnus-project.json`. An upgrade that was
+  killed, lost its terminal or crashed is reported by the next command, which offers
+  `magnus upgrade --resume` or `magnus rollback`. SIGINT, SIGHUP and SIGTERM stop the upgrade at the
+  next safe step; a running migration always finishes first, and after the switch an interrupted
+  upgrade switches back. A restart that fails counts as a failed health check.
+- The new version's `magnus-server check` and a start-up test (`--version`, native modules) run
+  before the backup and the migration. A check that crashes or prints no JSON fails the upgrade.
+- After a failed upgrade that applied a one-way migration, the previous version is no longer
+  started on a schema it cannot run on; the restore command is printed. `magnus rollback` asks the
+  previous version which applied migrations it does not know and refuses one-way ones without
+  `--restore-db` or `--force`. `--restore-db` fails when there is no dump, a failed restore starts
+  the services again, and without a supervisor rollback waits until the server has stopped.
+- Restores no longer leave tables of the newer release next to the restored ones: the dump is
+  restored into a fresh `public` schema (same owner and grants) in one transaction, and the
+  original schema is put back if `pg_restore` fails.
+- Startup auto-migrate refuses a database with a migration that failed halfway before dumping it,
+  reuses the dump of its last attempt when it restarts in a loop, keeps only the newest dumps, and
+  gives up waiting for another instance's migrate lock after a timeout. The generated units stop
+  after three failed starts in five minutes.
+- `--supervisor none` projects no longer revert every upgrade: the server env file now names
+  `MAGNUS_RUNTIME_FILE` and `MAGNUS_PROJECT_DIR`, and the health check also reads
+  `MAGNUS_HOME/run`. It probes the port and bind address the server reports.
+- An unreadable release manifest is no longer replaced by a guessed one: the engine says it is too
+  old and how to run the newest one. A registry 404 is an error. Deprecated releases and releases
+  newer than the `latest` tag are skipped unless named with `--to`.
+- The Node.js the services run is recorded; engines checks, npm and the server CLI use it, and
+  `magnus upgrade --node PATH` switches it and rewrites the units.
+- Install scripts come from the target release's manifest (`allowScripts`), not from the engine
+  that installs it.
+- `pg_dump` gets the password through `PGPASSWORD` instead of the command line, and every dump is
+  checked with `pg_restore --list`.
+- Free disk space, the systemd user session bus and (in `--dry-run`) `pg_dump` and npm are checked
+  before anything changes. User units are refused for another account (`sudo`), and systemd off
+  Linux is refused before `init` writes anything.
+- Upgrade locks record the boot and process start time, survive concurrent takeover, are handed to
+  a newer engine without a gap, and `--break-lock` removes a leftover one.
+- `magnus-project.json` and env files are written atomically and durably; env files keep their mode
+  and owner and a `.bak` of the previous content.
+
+### Added
+
+- `magnus restore <dump>` (stops the services, restores, starts them again) and
+  `magnus-server restore <dump> --env-file <file>`.
+- `magnus-server migrations --format json` reports `failed` and `unknown` (applied by a newer
+  release) migrations, the database size and the PostgreSQL major version. The server warns at
+  startup when the database is ahead of it.
+- New projects get their own Compose project name for the bundled PostgreSQL and Redis; existing
+  projects keep `magnus-deps`.
+- The server image allows ten minutes for startup (dump and migrate) before its health check counts.
+
+### New environment variables
+
+- `MAGNUS_BACKUP_KEEP` (server, default 5): dumps kept in `MAGNUS_BACKUP_DIR`; the newest of each
+  label always stays.
+- `MAGNUS_AUTO_MIGRATE_LOCK_TIMEOUT` (server, default 600): seconds auto-migrate waits for another
+  instance's migrate lock.
+- `MAGNUS_MIGRATE_DATABASE_URL` (server, optional): a direct connection for migrations, dumps and
+  restores when `DATABASE_URL` goes through a pooler such as PgBouncer.
+
+### Migration impact
+
+- None.
+
 ## [1.1.2] - 2026-11-02
 
 ### Changed

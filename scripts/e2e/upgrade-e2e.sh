@@ -7,7 +7,8 @@
 #   4. `magnus-server agents upgrade` to a synthetic release: confirmed
 #   5. upgrade to a synthetic agent that never heartbeats: the launcher reverts it
 #   6. upgrade the server to a synthetic broken release with a migration: backup, auto-revert, restore hint
-#   7. `magnus rollback` to FROM: healthy
+#   7. `magnus restore` the pre-upgrade dump: the broken release's migration is gone, the server healthy
+#   8. `magnus rollback` to FROM: healthy
 #
 # Needs: E2E_DATABASE_ADMIN_URL (PostgreSQL superuser, database name starting
 # with magnus_ideas), E2E_REDIS_URL, `npm run build` done, sudo without a
@@ -169,15 +170,26 @@ rc=${PIPESTATUS[0]}
 set -e
 (( rc == 1 )) || fail "a broken release did not fail the upgrade (exit $rc)"
 grep -q "switching back to $VERSION" "$WORK/broken.log" || fail "no automatic switch back"
-grep -q 'pg_restore --clean --if-exists --no-owner -d "$DATABASE_URL"' "$WORK/broken.log" || fail "no restore command printed"
-sudo sh -c "ls '$PROJECT'/backups/*pre-upgrade-$VERSION-to-$SERVER_BROKEN*.dump" >/dev/null || fail "no pre-upgrade dump"
+grep -q "magnus restore .*pre-upgrade-$VERSION-to-$SERVER_BROKEN.*\.dump --dir $PROJECT" "$WORK/broken.log" || fail "no restore command printed"
+DUMP=$(sudo sh -c "ls '$PROJECT'/backups/*pre-upgrade-$VERSION-to-$SERVER_BROKEN*.dump" | head -1)
+[[ -n $DUMP ]] || fail "no pre-upgrade dump"
 STATUS=$(magnus status --json --offline)
 [[ $(json 'v.current' <<<"$STATUS") == "$VERSION" && $(json 'v.serving.version' <<<"$STATUS") == "$VERSION" ]] || fail "$VERSION is not serving again"
 [[ $(json 'v.history.at(-1).result' <<<"$STATUS") == reverted ]] || fail "history does not record the revert"
+[[ $(json 'v.inProgress' <<<"$STATUS") == null ]] || fail "the reverted upgrade left its journal behind"
+[[ $(server_cli migrations --format json | json "v.unknown.map(m => m.name).join(',')") == 20991231000000_e2e_probe ]] \
+  || fail "migrations does not report the broken release's migration as unknown to $VERSION"
+
+step "Restore the pre-upgrade dump"
+magnus restore "$DUMP" --dir "$PROJECT" --yes --health-timeout 240 || fail "magnus restore"
+[[ $(server_cli migrations --format json | json "v.applied.includes('20991231000000_e2e_probe')") == false ]] \
+  || fail "the restore kept the broken release's migration"
+[[ $(magnus status --json --offline | json 'v.serving.version') == "$VERSION" ]] || fail "$VERSION is not serving after the restore"
+curl -fsk "https://127.0.0.1:$SERVER_PORT/api/v1/health" >/dev/null || fail "$VERSION is not healthy after the restore"
 
 step "Rollback $VERSION -> $FROM"
 magnus rollback --dir "$PROJECT" --health-timeout 240 || fail "rollback"
 [[ $(magnus status --json --offline | json 'v.current') == "$FROM" ]] || fail "rollback did not switch to $FROM"
 curl -fsk "https://127.0.0.1:$SERVER_PORT/api/v1/health" >/dev/null || fail "$FROM is not healthy after the rollback"
 
-step "PASS: init, upgrade, agent upgrade and self-revert, broken-release revert and rollback"
+step "PASS: init, upgrade, agent upgrade and self-revert, broken-release revert, restore and rollback"
