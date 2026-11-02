@@ -6,6 +6,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [1.1.5] - 2026-11-02
+
 ### Fixed
 
 - The scheduler enrollment-drain proof no longer fails on hosts with frequently firing systemd timers. The
@@ -21,6 +23,14 @@ All notable changes to this project are documented in this file. The format is b
 - A refused agent or scheduler drain proof now says why. The 409 response carries a fixed `error.reason`
   (for example `inventory-changed` or `challenge-expired`), the agent logs the underlying cause as a warning,
   and the server keeps the reason in the enrollment status's `lastFailures` as `agentReason`.
+
+### New environment variables
+
+- None.
+
+### Migration impact
+
+- None.
 
 ## [1.1.4] - 2026-11-02
 
@@ -435,6 +445,7 @@ The initial release snapshot.
   Pass them to `npm install -g` with `--allow-scripts=...`, or list them under `allowScripts` in
   your project's `package.json`.
 
+[1.1.5]: https://github.com/ChefTaco/magnus/releases/tag/v1.1.5
 [1.1.4]: https://github.com/ChefTaco/magnus/releases/tag/v1.1.4
 [1.1.3]: https://github.com/ChefTaco/magnus/releases/tag/v1.1.3
 [1.1.2]: https://github.com/ChefTaco/magnus/releases/tag/v1.1.2
