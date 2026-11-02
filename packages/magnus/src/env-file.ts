@@ -1,11 +1,17 @@
 /** Minimal env-file handling: read, append missing keys, generate secrets. */
 import { randomBytes } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, readFileSync, statSync } from 'node:fs';
 import { parseEnv } from 'node:util';
+import { writeAtomic } from './project.js';
 
 export function readEnvFile(path: string): Record<string, string> {
   if (!existsSync(path)) return {};
-  return parseEnv(readFileSync(path, 'utf8')) as Record<string, string>;
+  try {
+    return parseEnv(readFileSync(path, 'utf8')) as Record<string, string>;
+  } catch (error) {
+    throw new Error(`Cannot read the env file ${path}: ${error instanceof Error ? error.message : String(error)}. `
+      + `${existsSync(`${path}.bak`) ? `The version before the last change is in ${path}.bak.` : 'Fix the file and re-run.'}`);
+  }
 }
 
 /** 64 hex characters: comfortably above every 32-character secret minimum. */
@@ -35,7 +41,11 @@ export function renderEnv(header: string, sections: Array<{ title: string; entri
   return `${lines.join('\n')}\n`;
 }
 
-/** Append entries whose names are not already present; existing values are never changed. */
+/**
+ * Append entries whose names are not already present; existing values are
+ * never changed. The file is replaced atomically (same mode and owner) and
+ * the previous content is kept as `<file>.bak`.
+ */
 export function appendMissing(path: string, entries: EnvEntry[], note: string): string[] {
   const existing = readEnvFile(path);
   const missing = entries.filter((entry) => existing[entry.name] === undefined);
@@ -44,7 +54,10 @@ export function appendMissing(path: string, entries: EnvEntry[], note: string): 
     ...(entry.comment ? [`# ${entry.comment}`] : []),
     `${entry.name}=${quote(entry.value)}`,
   ])].join('\n');
-  const current = existsSync(path) ? readFileSync(path, 'utf8') : '';
-  writeFileSync(path, `${current.replace(/\n*$/, '\n')}${block}\n`, { mode: 0o600 });
+  const present = existsSync(path);
+  const current = present ? readFileSync(path, 'utf8') : '';
+  const stats = present ? statSync(path) : null;
+  if (present) copyFileSync(path, `${path}.bak`);
+  writeAtomic(path, `${current.replace(/\n*$/, '\n')}${block}\n`, stats ? stats.mode & 0o777 : 0o600, stats ? { uid: stats.uid, gid: stats.gid } : undefined);
   return missing.map((entry) => entry.name);
 }

@@ -7,7 +7,7 @@ import { admitResourceCommand, markResourceDispatched, failResourceCommand, sett
 import { commandFenceSchema, commandResultSchema } from '../schemas/node-responses.js';
 import type { CronEnrollmentStage, ManagedCronIdentity, ManagedCronSpec, SchedulerSourceSettlement } from '../schemas/managed-cron.js';
 import { commandRequestDigest, type CommandRequest } from '../security/command-request.js';
-import ky, { type AfterResponseState, type KyInstance } from 'ky';
+import ky, { HTTPError, type AfterResponseState, type KyInstance } from 'ky';
 import { HttpError } from '../middleware/error-handler.js';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
@@ -115,6 +115,74 @@ export function isAgentNotPrivileged(error: unknown): boolean {
   return error instanceof HttpError && error.code === AGENT_NOT_PRIVILEGED;
 }
 
+/** `{ success: false, error: { code, message } }` from an agent reply (object or JSON text). */
+export function agentErrorBody(raw: unknown): { code: string; message: string } | null {
+  let value = raw;
+  if (typeof raw === 'string') { try { value = JSON.parse(raw) as unknown; } catch { return null; } }
+  const error = (value as { error?: { code?: unknown; message?: unknown } } | null)?.error;
+  if (!error || typeof error.code !== 'string') return null;
+  return { code: error.code.slice(0, 64), message: typeof error.message === 'string' ? error.message.slice(0, 1000) : error.code };
+}
+
+/** The agent answered a mutation with an error status. `agentStatus` is not an HTTP status for our callers. */
+export class AgentResponseError extends Error {
+  readonly agentStatus: number;
+  readonly code: string | null;
+  readonly agentMessage: string | null;
+  constructor(agentStatus: number, body: { code: string; message: string } | null) {
+    super(`Native mutation completed with HTTP ${agentStatus}${body ? `: ${body.code}: ${body.message}` : ''}`);
+    this.name = 'AgentResponseError';
+    this.agentStatus = agentStatus;
+    this.code = body?.code ?? null;
+    this.agentMessage = body?.message ?? null;
+  }
+}
+
+/** Thrown by `upgradeAgent` for every failure before the request left: the node is untouched. */
+export class NotDispatchedError extends HttpError {
+  readonly dispatched = false;
+  constructor(code: string, message: string, cause?: unknown) {
+    super(409, code, message);
+    this.name = 'NotDispatchedError';
+    if (cause !== undefined) this.cause = cause;
+  }
+}
+
+/** The request may have reached the agent but no answer came back. */
+export class DispatchOutcomeUnknownError extends Error {
+  readonly code = 'MUTATION_OUTCOME_UNKNOWN';
+  constructor(message: string, cause?: unknown) {
+    super(message);
+    this.name = 'DispatchOutcomeUnknownError';
+    if (cause !== undefined) this.cause = cause;
+  }
+}
+
+const CONNECT_ERRORS = new Set(['ECONNREFUSED', 'ENOTFOUND', 'EHOSTUNREACH', 'ENETUNREACH', 'EAI_AGAIN', 'UND_ERR_CONNECT_TIMEOUT']);
+/** A connection that never opened cannot have carried the request. */
+export function isConnectError(error: unknown): boolean {
+  for (let current = error, depth = 0; current && typeof current === 'object' && depth < 5; current = (current as { cause?: unknown }).cause, depth++) {
+    const code = (current as { code?: unknown }).code;
+    if (typeof code === 'string' && CONNECT_ERRORS.has(code)) return true;
+  }
+  return false;
+}
+
+function errorText(error: unknown): string {
+  return (error instanceof Error ? error.message : String(error)).slice(0, 1000);
+}
+
+/** Sort an upgradeAgent failure by whether the request can have reached the agent. */
+export function classifyAgentRequestError(error: unknown, dispatched: boolean): Error {
+  if (!dispatched) return error instanceof NotDispatchedError ? error : new NotDispatchedError(
+    error instanceof HttpError ? error.code : error instanceof AgentResponseError && error.code ? error.code : 'NOT_DISPATCHED', errorText(error), error);
+  if (error instanceof AgentResponseError) return error;
+  if (error instanceof HTTPError) return new AgentResponseError(error.response.status, agentErrorBody(error.data));
+  if (error instanceof HttpError && error.code === AGENT_NOT_PRIVILEGED) return new AgentResponseError(403, { code: error.code, message: error.message });
+  if (isConnectError(error)) return new NotDispatchedError('AGENT_UNREACHABLE', `agent unreachable: ${errorText(error)}`, error);
+  return new DispatchOutcomeUnknownError(`no answer from the agent after the request was sent: ${errorText(error)}`, error);
+}
+
 export class NodeApiClient {
   private api: KyInstance;
   private readonly nodeToken: string;
@@ -141,7 +209,7 @@ export class NodeApiClient {
   private async mutateWithEvidence<T>(method: 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown,
     timeout = this.defaultTimeout, commandId?: string, skillPublication?: {
       skillName: string; version: string; bundleSha256: string;
-    }, requireManaged = false): Promise<{ response: T; evidence?: ManagedMutationEvidence }> {
+    }, requireManaged = false, dispatch?: { pingFirst?: boolean; onDispatch: () => void }): Promise<{ response: T; evidence?: ManagedMutationEvidence }> {
     if (!this.resourceContext) throw new Error('Managed mutation requires canonical resource node identity');
     const serialized = body === undefined ? '' : JSON.stringify(body);
     const nativePath = '/' + path; const requestedTimeoutSeconds = Math.ceil(timeout / 1000);
@@ -150,6 +218,10 @@ export class NodeApiClient {
     const identity = httpIdentity(commandId ?? 'native-' + randomUUID(), method, nativePath, serialized, timeoutSeconds);
     const admission = await admitResourceCommand(this.resourceContext, identity);
     if (!admission && requireManaged) throw new Error('This operation requires enrolled managed admission; direct node mutation is forbidden');
+    if (!admission) {
+      if (dispatch?.pingFirst) await this.api.get('ping', { timeout: 10_000, retry: 0 });
+      dispatch?.onDispatch();
+    }
     if (!admission) return { response: await this.api(path, { method,
       ...(body === undefined ? {} : { body: serialized, headers: { 'content-type': 'application/json' } }), timeout, retry: 0 }).json<T>() };
     try {
@@ -161,6 +233,7 @@ export class NodeApiClient {
       const capability = await this.api.get('ping').json<ApiResponse<{ features?: { managedMutations?: number } }>>();
       if (!capability.success || capability.data?.features?.managedMutations !== 1) throw new Error('Node does not support managed mutations; operation not dispatched');
       await markResourceDispatched(admission);
+      dispatch?.onDispatch();
       const managedRequest = managedHttpRequestSchema.parse({
         claim: { leaseId: admission.leaseId, nodeId: admission.nodeId, nodeFqdn: admission.nodeFqdn },
         commandId: admission.commandId, method, path: '/' + path, body: serialized,
@@ -179,7 +252,7 @@ export class NodeApiClient {
         skillName: skillPublication.skillName, version: skillPublication.version,
         bundleSha256: skillPublication.bundleSha256, responseBody: response.body,
       });
-      if (response.status >= 400) throw new Error(`Native mutation completed with HTTP ${response.status}`);
+      if (response.status >= 400) throw new AgentResponseError(response.status, agentErrorBody(response.body));
       const commandSha256 = receipt.coordination?.requestSha256;
       if (!commandSha256 || commandSha256 !== commandRequestDigest(admission.payload))
         throw new Error('Managed mutation command evidence differs');
@@ -486,7 +559,18 @@ export class NodeApiClient {
   async upgradeAgent(request: { version: string; integrity: string; requestId: string; packageName: string }): Promise<ApiResponse<{
     accepted: boolean; from: string; to: string; integrity: string; requestId: string; restartInSeconds: number;
   }>> {
-    return this.mutate('POST', 'agent-upgrade', request, 15 * 60_000);
+    // Every failure is typed: NotDispatchedError (node untouched), AgentResponseError
+    // (the agent answered with an error) or DispatchOutcomeUnknownError (sent, no answer).
+    let dispatched = false;
+    try {
+      return (await this.mutateWithEvidence<ApiResponse<{ accepted: boolean; from: string; to: string; integrity: string; requestId: string;
+        restartInSeconds: number }>>('POST', 'agent-upgrade', request, 15 * 60_000,
+      // A stable command id lets an operator find (and reconcile) the lease of a request whose reply was lost.
+      /^[a-zA-Z0-9._-]{1,100}$/.test(request.requestId) ? `agent-upgrade-${request.requestId}` : undefined, undefined, false,
+      { pingFirst: true, onDispatch: () => { dispatched = true; } })).response;
+    } catch (error) {
+      throw classifyAgentRequestError(error, dispatched);
+    }
   }
 
   // ── Ping ──

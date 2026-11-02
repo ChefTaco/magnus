@@ -55,15 +55,22 @@ magnus upgrade [--to X.Y.Z] [--yes] [--generate-secrets] [--allow-major] [--sour
 
 An upgrade:
 
-1. Checks the registry and the Node.js engines.
+1. Checks the registry and the Node.js the services run (`--node PATH` switches it).
 2. Refuses a downgrade or a major-version change (unless `--allow-major`).
-3. Checks for new required settings.
+3. Checks for new required settings, free disk space and the systemd session bus.
 4. Installs the release into `versions/<X>`.
-5. Dumps PostgreSQL, migrates and checks.
-6. Switches `./current`, restarts and waits for the new version to serve.
-7. If the new version is unhealthy, switches back and prints the database restore command.
+5. Runs the new version's configuration check and a start-up test, before the database is touched.
+6. Dumps PostgreSQL and migrates.
+7. Switches `./current`, restarts and waits for the new version to serve.
+8. If the new version is unhealthy, switches back and prints the database restore command.
 
-Slow or one-way migrations need `--yes`.
+Slow or one-way migrations need `--yes`. An upgrade that is interrupted is recorded in
+`magnus-project.json`; finish it with `magnus upgrade --resume` or go back with `magnus rollback`.
+
+```bash
+magnus rollback [--restore-db] [--force]   # back to the previous version
+magnus restore <dump>                      # stop, restore into a clean schema, start again
+```
 
 `magnus-server upgrade` hands the same command to the project it was installed into.
 

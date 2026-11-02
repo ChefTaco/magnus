@@ -21,6 +21,13 @@ export function AgentSelfUpgradeBadge({ metadata }: { metadata: Record<string, u
       </span>
     );
   }
+  if (report.upgrade?.state === 'failed') {
+    return (
+      <span title={report.upgrade.reason ?? undefined}>
+        <Badge variant="danger"><RotateCcw className="mr-1 inline h-3 w-3" />Upgrade to {report.upgrade.to} failed</Badge>
+      </span>
+    );
+  }
   if (!report.enabled) {
     return (
       <span title={report.reason ?? undefined} data-testid="agent-self-upgrade-off">

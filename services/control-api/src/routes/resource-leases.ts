@@ -16,6 +16,7 @@ import { HttpError } from '../middleware/error-handler.js';
 import { NODE_MANAGER_SECRET } from '../utils/env.js';
 import { verifyWithRotation } from '../services/credential-rotation-service.js';
 import { resourceLeasesRequested } from '../services/command-resource-leases.js';
+import { readOwnershipHistory, stickyEnrollmentObserved } from '../services/resource-ownership.js';
 import { activateArdentScope, ardentScopeActivationSchema, assertArdentScope, inspectArdentScope } from '../services/ardent-scope-enrollment.js';
 import { legacyAdmissionRequestSchema, resourceClaimSchema } from '../security/managed-http.js';
 import { participantWorkReconciliationSchema, historicalParticipantWorkReconciliationSchema } from '../schemas/resource-participant-reconciliation.js';
@@ -138,14 +139,10 @@ resourceLeasesRouter.post('/legacy-admission', async c => {
     const current = await tx.node.findUnique({ where: { id: node.id }, select: { hostname: true } });
     if (current?.hostname !== body.nodeFqdn) throw new HttpError(409, 'RESOURCE_TARGET_INVALID', 'Inventory target changed');
     await assertNodeAdmissionOpen(tx, node.id);
-    const [enrollment, leaseHistory, managedCronHistory, participantHistory] = await Promise.all([
-      tx.resourceEnrollment.findUnique({ where: { nodeId: node.id } }),
-      tx.commandResourceLease.findFirst({ where: { nodeId: node.id }, select: { id: true } }),
-      tx.managedCronDefinition.findFirst({ where: { nodeId: node.id }, select: { cronJobId: true } }),
-      tx.resourceParticipantWork.findFirst({ where: { nodeId: node.id }, select: { workId: true } }),
-    ]);
-    const enrolled = Boolean(enrollment && enrollment.state !== 'legacy')
-      || Boolean(leaseHistory || managedCronHistory || participantHistory);
+    const [enrollment, history] = await Promise.all([
+      tx.resourceEnrollment.findUnique({ where: { nodeId: node.id } }), readOwnershipHistory(tx, node.id)]);
+    // Sticky rule (see resource-ownership.ts): the agent stores `enrolled` for good.
+    const enrolled = stickyEnrollmentObserved(enrollment, history);
     const gateEnabled = resourceLeasesRequested();
     return { ...body, nodeId: node.id, enrolled, gateEnabled, allowedLegacy: !enrolled && !gateEnabled };
   });

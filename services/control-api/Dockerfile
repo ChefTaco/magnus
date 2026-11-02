@@ -98,7 +98,8 @@ ENV NODE_ENV=production \
 USER node
 VOLUME ["/var/lib/magnus"]
 EXPOSE 4000
-HEALTHCHECK --interval=10s --timeout=5s --start-period=60s --retries=12 \
+# Startup may first dump and migrate the database (MAGNUS_AUTO_MIGRATE): allow ten minutes.
+HEALTHCHECK --interval=10s --timeout=5s --start-period=600s --retries=12 \
   CMD ["magnus-server-entrypoint", "healthcheck"]
 ENTRYPOINT ["magnus-server-entrypoint"]
 CMD ["start"]

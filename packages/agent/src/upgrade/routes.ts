@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { agentUpgradeRequestSchema } from '@hivemagnus/magnus-contracts';
 import { logger } from '../utils/logger.js';
 import { AGENT_VERSION } from '../version.js';
-import { SelfUpgradeError, selfUpgradeStatus, stageUpgrade } from './self-upgrade.js';
+import { EXIT_BACKSTOP_MS, SelfUpgradeError, selfUpgradeStatus, stageUpgrade } from './self-upgrade.js';
 
 /** Seconds between the reply and the exit that hands over to the launcher. */
 export const RESTART_DELAY_MS = 3_000;
@@ -18,9 +18,13 @@ agentUpgradeRoutes.post('/', async c => {
   }
   try {
     const result = await stageUpgrade({ request: parsed.data, version: AGENT_VERSION });
+    // A retried request: report the current state, change nothing.
+    if (result.repeated) return c.json({ success: true, data: { accepted: true, ...result } });
     logger.info(`Self-upgrade staged: ${result.from} -> ${result.to}; restarting through the launcher`);
     // Reply first; the launcher starts versions/<to> on trial after this process exits.
     setTimeout(() => process.kill(process.pid, 'SIGTERM'), RESTART_DELAY_MS).unref();
+    // Backstop: a shutdown that hangs must not keep the old version running on the new ./current.
+    setTimeout(() => process.exit(0), EXIT_BACKSTOP_MS).unref();
     return c.json({ success: true, data: { accepted: true, ...result, restartInSeconds: RESTART_DELAY_MS / 1000 } });
   } catch (error) {
     if (error instanceof SelfUpgradeError) {

@@ -68,7 +68,7 @@ const { CONTROL_API_VERSION } = await import('./config/version.js');
 
 /** Background services shared by the TLS and development listeners. */
 function startBackgroundServices(listenPort: number): void {
-  writeRuntimeFile({ version: CONTROL_API_VERSION, port: listenPort });
+  writeRuntimeFile({ version: CONTROL_API_VERSION, port: listenPort, host: listener.hostname });
   startNodeIssueMonitor();
   startApplicationProbes();
   startLogRetention();

@@ -4,7 +4,8 @@ import { compareVersions, latestVersion } from '@hivemagnus/magnus-contracts';
 import { readRuntime } from './health.js';
 import type { Io } from './io.js';
 import { Project } from './project.js';
-import { fetchRegistryCatalog } from './release.js';
+import { automaticCandidates, fetchRegistryCatalog } from './release.js';
+import { journalMessage } from './upgrade.js';
 
 export interface StatusOptions {
   dir: string;
@@ -24,7 +25,7 @@ export async function status(io: Io, options: StatusOptions): Promise<number> {
   if (!options.offline && project.state.current) {
     try {
       const catalog = await fetchRegistryCatalog(io, options.registry);
-      latest = { sameMajor: latestVersion(catalog.versions, { sameMajorAs: project.state.current }), any: latestVersion(catalog.versions) };
+      latest = { sameMajor: latestVersion(automaticCandidates(catalog), { sameMajorAs: project.state.current }), any: latestVersion(automaticCandidates(catalog)) };
     } catch (error) {
       latest = { sameMajor: null, any: null, error: error instanceof Error ? error.message : String(error) };
     }
@@ -39,6 +40,7 @@ export async function status(io: Io, options: StatusOptions): Promise<number> {
     installed,
     serving: runtime ? { version: runtime.version, pid: runtime.pid, startedAt: runtime.startedAt } : null,
     latest,
+    inProgress: project.state.inProgress ?? null,
     history: project.state.history.slice(-5),
   };
   if (options.json) {
@@ -58,6 +60,7 @@ export async function status(io: Io, options: StatusOptions): Promise<number> {
       io.log(`             ${latest.any} is a new major version; see UPGRADING.md before \`magnus upgrade --to ${latest.any} --allow-major\``);
     }
   }
+  if (report.inProgress) io.warn(journalMessage(project, report.inProgress));
   for (const entry of report.history) {
     io.log(`  ${entry.at}  ${entry.action} ${entry.from ?? '-'} -> ${entry.to}: ${entry.result}${entry.reason ? ` (${entry.reason})` : ''}`);
   }

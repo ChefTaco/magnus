@@ -10,6 +10,11 @@
 # policy and the agent's own allowlists. This is privileged mode
 # (MAGNUS_AGENT_PRIVILEGED=true, the default); to run without root, use
 # magnus-agent-unprivileged.service instead.
+#
+# These example units start the agent directly and cannot self-upgrade. For
+# server-driven upgrades, run `sudo magnus-agent install-service` instead: it
+# moves the install into versions/<X>, installs the upgrade launcher and writes
+# a unit that starts it (the cron path below node_modules keeps working).
 [Unit]
 Description=Magnus Agent
 After=network-online.target

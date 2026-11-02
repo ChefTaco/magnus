@@ -14,8 +14,8 @@ import { chownForService, installVersion, publishPins, serverCli } from './insta
 import { mustRun, type Io } from './io.js';
 import { acquireLock, Project, type Component, type DatabaseConfig, type ProjectState, type Supervisor } from './project.js';
 import { ownPackage, releaseFor } from './release.js';
-import { enableServices, restartServices, unitDirectory } from './supervisor.js';
-import { depsCompose, depsEnv, serverEnv, serverUnit, uiEnv, uiUnit } from './templates.js';
+import { checkSupervisor, enableServices, restartServices, unitDirectory } from './supervisor.js';
+import { composeProjectName, depsCompose, depsEnv, serverEnv, serverUnit, uiEnv, uiUnit } from './templates.js';
 import { loadCatalog, UpgradeError } from './upgrade.js';
 
 export interface InitOptions {
@@ -62,14 +62,14 @@ async function selfSignedCertificate(io: Io, dir: string, host: string): Promise
 
 async function hashPassword(io: Io, project: Project, version: string, password: string): Promise<string> {
   // argon2 comes with the server install; nothing extra is downloaded.
-  const { stdout } = await mustRun(io, process.execPath, ['--input-type=module', '-e',
+  const { stdout } = await mustRun(io, project.nodePath(), ['--input-type=module', '-e',
     "import argon2 from 'argon2'; console.log(await argon2.hash(process.env.MAGNUS_INIT_PASSWORD, { type: argon2.argon2id }))"],
   { cwd: project.versionDir(version), capture: true, env: { ...io.env, MAGNUS_INIT_PASSWORD: password } });
   return stdout.trim();
 }
 
 async function startDeps(io: Io, project: Project): Promise<void> {
-  const args = ['compose', '-f', project.path('deps.compose.yml'), '--env-file', project.path('config', 'deps.env'), 'up', '-d', '--wait'];
+  const args = ['compose', '-p', project.composeProject(), '-f', project.path('deps.compose.yml'), '--env-file', project.path('config', 'deps.env'), 'up', '-d', '--wait'];
   io.log('  starting PostgreSQL and Redis (docker compose)');
   await mustRun(io, 'docker', args, { capture: true });
 }
@@ -79,6 +79,10 @@ export async function init(io: Io, options: InitOptions): Promise<number> {
   if (options.system && !options.serviceUser) throw new UpgradeError('--system needs --service-user <existing account> to run the services as.');
   const dir = resolve(options.dir ?? defaultProjectDir(io, options.system));
   if (Project.exists(dir)) throw new UpgradeError(`${dir} already holds a Magnus project. Use \`magnus upgrade\` or \`magnus status\`.`);
+  // Before anything is written: systemd needs Linux and (user units) a session bus.
+  await checkSupervisor(io, options.supervisor, options.system ? 'system' : 'user').catch((error: unknown) => {
+    throw new UpgradeError(`${error instanceof Error ? error.message : String(error)} Or pass --supervisor none.`);
+  });
 
   const catalog = await loadCatalog(io, options);
   const own = ownPackage();
@@ -108,6 +112,9 @@ export async function init(io: Io, options: InitOptions): Promise<number> {
     current: null,
     previous: null,
     keepVersions: 3,
+    keepBackups: 5,
+    nodePath: process.execPath,
+    ...(deps ? { composeProject: composeProjectName(dir) } : {}),
     history: [],
   };
   mkdirSync(dir, { recursive: true, mode: 0o755 });
@@ -124,7 +131,7 @@ export async function init(io: Io, options: InitOptions): Promise<number> {
     if (deps) {
       const postgresPassword = randomBytes(24).toString('hex');
       const redisPassword = randomBytes(24).toString('hex');
-      writeFileSync(project.path('deps.compose.yml'), depsCompose());
+      writeFileSync(project.path('deps.compose.yml'), depsCompose(project.composeProject()));
       writeFileSync(project.path('config', 'deps.env'), depsEnv({ postgresPort: options.postgresPort, redisPort: options.redisPort, postgresPassword, redisPassword }), { mode: 0o600 });
       databaseUrl ??= `postgresql://magnus:${postgresPassword}@127.0.0.1:${options.postgresPort}/magnus`;
       redisUrl ??= `redis://:${redisPassword}@127.0.0.1:${options.redisPort}`;
@@ -141,6 +148,7 @@ export async function init(io: Io, options: InitOptions): Promise<number> {
     writeFileSync(project.envFile('server'), serverEnv({
       databaseUrl: databaseUrl!, redisUrl: redisUrl!, port: options.serverPort, publicUrl: `https://${host}:${options.serverPort}`,
       uiOrigin, tlsCert: tls.cert, tlsKey: tls.key, home: project.path('data'), backupDir: project.path('backups'), autoMigrate: options.autoMigrate,
+      projectDir: project.dir, runtimeFile: project.path('run', 'server-runtime.json'),
       ...(tls.selfSigned ? { extraCaFile: tls.cert } : {}),
     }, {}), { mode: 0o600 });
     const password = options.adminPassword ?? randomBytes(12).toString('base64url');
@@ -154,7 +162,7 @@ export async function init(io: Io, options: InitOptions): Promise<number> {
     }
 
     io.log('  applying database migrations');
-    await serverCli(io, project, version, ['migrate']);
+    await serverCli(io, project, version, ['migrate'], { detached: true });
     project.switchCurrent(version);
     project.state.current = version;
     project.record({ action: 'init', from: null, to: version, at: io.now().toISOString(), result: 'ok', migrations: [] });
@@ -170,7 +178,7 @@ export async function init(io: Io, options: InitOptions): Promise<number> {
 
     const afterUnits = deps ? ['docker.service'] : [];
     // With the self-signed certificate, agents on this host can reuse it; the server must trust it to call them.
-    const unitOptions = { project, nodePath: process.execPath, serviceUser: options.serviceUser, afterUnits,
+    const unitOptions = { project, nodePath: project.nodePath(), serviceUser: options.serviceUser, afterUnits,
       ...(tls.selfSigned ? { extraCaFile: tls.cert } : {}) };
     const units: Record<string, string> = { [`${state.units.server}.service`]: serverUnit(unitOptions) };
     if (options.ui) units[`${state.units.ui}.service`] = uiUnit(unitOptions);

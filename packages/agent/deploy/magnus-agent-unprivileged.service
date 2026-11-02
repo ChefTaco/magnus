@@ -13,6 +13,11 @@
 #
 # Use a NODE_MANAGER_PORT above 1023, and make the TLS key readable by
 # magnus-agent. Install this file as /etc/systemd/system/magnus-agent.service.
+#
+# These example units start the agent directly and cannot self-upgrade. For
+# server-driven upgrades, run `sudo magnus-agent install-service` instead: it
+# moves the install into versions/<X>, installs the upgrade launcher and writes
+# a unit that starts it (the cron path below node_modules keeps working).
 [Unit]
 Description=Magnus Agent (unprivileged)
 After=network-online.target

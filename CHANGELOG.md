@@ -6,12 +6,159 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [1.1.3] - 2026-11-02
+
 ### Changed
 
 - Ardent: extract prompt fitting and durable checkpoint logic into the exact
   `@hivemagnus/emberfold` 0.1.0 dependency. Keep SQLite publication, policy fences,
   journals, and profile isolation local. Add portable checkpoint metadata without
   changing existing checkpoint rows; previous-reader rollback remains supported.
+
+### Fixed
+
+- Agent: managed cron jobs find the install directory's `.env` and `.magnus` ledger again under the
+  versioned layout (`versions/<X>` reached through `./current` or the `node_modules` link).
+- Agent launcher: a state or link write that fails (full or read-only disk) no longer crash-loops the
+  service. The launcher logs it and starts the previous version, or `./current` without a trial.
+- Agent self-upgrade: every npm step and the smoke test have a time limit that kills the whole
+  process group, within a 13 minute total budget (`SELF_UPGRADE_TIMEOUT`). npm gets
+  `--fetch-timeout` and `--fetch-retries`.
+- Agent self-upgrade: `upgrade-state.json` and the `current` and `last-good` links are written
+  durably (fsync, rename, fsync of the directory), and the agent and the launcher lock the state
+  file around every change, so a late confirmation cannot race a revert. A confirmation after the
+  trial deadline, or from a version `./current` no longer runs, is refused.
+- Agent self-upgrade: a failed switch of `./current` records `failed`, not `staged`. The launcher
+  records `failed` instead of starting a trial when `./current` does not point at the new version.
+- Agent self-upgrade: upgrades start only when `versions/<from>` is complete. When it is missing at
+  revert time, the launcher uses `./last-good` or records `failed`, instead of reporting a revert
+  that did not happen.
+- Agent self-upgrade: a healthy new version is no longer reverted because the control API was
+  unreachable for a few minutes. On trial, heartbeats retry every 5 s, and the launcher extends the
+  trial up to three windows while the agent reports that it runs. The revert reason says
+  "control API unreachable" when that was the cause.
+- Agent self-upgrade: npm, its lifecycle scripts and the smoke test no longer inherit the agent's
+  credentials.
+- Agent self-upgrade: the agent uses the npm that ships with its own Node.js before the one on
+  `PATH`, and reports a missing or too old npm in the heartbeat instead of failing mid-upgrade.
+- Agent self-upgrade: a release whose `engines.node` excludes the node's Node.js
+  (`SELF_UPGRADE_ENGINE`) or that needs a newer launcher (`SELF_UPGRADE_LAUNCHER`) is refused before
+  the switch.
+- Agent self-upgrade: a repeated request with the same `requestId` returns 200 with the current
+  state. Earlier leftovers in `staging/` and stale `*.tmp` files are removed, the npm cache is per
+  upgrade, and the agent exits within 60 s after staging even if its shutdown hangs.
+- Agent launcher: the trial deadline is clamped and measured with a monotonic clock, a revert by the
+  trial watcher keeps the real attempt count, and the child always gets the launcher's own
+  `AGENT_INSTALL_DIR`.
+- `magnus-agent install-service --unprivileged` hands root-owned `staging/`, `upgrade-state.json` and
+  `.magnus` to the service account. The heartbeat reports when the agent cannot write them.
+- `magnus upgrade` records the upgrade in progress in `magnus-project.json`. An upgrade that was
+  killed, lost its terminal or crashed is reported by the next command, which offers
+  `magnus upgrade --resume` or `magnus rollback`. SIGINT, SIGHUP and SIGTERM stop the upgrade at the
+  next safe step; a running migration always finishes first, and after the switch an interrupted
+  upgrade switches back. A restart that fails counts as a failed health check.
+- The new version's `magnus-server check` and a start-up test (`--version`, native modules) run
+  before the backup and the migration. A check that crashes or prints no JSON fails the upgrade.
+- After a failed upgrade that applied a one-way migration, the previous version is no longer
+  started on a schema it cannot run on; the restore command is printed. `magnus rollback` asks the
+  previous version which applied migrations it does not know and refuses one-way ones without
+  `--restore-db` or `--force`. `--restore-db` fails when there is no dump, a failed restore starts
+  the services again, and without a supervisor rollback waits until the server has stopped.
+- Restores no longer leave tables of the newer release next to the restored ones: the dump is
+  restored into a fresh `public` schema (same owner and grants) in one transaction, and the
+  original schema is put back if `pg_restore` fails.
+- Startup auto-migrate refuses a database with a migration that failed halfway before dumping it,
+  reuses the dump of its last attempt when it restarts in a loop, keeps only the newest dumps, and
+  gives up waiting for another instance's migrate lock after a timeout. The generated units stop
+  after three failed starts in five minutes.
+- `--supervisor none` projects no longer revert every upgrade: the server env file now names
+  `MAGNUS_RUNTIME_FILE` and `MAGNUS_PROJECT_DIR`, and the health check also reads
+  `MAGNUS_HOME/run`. It probes the port and bind address the server reports.
+- An unreadable release manifest is no longer replaced by a guessed one: the engine says it is too
+  old and how to run the newest one. A registry 404 is an error. Deprecated releases and releases
+  newer than the `latest` tag are skipped unless named with `--to`.
+- The Node.js the services run is recorded; engines checks, npm and the server CLI use it, and
+  `magnus upgrade --node PATH` switches it and rewrites the units.
+- Install scripts come from the target release's manifest (`allowScripts`), not from the engine
+  that installs it.
+- `pg_dump` gets the password through `PGPASSWORD` instead of the command line, and every dump is
+  checked with `pg_restore --list`.
+- Free disk space, the systemd user session bus and (in `--dry-run`) `pg_dump` and npm are checked
+  before anything changes. User units are refused for another account (`sudo`), and systemd off
+  Linux is refused before `init` writes anything.
+- Upgrade locks record the boot and process start time, survive concurrent takeover, are handed to
+  a newer engine without a gap, and `--break-lock` removes a leftover one.
+- `magnus-project.json` and env files are written atomically and durably; env files keep their mode
+  and owner and a `.bak` of the previous content.
+- Server: agent upgrade runs no longer stop at a node that refused before anything changed (resource
+  enrollment, admission fence, busy, unreachable, managed-mutation guard). Such nodes are recorded
+  as `refused` with the agent's error code and message, and the run goes on; a refused canary hands
+  the role to the next node. Reverts, release problems and agents that go silent still stop the run.
+- Server: eligibility uses the same checks as dispatch (admission fence, enrollment state and host
+  name, held work and leases, fresh heartbeat), names the blocker (for example "resource enrollment
+  stuck in draining since <date>"), flags agents whose local managed-enrollment marker the server
+  does not share, and is checked again right before each node.
+- Server: a run whose server restarted or whose CLI was interrupted shows as `interrupted` instead
+  of blocking new runs for seven days. Two runs can no longer start at once.
+- Server: a node only counts as upgraded once its agent reports the request as confirmed. A lost
+  reply no longer fails the node; the heartbeat report for the request decides. The wait follows the
+  agent's own trial window.
+- Server: `nodeIds: []` no longer upgrades the whole fleet; unknown node ids are rejected and
+  selected nodes that are not eligible are listed with the reason.
+- Server: an agent stays `UPDATING` no longer once it goes offline or stops reporting an upgrade, and
+  gets back the status it had before.
+- Server: self-upgrade heartbeat reports with an unknown future upgrade state or a long reason are
+  kept instead of being dropped; reports that do not parse are logged.
+- Server: scheduler drain receipts may be up to 256 KiB (was 16 KiB), enough for the schema maximum
+  of 1024 external blockers on hosts with many system timers.
+- Console: the upgrade dialog shows the server's error message instead of "Request failed with
+  status code 409", refused and excluded nodes with their reasons, and the last run when reopened.
+
+### Added
+
+- Agent: operator-reviewed historical mutation records are read from a root-controlled JSON file
+  (`MAGNUS_AGENT_REVIEWED_HISTORICAL_RECORDS`, default `/etc/magnus/reviewed-historical-records.json`).
+  Before, the public agent shipped an empty set, so the enrollment drain proof of a node with signed
+  historical quiescence settlements failed with 409. The file must be owned by root, not group- or
+  world-writable, not a symlink, at most 1 MiB, and match the schema. Otherwise it is refused and the
+  reason is logged. Entries for other nodes are ignored.
+- Agent launcher protocol 2. `./last-good` points at the last confirmed version, and the launcher
+  falls back to it after repeated crashes with an unreadable state file. A confirmed version installs
+  its own launcher when that declares a higher protocol and passes a self-check
+  (`launcher.mjs --protocol`).
+- Heartbeat `selfUpgrade` gains `confirmSeconds` (the trial window) and `managedEnrollment` (the
+  agent's local enrollment marker), so the server can detect an enrollment disagreement.
+- `magnus restore <dump>` (stops the services, restores, starts them again) and
+  `magnus-server restore <dump> --env-file <file>`.
+- `magnus-server migrations --format json` reports `failed` and `unknown` (applied by a newer
+  release) migrations, the database size and the PostgreSQL major version. The server warns at
+  startup when the database is ahead of it.
+- New projects get their own Compose project name for the bundled PostgreSQL and Redis; existing
+  projects keep `magnus-deps`.
+- The server image allows ten minutes for startup (dump and migrate) before its health check counts.
+- Server: `POST /api/v1/agents/upgrade/runs/{id}/stop` and `/retry`, optional `canaryNodeId`,
+  `allowPrerelease` and `allowRetryReverted`; `magnus-server agents stop`, `agents upgrade --retry`,
+  `--canary`, `--allow-prerelease` and `--retry-reverted`. Console Stop and Retry buttons.
+- Server: audit actions `agent.upgrade_run.started|finished|stopped|stop_requested` and
+  `agent.upgrade.node_refused|node_failed|node_confirmed|node_reverted`.
+- Server: enrollment inspection lists each participant's last refresh failure as a fixed reason code
+  (and the participant's own error code, if it sent one).
+- Contracts: the self-upgrade heartbeat report may carry `confirmSeconds` and `managedEnrollment`.
+
+### New environment variables
+
+- `MAGNUS_BACKUP_KEEP` (server, default 5): dumps kept in `MAGNUS_BACKUP_DIR`; the newest of each
+  label always stays.
+- `MAGNUS_AUTO_MIGRATE_LOCK_TIMEOUT` (server, default 600): seconds auto-migrate waits for another
+  instance's migrate lock.
+- `MAGNUS_MIGRATE_DATABASE_URL` (server, optional): a direct connection for migrations, dumps and
+  restores when `DATABASE_URL` goes through a pooler such as PgBouncer.
+- `MAGNUS_AGENT_REVIEWED_HISTORICAL_RECORDS` (agent): path of the reviewed historical mutation records
+  file. Optional; default `/etc/magnus/reviewed-historical-records.json`.
+
+### Migration impact
+
+- None.
 
 ## [1.1.2] - 2026-11-02
 
@@ -252,6 +399,7 @@ The initial release snapshot.
   Pass them to `npm install -g` with `--allow-scripts=...`, or list them under `allowScripts` in
   your project's `package.json`.
 
+[1.1.3]: https://github.com/ChefTaco/magnus/releases/tag/v1.1.3
 [1.1.2]: https://github.com/ChefTaco/magnus/releases/tag/v1.1.2
 [1.1.1]: https://github.com/ChefTaco/magnus/releases/tag/v1.1.1
 [1.1.0]: https://github.com/ChefTaco/magnus/releases/tag/v1.1.0

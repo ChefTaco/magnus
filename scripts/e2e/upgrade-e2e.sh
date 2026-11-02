@@ -7,7 +7,8 @@
 #   4. `magnus-server agents upgrade` to a synthetic release: confirmed
 #   5. upgrade to a synthetic agent that never heartbeats: the launcher reverts it
 #   6. upgrade the server to a synthetic broken release with a migration: backup, auto-revert, restore hint
-#   7. `magnus rollback` to FROM: healthy
+#   7. `magnus restore` the pre-upgrade dump: the broken release's migration is gone, the server healthy
+#   8. `magnus rollback` to FROM: healthy
 #
 # Needs: E2E_DATABASE_ADMIN_URL (PostgreSQL superuser, database name starting
 # with magnus_ideas), E2E_REDIS_URL, `npm run build` done, sudo without a
@@ -133,7 +134,7 @@ wait_for() { # description, seconds, command...
   for ((i = 0; i < seconds; i += 3)); do "$@" >/dev/null 2>&1 && return 0; sleep 3; done
   fail "timed out waiting for $description"
 }
-agent_ready() { server_cli agents upgrade --to $AGENT_OK --integrity "sha512-$(printf 'A%.0s' {1..86})==" --dry-run 2>/dev/null | grep -q "will upgrade"; }
+agent_ready() { server_cli agents upgrade --allow-prerelease --to $AGENT_OK --integrity "sha512-$(printf 'A%.0s' {1..86})==" --dry-run 2>/dev/null | grep -q "will upgrade"; }
 wait_for "the agent to enroll with the launcher layout" 120 agent_ready
 
 synthetic() { node "$ROOT/scripts/e2e/synthetic-release.mjs" --from "$PACKS" --out "$SYNTH" "$@" >/dev/null; chmod -R a+rX "$SYNTH"; }
@@ -143,21 +144,25 @@ step "Agent upgrade $VERSION -> $AGENT_OK (confirms)"
 # The unpublished $VERSION contracts come from the source directory as well.
 cp "$PACKS/hivemagnus-magnus-contracts-$VERSION.tgz" "$SYNTH/"
 synthetic --version $AGENT_OK --only magnus-agent
-server_cli agents upgrade --to $AGENT_OK --integrity "$(integrity "$SYNTH/hivemagnus-magnus-agent-$AGENT_OK.tgz")" \
+server_cli agents upgrade --allow-prerelease --to $AGENT_OK --integrity "$(integrity "$SYNTH/hivemagnus-magnus-agent-$AGENT_OK.tgz")" \
   | tee "$WORK/agents-1.log" || fail "agent upgrade to $AGENT_OK"
 grep -q "confirmed" "$WORK/agents-1.log" || fail "agent upgrade was not confirmed"
 [[ $(sudo readlink "$AGENT_DIR/current") == versions/$AGENT_OK ]] || fail "agent ./current is not $AGENT_OK"
+wait_for "last-good to record $AGENT_OK" 30 bash -c "[[ \$(sudo readlink '$AGENT_DIR/last-good') == versions/$AGENT_OK ]]"
+[[ -z $(sudo find "$AGENT_DIR/staging" -mindepth 1 -maxdepth 1 2>/dev/null) ]] || fail "staging/ was not cleaned up"
 
 step "Agent upgrade $AGENT_OK -> $AGENT_SILENT (never heartbeats: the launcher reverts it)"
 synthetic --version $AGENT_SILENT --only magnus-agent --agent-never-heartbeats
 set +e
-server_cli agents upgrade --to $AGENT_SILENT --integrity "$(integrity "$SYNTH/hivemagnus-magnus-agent-$AGENT_SILENT.tgz")" | tee "$WORK/agents-2.log"
+server_cli agents upgrade --allow-prerelease --to $AGENT_SILENT --integrity "$(integrity "$SYNTH/hivemagnus-magnus-agent-$AGENT_SILENT.tgz")" | tee "$WORK/agents-2.log"
 rc=${PIPESTATUS[0]}
 set -e
 (( rc != 0 )) || fail "a never-heartbeating agent upgrade reported success"
 grep -q "reverted" "$WORK/agents-2.log" || fail "the agent did not report the revert"
 [[ $(sudo readlink "$AGENT_DIR/current") == versions/$AGENT_OK ]] || fail "agent ./current was not reverted"
 sudo grep -q '"state": "reverted"' "$AGENT_DIR/upgrade-state.json" || fail "agent upgrade state is not reverted"
+sudo grep -q 'no confirmed heartbeat' "$AGENT_DIR/upgrade-state.json" || fail "the revert reason does not name the missing heartbeat"
+[[ $(sudo readlink "$AGENT_DIR/last-good") == versions/$AGENT_OK ]] || fail "last-good moved during a failed trial"
 
 step "Server upgrade $VERSION -> $SERVER_BROKEN (broken, with a migration: reverts)"
 mkdir -p "$WORK/broken"
@@ -169,15 +174,26 @@ rc=${PIPESTATUS[0]}
 set -e
 (( rc == 1 )) || fail "a broken release did not fail the upgrade (exit $rc)"
 grep -q "switching back to $VERSION" "$WORK/broken.log" || fail "no automatic switch back"
-grep -q 'pg_restore --clean --if-exists --no-owner -d "$DATABASE_URL"' "$WORK/broken.log" || fail "no restore command printed"
-sudo sh -c "ls '$PROJECT'/backups/*pre-upgrade-$VERSION-to-$SERVER_BROKEN*.dump" >/dev/null || fail "no pre-upgrade dump"
+grep -q "magnus restore .*pre-upgrade-$VERSION-to-$SERVER_BROKEN.*\.dump --dir $PROJECT" "$WORK/broken.log" || fail "no restore command printed"
+DUMP=$(sudo sh -c "ls '$PROJECT'/backups/*pre-upgrade-$VERSION-to-$SERVER_BROKEN*.dump" | head -1)
+[[ -n $DUMP ]] || fail "no pre-upgrade dump"
 STATUS=$(magnus status --json --offline)
 [[ $(json 'v.current' <<<"$STATUS") == "$VERSION" && $(json 'v.serving.version' <<<"$STATUS") == "$VERSION" ]] || fail "$VERSION is not serving again"
 [[ $(json 'v.history.at(-1).result' <<<"$STATUS") == reverted ]] || fail "history does not record the revert"
+[[ $(json 'v.inProgress' <<<"$STATUS") == null ]] || fail "the reverted upgrade left its journal behind"
+[[ $(server_cli migrations --format json | json "v.unknown.map(m => m.name).join(',')") == 20991231000000_e2e_probe ]] \
+  || fail "migrations does not report the broken release's migration as unknown to $VERSION"
+
+step "Restore the pre-upgrade dump"
+magnus restore "$DUMP" --dir "$PROJECT" --yes --health-timeout 240 || fail "magnus restore"
+[[ $(server_cli migrations --format json | json "v.applied.includes('20991231000000_e2e_probe')") == false ]] \
+  || fail "the restore kept the broken release's migration"
+[[ $(magnus status --json --offline | json 'v.serving.version') == "$VERSION" ]] || fail "$VERSION is not serving after the restore"
+curl -fsk "https://127.0.0.1:$SERVER_PORT/api/v1/health" >/dev/null || fail "$VERSION is not healthy after the restore"
 
 step "Rollback $VERSION -> $FROM"
 magnus rollback --dir "$PROJECT" --health-timeout 240 || fail "rollback"
 [[ $(magnus status --json --offline | json 'v.current') == "$FROM" ]] || fail "rollback did not switch to $FROM"
 curl -fsk "https://127.0.0.1:$SERVER_PORT/api/v1/health" >/dev/null || fail "$FROM is not healthy after the rollback"
 
-step "PASS: init, upgrade, agent upgrade and self-revert, broken-release revert and rollback"
+step "PASS: init, upgrade, agent upgrade and self-revert, broken-release revert, restore and rollback"

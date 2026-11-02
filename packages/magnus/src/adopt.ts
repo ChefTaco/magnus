@@ -5,14 +5,14 @@
  * at ./current. Nothing running is touched unless --install-units is given.
  */
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { isVersion } from '@hivemagnus/magnus-contracts';
 import { readEnvFile } from './env-file.js';
 import { installVersion, publishPins } from './install.js';
 import type { Io } from './io.js';
 import { acquireLock, Project, type Component, type ProjectState, type Supervisor } from './project.js';
 import { releaseFor } from './release.js';
-import { enableServices, unitDirectory } from './supervisor.js';
+import { checkSupervisor, enableServices, unitDirectory } from './supervisor.js';
 import { serverUnit, uiUnit } from './templates.js';
 import { loadCatalog, UpgradeError } from './upgrade.js';
 import { defaultProjectDir } from './init.js';
@@ -44,6 +44,12 @@ export async function adopt(io: Io, options: AdoptOptions): Promise<number> {
   if (uiEnvFile && !existsSync(uiEnvFile)) throw new UpgradeError(`--ui-env-file ${uiEnvFile} does not exist`);
   const dir = resolve(options.dir ?? defaultProjectDir(io, options.system));
   if (Project.exists(dir)) throw new UpgradeError(`${dir} already holds a Magnus project.`);
+  if (options.supervisor === 'systemd') {
+    if (io.platform !== 'linux') throw new UpgradeError(`systemd units need Linux; on ${io.platform} pass --supervisor none.`);
+    if (options.installUnits) await checkSupervisor(io, 'systemd', options.system ? 'system' : 'user').catch((error: unknown) => {
+      throw new UpgradeError(error instanceof Error ? error.message : String(error));
+    });
+  }
   const version = options.version ?? await detectVersion(io);
   if (!version) throw new UpgradeError('Could not detect the installed version; pass --version X.Y.Z (the output of `magnus-server --version`).');
 
@@ -63,6 +69,8 @@ export async function adopt(io: Io, options: AdoptOptions): Promise<number> {
     current: null,
     previous: null,
     keepVersions: 3,
+    keepBackups: 5,
+    nodePath: process.execPath,
     history: [],
   };
   mkdirSync(dir, { recursive: true });
@@ -79,7 +87,9 @@ export async function adopt(io: Io, options: AdoptOptions): Promise<number> {
     publishPins(project, version);
     project.save();
 
-    const unitOptions = { project, nodePath: process.execPath, serviceUser: options.serviceUser, afterUnits: [] };
+    // An adopted install keeps its data where it was: the system units must be allowed to write there.
+    const extraWritable = ['MAGNUS_HOME', 'MAGNUS_BACKUP_DIR'].map((name) => serverEnv[name]).filter((path): path is string => Boolean(path && isAbsolute(path)));
+    const unitOptions = { project, nodePath: project.nodePath(), serviceUser: options.serviceUser, afterUnits: [], extraWritable };
     const units: Record<string, string> = { 'magnus-server.service': serverUnit(unitOptions) };
     if (uiEnvFile) units['magnus-ui.service'] = uiUnit(unitOptions);
     for (const [name, content] of Object.entries(units)) writeFileSync(project.path('units', name), content);

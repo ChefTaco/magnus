@@ -4,6 +4,7 @@
  *   npx @hivemagnus/magnus init                  create and start a project in ~/.magnus
  *   magnus upgrade [--to X.Y.Z] [--dry-run]      upgrade it (never across a major by itself)
  *   magnus rollback [--restore-db]               switch back to the previous version
+ *   magnus restore FILE                          restore a database dump (stops and restarts the services)
  *   magnus status                                versions, health and available updates
  *   magnus adopt --server-env-file FILE          take over an existing npm install
  */
@@ -11,7 +12,8 @@ import { adopt } from './adopt.js';
 import { init, defaultProjectDir } from './init.js';
 import type { Io } from './io.js';
 import { findProjectDir, type Supervisor } from './project.js';
-import { ownPackage } from './release.js';
+import { ownPackage, resolveRegistry } from './release.js';
+import { restore } from './restore.js';
 import { rollback } from './rollback.js';
 import { status } from './status.js';
 import { upgrade } from './upgrade.js';
@@ -22,16 +24,18 @@ Commands:
   init        Create a managed project, install the pinned release and start it
   upgrade     Upgrade the project (same major version unless --allow-major)
   rollback    Switch back to the version that served before the last upgrade
+  restore     Restore a database dump: stop the services, restore, start them again
   status      Show installed and serving versions, history and available updates
   adopt       Turn an existing npm install into a managed project
   version     Print this tool's version
 
 Common options:
   --dir DIR             Project directory (default ~/.magnus, or /opt/magnus with --system)
-  --registry URL        npm registry (default MAGNUS_UPDATE_REGISTRY or https://registry.npmjs.org)
+  --registry URL        npm registry (default MAGNUS_UPDATE_REGISTRY, then npm's configured registry)
   --source DIR          Install from packed tarballs in DIR instead of the registry
   --health-timeout SEC  How long to wait for the new version to become healthy (default 180)
   --yes                 Confirm slow or one-way migrations and restores without asking
+  --break-lock          Remove a lock left behind by a magnus command that no longer runs
 
 init:
   --version X.Y.Z       Release to install (default: newest of this major)
@@ -58,9 +62,15 @@ upgrade:
   --dry-run             Show what would happen and check prerequisites; change nothing
   --allow-major         Permit crossing a major version
   --generate-secrets    Generate values for new required secret settings
+  --resume              Finish an upgrade that was interrupted (see \`magnus status\`)
+  --node PATH           Node.js the services run and the upgrade uses (rewrites the units)
+  --force               After a failed upgrade, start the old version even over one-way migrations
 
 rollback:
   --restore-db          Also restore the pre-upgrade database dump (data written since is lost)
+  --force               Start the previous version even over one-way migrations it does not know
+
+restore FILE:           A dump from backups/ (shown by upgrade, rollback and status)
 
 status:
   --json                Machine-readable output
@@ -79,18 +89,21 @@ interface Parsed {
   command: string;
   values: Map<string, string>;
   flags: Set<string>;
+  /** Positional arguments after the command (restore FILE). */
+  args: string[];
 }
 
 const VALUE_OPTIONS = new Set(['--dir', '--registry', '--source', '--health-timeout', '--version', '--service-user', '--supervisor',
   '--database-url', '--redis-url', '--postgres-port', '--redis-port', '--server-port', '--ui-port', '--public-host', '--admin-user',
-  '--admin-password', '--tls-cert', '--tls-key', '--to', '--server-env-file', '--ui-env-file']);
+  '--admin-password', '--tls-cert', '--tls-key', '--to', '--server-env-file', '--ui-env-file', '--node']);
 const FLAG_OPTIONS = new Set(['--yes', '--system', '--no-ui', '--no-start', '--no-auto-migrate', '--dry-run', '--allow-major',
-  '--generate-secrets', '--resume', '--restore-db', '--json', '--offline', '--install-units', '--help', '-h']);
-const COMMANDS = new Set(['init', 'upgrade', 'rollback', 'status', 'adopt', 'version', 'help']);
+  '--generate-secrets', '--resume', '--restore-db', '--json', '--offline', '--install-units', '--force', '--break-lock', '--help', '-h']);
+const COMMANDS = new Set(['init', 'upgrade', 'rollback', 'restore', 'status', 'adopt', 'version', 'help']);
 
 export function parseArgs(argv: readonly string[]): Parsed {
   const values = new Map<string, string>();
   const flags = new Set<string>();
+  const args: string[] = [];
   let command: string | undefined;
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index]!;
@@ -106,12 +119,14 @@ export function parseArgs(argv: readonly string[]): Parsed {
       throw new ArgsError(`unknown option ${name}`);
     } else if (!command && COMMANDS.has(name)) {
       command = name;
+    } else if (command === 'restore' && args.length === 0) {
+      args.push(name);
     } else {
       throw new ArgsError(`unexpected argument ${name}`);
     }
   }
   if (flags.has('--help')) command = 'help';
-  return { command: command ?? 'help', values, flags };
+  return { command: command ?? 'help', values, flags, args };
 }
 
 function port(values: Map<string, string>, name: string, fallback: number): number {
@@ -135,12 +150,14 @@ function projectDir(io: Io, values: Map<string, string>, system: boolean): strin
 }
 
 export async function run(io: Io, argv: readonly string[]): Promise<number> {
-  const { command, values, flags } = parseArgs(argv);
-  const registry = values.get('--registry') ?? io.env['MAGNUS_UPDATE_REGISTRY'] ?? 'https://registry.npmjs.org';
+  const { command, values, flags, args } = parseArgs(argv);
+  const registry = ['init', 'upgrade', 'status', 'adopt'].includes(command) ? await resolveRegistry(io, values.get('--registry')) : 'https://registry.npmjs.org';
   const healthTimeoutMs = Number(values.get('--health-timeout') ?? '180') * 1000;
   if (!Number.isFinite(healthTimeoutMs) || healthTimeoutMs <= 0) throw new ArgsError('--health-timeout must be a number of seconds');
   const source = values.get('--source');
   const yes = flags.has('--yes');
+  const breakLock = flags.has('--break-lock');
+  const force = flags.has('--force');
   switch (command) {
     case 'help':
       io.log(USAGE);
@@ -162,9 +179,15 @@ export async function run(io: Io, argv: readonly string[]): Promise<number> {
       return upgrade(io, {
         dir: projectDir(io, values, false), to: values.get('--to'), dryRun: flags.has('--dry-run'), allowMajor: flags.has('--allow-major'),
         yes, generateSecrets: flags.has('--generate-secrets'), source, registry, healthTimeoutMs, resume: flags.has('--resume'),
+        force, breakLock, nodePath: values.get('--node'),
       });
     case 'rollback':
-      return rollback(io, { dir: projectDir(io, values, false), restoreDb: flags.has('--restore-db'), yes, healthTimeoutMs });
+      return rollback(io, { dir: projectDir(io, values, false), restoreDb: flags.has('--restore-db'), yes, healthTimeoutMs, force, breakLock });
+    case 'restore': {
+      const file = args[0];
+      if (!file) throw new ArgsError('restore needs the dump file: magnus restore <file>');
+      return restore(io, { dir: projectDir(io, values, false), file, yes, healthTimeoutMs, breakLock });
+    }
     case 'status':
       return status(io, { dir: projectDir(io, values, false), json: flags.has('--json'), offline: flags.has('--offline'), registry });
     case 'adopt': {
