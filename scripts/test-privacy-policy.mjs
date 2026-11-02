@@ -96,7 +96,7 @@ test('npm package checking scans generated file contents as well as names', () =
     }
     const directories = ['packages/contracts', 'packages/skills', 'packages/ardent', 'packages/agent', 'services/control-api', 'apps/dashboard', 'packages/magnus'];
     const files = ['package.json', 'README.md', 'LICENSE', 'dist/index.js',
-      'dist/app/apps/dashboard/server-tls.mjs', 'dist/app/apps/dashboard/server.js', 'launcher/launcher.mjs'];
+      'dist/app/apps/dashboard/server-tls.mjs', 'dist/app/apps/dashboard/server.js', 'launcher/launcher.mjs', 'NOTICE', 'dist/ardent-context-bundle.json'];
     for (const directory of directories) {
       for (const file of files) {
         const target = join(root, directory, file);
@@ -106,6 +106,7 @@ test('npm package checking scans generated file contents as well as names', () =
       writeFileSync(join(root, directory, 'package.json'), JSON.stringify({
         name: '@hivemagnus/fixture', version: '1.0.0', license: 'Apache-2.0', publishConfig: { access: 'public' }, main: 'dist/index.js',
       }));
+      writeFileSync(join(root, directory, 'dist/ardent-context-bundle.json'), JSON.stringify({ files: [{ content: Buffer.from('synthetic context code').toString('base64') }] }));
     }
     writeFileSync(join(root, 'bin/npm'), `#!${process.execPath}\nconsole.log(${JSON.stringify(JSON.stringify([{ files: files.map(path => ({ path })) }]))});\n`, { mode: 0o755 });
     const options = { encoding: 'utf8', env: { ...process.env, PATH: `${join(root, 'bin')}:${process.env.PATH}` } };
@@ -117,6 +118,12 @@ test('npm package checking scans generated file contents as well as names', () =
     assert.equal(result.status, 1);
     assert.match(result.stdout, /dist\/index.js:1: GitHub token \[redacted\]/);
     assert.ok(!`${result.stdout}${result.stderr}`.includes(token));
+    writeFileSync(join(root, 'packages/contracts/dist/index.js'), 'sanitized');
+    writeFileSync(join(root, 'packages/agent/dist/ardent-context-bundle.json'), JSON.stringify({ files: [{ content: Buffer.from(token).toString('base64') }] }));
+    const encoded = run();
+    assert.equal(encoded.status, 1);
+    assert.match(encoded.stdout, /payload-0:1: GitHub token \[redacted\]/);
+    assert.ok(!`${encoded.stdout}${encoded.stderr}`.includes(token));
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -129,6 +136,7 @@ test('package builds remove outputs for deleted source files', { timeout: 60_000
       mkdirSync(join(cwd, 'src'), { recursive: true });
       mkdirSync(join(cwd, 'scripts'));
       for (const file of ['build-index.mjs', 'copy-assets.mjs']) writeFileSync(join(cwd, 'scripts', file), '');
+      writeFileSync(join(cwd, 'build-context-bundle.mjs'), '');
       writeFileSync(join(cwd, 'package.json'), JSON.stringify({ private: true, type: 'module', scripts: manifest.scripts }));
       writeFileSync(join(cwd, 'tsconfig.json'), JSON.stringify({ compilerOptions: {
         target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext', types: [],

@@ -134,7 +134,7 @@ export type AuditAction =
   | 'release.coding.propose'
   | 'release.coding.review'
   | 'release.coding.resume-publication'
-  | `ardent.${'profile-create' | 'profile-import-hermes' | 'config-validate' | 'config-save' | 'peer-validate' | 'peer-save' | 'identity-save' | 'identity-restore' | 'provider-test' | 'channel-test' | 'peer-test' | 'memory-search' | 'task-submit' | 'task-cancel' | 'skill-set' | 'service-start' | 'service-stop' | 'service-restart' | 'package-install'}`
+  | `ardent.${'profile-create' | 'profile-import-hermes' | 'config-validate' | 'config-save' | 'peer-validate' | 'peer-save' | 'identity-save' | 'identity-restore' | 'provider-test' | 'channel-test' | 'peer-test' | 'memory-search' | 'task-submit' | 'task-cancel' | 'skill-set' | 'service-start' | 'service-stop' | 'service-restart' | 'package-install' | 'context-stage' | 'context-adopt' | 'context-rollback'}`
   | 'codex.auth.logout'
   | 'codex.auth.expired_logout'
   | 'codex.auth.device_start'

@@ -78,6 +78,8 @@ jobs:
         run: npm --workspace @hivemagnus/magnus-server run db:generate
       - name: Build, typecheck, test and check packages
         run: npm run verify
+      - name: Context-only adoption of a published older Ardent runtime
+        run: npm run ardent:context:integration -- --image node:${{ matrix.node-version }}-bookworm-slim
       - name: Apply database migrations
         run: npm --workspace @hivemagnus/magnus-server run db:migrate:deploy
       - name: PostgreSQL 17 client tools (the restore integration test dumps the PostgreSQL 17 service)

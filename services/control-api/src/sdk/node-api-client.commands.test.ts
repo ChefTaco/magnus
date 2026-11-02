@@ -92,6 +92,22 @@ describe('credential-bearing native mutations', () => {
   });
 });
 
+describe('managed context-only adoption', () => {
+  it.each(['context-stage', 'context-adopt', 'context-rollback'])('never falls back to an unleased %s action', async action => {
+    const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
+    mocks.admit.mockResolvedValue(null);
+    await expect(client().performArdentContextAction('example', action, { release_id: '11111111-1111-4111-8111-111111111111',
+      expected_bundle_sha256: 'a'.repeat(64), expected_base_sha256: 'b'.repeat(64), expected_policy_sha256: 'c'.repeat(64), expected_config_sha256: 'd'.repeat(64) }))
+      .rejects.toThrow('requires enrolled managed admission');
+    expect(fetch).not.toHaveBeenCalled();
+    expect(mocks.mark).not.toHaveBeenCalled();
+  });
+  it('rejects arbitrary context actions before reserving ownership', async () => {
+    await expect(client().performArdentContextAction('example', 'shell', {})).rejects.toThrow('Invalid context adoption');
+    expect(mocks.admit).not.toHaveBeenCalled();
+  });
+});
+
 describe('independently packaged command wire compatibility', () => {
   it('uses identical canonical requests and validates v2 through API parsing', () => {
     const request = input();

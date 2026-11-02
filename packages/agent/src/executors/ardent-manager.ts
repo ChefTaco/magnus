@@ -8,6 +8,9 @@ import { parse as parseEnv } from 'dotenv';
 import YAML from 'yaml';
 import { z } from 'zod';
 import { ardentPackageNames } from './ardent-packages.js';
+import { contextAdoptionInput, contextRelease, inspectContextAdoption, manageContextAdoption } from './ardent-context-adoption.js';
+import { childEnvironment } from '../utils/child-env.js';
+import { managedExecution } from '../security/managed-context.js';
 
 export { ardentPackageNames, DEFAULT_ARDENT_PACKAGE } from './ardent-packages.js';
 
@@ -130,7 +133,7 @@ async function stagedPackage(): Promise<{ name: string; version: string; sha256:
   return { name: details.name, version: details.version, sha256: digest };
 }
 
-async function packageTreeDigest(packageRoot: string): Promise<string> {
+export async function packageTreeDigest(packageRoot: string): Promise<string> {
   const entries: string[] = [];
   let totalBytes = 0;
   const visit = async (directory: string): Promise<void> => {
@@ -209,7 +212,7 @@ async function managementToken(dir: string, envName: string): Promise<string> {
 const allowedRead = /^(?:openapi|status|profile|config|config\/schema|providers|channels|peers|peers\/config|memory\/status|skills|sessions|tasks|tasks\/[0-9a-f-]{36}(?:\/events)?|jobs\/definitions\/status|sessions\/[0-9a-f-]{36}\/messages|identity\/(?:soul|identity)(?:\/history)?|artifacts\/[a-f0-9]{64})$/;
 const actionInput = z.object({
   profile: profileName,
-  action: z.enum(['profile-create', 'profile-import-hermes', 'config-validate', 'config-save', 'peer-validate', 'peer-save', 'identity-save', 'identity-restore', 'provider-test', 'channel-test', 'peer-test', 'memory-search', 'task-submit', 'task-cancel', 'skill-set', 'service-start', 'service-stop', 'service-restart', 'package-install']),
+  action: z.enum(['profile-create', 'profile-import-hermes', 'config-validate', 'config-save', 'peer-validate', 'peer-save', 'identity-save', 'identity-restore', 'provider-test', 'channel-test', 'peer-test', 'memory-search', 'task-submit', 'task-cancel', 'skill-set', 'service-start', 'service-stop', 'service-restart', 'package-install', 'context-stage', 'context-adopt', 'context-rollback']),
   target: z.string().max(128).optional(),
   body: z.unknown().optional(),
 }).strict();
@@ -233,6 +236,9 @@ const actionRoutes: Record<z.infer<typeof actionInput>['action'], { method: 'POS
   'service-stop': { method: 'POST', path: () => '' },
   'service-restart': { method: 'POST', path: () => '' },
   'package-install': { method: 'POST', path: () => '' },
+  'context-stage': { method: 'POST', path: () => '' },
+  'context-adopt': { method: 'POST', path: () => '' },
+  'context-rollback': { method: 'POST', path: () => '' },
 };
 
 async function runAsOwner(root: ArdentRoot, args: string[], timeout = 100_000): Promise<string> {
@@ -243,7 +249,7 @@ async function runAsOwner(root: ArdentRoot, args: string[], timeout = 100_000): 
   const bus = `/run/user/${uid}/bus`;
   return new Promise<string>((resolve, reject) => execFile('/usr/sbin/runuser', ['-u', root.owner, '--', '/usr/bin/env',
     `XDG_RUNTIME_DIR=/run/user/${uid}`, `DBUS_SESSION_BUS_ADDRESS=unix:path=${bus}`, ...args],
-  { timeout, maxBuffer: 32 * 1024 }, (error, stdout) => error ? reject(new Error(`Ardent owner command failed: ${error.code ?? 'unknown'}`)) : resolve(stdout)));
+  { timeout, maxBuffer: 32 * 1024, env: childEnvironment() }, (error, stdout) => error ? reject(new Error(`Ardent owner command failed: ${error.code ?? 'unknown'}`)) : resolve(stdout)));
 }
 
 export async function hermesTrafficConsumersDisabled(home: string): Promise<boolean> {
@@ -269,7 +275,12 @@ export function ardentUserUnit(root: ArdentRoot, profile: string, packageName = 
   return `[Unit]\nDescription=Magnus Ardent ${profile}\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nWorkingDirectory=${join(root.root, 'profiles', profile)}\nEnvironment=ARDENT_HOME=${root.root}\nExecStart=/usr/bin/node ${join(packageDir(root.install, packageName), 'dist/cli.js')} --profile ${profile} gateway run\nRestart=on-failure\nRestartSec=5\nTimeoutStopSec=75\nNoNewPrivileges=true\n\n[Install]\nWantedBy=default.target\n`;
 }
 
-async function serviceAction(root: ArdentRoot, profile: string, action: 'service-start' | 'service-stop' | 'service-restart'): Promise<object> {
+export function ardentServiceCommand(action: 'service-start' | 'service-stop' | 'service-restart', preserveEnablement = false): string[] {
+  return action === 'service-start' ? preserveEnablement ? ['start'] : ['enable', '--now']
+    : action === 'service-stop' ? preserveEnablement ? ['stop'] : ['disable', '--now'] : ['restart'];
+}
+
+async function serviceAction(root: ArdentRoot, profile: string, action: 'service-start' | 'service-stop' | 'service-restart', preserveEnablement = false): Promise<object> {
   if (process.getuid?.() !== 0) throw new Error('Ardent service management requires a root node manager');
   const { config, dir } = await profileConfig(root.root, profile);
   const requested = Object.entries(channelStates(config)).filter(([, enabled]) => enabled).map(([name]) => name);
@@ -309,7 +320,7 @@ async function serviceAction(root: ArdentRoot, profile: string, action: 'service
     await chown(path, Number(fields?.[2]), Number(fields?.[3]));
     await runAsOwner(root, ['/usr/bin/systemctl', '--user', 'daemon-reload'], 10_000);
   }
-  const command = action === 'service-start' ? ['enable', '--now'] : action === 'service-stop' ? ['disable', '--now'] : ['restart'];
+  const command = ardentServiceCommand(action, preserveEnablement);
   await runAsOwner(root, ['/usr/bin/systemctl', '--user', ...command, unit]);
   let running = false;
   for (let attempt = 0; attempt < 20; attempt++) {
@@ -323,6 +334,8 @@ async function serviceAction(root: ArdentRoot, profile: string, action: 'service
 
 async function installPackage(root: ArdentRoot): Promise<object> {
   if (process.getuid?.() !== 0) throw new Error('Ardent package installation requires a root node manager');
+  if (await lstat(join(root.install, 'context-adoption.json')).then(() => true, error => { if (error.code === 'ENOENT') return false; throw error; }))
+    throw new Error('Resolve the context adoption before replacing the entire Ardent runtime');
   const staged = await stagedPackage();
   if (!staged) throw new Error('No verified Ardent package is staged with this node agent release');
   const before = await readArdentState(root) as { version: string | null; profiles: Array<{ id: string; running: boolean }> };
@@ -428,6 +441,34 @@ export function createArdentRoutes(resolveRoot: () => Promise<ArdentRoot> = arde
     try { return c.json({ success: true, data: await readArdentState(await resolveRoot()) }); }
     catch (error: unknown) { return c.json({ success: false, error: error instanceof Error ? error.message.slice(0, 200) : 'Ardent inventory failed' }, 503); }
   });
+  routes.get('/profiles/:name/context', async c => {
+    try {
+      const root = await resolveRoot();
+      const profile = profileName.parse(c.req.param('name'));
+      await profileConfig(root.root, profile);
+      const name = await installedPackageName(root.install);
+      if (!name) throw new Error('No supported Ardent runtime is installed');
+      const release = await contextRelease();
+      const unit = join(root.home, '.config/systemd/user', `ardent@${profile}.service`);
+      const unitInfo = await lstat(unit);
+      if (!unitInfo.isFile() || unitInfo.isSymbolicLink()) throw new Error('Ardent service unit is unsafe');
+      const serviceUnitMatches = await readFile(unit, 'utf8') === ardentUserUnit(root, profile, name);
+      return c.json({ schema_version: 1, engine_version: release.bundle.engine_version, bundle_sha256: release.sha256,
+        base_sha256: await packageTreeDigest(packageDir(root.install, name)),
+        policy_sha256: createHash('sha256').update(await readFile(join(root.root, 'model-policy/active.json'))).digest('hex'),
+        config_sha256: createHash('sha256').update(await readFile(join(root.root, 'profiles', profile, 'config.yaml'))).digest('hex'),
+        single_profile: JSON.stringify(await safeProfiles(root.root)) === JSON.stringify([profile]), service_unit_matches: serviceUnitMatches });
+    } catch (error: unknown) {
+      return c.json({ error: error instanceof Error ? error.message.slice(0, 200) : 'Context adoption preflight unavailable' }, 503);
+    }
+  });
+  routes.get('/profiles/:name/context/:releaseId', async c => {
+    try {
+      return c.json(await inspectContextAdoption(await resolveRoot(), profileName.parse(c.req.param('name')), c.req.param('releaseId')));
+    } catch (error: unknown) {
+      return c.json({ error: error instanceof Error ? error.message.slice(0, 200) : 'Context adoption journal unavailable' }, 503);
+    }
+  });
   routes.get('/profiles/:name/api/*', async c => {
     try {
       const target = await resolveRoot();
@@ -465,6 +506,24 @@ export function createArdentRoutes(resolveRoot: () => Promise<ArdentRoot> = arde
     if (Buffer.byteLength(body) > 200_000) return c.json({ error: 'Ardent action exceeds size limit' }, 413);
     try {
       const root = await resolveRoot();
+      if (input.action === 'context-stage' || input.action === 'context-adopt' || input.action === 'context-rollback') {
+        if (!managedExecution.getStore()) return c.json({ error: 'Context adoption requires a signed managed resource claim' }, 409);
+        if (!contextAdoptionInput.safeParse(input.body).success) return c.json({ error: 'Context adoption requires exact release, source and policy pins' }, 400);
+        await profileConfig(root.root, input.profile);
+        return c.json(await manageContextAdoption(root, input.profile, input.action, input.body, {
+          packageName: async () => { const name = await installedPackageName(root.install); if (!name) throw new Error('Ardent runtime is absent'); return name; },
+          treeDigest: packageTreeDigest, profiles: () => safeProfiles(root.root),
+          service: action => serviceAction(root, input.profile, action, true),
+          checkService: async () => {
+            const name = await installedPackageName(root.install);
+            if (!name) throw new Error('Ardent runtime is absent');
+            const path = join(root.home, '.config/systemd/user', `ardent@${input.profile}.service`);
+            const info = await lstat(path);
+            if (!info.isFile() || info.isSymbolicLink() || await readFile(path, 'utf8') !== ardentUserUnit(root, input.profile, name))
+              throw new Error('Existing Ardent service does not match the reviewed managed unit');
+          }
+        }));
+      }
       if (input.action === 'package-install') return c.json(await installPackage(root));
       if (input.action === 'profile-create') return c.json(await createProfile(root, input.profile, input.body));
       if (input.action === 'profile-import-hermes') return c.json(await importHermesProfile(root, input.profile, input.body));

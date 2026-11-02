@@ -263,6 +263,11 @@ its name, for example `MAGNUS_AGENT_ARDENT_PACKAGES=@hivemagnus/ardent,@legacy-s
 Older sidecars with the `{name, version, sha256}` shape are accepted unchanged.
 Profile channel maps accept any channel key that matches `[a-z][a-z0-9_-]{0,31}`.
 
+For adopting Emberfold without replacing the existing runtime, see
+[context-only Ardent adoption](../../docs/ARDENT_CONTEXT_ADOPTION.md). The release
+bundles the exact context adapter and engine; managed staging verifies continuity
+in isolated data before activation exercises an actual old-runtime rollback.
+
 ## Development
 
 ```bash

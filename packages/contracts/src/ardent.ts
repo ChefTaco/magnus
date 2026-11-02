@@ -1,5 +1,14 @@
 import { z } from 'zod';
 
+export const ArdentContextAdoptionInputSchema = z.object({ release_id: z.string().guid(),
+  expected_bundle_sha256: z.string().regex(/^[a-f0-9]{64}$/), expected_base_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  expected_policy_sha256: z.string().regex(/^[a-f0-9]{64}$/), expected_config_sha256: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
+export const ArdentContextReleaseSchema = z.object({ schema_version: z.literal(1), engine_version: z.literal('0.1.0'),
+  bundle_sha256: z.string().regex(/^[a-f0-9]{64}$/), base_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  policy_sha256: z.string().regex(/^[a-f0-9]{64}$/), config_sha256: z.string().regex(/^[a-f0-9]{64}$/), single_profile: z.boolean(), service_unit_matches: z.boolean() }).strict();
+export type ArdentContextAdoptionInput = z.infer<typeof ArdentContextAdoptionInputSchema>;
+export type ArdentContextRelease = z.infer<typeof ArdentContextReleaseSchema>;
+
 export const ArdentProfileSummarySchema = z.object({
   id: z.string(), name: z.string(), backend: z.enum(['llamacpp', 'codex']).nullable(),
   apiPort: z.number().int().nullable(), running: z.boolean(), a2aEnabled: z.boolean(),

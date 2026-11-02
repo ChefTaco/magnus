@@ -1,0 +1,5 @@
+Magnus includes a context-only adoption bundle containing Emberfold 0.1.0.
+Emberfold is licensed under Apache-2.0.
+Source: https://github.com/ChefTaco/emberfold
+Its LICENSE and NOTICE are retained in the bundle and installed with the engine.
+The bundle also contains Zod 4.6.7 under the MIT license, retained with Zod.

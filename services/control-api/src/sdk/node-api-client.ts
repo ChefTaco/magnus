@@ -12,7 +12,7 @@ import ky, { HTTPError, type AfterResponseState, type KyInstance } from 'ky';
 import { HttpError } from '../middleware/error-handler.js';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
-import { agentUpgradePreflightSchema, type AgentUpgradePreflight, type ArdentNodeState } from '@hivemagnus/magnus-contracts';
+import { agentUpgradePreflightSchema, ArdentContextAdoptionInputSchema, type AgentUpgradePreflight, type ArdentNodeState } from '@hivemagnus/magnus-contracts';
 import type {
   ApiResponse,
   HealthSnapshot,
@@ -746,6 +746,25 @@ export class NodeApiClient {
       || (target !== undefined && !/^[A-Za-z0-9_-]{1,128}$/.test(target))) throw new Error('Invalid Ardent action target');
     const timeout = action === 'package-install' ? 600_000 : action === 'profile-import-hermes' ? 90_000 : action.startsWith('service-') ? 115_000 : 45_000;
     return this.mutate('POST', 'ardent/action', { profile, action, ...(target ? { target } : {}), body: body ?? {} }, timeout);
+  }
+
+  async getArdentContextRelease(profile: string): Promise<unknown> {
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(profile)) throw new Error('Invalid Ardent context profile');
+    return this.api.get(`ardent/profiles/${profile}/context`, { timeout: 15000, retry: 0 }).json();
+  }
+
+  async getArdentContextAdoption(profile: string, releaseId: string): Promise<unknown> {
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(profile) || !/^[a-f0-9-]{36}$/i.test(releaseId)) throw new Error('Invalid context adoption journal target');
+    return this.api.get(`ardent/profiles/${profile}/context/${releaseId}`, { timeout: 15000, retry: 0 }).json();
+  }
+
+  async performArdentContextAction<T>(profile: string, action: string, body: unknown): Promise<ManagedMutationResult<T>> {
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(profile) || !['context-stage', 'context-adopt', 'context-rollback'].includes(action))
+      throw new Error('Invalid context adoption action');
+    const input = ArdentContextAdoptionInputSchema.parse(body);
+    const result = await this.mutateWithEvidence<T>('POST', 'ardent/action', { profile, action, body: input }, 850000, undefined, undefined, true);
+    if (!result.evidence) throw new Error('Context adoption requires a signed managed mutation receipt');
+    return { response: result.response, evidence: result.evidence };
   }
 
   async updateCodex(): Promise<ApiResponse<CodexNodeState>> {

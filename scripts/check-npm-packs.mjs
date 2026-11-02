@@ -26,7 +26,7 @@ export const PUBLISHABLE = [
 // Runtime files a package needs beyond its bin, main, types and exports.
 const EXTRA_REQUIRED = {
   'apps/dashboard': ['dist/app/apps/dashboard/server-tls.mjs', 'dist/app/apps/dashboard/server.js'],
-  'packages/agent': ['launcher/launcher.mjs'],
+  'packages/agent': ['launcher/launcher.mjs', 'NOTICE', 'dist/ardent-context-bundle.json'],
 };
 
 const UNEXPECTED_MODULES = /^(?!dist\/app\/)(.*\/)?node_modules\//u;
@@ -73,6 +73,21 @@ for (const directory of PUBLISHABLE) {
       const content = readFileSync(join(cwd, file));
       for (const finding of [...secretFindings(content.toString()), ...privateInfrastructureFindings(content.toString())]) {
         problems.push(`${file}:${finding.line}: ${finding.rule} [redacted]`);
+      }
+      if (file === 'dist/ardent-context-bundle.json') {
+        try {
+          const bundle = JSON.parse(content.toString());
+          if (!Array.isArray(bundle.files) || bundle.files.length > 1000) throw new Error('Invalid context payload');
+          let size = 0;
+          for (const [index, entry] of bundle.files.entries()) {
+            if (typeof entry.content !== 'string') throw new Error('Invalid encoded context payload');
+            const decoded = Buffer.from(entry.content, 'base64');
+            size += decoded.length;
+            if (decoded.toString('base64') !== entry.content || size > 12 * 1024 * 1024) throw new Error('Invalid encoded context payload');
+            for (const finding of [...secretFindings(decoded.toString()), ...privateInfrastructureFindings(decoded.toString())])
+              problems.push(`${file}:payload-${index}:${finding.line}: ${finding.rule} [redacted]`);
+          }
+        } catch { problems.push(`${file}: context payload cannot be privacy-checked`); }
       }
     }
   }

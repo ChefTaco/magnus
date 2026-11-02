@@ -24,6 +24,8 @@ README is the reference for its installation, configuration and environment vari
 
 ## Operations
 
+- [Context-only Ardent adoption](ARDENT_CONTEXT_ADOPTION.md): pinned engine staging,
+  per-profile continuity acceptance, managed activation and runtime rollback.
 - [Public-release privacy and security review](PUBLIC_RELEASE_REVIEW.md): fixes, validation and
   publication prerequisites from the pre-release review.
 - [Publishing packages](PUBLISHING.md): required review, npm authentication,

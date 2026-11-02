@@ -12,6 +12,7 @@ catalogue; each package README lists its own build and test commands.
 | Install git hooks | `npm run hooks:install` | Points `core.hooksPath` at `.githooks/` |
 | OpenAPI contract | `npm run openapi:check` | `check-openapi-contract.mjs`: the server's OpenAPI document is valid 3.1 and every operation has a summary, tags and responses. Needs a server build. |
 | npm package contents | `npm run check:packs` | `check-npm-packs.mjs`: dry-runs `npm pack` for every published package, checks required files, and scans file names and contents for credentials, private infrastructure and local state |
+| Context-only runtime adoption | `npm run ardent:context:integration` | Offline container acceptance against an older published Ardent runtime; compaction, recovery, real gateway restarts and runtime rollback with a synthetic provider |
 | Lockfile | `npm run lockfile:check` | `validate-lockfile.mjs`: `package-lock.json` agrees with every workspace manifest and each registry package has an integrity hash |
 | Documentation | `npm run docs:check` | `check-repository-docs.mjs` and `check-documentation.mjs`. Needs a console build (`npm run dashboard:build`). |
 | Documentation, no build | `npm run docs:links` | `check-repository-docs.mjs`: package guides, package maps and local Markdown links |

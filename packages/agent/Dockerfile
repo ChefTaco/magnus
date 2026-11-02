@@ -20,6 +20,7 @@ WORKDIR /opt/magnus-build
 COPY . .
 RUN npm ci --no-audit --no-fund --ignore-scripts \
       --workspace @hivemagnus/magnus-contracts \
+      --workspace @hivemagnus/ardent \
       --workspace @hivemagnus/magnus-agent
 RUN npm --workspace @hivemagnus/magnus-contracts run build \
   && npm --workspace @hivemagnus/magnus-agent run build

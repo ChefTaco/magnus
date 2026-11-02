@@ -77,6 +77,7 @@ jobs:
           npm --workspace @hivemagnus/magnus-server run db:generate
           npm run audit:production
           npm run verify
+          npm run ardent:context:integration -- --image node:24.22.1-bookworm-slim
 
       - name: Publish
         env:

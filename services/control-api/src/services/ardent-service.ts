@@ -1,4 +1,4 @@
-import { ArdentNodeStateSchema, type ArdentFleetInstallation } from '@hivemagnus/magnus-contracts';
+import { ArdentNodeStateSchema, ArdentContextReleaseSchema, ArdentContextAdoptionInputSchema, type ArdentFleetInstallation } from '@hivemagnus/magnus-contracts';
 import { getDb } from '../db/index.js';
 import { NodeApiClient } from '../sdk/index.js';
 import { getNodeBaseUrl } from '../utils/node-url.js';
@@ -84,5 +84,23 @@ export async function getArdentArtifact(nodeId: string, profile: string, artifac
 }
 
 export async function performArdentAction(nodeId: string, profile: string, action: string, target?: string, body?: unknown): Promise<unknown> {
+  if (['context-stage', 'context-adopt', 'context-rollback'].includes(action)) {
+    if (target !== undefined) throw new Error('Context adoption does not accept an arbitrary target');
+    const input = ArdentContextAdoptionInputSchema.parse(body);
+    const node = await nodeTarget(nodeId);
+    const enrollment = await getDb().resourceEnrollment.findUnique({ where: { nodeId } });
+    const client = enrollment?.state === 'enrolled'
+      ? new NodeApiClient({ baseUrl: getNodeBaseUrl(node.ipAddress, node.port), resourceNodeId: node.id,
+        resourceActorId: 'system:ardent-context-adoption', nodeToken: getNodeManagerSecret() }) : clientFor(node);
+    return client.performArdentContextAction(profile, action, input);
+  }
   return clientFor(await nodeTarget(nodeId)).performArdentAction<unknown>(profile, action, target, body);
+}
+
+export async function getArdentContextRelease(nodeId: string, profile: string): Promise<unknown> {
+  return ArdentContextReleaseSchema.parse(await clientFor(await nodeTarget(nodeId)).getArdentContextRelease(profile));
+}
+
+export async function getArdentContextAdoption(nodeId: string, profile: string, releaseId: string): Promise<unknown> {
+  return clientFor(await nodeTarget(nodeId)).getArdentContextAdoption(profile, releaseId);
 }

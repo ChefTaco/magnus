@@ -1,0 +1,9 @@
+{
+  "summary": "Managed context-only Ardent adoption retains existing runtime extensions and profile data, verifies compaction and continuity in isolated provider acceptance, and exercises real runtime rollback before declaring adoption active. Exact release, base-runtime, policy and configuration pins, signed resource ownership and retained private journals fail closed on interruption. No database migrations or new settings.",
+  "breaking": false,
+  "minUpgradeFrom": "1.0.0",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}

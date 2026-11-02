@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file. The format is b
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
+## [1.1.9] - 2026-11-02
+
+### Added
+
+- Managed context-only Ardent adoption stages the pinned Emberfold integration while retaining existing runtime extensions, credentials and profile data.
+- Revision-bound staging verifies isolated compaction, primary-model continuation, exact source recovery, rebuild and previous-reader compatibility; activation exercises real runtime rollback and preserves original journals and uncertain effects.
+- Admin-only release and journal inspection, signed managed completion receipts, bounded owner subprocesses and fail-closed cancellation; no unmanaged installation fallback or automatic replay.
+- Offline published-runtime adoption and rollback acceptance runs on both supported Node versions in CI and gates publication.
+
 ## [Unreleased]
 
 ## [1.1.8] - 2026-11-02

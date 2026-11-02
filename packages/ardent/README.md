@@ -37,6 +37,11 @@ checkpoints stay readable by the previous runtime; richer portable metadata is
 stored in an additive `emberfold_checkpoint_metadata` sidecar table. The initial
 integration retains existing budgets and uses the general continuity profile.
 
+For existing installations that must retain their runtime extensions, the node
+manager offers [context-only adoption](../../docs/ARDENT_CONTEXT_ADOPTION.md).
+It stages the pinned adapter and engine without replacing the runtime, runs
+isolated provider acceptance, and verifies an actual old-runtime rollback.
+
 ## Install
 
 Ardent needs Node.js 24.22.1+ or 26.13.0+ (`better-sqlite3` is a native

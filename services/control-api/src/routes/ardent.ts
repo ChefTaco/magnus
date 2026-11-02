@@ -3,8 +3,9 @@ import type { AppVariables } from '../types/index.js';
 import { authMiddleware, getUser, requireRole } from '../middleware/auth.js';
 import { HttpError } from '../middleware/error-handler.js';
 import { logAuditEvent } from '../services/audit-service.js';
-import { getArdentArtifact, getArdentInstallation, getArdentProfileResource, listArdentInstallations, performArdentAction } from '../services/ardent-service.js';
+import { getArdentArtifact, getArdentContextAdoption, getArdentContextRelease, getArdentInstallation, getArdentProfileResource, listArdentInstallations, performArdentAction } from '../services/ardent-service.js';
 import { z } from 'zod';
+import { ArdentContextAdoptionInputSchema } from '@hivemagnus/magnus-contracts';
 
 export const ardentRouter = new Hono<AppVariables>();
 ardentRouter.use('*', authMiddleware);
@@ -17,6 +18,14 @@ const id = (value: string | undefined) => {
 
 ardentRouter.get('/installations', async c => c.json({ success: true, data: await listArdentInstallations() }));
 ardentRouter.get('/installations/:nodeId', async c => c.json({ success: true, data: await getArdentInstallation(id(c.req.param('nodeId'))) }));
+ardentRouter.get('/installations/:nodeId/profiles/:name/context-release', async c => {
+  return c.json({ success: true, data: await getArdentContextRelease(id(c.req.param('nodeId')), id(c.req.param('name'))) });
+});
+ardentRouter.get('/installations/:nodeId/profiles/:name/context-adoptions/:releaseId', async c => {
+  const releaseId = z.string().guid().safeParse(c.req.param('releaseId'));
+  if (!releaseId.success) throw new HttpError(400, 'VALIDATION_ERROR', 'Invalid context adoption release ID');
+  return c.json({ success: true, data: await getArdentContextAdoption(id(c.req.param('nodeId')), id(c.req.param('name')), releaseId.data) });
+});
 ardentRouter.get('/profiles', async c => {
   const installations = await listArdentInstallations();
   return c.json({ success: true, data: installations.flatMap(installation => installation.profiles.map(profile => ({ ...profile,
@@ -59,7 +68,7 @@ ardentRouter.get('/installations/:nodeId/profiles/:name/*', async c => {
 });
 
 const Action = z.object({
-  action: z.enum(['profile-create', 'profile-import-hermes', 'config-validate', 'config-save', 'peer-validate', 'peer-save', 'identity-save', 'identity-restore', 'provider-test', 'channel-test', 'peer-test', 'memory-search', 'task-submit', 'task-cancel', 'skill-set', 'service-start', 'service-stop', 'service-restart', 'package-install']),
+  action: z.enum(['profile-create', 'profile-import-hermes', 'config-validate', 'config-save', 'peer-validate', 'peer-save', 'identity-save', 'identity-restore', 'provider-test', 'channel-test', 'peer-test', 'memory-search', 'task-submit', 'task-cancel', 'skill-set', 'service-start', 'service-stop', 'service-restart', 'package-install', 'context-stage', 'context-adopt', 'context-rollback']),
   target: z.string().min(1).max(128).optional(), body: z.unknown().optional(),
 }).strict();
 ardentRouter.post('/installations/:nodeId/profiles/:name/action', async c => {
@@ -68,10 +77,16 @@ ardentRouter.post('/installations/:nodeId/profiles/:name/action', async c => {
   const parsed = Action.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) throw new HttpError(400, 'VALIDATION_ERROR', 'Invalid Ardent action');
   const { action, target, body } = parsed.data;
+  if (['context-stage', 'context-adopt', 'context-rollback'].includes(action)
+    && (target !== undefined || !ArdentContextAdoptionInputSchema.safeParse(body).success))
+    throw new HttpError(400, 'VALIDATION_ERROR', 'Context adoption requires exact release, source and policy pins without an arbitrary target');
   try {
     const result = await performArdentAction(nodeId, profile, action, target, body);
     await logAuditEvent({ action: `ardent.${action}`, actorId: getUser(c).userId,
-      targetType: 'ardent-profile', targetId: `${nodeId}:${profile}`, details: { target: target ?? null } });
+      targetType: 'ardent-profile', targetId: `${nodeId}:${profile}`, details: {
+        target: target ?? null,
+        ...(['context-stage', 'context-adopt', 'context-rollback'].includes(action) ? ArdentContextAdoptionInputSchema.parse(body) : {})
+      } });
     return c.json({ success: true, data: result });
   } catch (error: unknown) {
     throw new HttpError(503, 'DEPENDENCY_UNAVAILABLE', error instanceof Error ? error.message.slice(0, 300) : 'Ardent action unavailable');
