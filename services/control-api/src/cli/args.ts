@@ -79,7 +79,9 @@ export function parseArgs(argv: readonly string[]): CliOptions {
       options.format = format;
       options.formatGiven = true;
     } else if (arg === '--label' || arg.startsWith('--label=')) options.label = value('--label');
+    else if (arg === '--yes') options.yes = true;
     else if (arg.startsWith('-')) throw new UsageError(`unknown option ${arg}`);
+    else if (commandSeen && options.command === 'restore' && options.file === undefined) options.file = arg;
     else if (!commandSeen && COMMANDS.has(arg as CliCommand)) {
       if (options.command !== 'help' && options.command !== 'version') options.command = arg as CliCommand;
       commandSeen = true;

@@ -13,6 +13,10 @@ describe('magnus-server argument parsing', () => {
   it('parses check, migrate, env-schema formats and help flags', () => {
     expect(parseArgs(['check']).command).toBe('check');
     expect(parseArgs(['migrate', '--env-file', 'x']).command).toBe('migrate');
+    expect(parseArgs(['restore', '/var/lib/magnus/backups/a.dump', '--env-file', 'x', '--yes'])).toMatchObject({
+      command: 'restore', file: '/var/lib/magnus/backups/a.dump', envFiles: ['x'], yes: true,
+    });
+    expect(() => parseArgs(['restore'])).toThrow(UsageError);
     expect(parseArgs(['env-schema', '--format', 'table'])).toMatchObject({ command: 'env-schema', format: 'table' });
     expect(parseArgs(['check', '--help']).command).toBe('help');
     expect(parseArgs(['-v']).command).toBe('version');
