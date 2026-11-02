@@ -15,7 +15,7 @@ function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'magnus-release-tooling-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const file of ['package.json', 'CHANGELOG.md', 'services/control-api/agent-version.json', 'packages/ardent/openapi/ardent.json',
-    'services/control-api/src/cli/env-catalog.ts', 'packages/agent/src/env-catalog.ts', 'apps/dashboard/runtime-environment.mjs',
+    'services/control-api/src/cli/env-catalog.ts', 'packages/agent/src/env-catalog.ts', 'apps/dashboard/runtime-environment.mjs', 'packages/magnus/src/templates.ts',
     ...PACKAGE_DIRECTORIES.map((directory) => `${directory}/package.json`)]) {
     mkdirSync(join(root, file, '..'), { recursive: true });
     cpSync(join(repo, file), join(root, file));
@@ -76,4 +76,10 @@ test('new settings and risky migrations must be documented', async (t) => {
   assert.ok(problems.some((problem) => /New environment variables/.test(problem)));
   assert.ok(problems.some((problem) => /Migration impact/.test(problem)));
   assert.deepEqual(buildManifest(root).migrations, [{ name: '20270101000000_example', impact: 'one-way', note: 'drops a column' }]);
+});
+
+test('the manifest carries the install scripts the release needs', () => {
+  const { allowScripts } = buildManifest(repo);
+  assert.equal(allowScripts.argon2, true);
+  assert.equal(allowScripts.prisma, true);
 });
