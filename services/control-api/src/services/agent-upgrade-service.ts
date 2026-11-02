@@ -167,7 +167,9 @@ export async function recordSelfUpgradeReport(node: { id: string; name: string }
   const nodeVersion = typeof body.nodeVersion === 'string' ? body.nodeVersion.slice(0, 32) : null;
   const next = { ...parsed, nodeVersion, observedAt: new Date().toISOString() };
   const nextMetadata: Record<string, unknown> = { ...metadata, agentSelfUpgrade: next, nodeVersion };
-  let changed = !(previous && JSON.stringify({ ...previous, observedAt: '' }) === JSON.stringify({ ...next, observedAt: '' })
+  // Free disk moves with every report; only crossing the threshold is a change worth a write.
+  const comparable = (value: StoredSelfUpgrade) => JSON.stringify({ ...value, observedAt: '', disk: value.disk?.low });
+  let changed = !(previous && comparable(previous) === comparable(next)
     && Date.now() - Date.parse(previous.observedAt) < 10 * 60_000);
   const state = parsed.upgrade?.state;
   const updating = state === 'staged' || state === 'trial';

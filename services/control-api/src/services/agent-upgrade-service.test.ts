@@ -108,6 +108,21 @@ describe('self-upgrade reports', () => {
     expect(status).toBe('STOPPED');
   });
 
+  it('does not rewrite the node on every heartbeat because free disk moved', async () => {
+    let metadata = JSON.stringify({});
+    db.node.findUnique.mockImplementation(async () => ({ metadata }));
+    db.node.update.mockReset().mockImplementation(async ({ data }: { data: { metadata: string } }) => { metadata = data.metadata; });
+    db.agent.findUnique.mockImplementation(async () => ({ status: 'RUNNING' }));
+    const beat = (freeBytes: number, low = false) => recordSelfUpgradeReport({ id: 'n1', name: 'node-1' }, { nodeVersion: 'v24.22.1', selfUpgrade: { protocol: 1, launcherProtocol: 1, layout: 'versioned', enabled: true,
+      fenceHighWater: { 'node:n1': '5' }, disk: { freeBytes, requiredBytes: 100, low } } }, memoryRunStore());
+    await beat(1000);
+    await beat(999);
+    expect(db.node.update).toHaveBeenCalledTimes(1);
+    await beat(10, true);
+    expect(db.node.update).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(metadata).agentSelfUpgrade).toMatchObject({ fenceHighWater: { 'node:n1': '5' }, disk: { low: true } });
+  });
+
   it('records an outcome that arrives after its run ended, and audits it once', async () => {
     let metadata = JSON.stringify({});
     db.node.findUnique.mockImplementation(async () => ({ metadata }));
