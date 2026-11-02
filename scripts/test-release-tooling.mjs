@@ -33,11 +33,18 @@ test('the committed release manifest is current', async () => {
 
 test('bumping sets every version and pin, and the manifest follows', async (t) => {
   const root = fixture(t);
+  const originals = new Map(PACKAGE_DIRECTORIES.map(directory => [directory,
+    JSON.parse(readFileSync(join(root, directory, 'package.json'), 'utf8'))]));
+  const workspaceNames = new Set([...originals.values()].map(pkg => pkg.name));
   bumpVersion(root, '9.8.7', { today: '2026-11-01' });
   for (const directory of PACKAGE_DIRECTORIES) {
     const pkg = JSON.parse(readFileSync(join(root, directory, 'package.json'), 'utf8'));
     assert.equal(pkg.version, '9.8.7', directory);
-    for (const [name, pinned] of Object.entries(pkg.dependencies ?? {})) if (name.startsWith('@hivemagnus/')) assert.equal(pinned, '9.8.7', `${directory} ${name}`);
+    for (const category of ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies']) {
+      for (const [name, pinned] of Object.entries(pkg[category] ?? {})) {
+        assert.equal(pinned, workspaceNames.has(name) ? '9.8.7' : originals.get(directory)[category][name], `${directory} ${name}`);
+      }
+    }
   }
   assert.equal(JSON.parse(readFileSync(join(root, 'services/control-api/agent-version.json'), 'utf8')).version, '9.8.7');
   const meta = JSON.parse(readFileSync(join(root, 'packages/magnus/package.json'), 'utf8'));
