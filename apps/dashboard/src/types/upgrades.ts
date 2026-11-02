@@ -115,6 +115,7 @@ export interface RunAttention {
   detail: string | null;
   cause: string;
   remedy: string;
+  unknownCode?: boolean;
 }
 
 export interface AgentUpgradeRunNode {
@@ -144,6 +145,9 @@ export interface AgentUpgradeRun {
   excluded?: Array<{ nodeId: string; name: string; reason: string; code?: string | null }>;
   maxFailures?: number;
   attention?: RunAttention[];
+  /** The release is suspect but unproven; cleared when a node confirms after all. */
+  suspectedRelease?: string | null;
+  warnings?: Array<{ nodeId: string; name: string; code: string; detail: string }>;
   nodes: AgentUpgradeRunNode[];
 }
 

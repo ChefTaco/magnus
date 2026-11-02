@@ -41,7 +41,7 @@ export function runHeadline(run: AgentUpgradeRun): string {
   switch (run.status) {
     case 'succeeded': return 'Last run: succeeded';
     case 'partial': return `Last run: partial, ${run.attention?.length ?? 0} node(s) need attention`;
-    case 'failed': return 'Last run: failed, on evidence about the release';
+    case 'failed': return run.suspectedRelease ? 'Last run: failed, a release problem is suspected but unproven' : 'Last run: failed, on evidence about the release';
     default: return `Last run: ${run.status}`;
   }
 }

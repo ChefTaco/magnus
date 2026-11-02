@@ -271,6 +271,22 @@ describe('read-only ledger health', () => {
       .rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT', notStarted: false });
   });
 
+  it('tells a command running right now from one nobody is running', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'ledger-running-'));
+    const ledger = new CommandLedger(root, { resultSecret: 'ledger-health-result-key-more-than-thirty-two', reconciliationSecret: '', nodeFqdn: 'fixture.example.com' });
+    let finish!: () => void;
+    let entered!: () => void;
+    const running = new Promise<void>(resolve => { entered = resolve; });
+    const held = new Promise<never>((_resolve, reject) => { finish = () => reject(new Error('over')); });
+    const fence = { version: 1 as const, resourceKey: 'node:fixture', fence: '7', expiresAt: Date.now() + 60_000 };
+    const pending = ledger.execute({ commandId: 'now', command: '/bin/true', args: [], timeoutSeconds: 1, coordination: fence }, async () => { entered(); return held; });
+    await running;
+    expect(await ledger.health()).toMatchObject({ activeLock: { commandId: 'now', receipt: 'running' }, nonTerminalReceipts: 1, unresolvedReceipts: 0 });
+    finish();
+    await expect(pending).rejects.toMatchObject({ code: 'OUTCOME_UNKNOWN' });
+    expect(await ledger.health()).toMatchObject({ activeLock: { commandId: 'now', receipt: 'unknown' }, unresolvedReceipts: 1 });
+  });
+
   it('carries the high-water in a stale fence refusal', async () => {
     const root = await mkdtemp(join(tmpdir(), 'ledger-stale-'));
     const secret = 'ledger-health-result-key-more-than-thirty-two';

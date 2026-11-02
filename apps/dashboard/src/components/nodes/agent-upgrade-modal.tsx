@@ -137,6 +137,9 @@ export function AgentUpgradeModal({ open, onClose, onFinished }: { open: boolean
               </span>
             </p>
             {run.status !== 'running' && run.message && <p className="text-text-muted" data-testid="agent-upgrade-run-message">{run.message}</p>}
+            {(run.warnings ?? []).map((warning) => (
+              <p key={`${warning.nodeId}-${warning.code}`} className="text-warning" data-testid="agent-upgrade-warning">{warning.name}: {warning.detail}</p>
+            ))}
             <ul className="max-h-80 divide-y divide-border/40 overflow-y-auto rounded border border-border">
               {run.nodes.map((node) => (
                 <li key={node.nodeId} className="flex items-center gap-3 px-3 py-2">
@@ -165,7 +168,7 @@ export function AgentUpgradeModal({ open, onClose, onFinished }: { open: boolean
                 <ul className="max-h-48 space-y-2 overflow-y-auto">
                   {run.attention!.map((item) => (
                     <li key={`${item.nodeId}-${item.code}`}>
-                      <p className="font-medium text-text">{item.name}: <span className="num">{item.code}</span>{item.failureClass === 'release' ? ' (points at the release)' : ''}</p>
+                      <p className="font-medium text-text">{item.name}: <span className="num">{item.code}</span>{item.failureClass === 'release' ? ' (points at the release)' : ''}{item.unknownCode ? ' (unrecognised code)' : ''}</p>
                       {item.detail && <p className="text-text-muted">{item.detail}</p>}
                       <p className="text-text">{item.remedy}</p>
                     </li>

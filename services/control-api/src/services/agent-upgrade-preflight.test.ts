@@ -32,6 +32,8 @@ describe('holding a preflight report against what an upgrade needs', () => {
     expect(codes(lock)).toEqual([['LEDGER_UNRESOLVED', true]]);
     expect(codes(lock, { managed: false })).toEqual([['LEDGER_UNRESOLVED', false]]);
     expect(codes({ ledger: { readable: false, error: 'nope' } })).toEqual([['LEDGER_UNAVAILABLE', true]]);
+    // A command running right now finishes by itself: a busy slot, not a reason to leave the node out of the whole run.
+    expect(codes({ ledger: { readable: true, activeLock: { commandId: 'c', receipt: 'running' } } })).toEqual([['RESOURCE_BUSY', false]]);
     // A claim without a receipt never started, and the next holder clears it.
     expect(codes({ ledger: { readable: true, activeLock: { commandId: 'c', receipt: 'none' } } })).toEqual([]);
     expect(codes({ ledger: { readable: true, activeLock: null, unresolvedReceipts: 2 } })).toEqual([['LEDGER_UNRESOLVED', false]]);
@@ -42,6 +44,16 @@ describe('holding a preflight report against what an upgrade needs', () => {
     expect(codes({ fenceHighWater: { 'node:n1': '5' } }, { generations: { 'node:n1': 5n } })).toEqual([]);
     expect(codes({ fenceHighWater: { 'node:n1': '9000000000000000000' } })).toEqual([['FENCE_OVERFLOW', true]]);
     expect(codes({ fenceHighWater: { 'node:other': '5' } })).toEqual([]);
+  });
+
+  it('blocks on a marker it cannot read, since that could hide a mismatch', () => {
+    expect(codes({ managedEnrollment: null, managedEnrollmentState: 'unknown' })).toEqual([['ENROLLMENT_MARKER_UNKNOWN', true]]);
+    expect(codes({ managedEnrollment: null, managedEnrollmentState: 'absent' })).toEqual([]);
+  });
+
+  it('maps a reason code the same way as eligibility', () => {
+    expect(codes({ enabled: false, reasonCode: 'SWITCHED_OFF' })).toEqual([['SELF_UPGRADE_DISABLED', true]]);
+    expect(codes({ enabled: false, reasonCode: 'SOMETHING_NEW' })).toEqual([['SELF_UPGRADE_UNAVAILABLE', true]]);
   });
 
   it('bounds its concurrency and keeps the order', async () => {

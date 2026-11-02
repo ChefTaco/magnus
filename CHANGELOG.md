@@ -17,22 +17,26 @@ fixes shipped in 1.1.7.
 - **Upgrade waves stop only on evidence about the release.** An integrity or source failure stops at once. On the canary,
   a release failure stops the run and a node-level problem hands the role to the next node. After the canary, the run stops
   when reverts, failed installs and trials that never confirm reach `MAGNUS_AGENT_UPGRADE_MAX_FAILURES` (default 2;
-  `maxFailures`, `--max-failures` or the console for one run). Everything else is a node-level problem: recorded, and the wave
-  goes on. A node whose reply was lost is watched by request id and frees its batch slot once its window has passed, and late
+  `maxFailures`, `--max-failures` or the console for one run). Agents before 1.1.8 can only answer a failed install as uncertain, so
+  that many ambiguous canaries with nothing confirmed (at least two) stop the run, with the release reported as suspect but unproven;
+  one such node hands off. Identical refusals with nothing confirmed are surfaced the same way, without stopping. From 1.1.8 the agent
+  names the cause of a failed install, so disk, access and network causes are node-level. Everything else is a node-level problem:
+  recorded, and the wave goes on. A node whose reply was lost is watched by request id and frees its batch slot once its window has passed, and late
   outcomes are recorded.
-- **Run statuses and an attention list.** Runs end `succeeded`, `partial` (node-level problems, nothing against the release),
-  `failed` (release evidence), `stopped` or `interrupted`. Each node needing attention has a code, a cause and a specific remedy.
+- **Run statuses and an attention list.** Runs end `succeeded` (every selected node confirmed or with an expected reason), `partial`
+  (node-level problems, nothing against the release), `failed` (release evidence or suspicion), `stopped` or `interrupted`. Each node needing attention has a code, a cause and a specific remedy.
   A `partial` run offers Retry for just those nodes, including ones the check held back. `magnus-server agents upgrade` exits 2
   for `partial`.
 - **Automatic end-of-wave retry** of transient node-level failures (unreachable, busy, a lock timeout, `RESOURCE_BUSY`, a
-  repaired fence): up to twice, with backoff, and a new request each time. Nothing ambiguous or release-class is retried.
+  repaired fence, a failed eligibility check): up to twice, with backoff, a new request each time, and only once the last request's
+  lease settled. Nothing ambiguous or release-class is retried.
 - **Preflight before the first node is touched.** `GET /api/v1/agent-upgrade/preflight` on the agent reports layout, launcher
   protocol, writable directories, free disk, npm, whether the running version is complete, ledger health, fence high-water,
   the enrollment marker and `engines` compatibility. It is read only and needs no lease. The server runs it for every selected
   node at run start, with the dry-run admission predicates, and excludes blocked nodes with their reason. Agents without the route
   show `preflight: unavailable`, which is not a failure. See the report with the dialog's **Check**, `dryRun` on
   `POST /api/v1/agents/upgrade`, `--dry-run`, or the new `magnus-server agents doctor [--nodes a,b] [--heal]`.
-- **Fence self-healing.** When a preflight or a `STALE_FENCE` reply reports a high-water at or above the server's next generation,
+- **Fence self-healing.** When a preflight signed for a fresh nonce or a signed `STALE_FENCE` reply reports a high-water at or above the server's next generation,
   the server moves `commandResourceFence.generation` to high-water + 1 under the node's advisory lock, audited as
   `agent.fence.advanced`. It never lowers a generation, accepts only the node's own keys and decimal values under a cap, and above
   the cap reports `FENCE_OVERFLOW` and changes nothing. `magnus-server agents fence NODE VALUE` does the same by hand for agents
@@ -54,12 +58,16 @@ fixes shipped in 1.1.7.
   `MANAGED_MUTATION_UNCERTAIN`, so a stale fence, an expired lease or a busy slot left a lease `unknown` that blocked every later
   managed command on the node, and stopped the wave. The agent now returns the real code (`STALE_FENCE` with the high-water,
   `LEASE_EXPIRED`, `RESOURCE_BUSY`, `UNMANAGED_MUTATION`, `IDEMPOTENCY_CONFLICT`, `LEDGER_UNAVAILABLE`) and logs the cause at WARN.
-  Where the ledger proves the handler did not start and the command has no receipt, it adds `executed: false` and a signature bound to
-  the request digest, and the server settles the lease as `not-dispatched`. Anything that may have started stays uncertain.
-- Leases stuck `unknown` with no local trace can recover. After the lease deadline, a run or `agents doctor --heal` asks the agent
-  for a signed, nonce-bound answer on whether it holds a receipt or `active.lock` for the command. Only "neither" settles the lease as
-  `not-dispatched`, audited as `agent.lease.recovered`. Signed reconciliation is unchanged for anything with a receipt, and older
-  agents keep the older behaviour.
+  Where the ledger proves the handler did not start and nothing local refers to the command, it adds `executed: false` and a
+  signature bound to the request, the lease and the node, and the server settles the lease as `not-dispatched`. Anything that may
+  have started stays uncertain.
+- A known self-upgrade failure on an enrolled node is a settled result: it answered 500 or 504, which left a lock, an unresolved
+  receipt and a held lease on every node a bad release reached. An unexpected handler failure stays uncertain.
+- Leases stuck `unknown` with no receipt can recover. A minute past the lease deadline, the readiness monitor, a run or
+  `agents doctor --heal` asks a 1.1.8 agent for a signed, nonce-bound account of its ledger. It settles the lease as `not-dispatched`, audited as
+  `agent.lease.recovered`, only if a ledger exists, has seen this node, and the evidence fits; a missing ledger stays held with a code.
+  Signed reconciliation is unchanged for anything with a receipt. **A lease stranded by an agent older than 1.1.8 has no automatic way
+  out:** upgrade that agent by hand, after which this recovery can settle it.
 - A lost reply whose node then confirms no longer leaves its lease held: the server reads the signed receipt of that request.
 - Fixed error replies in the cron, scheduler, enrollment and drain routes no longer drop their cause: it is logged at WARN.
 
@@ -74,8 +82,9 @@ fixes shipped in 1.1.7.
   for that. A server on 1.1.8 works with agents from 1.1.2 up and a new agent with an older server, because every new field is optional
   and the new routes are GETs an older agent answers with 404.
 - **For the first wave onto 1.1.8:** an agent older than 1.1.8 cannot report its fence. If such a node holds a high fence, its first
-  managed request fails as `MANAGED_MUTATION_UNCERTAIN` and is recorded, and the wave goes on, but the lease stays held. Run
-  `magnus-server agents fence NODE VALUE` first for nodes you know are ahead.
+  managed request fails as `MANAGED_MUTATION_UNCERTAIN` and is recorded, and the wave goes on, but the lease stays held until that agent is
+  upgraded by hand. A run warns about such nodes before the wave (`FENCE_UNREPORTED`): run `magnus-server agents fence NODE VALUE` first for
+  those that are ahead. On such a fleet a bad release also reads as ambiguous canaries, not as a failed install, until agents run 1.1.8.
 
 ## [1.1.7] - 2026-11-02
 

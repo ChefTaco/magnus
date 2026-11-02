@@ -219,7 +219,7 @@ export function classifyAgentRequestError(error: unknown, dispatched: boolean): 
   const refused = certainRefusalOf(error);
   if (refused) return new NotDispatchedError(refused.code, refused.message, error);
   if (!dispatched) return error instanceof NotDispatchedError ? error : new NotDispatchedError(
-    error instanceof HttpError ? error.code : error instanceof AgentResponseError && error.code ? error.code : 'NOT_DISPATCHED', errorText(error), error);
+    error instanceof HttpError ? error.code : error instanceof AgentResponseError && error.code ? error.code : isConnectError(error) ? 'AGENT_UNREACHABLE' : 'NOT_DISPATCHED', errorText(error), error);
   if (error instanceof AgentResponseError) return error;
   if (error instanceof HTTPError) return new AgentResponseError(error.response.status, agentErrorBody(error.data));
   if (error instanceof HttpError && error.code === AGENT_NOT_PRIVILEGED) return new AgentResponseError(403, { code: error.code, message: error.message });

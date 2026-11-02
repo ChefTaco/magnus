@@ -1,10 +1,11 @@
 /**
- * A mixed fleet in one wave. Clean-install tests never see what production
- * nodes carry: each fake agent here has a real-world bad state, from a stale
- * fence to a reply that never arrives. Everything from eligibility to the final
- * summary is the real code; only the agents, their transport and the rows are
- * fake. The rule under test: a node's own state never stops a wave, and only
- * evidence about the release does.
+ * A mixed fleet in one wave, for the POLICY: a node's own state never stops a
+ * wave, and only evidence about the release does. Each fake agent has a real-world
+ * bad state, from a stale fence to a reply that never arrives. Eligibility, the run
+ * loop and the summary are the real code. The transport and lease settlement are
+ * NOT: `settle` below models them, so nothing here proves a real refusal settles a
+ * real lease. agent-upgrade.integration.test.ts proves that over the real client and
+ * PostgreSQL, and agent-upgrade.real-agent.integration.test.ts with the real agent.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const logAuditEvent = vi.fn(async (_event: { action: string; details?: Record<string, unknown> }) => undefined);

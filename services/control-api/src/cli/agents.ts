@@ -14,8 +14,9 @@ agent installs the exact version beside the running one and switches back by
 itself if the new version does not report a heartbeat in time.
 
 Only evidence about the release stops a run: an integrity or source failure at
-once, a failure on the canary, and after that MAGNUS_AGENT_UPGRADE_MAX_FAILURES
-reverts or failed installs. A problem of one node (busy, enrollment, unreachable,
+once, a failure on the canary, ambiguous answers from canaries with nothing
+confirmed, and after that MAGNUS_AGENT_UPGRADE_MAX_FAILURES reverts or failed
+installs. A problem of one node (busy, enrollment, unreachable,
 a lost reply) is recorded and the run goes on; transient ones are tried again at
 the end. The summary lists each node needing attention, with what to do.
 
@@ -35,8 +36,9 @@ Options:
 doctor: the same read-only check for every node: what each agent reports about
 its layout, launcher, disk, npm, ledger, fences and enrollment, and what to do
 about each problem. --heal also repairs what the server owns: it moves a fence
-generation up to what the agent holds, and settles leases stuck unknown that
-left no trace on the agent. Exit status 1 when a node is blocked.
+generation up to what the agent signs that it holds, and settles leases stuck
+unknown when the agent's ledger proves they never ran. Exit status 1 when a node
+is blocked.
 
 fence: moves the server's fence generation for a node to VALUE + 1. Only ever up,
 and audited. For agents older than 1.1.8, which do not say what fence they hold:
@@ -118,8 +120,8 @@ type Run = Awaited<ReturnType<Service['executeUpgradeRun']>>;
 
 type Report = Awaited<ReturnType<Service['checkUpgrade']>>;
 
-const remedyLines = (item: { name: string; code: string; detail: string | null; cause: string; remedy: string }) => [
-  `  ${item.name}: ${item.code}${item.detail ? ` (${item.detail})` : ''}`,
+const remedyLines = (item: { name: string; code: string; detail: string | null; cause: string; remedy: string; unknownCode?: boolean }) => [
+  `  ${item.name}: ${item.code}${item.unknownCode ? ' [unrecognised code]' : ''}${item.detail ? ` (${item.detail})` : ''}`,
   `    cause:  ${item.cause}`,
   `    remedy: ${item.remedy}`,
 ];
@@ -249,6 +251,7 @@ export async function commandAgents(args: readonly string[]): Promise<number> {
       }
       showCandidates(started.candidates);
       for (const candidate of started.candidates) for (const healed of candidate.preflight?.healed ?? []) console.log(`    ${candidate.name}: repaired: ${healed}`);
+      for (const warning of started.run.warnings ?? []) console.warn(`    ${warning.name}: ${warning.code}: ${warning.detail}`);
     }
     let interrupts = 0;
     const onSigint = () => {
@@ -263,6 +266,7 @@ export async function commandAgents(args: readonly string[]): Promise<number> {
     try {
       const run = await started.done;
       for (const node of run.excluded ?? []) if (options.nodes || options.retry) console.log(`  ${node.name}: not upgraded (${node.reason})`);
+      if (run.suspectedRelease) console.log(`Suspected release problem: ${run.suspectedRelease}`);
       if (run.attention?.length) {
         console.log(`Needs attention (${run.attention.length}):`);
         for (const item of run.attention) for (const line of remedyLines(item)) console.log(line);

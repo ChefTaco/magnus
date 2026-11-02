@@ -45,6 +45,7 @@ describe('agent upgrade dialog text', () => {
     expect(runHeadline({ ...run(['refused'], 'partial'), attention: [{ nodeId: 'n', name: 'n', state: 'refused', code: 'X', failureClass: 'node', detail: null, cause: 'c', remedy: 'r' }] }))
       .toBe('Last run: partial, 1 node(s) need attention');
     expect(runHeadline(run(['reverted'], 'failed'))).toMatch(/evidence about the release/);
+    expect(runHeadline({ ...run(['ambiguous', 'ambiguous'], 'failed'), suspectedRelease: 'suspect' })).toMatch(/suspected but unproven/);
     expect(runHeadline(run(['confirmed'], 'succeeded'))).toBe('Last run: succeeded');
     expect(runHeadline(run(['skipped'], 'stopped'))).toBe('Last run: stopped');
   });

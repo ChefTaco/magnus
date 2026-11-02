@@ -12,10 +12,14 @@
  * the cap keeps a value from pushing the column near BIGINT overflow. The result
  * key and the node credential are shared by the fleet, so these signatures tell
  * agents apart only by what they claim: whoever holds them can sign for any node.
- * The limit is the connection, which ends at whatever the inventory says. An
- * agent, or a holder of the fleet secrets the server connects to, can inflate the
- * counters of the node the server thinks it is talking to; the cost is that node's
- * numbering, since a generation only moves up and nothing depends on its size.
+ * The limit is the connection, which ends at whatever the inventory says. A
+ * heartbeat with the fleet credential can repoint a node only while its stored
+ * address is loopback or unroutable (shouldRepairNodeIp), or to the DNS name of its own
+ * agent certificate; a routable address stays. So a holder of the fleet secrets,
+ * with a certificate the server trusts for its own address, could answer for a node
+ * in that state. It can then inflate that node's counters and settle its leases that
+ * left no receipt there. The cost of the counter is only numbering: a generation
+ * moves up and nothing depends on its size.
  * Heartbeat values are never used for this.
  *
  * command_resource_fences has no database trigger. The increase-only triggers
