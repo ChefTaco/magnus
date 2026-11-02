@@ -6,6 +6,7 @@
 !packages/*/package.json
 !services/*/package.json
 !packages/contracts/**
+!packages/ardent/**
 !packages/agent/**
 
 **/node_modules

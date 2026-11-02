@@ -4,7 +4,16 @@ All notable changes to this project are documented in this file. The format is b
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
+## [1.1.10] - 2026-11-02
+
+### Added
+
+- Ship the managed context-only Ardent adoption and continuity acceptance described below.
+- Include the context-adapter source workspace in the node-agent container build context, alongside its exact engine dependency.
+
 ## [1.1.9] - 2026-11-02
+
+Publication withheld after the container-context gate failed; superseded by 1.1.10.
 
 ### Added
 

@@ -1,0 +1,9 @@
+{
+  "summary": "Managed context-only Ardent adoption with pinned engine staging, configured-provider continuity acceptance, retained source journals and real runtime rollback. Corrected node-agent container context includes the adapter sources required to build the immutable adoption payload. No database migrations or new settings.",
+  "breaking": false,
+  "minUpgradeFrom": "1.0.0",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}
