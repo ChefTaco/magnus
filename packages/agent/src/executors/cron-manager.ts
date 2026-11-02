@@ -15,6 +15,10 @@ import { HOST_FQDN, NODE_MANAGER_SECRET, RESULT_SIGNING_SECRET } from '../env.js
 import { readdir, readFile } from 'node:fs/promises';
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { stableCodePath } from '../upgrade/stable-path.js';
+import { logger } from '../utils/logger.js';
+
+/** Routes answer with a fixed code; the cause goes to the log. */
+const warnCause = (what: string, error: unknown) => logger.warn(`${what} failed: ${error instanceof Error ? error.message : String(error)}`);
 
 export const cronRoutes = new Hono();
 
@@ -103,7 +107,7 @@ cronRoutes.get('/os-scheduler-writer-proof', async c => {
       .update(OS_SCHEDULER_WRITER_DOMAIN + canonicalSchedulerEvidence(receipt)).digest('hex');
     c.header('Cache-Control', 'no-store');
     return c.json({ success: true, data: { ...receipt, signature } });
-  } catch { return c.json({ success: false, error: { code: 'WRITER_PROOF_UNAVAILABLE' } }, 409); }
+  } catch (error) { warnCause('Writer proof', error); return c.json({ success: false, error: { code: 'WRITER_PROOF_UNAVAILABLE' } }, 409); }
 });
 
 // ── List crontab entries ──
@@ -113,6 +117,7 @@ cronRoutes.get('/', async (c) => {
     const jobs = parseCrontab(crontab);
     return c.json({ success: true, data: jobs });
   } catch {
+    // no-reason-needed: `crontab -l` fails the same way for a user with no crontab, which is the common answer
     return c.json({ success: true, data: [] });
   }
 });
@@ -142,6 +147,7 @@ cronRoutes.get('/all-users', async (c) => {
 
     return c.json({ success: true, data: allJobs });
   } catch {
+    // no-reason-needed: `crontab -l` fails the same way for a user with no crontab, which is the common answer
     return c.json({ success: true, data: [] });
   }
 });
@@ -178,7 +184,8 @@ cronRoutes.post('/enrollment-stage', async c => {
       specSha256: job.specSha256, operationId: parsed.data.operationId, staged: true as const, enabled: false as const };
     return c.json({ success: true, data: { ...receipt, receiptSignature: createHmac('sha256', RESULT_SIGNING_SECRET)
       .update(cronEnrollmentStageReceiptPayload(receipt)).digest('hex') } });
-  } catch {
+  } catch (error) {
+    warnCause('Enrollment stage', error);
     return c.json({ success: false, error: { code: 'CRON_ENROLLMENT_STAGE_CONFLICT' } }, 409);
   }
 });
@@ -189,7 +196,7 @@ cronRoutes.get('/source-reconciliation/:decisionId', async c => {
     if (!receipt) return c.json({ success: false, error: { code: 'SCHEDULER_RECONCILIATION_NOT_FOUND' } }, 404);
     c.header('Cache-Control', 'no-store');
     return c.json({ success: true, data: receipt });
-  } catch { return c.json({ success: false, error: { code: 'SCHEDULER_RECONCILIATION_NOT_FOUND' } }, 404); }
+  } catch (error) { warnCause('Scheduler reconciliation lookup', error); return c.json({ success: false, error: { code: 'SCHEDULER_RECONCILIATION_NOT_FOUND' } }, 404); }
 });
 
 // This is evidence reconciliation during enrollment, never scheduler execution
@@ -220,7 +227,8 @@ cronRoutes.post('/source-reconciliation', async c => {
     const settled = await scheduler.settleForeignSource(parsed.data, receipt => createHmac('sha256', RESULT_SIGNING_SECRET)
       .update(schedulerSourceSettlementReceiptPayload(receipt)).digest('hex'));
     c.header('Cache-Control', 'no-store'); return c.json({ success: true, data: settled.receipt });
-  } catch {
+  } catch (error) {
+    warnCause('Scheduler reconciliation', error);
     return c.json({ success: false, error: { code: 'SCHEDULER_RECONCILIATION_CONFLICT' } }, 409);
   }
 });
@@ -245,7 +253,7 @@ cronRoutes.post('/sync', async c => {
       await writeCrontab((kept ? kept + '\n' : '') + '# MAGNUS:' + job.name + '\n' + job.schedule + ' ' + job.command + (job.args.length ? ' ' + job.args.join(' ') : '') + '\n');
     });
     return c.json({ success: true, data: { name: job.name, schedule: job.schedule, command: job.command, synced: true, managed: false } });
-  } catch { return c.json({ success: false, error: { code: 'CRON_SYNC_ERROR' } }, 500); }
+  } catch (error) { warnCause('Cron sync', error); return c.json({ success: false, error: { code: 'CRON_SYNC_ERROR' } }, 500); }
 });
 
 cronRoutes.post('/managed-sync', async (c) => {
@@ -270,7 +278,8 @@ cronRoutes.post('/managed-sync', async (c) => {
     });
     return c.json({ success: true, data: { nodeFqdn: HOST_FQDN, name: job.spec.name, jobId: job.jobId,
       revision: job.spec.revision, specSha256: job.specSha256, staged: true, enabled: false } });
-  } catch {
+  } catch (error) {
+    warnCause('Cron sync', error);
     return c.json({ success: false, error: { code: 'CRON_SYNC_ERROR', message: 'Managed cron installation incomplete; inspect durable definition before retry' } }, 500);
   }
 });
@@ -293,7 +302,8 @@ cronRoutes.post('/managed-activate', async c => {
       await scheduler.setEnabled(parsed.data, true);
     });
     return c.json({ success: true, data: { ...parsed.data, activated: true, enabled: true } });
-  } catch {
+  } catch (error) {
+    warnCause('Managed cron activation', error);
     return c.json({ success: false, error: { code: 'CRON_ACTIVATION_ERROR', message: 'Managed cron activation was not acknowledged' } }, 500);
   }
 });
@@ -314,7 +324,8 @@ cronRoutes.post('/managed-revoke', async c => {
       if (!managedCronEntryAbsent(await currentCrontab(), job)) throw new Error('Managed cron revocation readback differs');
     });
     return c.json({ success: true, data: { ...parsed.data, revoked: true, enabled: false } });
-  } catch {
+  } catch (error) {
+    warnCause('Managed cron revocation', error);
     return c.json({ success: false, error: { code: 'CRON_REVOCATION_ERROR', message: 'Managed cron revocation was not acknowledged' } }, 500);
   }
 });
@@ -329,7 +340,7 @@ cronRoutes.delete('/:name', async c => {
       await writeCrontab(removeCronEntry(crontab, name));
     });
     return c.json({ success: true, data: { deleted: true } });
-  } catch { return c.json({ success: false, error: { code: 'CRON_DELETE_ERROR' } }, 500); }
+  } catch (error) { warnCause('Cron delete', error); return c.json({ success: false, error: { code: 'CRON_DELETE_ERROR' } }, 500); }
 });
 
 /**
