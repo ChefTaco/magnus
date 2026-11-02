@@ -131,7 +131,7 @@ describe('agent release resolution', () => {
   it('reads the exact integrity from the registry, or takes an explicit one', async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ dist: { integrity: INTEGRITY } })));
     await expect(resolveAgentRelease({ version: '1.1.0', fetchImpl: fetchImpl as unknown as typeof fetch })).resolves.toEqual({ version: '1.1.0', integrity: INTEGRITY });
-    expect(String((fetchImpl.mock.calls[0] as unknown[])[0])).toMatch(/@hivemagnus%2fmagnus-agent\/1\.1\.0$/);
+    expect(String((fetchImpl.mock.calls[0] as unknown[])[0])).toMatch(/@hivemagnus%2Fmagnus-agent\/1\.1\.0$/);
     await expect(resolveAgentRelease({ version: '1.1.0', integrity: 'md5-x' })).rejects.toThrow(/sha512/);
     await expect(resolveAgentRelease({ version: 'latest' })).rejects.toThrow(/X\.Y\.Z/);
   });
