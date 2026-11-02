@@ -5,8 +5,8 @@ import { authMiddleware, getUser, requireRole } from '../middleware/auth.js';
 import { HttpError } from '../middleware/error-handler.js';
 import { upgradeSettings } from '../config/features.js';
 import { AGENT_VERSION } from '../config/version.js';
-import { getUpgradeRun, isPrerelease, latestUpgradeRun, listUpgradeCandidates, retryUpgradeRun, startUpgradeRun, stopUpgradeRun,
-  verifyAgentRelease } from '../services/agent-upgrade-service.js';
+import { checkUpgrade, getUpgradeRun, isPrerelease, latestUpgradeRun, listUpgradeCandidates, retryUpgradeRun, startUpgradeRun, stopUpgradeRun,
+  verifyAgentRelease, withCachedPreflight } from '../services/agent-upgrade-service.js';
 
 /** /api/v1/agents/upgrade: which agents can take a version, and fleet upgrade runs. */
 export const agentUpgradesRouter = new Hono<AppVariables>();
@@ -14,6 +14,7 @@ agentUpgradesRouter.use('*', authMiddleware);
 
 const version = z.string().regex(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/);
 const nodeId = z.string().min(1).max(128);
+const maxFailures = z.number().int().min(1).max(1000);
 
 agentUpgradesRouter.get('/eligibility', async c => {
   const target = version.safeParse(c.req.query('version') ?? AGENT_VERSION);
@@ -24,7 +25,7 @@ agentUpgradesRouter.get('/eligibility', async c => {
   return c.json({ success: true, data: {
     version: target.data, serverVersion: AGENT_VERSION, upgradesEnabled: upgradeSettings().agentUpgrades,
     disabledReason: upgradeSettings().agentUpgrades ? null : 'MAGNUS_AGENT_UPGRADES=false on the server',
-    prerelease: isPrerelease(target.data), release, nodes, latestRun,
+    prerelease: isPrerelease(target.data), release, nodes: withCachedPreflight(nodes, target.data), latestRun,
   } });
 });
 
@@ -35,6 +36,9 @@ const startSchema = z.object({
   canaryNodeId: nodeId.optional(),
   allowPrerelease: z.boolean().optional(),
   allowRetryReverted: z.boolean().optional(),
+  /** Report on every selected node and start nothing: the console's Check action. */
+  dryRun: z.boolean().optional(),
+  maxFailures: maxFailures.optional(),
 }).strict();
 
 const parseBody = async <T extends z.ZodType>(schema: T, raw: unknown): Promise<z.infer<T>> => {
@@ -45,7 +49,9 @@ const parseBody = async <T extends z.ZodType>(schema: T, raw: unknown): Promise<
 
 agentUpgradesRouter.post('/', requireRole('ADMIN'), async c => {
   const body = await parseBody(startSchema, await c.req.json().catch(() => ({})));
-  const { run } = await startUpgradeRun({ ...body, actorId: getUser(c).userId });
+  const { dryRun, ...options } = body;
+  if (dryRun) return c.json({ success: true, data: { dryRun: true, ...await checkUpgrade(options) } });
+  const { run } = await startUpgradeRun({ ...options, actorId: getUser(c).userId });
   return c.json({ success: true, data: run }, 202);
 });
 
@@ -63,6 +69,7 @@ agentUpgradesRouter.post('/runs/:id/stop', requireRole('ADMIN'), async c =>
 const retrySchema = z.object({
   canaryNodeId: nodeId.optional(),
   allowRetryReverted: z.boolean().optional(),
+  maxFailures: maxFailures.optional(),
 }).strict();
 
 agentUpgradesRouter.post('/runs/:id/retry', requireRole('ADMIN'), async c => {
