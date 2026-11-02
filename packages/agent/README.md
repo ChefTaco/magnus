@@ -138,11 +138,32 @@ After that, the server can upgrade the agent from the console's **Upgrade agents
 
 1. The agent downloads the exact version the server names and checks its npm `sha512` integrity. It
    also runs `npm audit signatures` (`MAGNUS_AGENT_UPGRADE_REQUIRE_PROVENANCE`).
-2. It installs that version beside the running one, points `./current` at it and exits.
+2. It installs that version beside the running one and checks that it runs on this Node.js
+   (`engines`), works with the installed launcher, and reports the requested version. Then it points
+   `./current` at it and exits.
 3. The launcher starts the new version on trial.
 4. If the new version does not report an accepted heartbeat within
    `MAGNUS_AGENT_UPGRADE_CONFIRM_SECONDS` (default 180), or crashes twice, the launcher switches back
-   to the previous version.
+   to the previous version. A new version that runs but cannot reach the control API gets up to three
+   windows, and the revert reason then says so.
+
+Every step has a time limit, and the whole upgrade stops after 13 minutes (`SELF_UPGRADE_TIMEOUT`).
+npm, its lifecycle scripts and the smoke test run without the agent's credentials. The agent uses
+`MAGNUS_AGENT_NPM` when set, otherwise the npm that ships with the Node.js it runs on, then npm on
+`PATH`. A retried
+request with the same `requestId` returns the current state instead of an error.
+
+The state file (`upgrade-state.json`) and the links are written durably (fsync and rename), and the
+agent and the launcher lock the state file while they change it. `./last-good` points at the last
+confirmed version. The launcher switches to it when `versions/<from>` is missing, and when the state
+file is unreadable and `./current` keeps exiting. When a write fails (full or read-only disk), the
+launcher logs it and still starts an agent instead of crash-looping.
+
+A confirmed version installs its own `launcher/launcher.mjs` when that declares a higher
+`LAUNCHER_PROTOCOL` and passes a self-check; the old file is kept as `launcher.mjs.previous`. In the
+`--unprivileged` mode, `launcher/` stays owned by root, so the launcher is updated only by
+`install-service`. A release that needs a newer launcher than the node runs is refused with
+`SELF_UPGRADE_LAUNCHER`.
 
 The agent writes only inside its install directory and never uses sudo. Set
 `MAGNUS_AGENT_SELF_UPGRADE=false` to refuse upgrade requests on a node. Offline nodes can install from

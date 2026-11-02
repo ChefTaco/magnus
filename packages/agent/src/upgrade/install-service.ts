@@ -6,6 +6,7 @@
  *   /opt/magnus-agent/.env
  *   /opt/magnus-agent/versions/<X>/node_modules/@hivemagnus/magnus-agent
  *   /opt/magnus-agent/current -> versions/<X>
+ *   /opt/magnus-agent/last-good -> versions/<X>   (the last confirmed version)
  *   /opt/magnus-agent/launcher/launcher.mjs   (ExecStart)
  *
  * After this the agent upgrades itself inside that directory; it never needs
@@ -15,7 +16,7 @@ import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { AGENT_PACKAGE, pointCurrentAt } from './self-upgrade.js';
+import { AGENT_PACKAGE, ALIVE_FILE, LOCK_FILE, STATE_FILE, linkVersion, pointCurrentAt, pointLink } from './self-upgrade.js';
 
 export interface InstallServiceOptions {
   dir: string;
@@ -179,12 +180,16 @@ export async function installService(argv: readonly string[]): Promise<number> {
     }
     act(`point ${current} at versions/${version}`, () => pointCurrentAt(dir, version));
   }
+  // The launcher falls back to the last confirmed version when the upgrade state is unreadable.
+  if (!isSymlink(join(dir, 'last-good'))) {
+    act(`link ${join(dir, 'last-good')} to the running version`, () => pointLink(dir, 'last-good', linkVersion(dir, 'current') ?? version));
+  }
   // Paths written before the versioned layout (cron lines, other units) keep working.
   if (!existsSync(join(dir, 'node_modules')) && !isSymlink(join(dir, 'node_modules'))) {
     act(`link ${join(dir, 'node_modules')} to current/node_modules`, () => symlinkSync(join('current', 'node_modules'), join(dir, 'node_modules'), 'dir'));
   }
-  // The launcher is copied from the release that runs install-service, not linked:
-  // self-upgrades never replace it.
+  // The launcher is copied from the release that runs install-service, not linked. A confirmed
+  // self-upgrade replaces it only with a copy that declares a higher LAUNCHER_PROTOCOL.
   act(`install ${join(dir, 'launcher', 'launcher.mjs')}`, () => {
     mkdirSync(join(dir, 'launcher'), { recursive: true, mode: 0o755 });
     copyFileSync(join(isSymlink(current) ? realpathSync(join(current, 'node_modules', ...AGENT_PACKAGE.split('/'))) : here, 'launcher', 'launcher.mjs'),
@@ -201,7 +206,10 @@ export async function installService(argv: readonly string[]): Promise<number> {
       execFileSync('chown', [`${user}:${user}`, dir]);
       execFileSync('chown', ['-R', `${user}:${user}`, join(dir, 'versions'), join(dir, '.npm')]);
       execFileSync('chown', ['-h', `${user}:${user}`, current]);
-      if (isSymlink(join(dir, 'node_modules'))) execFileSync('chown', ['-h', `${user}:${user}`, join(dir, 'node_modules')]);
+      for (const link of ['node_modules', 'last-good']) if (isSymlink(join(dir, link))) execFileSync('chown', ['-h', `${user}:${user}`, join(dir, link)]);
+      // Left behind by an earlier privileged run: the unprivileged agent must be able to replace them.
+      const leftovers = ['staging', '.magnus', STATE_FILE, LOCK_FILE, ALIVE_FILE, 'launcher-crashes.json'].map(name => join(dir, name)).filter(path => existsSync(path));
+      if (leftovers.length) execFileSync('chown', ['-R', `${user}:${user}`, ...leftovers]);
     });
   }
   act(`write ${options.unitPath}${existsSync(options.unitPath) ? ` (previous unit kept as ${options.unitPath}.pre-launcher)` : ''}`, () => {

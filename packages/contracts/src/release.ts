@@ -256,6 +256,10 @@ export const agentSelfUpgradeStatusSchema = z.object({
   enabled: z.boolean(),
   reason: z.string().max(300).nullable().optional(),
   upgrade: agentUpgradeReportSchema.nullable().optional(),
+  /** The launcher's trial window in seconds (versioned layout). */
+  confirmSeconds: z.number().int().positive().nullable().optional(),
+  /** The agent's sticky local enrollment marker, to detect agent/server enrollment disagreement. */
+  managedEnrollment: z.object({ nodeId: z.string(), nodeFqdn: z.string() }).nullable().optional(),
 });
 
 export const agentUpgradeRequestSchema = z.object({

@@ -13,6 +13,53 @@ All notable changes to this project are documented in this file. The format is b
   journals, and profile isolation local. Add portable checkpoint metadata without
   changing existing checkpoint rows; previous-reader rollback remains supported.
 
+### Fixed
+
+- Agent: managed cron jobs find the install directory's `.env` and `.magnus` ledger again under the
+  versioned layout (`versions/<X>` reached through `./current` or the `node_modules` link).
+- Agent launcher: a state or link write that fails (full or read-only disk) no longer crash-loops the
+  service. The launcher logs it and starts the previous version, or `./current` without a trial.
+- Agent self-upgrade: every npm step and the smoke test have a time limit that kills the whole
+  process group, within a 13 minute total budget (`SELF_UPGRADE_TIMEOUT`). npm gets
+  `--fetch-timeout` and `--fetch-retries`.
+- Agent self-upgrade: `upgrade-state.json` and the `current` and `last-good` links are written
+  durably (fsync, rename, fsync of the directory), and the agent and the launcher lock the state
+  file around every change, so a late confirmation cannot race a revert. A confirmation after the
+  trial deadline, or from a version `./current` no longer runs, is refused.
+- Agent self-upgrade: a failed switch of `./current` records `failed`, not `staged`. The launcher
+  records `failed` instead of starting a trial when `./current` does not point at the new version.
+- Agent self-upgrade: upgrades start only when `versions/<from>` is complete. When it is missing at
+  revert time, the launcher uses `./last-good` or records `failed`, instead of reporting a revert
+  that did not happen.
+- Agent self-upgrade: a healthy new version is no longer reverted because the control API was
+  unreachable for a few minutes. On trial, heartbeats retry every 5 s, and the launcher extends the
+  trial up to three windows while the agent reports that it runs. The revert reason says
+  "control API unreachable" when that was the cause.
+- Agent self-upgrade: npm, its lifecycle scripts and the smoke test no longer inherit the agent's
+  credentials.
+- Agent self-upgrade: the agent uses the npm that ships with its own Node.js before the one on
+  `PATH`, and reports a missing or too old npm in the heartbeat instead of failing mid-upgrade.
+- Agent self-upgrade: a release whose `engines.node` excludes the node's Node.js
+  (`SELF_UPGRADE_ENGINE`) or that needs a newer launcher (`SELF_UPGRADE_LAUNCHER`) is refused before
+  the switch.
+- Agent self-upgrade: a repeated request with the same `requestId` returns 200 with the current
+  state. Earlier leftovers in `staging/` and stale `*.tmp` files are removed, the npm cache is per
+  upgrade, and the agent exits within 60 s after staging even if its shutdown hangs.
+- Agent launcher: the trial deadline is clamped and measured with a monotonic clock, a revert by the
+  trial watcher keeps the real attempt count, and the child always gets the launcher's own
+  `AGENT_INSTALL_DIR`.
+- `magnus-agent install-service --unprivileged` hands root-owned `staging/`, `upgrade-state.json` and
+  `.magnus` to the service account. The heartbeat reports when the agent cannot write them.
+
+### Added
+
+- Agent launcher protocol 2. `./last-good` points at the last confirmed version, and the launcher
+  falls back to it after repeated crashes with an unreadable state file. A confirmed version installs
+  its own launcher when that declares a higher protocol and passes a self-check
+  (`launcher.mjs --protocol`).
+- Heartbeat `selfUpgrade` gains `confirmSeconds` (the trial window) and `managedEnrollment` (the
+  agent's local enrollment marker), so the server can detect an enrollment disagreement.
+
 ## [1.1.2] - 2026-11-02
 
 ### Changed

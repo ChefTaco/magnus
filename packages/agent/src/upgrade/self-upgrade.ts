@@ -6,23 +6,44 @@
  * `magnus-agent install-service`) starts the new version on trial and switches
  * back if it does not report an accepted heartbeat in time. Nothing here uses
  * sudo: the agent only writes inside its own install directory.
+ *
+ * The state file and the links are shared with the launcher: both write them
+ * durably (temp file, fsync, rename, fsync of the directory) and both take
+ * upgrade-state.lock (O_EXCL) around a read-modify-write.
  */
 import { createHash } from 'node:crypto';
-import { spawn } from 'node:child_process';
-import { accessSync, constants, existsSync, lchownSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync,
-  statSync, symlinkSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { spawn, spawnSync } from 'node:child_process';
+import { accessSync, closeSync, constants, copyFileSync, existsSync, fsyncSync, lchownSync, lstatSync, mkdirSync, openSync, readdirSync,
+  readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync, writeSync } from 'node:fs';
+import { delimiter, dirname, join, resolve } from 'node:path';
 import {
   AGENT_SELF_UPGRADE_PROTOCOL,
   checkUpgradeAllowed,
   compareVersions,
+  satisfiesRange,
   type AgentSelfUpgradeStatus,
   type AgentUpgradeReport,
   type AgentUpgradeRequest,
 } from '@hivemagnus/magnus-contracts';
+import { childEnvironment } from '../utils/child-env.js';
+import { logger } from '../utils/logger.js';
 
 export const STATE_FILE = 'upgrade-state.json';
+export const LOCK_FILE = 'upgrade-state.lock';
+/** Written while on trial when heartbeats cannot reach the control API; the launcher then extends the trial. */
+export const ALIVE_FILE = 'trial-alive.json';
 export const AGENT_PACKAGE = '@hivemagnus/magnus-agent';
+/** The launcher protocol this agent needs. Kept equal to `magnusAgent.minLauncher` in package.json. */
+export const MIN_LAUNCHER_PROTOCOL = 1;
+/** Oldest npm the upgrade steps are tested with (overrides, `audit signatures`). */
+export const MIN_NPM_VERSION = '10.0.0';
+/** Per-step limits and the total budget; the server waits 15 minutes for an upgrade. */
+export const STEP_TIMEOUT_MS = { pack: 3 * 60_000, install: 8 * 60_000, audit: 3 * 60_000, smoke: 60_000 } as const;
+export const STAGE_BUDGET_MS = 13 * 60_000;
+/** After staging, the agent exits even if a graceful shutdown hangs. */
+export const EXIT_BACKSTOP_MS = 60_000;
+const NPM_NETWORK = ['--fetch-timeout=60000', '--fetch-retries=2'];
+const ENTRY = ['node_modules', '@hivemagnus', 'magnus-agent', 'dist', 'index.js'] as const;
 
 export interface UpgradeState {
   state: 'idle' | 'staged' | 'trial' | 'confirmed' | 'reverted' | 'failed';
@@ -32,6 +53,7 @@ export interface UpgradeState {
   attempt?: number;
   maxAttempts?: number;
   trialDeadline?: string;
+  extended?: number;
   reason?: string | null;
   updatedAt?: string;
 }
@@ -65,20 +87,113 @@ export function adoptInstallOwner(dir: string, path: string, uid = process.getui
   if (lstatSync(path, { throwIfNoEntry: false })) walk(path);
 }
 
-export function writeUpgradeState(dir: string, state: UpgradeState): void {
-  const path = join(dir, STATE_FILE);
+function fsyncDir(dir: string): void {
+  try {
+    const fd = openSync(dir, 'r');
+    try { fsyncSync(fd); } finally { closeSync(fd); }
+  } catch {
+    // some filesystems cannot fsync a directory
+  }
+}
+
+/** Temp file, fsync, rename, fsync the directory: a crash leaves the old or the new content, never a torn file. */
+export function writeDurable(dir: string, name: string, text: string, mode = 0o600): void {
+  const path = join(dir, name);
   const temporary = `${path}.${process.pid}.tmp`;
-  writeFileSync(temporary, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
-  adoptInstallOwner(dir, temporary);
-  renameSync(temporary, path);
+  try {
+    const fd = openSync(temporary, 'w', mode);
+    try { writeSync(fd, text); fsyncSync(fd); } finally { closeSync(fd); }
+    adoptInstallOwner(dir, temporary);
+    renameSync(temporary, path);
+  } catch (error) {
+    rmSync(temporary, { force: true });
+    throw error;
+  }
+  fsyncDir(dir);
+}
+
+export function writeUpgradeState(dir: string, state: UpgradeState): void {
+  writeDurable(dir, STATE_FILE, `${JSON.stringify(state, null, 2)}\n`);
+}
+
+/** Atomically point `<dir>/<name>` (current, last-good) at versions/<version>. */
+export function pointLink(dir: string, name: string, version: string): void {
+  const temporary = join(dir, `${name}.${process.pid}.tmp`);
+  try {
+    rmSync(temporary, { force: true });
+    symlinkSync(join('versions', version), temporary, 'dir');
+    adoptInstallOwner(dir, temporary);
+    renameSync(temporary, join(dir, name));
+  } catch (error) {
+    rmSync(temporary, { force: true });
+    throw error;
+  }
+  fsyncDir(dir);
 }
 
 export function pointCurrentAt(dir: string, version: string): void {
-  const temporary = join(dir, `current.${process.pid}.tmp`);
-  rmSync(temporary, { force: true });
-  symlinkSync(join('versions', version), temporary, 'dir');
-  adoptInstallOwner(dir, temporary);
-  renameSync(temporary, join(dir, 'current'));
+  pointLink(dir, 'current', version);
+}
+
+/** The X of a `<name> -> versions/X` link, or null. */
+export function linkVersion(dir: string, name: string): string | null {
+  try {
+    return /^versions[\\/]([^\\/]+)$/.exec(readlinkSync(join(dir, name)))?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** versions/<version> holds a runnable agent. */
+export function versionComplete(dir: string, version: string | null | undefined): boolean {
+  return !!version && existsSync(join(dir, 'versions', version, ...ENTRY));
+}
+
+/** ./current resolves to versions/<version>. */
+export function runsVersion(dir: string, version: string): boolean {
+  try {
+    return realpathSync(join(dir, 'current')) === realpathSync(join(dir, 'versions', version));
+  } catch {
+    return false;
+  }
+}
+
+const sleeper = new Int32Array(new SharedArrayBuffer(4));
+
+function lockIsStale(path: string, staleMs: number): boolean {
+  try {
+    const pid = Number.parseInt(readFileSync(path, 'utf8'), 10);
+    if (Number.isInteger(pid) && pid > 0) {
+      try { process.kill(pid, 0); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') return true; }
+    }
+    return Date.now() - statSync(path).mtimeMs > staleMs;
+  } catch {
+    return false;
+  }
+}
+
+/** O_EXCL lock shared with the launcher around a read-modify-write of the state file. Synchronous; waits up to timeoutMs. */
+export function withStateLock<T>(dir: string, fn: () => T, { timeoutMs = 3_000, staleMs = 15_000 } = {}): T {
+  const path = join(dir, LOCK_FILE);
+  const until = Date.now() + timeoutMs;
+  let fd: number;
+  for (;;) {
+    try {
+      fd = openSync(path, 'wx', 0o600);
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      if (lockIsStale(path, staleMs)) { rmSync(path, { force: true }); continue; }
+      if (Date.now() >= until) throw Object.assign(new Error(`${LOCK_FILE} is held by another process`), { code: 'ELOCKED' });
+      Atomics.wait(sleeper, 0, 0, 25);
+    }
+  }
+  try { writeSync(fd, String(process.pid)); } finally { closeSync(fd); }
+  try {
+    return fn();
+  } finally {
+    rmSync(path, { force: true });
+  }
 }
 
 export type Layout = AgentSelfUpgradeStatus['layout'];
@@ -97,6 +212,59 @@ function selfUpgradeSwitch(env: NodeJS.ProcessEnv): boolean {
   return (env['MAGNUS_AGENT_SELF_UPGRADE'] ?? 'true').trim().toLowerCase() !== 'false';
 }
 
+function readJson<T>(path: string): T | null {
+  try { return JSON.parse(readFileSync(path, 'utf8')) as T; } catch { return null; }
+}
+
+export interface NpmCommand {
+  command: string;
+  args: string[];
+  /** Prepended to PATH so npm and lifecycle scripts run the agent's own Node.js. */
+  pathPrefix: string;
+  version: string | null;
+  problem: string | null;
+}
+
+/**
+ * The npm that belongs to the running Node.js (npm-cli.js beside it, run with
+ * process.execPath), then MAGNUS_AGENT_NPM, then npm on PATH. A systemd PATH
+ * often lacks the directory of a version-managed Node.js.
+ */
+export function resolveNpm(env: NodeJS.ProcessEnv = process.env, execPath = process.execPath): NpmCommand {
+  const bin = dirname(execPath);
+  const configured = env['MAGNUS_AGENT_NPM']?.trim();
+  if (configured) return { command: configured, args: [], pathPrefix: bin, version: null, problem: null };
+  for (const cli of [join(bin, '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'), join(bin, 'node_modules', 'npm', 'bin', 'npm-cli.js')]) {
+    if (!existsSync(cli)) continue;
+    const version = readJson<{ version?: string }>(join(dirname(cli), '..', 'package.json'))?.version ?? null;
+    let problem: string | null = null;
+    try {
+      if (version && compareVersions(version, MIN_NPM_VERSION) < 0) problem = `npm ${version} beside ${execPath} is older than ${MIN_NPM_VERSION}`;
+    } catch {
+      // unparseable version: let npm itself decide
+    }
+    return { command: execPath, args: [cli], pathPrefix: bin, version, problem };
+  }
+  const folder = [bin, ...(env['PATH'] ?? '').split(delimiter)].find(entry => entry && existsSync(join(entry, 'npm')));
+  if (folder) return { command: join(folder, 'npm'), args: [], pathPrefix: bin, version: null, problem: null };
+  return { command: 'npm', args: [], pathPrefix: bin, version: null, problem: `npm was not found beside ${execPath} or on PATH` };
+}
+
+function confirmWindowSeconds(env: NodeJS.ProcessEnv, layout: Layout): number | null {
+  const fromLauncher = Number.parseInt(env['MAGNUS_AGENT_LAUNCHER_CONFIRM_SECONDS'] ?? '', 10);
+  if (Number.isInteger(fromLauncher) && fromLauncher > 0) return fromLauncher;
+  if (layout !== 'versioned') return null;
+  // Launcher protocol 1 does not pass the window: compute it the same way.
+  const value = Number.parseInt(env['MAGNUS_AGENT_UPGRADE_CONFIRM_SECONDS'] ?? '', 10);
+  return Number.isInteger(value) && value >= 10 ? Math.min(value, 3600) : 180;
+}
+
+function writable(path: string): boolean {
+  try { accessSync(path, constants.W_OK); return true; } catch { return false; }
+}
+
+const clip = (text: string | null | undefined, max: number): string | null => (text == null ? null : text.length > max ? `${text.slice(0, max - 1)}…` : text);
+
 /** Whether this agent can upgrade itself, and why not. Reported with every heartbeat. */
 export function selfUpgradeStatus(version: string, env: NodeJS.ProcessEnv = process.env): AgentSelfUpgradeStatus {
   const dir = installDir(env);
@@ -108,70 +276,178 @@ export function selfUpgradeStatus(version: string, env: NodeJS.ProcessEnv = proc
   else if (layout === 'container') reason = 'container agent: upgrade by pulling a newer image';
   else if (layout === 'legacy') reason = 'not running under the upgrade launcher; run `sudo magnus-agent install-service` once on this node';
   else {
-    try {
-      accessSync(dir, constants.W_OK);
-      accessSync(join(dir, 'versions'), constants.W_OK);
-    } catch {
-      reason = `the agent cannot write ${dir}`;
-    }
+    // Paths left behind by root (an earlier privileged run) block an unprivileged agent.
+    const blocked = [dir, join(dir, 'versions'), ...[join(dir, 'staging'), join(dir, STATE_FILE)].filter(path => existsSync(path))]
+      .find(path => !writable(path));
+    if (blocked) reason = `the agent cannot write ${blocked}; run \`sudo magnus-agent install-service\` again`;
+    else reason = resolveNpm(env).problem;
   }
   return {
     protocol: AGENT_SELF_UPGRADE_PROTOCOL,
     launcherProtocol: Number.isInteger(launcherProtocol) ? launcherProtocol : null,
     layout,
     enabled: reason === null,
-    reason,
+    reason: clip(reason, 300),
+    confirmSeconds: confirmWindowSeconds(env, layout),
     upgrade: state ? reportOf(state) : { state: 'idle', from: null, to: version },
   };
 }
 
 function reportOf(state: UpgradeState): AgentUpgradeReport {
   return {
-    state: state.state, from: state.from, to: state.to, requestId: state.requestId, reason: state.reason ?? null,
+    state: state.state, from: state.from, to: state.to, requestId: state.requestId, reason: clip(state.reason, 500),
     ...(state.attempt !== undefined ? { attempt: state.attempt } : {}), ...(state.updatedAt ? { updatedAt: state.updatedAt } : {}),
   };
 }
 
+/** The upgrade state when `version` is the one on trial. */
+export function trialOf(version: string, env: NodeJS.ProcessEnv = process.env): UpgradeState | null {
+  const state = readUpgradeState(installDir(env));
+  return state?.state === 'trial' && state.to === version ? state : null;
+}
+
+/** Tell the launcher this version runs but cannot reach the control API, so it extends the trial instead of reverting. */
+export function recordTrialAlive(version: string, error: string, env: NodeJS.ProcessEnv = process.env, now = Date.now()): boolean {
+  const state = trialOf(version, env);
+  if (!state) return false;
+  try {
+    writeDurable(installDir(env), ALIVE_FILE, `${JSON.stringify({ version, requestId: state.requestId, at: now, error: error.slice(0, 200) })}\n`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** A failed heartbeat POST that says nothing about this version: no answer, or a gateway with no upstream. */
+export function controlApiUnreachable(error: unknown): boolean {
+  if (!(error instanceof Error)) return true;
+  if (error.name === 'HTTPError') {
+    const status = (error as Error & { response?: { status?: number } }).response?.status ?? 0;
+    return status === 502 || status === 503 || status === 504;
+  }
+  return true;
+}
+
+/** `export const LAUNCHER_PROTOCOL = N` in a launcher file, without running it. */
+export function declaredLauncherProtocol(path: string): number | null {
+  try {
+    const match = /^export const LAUNCHER_PROTOCOL = (\d+);$/m.exec(readFileSync(path, 'utf8'));
+    return match ? Number(match[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Called after every accepted heartbeat: the first one from a version on trial
- * confirms it, and versions other than the previous and the current one are pruned.
+ * Replace launcher/launcher.mjs with the confirmed version's copy when that
+ * declares a higher protocol and passes a self-check (`--protocol`). The
+ * running launcher keeps its loaded code; the new one is used from the next
+ * service start. The previous file is kept as launcher.mjs.previous.
+ */
+export function upgradeLauncher(dir: string, version: string, execPath = process.execPath): string | null {
+  const candidate = join(dir, 'versions', version, 'node_modules', ...AGENT_PACKAGE.split('/'), 'launcher', 'launcher.mjs');
+  const folder = join(dir, 'launcher');
+  const installed = join(folder, 'launcher.mjs');
+  const offered = declaredLauncherProtocol(candidate);
+  const have = declaredLauncherProtocol(installed);
+  if (offered === null || have === null || offered <= have) return null;
+  const probe = spawnSync(execPath, [candidate, '--protocol'], { encoding: 'utf8', timeout: 10_000, env: childEnvironment() });
+  if (probe.status !== 0 || probe.stdout.trim() !== String(offered)) throw new Error(`the launcher from ${version} failed its self-check`);
+  copyFileSync(installed, join(folder, 'launcher.mjs.previous'));
+  writeDurable(folder, 'launcher.mjs', readFileSync(candidate, 'utf8'), 0o644);
+  return `launcher protocol ${have} -> ${offered}`;
+}
+
+/**
+ * Called after every accepted heartbeat: the first one from a version on
+ * trial confirms it (unless the trial window has closed or ./current no
+ * longer runs it), records it as last-good, and prunes other versions.
  */
 export function confirmTrial(version: string, env: NodeJS.ProcessEnv = process.env, now = new Date()): boolean {
   const dir = installDir(env);
-  const state = readUpgradeState(dir);
-  if (!state || state.state !== 'trial' || state.to !== version) return false;
-  writeUpgradeState(dir, { ...state, state: 'confirmed', reason: null, updatedAt: now.toISOString() });
-  pruneVersions(dir, [state.from, state.to]);
+  let trial: UpgradeState | null = null;
+  try {
+    withStateLock(dir, () => {
+      const state = readUpgradeState(dir);
+      if (!state || state.state !== 'trial' || state.to !== version) return;
+      const deadline = Date.parse(state.trialDeadline ?? '');
+      // The launcher is reverting (or about to): a late confirmation must not race it.
+      if (Number.isFinite(deadline) && now.getTime() >= deadline) return;
+      if (!runsVersion(dir, version)) return;
+      writeUpgradeState(dir, { ...state, state: 'confirmed', reason: null, updatedAt: now.toISOString() });
+      trial = state;
+    }, { timeoutMs: 1_000 }); // blocks the event loop while it waits; the launcher holds the lock for milliseconds
+  } catch (error) {
+    logger.warn('Self-upgrade confirmation deferred', { error: error instanceof Error ? error.message : String(error) });
+    return false;
+  }
+  const confirmed = trial as UpgradeState | null;
+  if (!confirmed) return false;
+  const bestEffort = (step: string, action: () => void) => {
+    try { action(); } catch (error) { logger.warn(`Self-upgrade: ${step} failed`, { error: error instanceof Error ? error.message : String(error) }); }
+  };
+  bestEffort('recording last-good', () => pointLink(dir, 'last-good', version));
+  bestEffort('removing the trial marker', () => rmSync(join(dir, ALIVE_FILE), { force: true }));
+  bestEffort('pruning old versions', () => pruneVersions(dir, [confirmed.from, confirmed.to]));
+  bestEffort('upgrading the launcher', () => {
+    const change = upgradeLauncher(dir, version);
+    if (change) logger.info(`Self-upgrade: installed the launcher from ${version} (${change}); it takes over at the next service start`);
+  });
   return true;
 }
 
 export function pruneVersions(dir: string, keep: ReadonlyArray<string | null>): void {
   const versions = join(dir, 'versions');
   if (!existsSync(versions)) return;
+  const kept = [...keep, linkVersion(dir, 'current'), linkVersion(dir, 'last-good')];
   for (const name of readdirSync(versions)) {
-    if (keep.includes(name)) continue;
+    if (kept.includes(name)) continue;
     rmSync(join(versions, name), { recursive: true, force: true });
   }
 }
 
 export class SelfUpgradeError extends Error {
-  constructor(readonly code: string, message: string, readonly status: 400 | 409 | 422 | 500 = 409) {
+  constructor(readonly code: string, message: string, readonly status: 400 | 409 | 422 | 500 | 504 = 409) {
     super(message);
   }
 }
 
+export interface RunResult { code: number; stdout: string; stderr: string; timedOut?: boolean }
+
 export interface Runner {
-  (command: string, args: readonly string[], options: { cwd: string; env: NodeJS.ProcessEnv }): Promise<{ code: number; stdout: string; stderr: string }>;
+  (command: string, args: readonly string[], options: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs?: number }): Promise<RunResult>;
 }
 
+const OUTPUT_LIMIT = 64 * 1024;
+const KILL_GRACE_MS = 5_000;
+
+/** Runs a command in its own process group; at timeoutMs the whole group gets SIGTERM, then SIGKILL. */
 export const runProcess: Runner = (command, args, options) => new Promise((resolvePromise, reject) => {
-  const child = spawn(command, args, { cwd: options.cwd, env: options.env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(command, args, { cwd: options.cwd, env: options.env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
   let stdout = '';
   let stderr = '';
-  child.stdout.on('data', chunk => { stdout += String(chunk); });
-  child.stderr.on('data', chunk => { stderr += String(chunk); });
-  child.on('error', reject);
-  child.on('close', code => resolvePromise({ code: code ?? 1, stdout, stderr }));
+  let timedOut = false;
+  const timers: ReturnType<typeof setTimeout>[] = [];
+  const signalGroup = (signal: NodeJS.Signals) => {
+    try { if (child.pid) process.kill(-child.pid, signal); } catch { try { child.kill(signal); } catch { /* gone */ } }
+  };
+  if (options.timeoutMs !== undefined) {
+    timers.push(setTimeout(() => {
+      timedOut = true;
+      signalGroup('SIGTERM');
+      timers.push(setTimeout(() => {
+        signalGroup('SIGKILL');
+        // A descendant outside the group may still hold the pipes: release them so `close` fires.
+        timers.push(setTimeout(() => { child.stdout.destroy(); child.stderr.destroy(); }, KILL_GRACE_MS));
+      }, KILL_GRACE_MS));
+    }, options.timeoutMs));
+  }
+  const settle = () => { for (const timer of timers) clearTimeout(timer); };
+  const keep = (buffer: string, chunk: unknown) => (buffer + String(chunk)).slice(-OUTPUT_LIMIT);
+  child.stdout.on('data', chunk => { stdout = keep(stdout, chunk); });
+  child.stderr.on('data', chunk => { stderr = keep(stderr, chunk); });
+  child.on('error', error => { settle(); reject(error); });
+  child.on('close', code => { settle(); resolvePromise({ code: code ?? 1, stdout, stderr, timedOut }); });
 });
 
 /** npm pack names files `<scope>-<name>-<version>.tgz`. */
@@ -199,12 +475,24 @@ export function sourceOverrides(sourceDir: string, agentTarball: string): Record
   return overrides;
 }
 
+const SIMPLE_RANGE = /^(?:\*|\^?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/;
+
+/** Why `engines.node` rules out `nodeVersion`, or null. Range forms satisfiesRange cannot judge are not refused. */
+export function engineProblem(range: string | undefined, nodeVersion: string): string | null {
+  if (typeof range !== 'string' || !range.trim()) return null;
+  if (!range.split('||').every(part => SIMPLE_RANGE.test(part.trim()))) return null;
+  return satisfiesRange(nodeVersion, range) ? null : `requires Node.js ${range.trim()}; this node runs ${nodeVersion}`;
+}
+
 export interface StageOptions {
   request: AgentUpgradeRequest;
   version: string;
   env?: NodeJS.ProcessEnv;
   run?: Runner;
   now?: Date;
+  /** Monotonic-enough milliseconds for the step budget (tests). */
+  clock?: () => number;
+  nodeVersion?: string;
 }
 
 export interface StageResult {
@@ -212,15 +500,30 @@ export interface StageResult {
   to: string;
   integrity: string;
   requestId: string;
+  /** The same request was already handled: nothing was changed, `upgrade` is the current state. */
+  repeated?: boolean;
+  upgrade?: AgentUpgradeReport;
 }
 
-let staging = false;
+let staging: { requestId: string; version: string } | null = null;
 
 /** Download, verify, install and switch. The caller exits afterwards so the launcher starts the new version. */
 export async function stageUpgrade(options: StageOptions): Promise<StageResult> {
   const env = options.env ?? process.env;
   const run = options.run ?? runProcess;
+  const clock = options.clock ?? Date.now;
+  const started = clock();
   const { request, version: from } = options;
+  const dir = installDir(env);
+
+  // A retried request (same requestId and target) reports where it got to instead of failing.
+  const recorded = readUpgradeState(dir);
+  if ((recorded?.requestId === request.requestId && recorded.to === request.version)
+    || (staging?.requestId === request.requestId && staging.version === request.version)) {
+    return { from: recorded?.from ?? from, to: request.version, integrity: request.integrity, requestId: request.requestId, repeated: true,
+      upgrade: recorded?.requestId === request.requestId ? reportOf(recorded) : { state: 'idle', from, to: request.version, requestId: request.requestId, reason: 'being staged' } };
+  }
+
   const status = selfUpgradeStatus(from, env);
   if (!status.enabled) throw new SelfUpgradeError('SELF_UPGRADE_UNAVAILABLE', status.reason ?? 'self-upgrade is unavailable');
   if (request.packageName !== AGENT_PACKAGE) throw new SelfUpgradeError('SELF_UPGRADE_PACKAGE', `only ${AGENT_PACKAGE} can be installed`, 422);
@@ -230,17 +533,35 @@ export async function stageUpgrade(options: StageOptions): Promise<StageResult> 
   const previous = status.upgrade?.state;
   if (previous === 'staged' || previous === 'trial') throw new SelfUpgradeError('SELF_UPGRADE_BUSY', `an upgrade to ${status.upgrade?.to} is still on trial`);
   if (staging) throw new SelfUpgradeError('SELF_UPGRADE_BUSY', 'an upgrade is already being staged');
-  staging = true;
-  const dir = installDir(env);
-  const work = join(dir, 'staging', request.version);
+  // The launcher can only switch back to a complete versions/<from> that ./current runs now.
+  if (!versionComplete(dir, from) || !runsVersion(dir, from)) {
+    throw new SelfUpgradeError('SELF_UPGRADE_UNAVAILABLE', `./current does not run a complete versions/${from}, so a failed upgrade could not be reverted; run \`sudo magnus-agent install-service\` again`);
+  }
+  const npm = resolveNpm(env);
+  if (npm.problem) throw new SelfUpgradeError('SELF_UPGRADE_UNAVAILABLE', npm.problem);
+  staging = { requestId: request.requestId, version: request.version };
+  const stagingRoot = join(dir, 'staging');
+  const work = join(stagingRoot, request.version);
   const target = join(dir, 'versions', request.version);
   try {
-    rmSync(work, { recursive: true, force: true });
+    // Leftovers of interrupted upgrades, whatever version they were for.
+    rmSync(stagingRoot, { recursive: true, force: true });
     mkdirSync(work, { recursive: true, mode: 0o700 });
-    const npm = env['MAGNUS_AGENT_NPM'] || 'npm';
-    const npmEnv: NodeJS.ProcessEnv = { ...env, npm_config_cache: env['npm_config_cache'] ?? join(dir, '.npm'), npm_config_update_notifier: 'false' };
-    const fail = (step: string, result: { code: number; stderr: string; stdout: string }) => {
-      throw new SelfUpgradeError('SELF_UPGRADE_FAILED', `${step} failed (exit ${result.code}): ${(result.stderr || result.stdout).trim().split('\n').slice(-3).join(' ')}`, 500);
+    const path = [npm.pathPrefix, env['PATH']].filter(Boolean).join(delimiter);
+    // No agent credentials for npm, lifecycle scripts or the smoke test; a per-upgrade cache that goes with the staging directory.
+    const npmEnv = childEnvironment({ PATH: path, npm_config_cache: join(work, '.npm'), npm_config_update_notifier: 'false' }, env);
+    const step = async (name: string, limitMs: number, command: string, args: readonly string[], cwd: string, stepEnv: NodeJS.ProcessEnv) => {
+      const remaining = STAGE_BUDGET_MS - (clock() - started);
+      if (remaining <= 0) throw new SelfUpgradeError('SELF_UPGRADE_TIMEOUT', `the upgrade used its ${STAGE_BUDGET_MS / 60_000} minute budget before ${name}`, 504);
+      const timeoutMs = Math.min(limitMs, remaining);
+      const result = await run(command, args, { cwd, env: stepEnv, timeoutMs });
+      if (result.timedOut) throw new SelfUpgradeError('SELF_UPGRADE_TIMEOUT', `${name} did not finish within ${Math.round(timeoutMs / 1000)} s`, 504);
+      return result;
+    };
+    const npmStep = (name: string, limitMs: number, args: readonly string[], cwd: string) =>
+      step(name, limitMs, npm.command, [...npm.args, ...args, ...NPM_NETWORK, '--loglevel=error'], cwd, npmEnv);
+    const fail = (name: string, result: RunResult) => {
+      throw new SelfUpgradeError('SELF_UPGRADE_FAILED', `${name} failed (exit ${result.code}): ${(result.stderr || result.stdout).trim().split('\n').slice(-3).join(' ')}`, 500);
     };
 
     // 1. The exact tarball: from an operator-provided directory, or the registry.
@@ -250,7 +571,7 @@ export async function stageUpgrade(options: StageOptions): Promise<StageResult> 
       tarball = join(resolve(sourceDir), tarballName(request.version));
       if (!existsSync(tarball)) throw new SelfUpgradeError('SELF_UPGRADE_SOURCE', `${tarball} does not exist`, 422);
     } else {
-      const packed = await run(npm, ['pack', `${AGENT_PACKAGE}@${request.version}`, '--pack-destination', work, '--json', '--loglevel=error'], { cwd: work, env: npmEnv });
+      const packed = await npmStep('npm pack', STEP_TIMEOUT_MS.pack, ['pack', `${AGENT_PACKAGE}@${request.version}`, '--pack-destination', work, '--json'], work);
       if (packed.code !== 0) fail('npm pack', packed);
       tarball = join(work, tarballName(request.version));
     }
@@ -267,16 +588,26 @@ export async function stageUpgrade(options: StageOptions): Promise<StageResult> 
       name: `magnus-agent-${request.version}`, version: request.version, private: true, type: 'module',
       dependencies: { [AGENT_PACKAGE]: `file:${tarball}` }, ...(Object.keys(overrides).length ? { overrides } : {}), allowScripts: ALLOW_SCRIPTS,
     }, null, 2)}\n`);
-    const installed = await run(npm, ['install', '--omit=dev', '--no-audit', '--no-fund', '--loglevel=error'], { cwd: install, env: npmEnv });
+    const installed = await npmStep('npm install', STEP_TIMEOUT_MS.install, ['install', '--omit=dev', '--no-audit', '--no-fund'], install);
     if (installed.code !== 0) fail('npm install', installed);
-    // 4. Registry signatures and provenance of everything installed.
+    // 4. This node must be able to run it: Node.js engines and the launcher protocol it needs.
+    const manifest = readJson<{ engines?: { node?: string }; magnusAgent?: { minLauncher?: number } }>(
+      join(install, 'node_modules', ...AGENT_PACKAGE.split('/'), 'package.json')) ?? {};
+    const engine = engineProblem(manifest.engines?.node, options.nodeVersion ?? process.versions.node);
+    if (engine) throw new SelfUpgradeError('SELF_UPGRADE_ENGINE', `${request.version} ${engine}`, 422);
+    const needs = Number.isInteger(manifest.magnusAgent?.minLauncher) ? manifest.magnusAgent!.minLauncher! : 1;
+    if (needs > (status.launcherProtocol ?? 0)) {
+      throw new SelfUpgradeError('SELF_UPGRADE_LAUNCHER',
+        `${request.version} needs launcher protocol ${needs}; this node runs ${status.launcherProtocol ?? 'none'}. Run \`sudo magnus-agent install-service\` once to update it`, 422);
+    }
+    // 5. Registry signatures and provenance of everything installed.
     if ((env['MAGNUS_AGENT_UPGRADE_REQUIRE_PROVENANCE'] ?? 'true').trim().toLowerCase() !== 'false') {
-      const audit = await run(npm, ['audit', 'signatures', '--omit=dev', '--loglevel=error'], { cwd: install, env: npmEnv });
+      const audit = await npmStep('npm audit signatures', STEP_TIMEOUT_MS.audit, ['audit', 'signatures', '--omit=dev'], install);
       if (audit.code !== 0) fail('npm audit signatures', audit);
     }
-    // 5. The new code must at least start and report the requested version.
-    const entry = join(install, 'node_modules', '@hivemagnus', 'magnus-agent', 'dist', 'index.js');
-    const smoke = await run(process.execPath, [entry, '--version'], { cwd: install, env });
+    // 6. The new code must at least start and report the requested version.
+    const entry = join(install, ...ENTRY);
+    const smoke = await step('the installed agent', STEP_TIMEOUT_MS.smoke, process.execPath, [entry, '--version'], install, childEnvironment({ PATH: path }, env));
     if (smoke.code !== 0 || smoke.stdout.trim() !== request.version) {
       throw new SelfUpgradeError('SELF_UPGRADE_FAILED', `the installed agent reports "${smoke.stdout.trim()}", not ${request.version}`, 500);
     }
@@ -285,14 +616,31 @@ export async function stageUpgrade(options: StageOptions): Promise<StageResult> 
     adoptInstallOwner(dir, join(dir, 'versions'));
     adoptInstallOwner(dir, install);
     renameSync(install, target);
+    // 7. Record, then switch. A switch that fails records `failed`, so the launcher does not start a doomed trial.
     const now = (options.now ?? new Date()).toISOString();
-    writeUpgradeState(dir, { state: 'staged', from, to: request.version, requestId: request.requestId, attempt: 0, maxAttempts: 2, reason: null, updatedAt: now });
-    pointCurrentAt(dir, request.version);
+    const staged: UpgradeState = { state: 'staged', from, to: request.version, requestId: request.requestId, attempt: 0, maxAttempts: 2, reason: null, updatedAt: now };
+    try {
+      withStateLock(dir, () => {
+        writeUpgradeState(dir, staged);
+        try {
+          pointCurrentAt(dir, request.version);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          try { writeUpgradeState(dir, { ...staged, state: 'failed', reason: `switching ./current failed: ${message}` }); } catch { /* the launcher detects it */ }
+          throw new SelfUpgradeError('SELF_UPGRADE_FAILED', `switching ./current to ${request.version} failed: ${message}`, 500);
+        }
+      });
+    } catch (error) {
+      try { rmSync(target, { recursive: true, force: true }); } catch { /* pruned later */ }
+      if (error instanceof SelfUpgradeError) throw error;
+      const code = (error as NodeJS.ErrnoException).code;
+      throw new SelfUpgradeError(code === 'ELOCKED' ? 'SELF_UPGRADE_BUSY' : 'SELF_UPGRADE_FAILED',
+        `recording the upgrade failed: ${error instanceof Error ? error.message : String(error)}`, code === 'ELOCKED' ? 409 : 500);
+    }
     return { from, to: request.version, integrity, requestId: request.requestId };
   } finally {
-    rmSync(work, { recursive: true, force: true });
-    adoptInstallOwner(dir, join(dir, 'staging'));
-    adoptInstallOwner(dir, join(dir, '.npm'));
-    staging = false;
+    try { rmSync(work, { recursive: true, force: true }); } catch { /* cleared at the next upgrade */ }
+    try { adoptInstallOwner(dir, stagingRoot); } catch { /* reported by selfUpgradeStatus */ }
+    staging = null;
   }
 }
