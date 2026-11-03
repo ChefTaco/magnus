@@ -7,7 +7,7 @@
 import type { MiddlewareHandler } from 'hono';
 
 export type PrivilegedFeature = 'cron' | 'users' | 'system-updates' | 'docker-group-remediation'
-  | 'ardent-management' | 'credential-renewal' | 'execution-supervisor';
+  | 'ardent-management' | 'credential-renewal' | 'execution-supervisor' | 'security-response';
 
 /** Features that need root, with the routes or loops they cover. */
 export const PRIVILEGED_FEATURES: ReadonlyArray<{ feature: PrivilegedFeature; covers: string }> = [
@@ -17,6 +17,7 @@ export const PRIVILEGED_FEATURES: ReadonlyArray<{ feature: PrivilegedFeature; co
   { feature: 'docker-group-remediation', covers: 'heartbeat docker-group check (adding a user to the docker group)' },
   { feature: 'ardent-management', covers: 'POST /api/v1/ardent/action (Ardent package, profile and service management)' },
   { feature: 'credential-renewal', covers: 'background HiveMem token and listener certificate renewal' },
+  { feature: 'security-response', covers: 'POST /api/v1/security-response (explicit opt-in and root-owned containment helper)' },
   { feature: 'execution-supervisor', covers: 'MAGNUS_EXECUTION_SUPERVISOR_ENABLED (transient systemd units for commands)' },
 ];
 

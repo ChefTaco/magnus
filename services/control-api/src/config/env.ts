@@ -62,7 +62,10 @@ export const envSchema = z.object({
       'must list domain prefixes made of a-z, 0-9, "." and "-", separated by commas')
     .optional(),
   // Security Fusion: off (default) | local (in-process) | remote (external security console).
-  SECURITY_FUSION_MODE: z.enum(['off', 'local', 'remote']).default('off'),
+  SECURITY_FUSION_MODE: z.enum(['off', 'remote'], { error: 'Embedded Security Fusion local mode is retired; export and import state into Cindertrace before selecting remote mode (docs/CINDERTRACE_MIGRATION.md)' }).default('off'),
+  CINDERTRACE_RESPONSE_SECRET: z.string().min(32).optional(),
+  CINDERTRACE_RESTART_ALLOWLIST: z.string().optional(),
+  CINDERTRACE_PROTECTED_TARGET_IDS: z.string().optional(),
   SECURITY_FUSION_API_URL: z.string().url().optional(),
   MAGNUS_SECURITY_CONSOLE_URL: z.string().url().optional(),
   SECURITY_APPROVAL_BRIDGE_TOKEN: z.string().min(32).optional(),
@@ -267,10 +270,7 @@ export const envSchema = z.object({
     });
   }
 
-  if (env.SECURITY_FUSION_MODE === 'local' && !env.SECURITY_FUSION_RECEIPT_SIGNING_KEY) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['SECURITY_FUSION_RECEIPT_SIGNING_KEY'],
-      message: 'SECURITY_FUSION_RECEIPT_SIGNING_KEY is required when SECURITY_FUSION_MODE=local' });
-  }
+
   if (env.MAGNUS_PLUGIN_API_ENABLED) {
     if (!env.MAGNUS_PLUGIN_READ_TOKEN_DIGESTS_JSON)
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['MAGNUS_PLUGIN_READ_TOKEN_DIGESTS_JSON'],

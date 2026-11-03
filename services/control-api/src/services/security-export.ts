@@ -1,19 +1,16 @@
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { getDb, type Prisma } from '../db/index.js';
 import { incMetric, setMetricGauge } from '../routes/metrics.js';
-export type SecurityFusionMode = 'off' | 'local' | 'remote';
-/** Security Fusion is optional: `off` unless explicitly set to `local` or `remote`. */
+export type SecurityFusionMode = 'off' | 'remote';
+/** Security Fusion is optional: `off` unless explicitly set to `remote`. */
 export function securityFusionMode(): SecurityFusionMode {
   const mode = process.env['SECURITY_FUSION_MODE'];
-  return mode === 'local' || mode === 'remote' ? mode : 'off';
+  if (mode === 'local') throw new Error('Embedded Security Fusion is retired. Export its state with the Cindertrace migration tool, verify the import, then configure SECURITY_FUSION_MODE=remote. See docs/CINDERTRACE_MIGRATION.md');
+  return mode === 'remote' ? mode : 'off';
 }
 /** Observations are exported to an external security console. */
 export function securityFusionRemote(): boolean {
   return securityFusionMode() === 'remote';
-}
-/** Security Fusion cases, evidence and receipts are kept in this server's database. */
-export function securityFusionLocal(): boolean {
-  return securityFusionMode() === 'local';
 }
 /** Optional external security console URL shown to operators in remote mode. */
 export function securityConsoleUrl(): string | undefined {

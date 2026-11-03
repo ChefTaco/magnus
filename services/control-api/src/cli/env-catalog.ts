@@ -92,6 +92,9 @@ export const ENV_CATALOG: readonly EnvVariable[] = [
   { name: 'MAGNUS_LESSONS_HIVEMEM_TOKEN', group: 'hivemem', secret: true, description: 'Token for MAGNUS_LESSONS_HIVEMEM_URL.' },
 
   // ── Security Fusion / external security console ──
+  { name: 'CINDERTRACE_RESPONSE_SECRET', group: 'security', description: 'Dedicated HMAC credential for the optional Cindertrace managed response bridge.' },
+  { name: 'CINDERTRACE_RESTART_ALLOWLIST', group: 'security', description: 'Comma-separated allowlisted response service names; empty by default.' },
+  { name: 'CINDERTRACE_PROTECTED_TARGET_IDS', group: 'security', description: 'Comma-separated node IDs that Cindertrace must never isolate.' },
   { name: 'SECURITY_FUSION_MODE', group: 'security', default: 'off', description: 'off (feature disabled), local (cases and evidence in this server) or remote (export to an external security console).' },
   { name: 'SECURITY_FUSION_RECEIPT_SIGNING_KEY', group: 'security', secret: true, requiredWhen: 'SECURITY_FUSION_MODE=local', description: 'Dedicated key that signs Security Fusion deletion receipts (min 32 chars).' },
   { name: 'SECURITY_FUSION_EVIDENCE_DIR', group: 'security', description: 'Private evidence directory (local mode).' },

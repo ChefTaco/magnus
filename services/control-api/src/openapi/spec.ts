@@ -12,7 +12,7 @@ import {
 } from '../schemas/shared-resource-lease.js';
 import { managedCronRegistrationSchema, schedulerSourceSettlementSchema } from '../schemas/managed-cron.js';
 import { legacyAdmissionRequestSchema, resourceClaimSchema } from '../security/managed-http.js';
-import { magnusObservationSchema } from '@hivemagnus/magnus-contracts';
+import { magnusObservationSchema, responseRequestSchema } from '@hivemagnus/magnus-contracts';
 import { maintenanceSchema } from '../services/maintenance-service.js';
 import { rolloutInputSchema } from '../services/rollout-service.js';
 import { lessonSchema } from '../services/incident-lessons.js';
@@ -2809,6 +2809,7 @@ export function buildOpenApiSpec() {
     tags,
     components: {
       securitySchemes: {
+        cindertraceSignature: { type: 'apiKey', in: 'header', name: 'x-cindertrace-signature', description: 'Dedicated response HMAC bound to method, path, exact body, x-cindertrace-time and x-cindertrace-nonce. Responses are signed against the same request binding.' },
         apiSecret: {
           type: 'apiKey',
           in: 'header',
@@ -2840,6 +2841,10 @@ export function buildOpenApiSpec() {
       },
       schemas: componentSchemas,
     },
-    paths,
+    paths: { ...paths,
+      '/api/v1/security-integration/response/execute': { post: { summary: 'Execute an exact Cindertrace-approved response through managed node admission', tags: ['Cindertrace'], security: [{cindertraceSignature:[]}], requestBody: {required:true,content:{'application/json':{schema:zSchema.toJSONSchema(responseRequestSchema)}}}, responses: { 200: { description: 'Signed completion receipt' }, 409: { description: 'Expired, already claimed, blocked, or uncertain execution' } } } },
+      '/api/v1/security-integration/response/{id}': { get: { summary: 'Read an existing Cindertrace execution without replay', tags: ['Cindertrace'], security: [{cindertraceSignature:[]}], parameters:[{name:'id',in:'path',required:true,schema:{type:'string'}}], responses: { 200: { description: 'Signed existing execution status' } } } },
+      '/api/v1/security-integration/response/targets/{id}/health': { get: { summary: 'Read fresh target health for Cindertrace', tags: ['Cindertrace'], security: [{cindertraceSignature:[]}], parameters:[{name:'id',in:'path',required:true,schema:{type:'string'}}], responses: { 200: { description: 'Signed minimal health snapshot' } } } },
+    },
   };
 }

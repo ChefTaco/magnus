@@ -4,6 +4,29 @@ All notable changes to this project are documented in this file. The format is b
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
+## [2.0.0] - 2026-11-03
+
+### Changed
+
+- Move security observations, cases, evidence, correlation, approvals and workers to standalone Cindertrace. Retired `SECURITY_FUSION_MODE=local` fails with migration instructions; authenticated legacy local API calls return 410 and browser links retain compatibility redirects.
+- Preserve inventory, durable observation export, summaries and optional external approval forwarding. Fleet operation remains independent of Cindertrace outages. Historical security tables and applied migrations remain available for verified recovery.
+
+### Added
+
+- A dedicated authenticated response bridge binds an immutable approved plan to one durable execution identity. Host effects require managed admission and signed completion receipts; unknown effects never redispatch.
+- Explicit node opt-in to a root-controlled restart/isolation/release helper. Independent service allowlists, protected target policy, fresh target checks and isolation recovery protections remain enforced.
+- Accept the exact previous native-completion registry only for its original descriptors, so existing admitted work can settle without granting the new response operation historical authority.
+
+### New environment variables
+
+- Server: `CINDERTRACE_RESPONSE_SECRET`, `CINDERTRACE_RESTART_ALLOWLIST`, `CINDERTRACE_PROTECTED_TARGET_IDS`.
+- Node agent: `MAGNUS_SECURITY_RESPONSE_ENABLED`, `MAGNUS_SECURITY_CONTAINMENT_COMMAND`.
+
+### Migration impact
+
+- `20261103000000_cindertrace_response_bridge` adds a durable claim and receipt table. It does not modify historical Security Fusion state. Before upgrading an existing local-mode installation, follow [the Cindertrace migration guide](docs/CINDERTRACE_MIGRATION.md).
+
+
 ## [1.1.13] - 2026-11-02
 
 ### Added
@@ -655,3 +678,5 @@ The initial release snapshot.
 [1.0.2]: https://github.com/ChefTaco/magnus/releases/tag/v1.0.2
 [1.0.1]: https://github.com/ChefTaco/magnus/releases/tag/v1.0.1
 [1.0.0]: https://github.com/ChefTaco/magnus/releases/tag/v1.0.0
+
+[2.0.0]: https://github.com/ChefTaco/magnus/releases/tag/v2.0.0

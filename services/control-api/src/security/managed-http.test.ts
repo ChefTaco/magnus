@@ -17,9 +17,9 @@ describe('native HTTP wire compatibility', () => {
   it('shares the exact versioned native completion registry and digest', () => {
     expect(controlRegistry.NATIVE_COMPLETION_REGISTRY).toEqual(nodeRegistry.NATIVE_COMPLETION_REGISTRY);
     expect(controlRegistry.NATIVE_COMPLETION_REGISTRY_SHA256).toBe(nodeRegistry.NATIVE_COMPLETION_REGISTRY_SHA256);
-    expect(controlRegistry.NATIVE_COMPLETION_REGISTRY_SHA256).toBe('b0f05a1eac40dba262ec5ff0cc0de8d2b7c9f119a6a2d7ed3a00d94dcb6b1d3d');
+    expect(controlRegistry.NATIVE_COMPLETION_REGISTRY_SHA256).toBe('e1303b169387f536c257e686eb95a29c1ff9b09e26fc38ac0d71d6c0daf9eb55');
     expect(controlRegistry.NATIVE_COMPLETION_REGISTRY.version).toBe(1);
-    expect(controlRegistry.NATIVE_COMPLETION_REGISTRY.descriptors).toHaveLength(9);
+    expect(controlRegistry.NATIVE_COMPLETION_REGISTRY.descriptors).toHaveLength(10);
     // Agent self-upgrade is the one lifecycle mutation in the registry: exact version and integrity, launcher-confirmed.
     expect(controlRegistry.nativeCompletionDescriptor('POST', '/agent-upgrade')).toMatchObject({ id: 'agent-self-upgrade', resourceClassifier: 'node-filesystem' });
   });
@@ -79,4 +79,11 @@ describe('native HTTP wire compatibility', () => {
       expect(control.managedHttpRequestSchema.safeParse(changed).success).toBe(false);
   });
 
+});
+
+it('retains exact legacy native settlement without expanding its authority', () => {
+  const legacy = 'b0f05a1eac40dba262ec5ff0cc0de8d2b7c9f119a6a2d7ed3a00d94dcb6b1d3d';
+  expect(controlRegistry.knownNativeCompletionIdentity(1, legacy, 'file-write')).toBe(true);
+  expect(controlRegistry.knownNativeCompletionIdentity(1, legacy, 'security-response')).toBe(false);
+  expect(controlRegistry.knownNativeCompletionIdentity(1, '0'.repeat(64), 'file-write')).toBe(false);
 });

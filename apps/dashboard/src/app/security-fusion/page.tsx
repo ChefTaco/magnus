@@ -15,7 +15,7 @@ export default async function Page() {
   if (!consoleUrl) {
     return (
       <main className="p-6">
-        <FusionHeader eyebrow="Optional integration" title="Security" copy="Connect an external security console to investigate cases and evidence." />
+        <FusionHeader eyebrow="Optional integration" title="Cindertrace" copy="Connect an Cindertrace to investigate cases and evidence." />
         <EmptyState
           tone="muted"
           icon={<ShieldOff className="h-5 w-5" />}
@@ -31,14 +31,14 @@ export default async function Page() {
 
   return (
     <main className="p-6">
-      <FusionHeader eyebrow="Security console" title="Security" copy="Investigations, evidence and security response run in the external security console." />
+      <FusionHeader eyebrow="Security console" title="Cindertrace" copy="Investigations, evidence and security response run in the Cindertrace." />
       <a
         href={consoleUrl}
         target="_blank"
         rel="noopener noreferrer"
         className={cn(buttonClass('primary', 'lg'), 'mb-6 border-accent/60 bg-accent/10 text-accent hover:border-accent hover:bg-accent/20 hover:shadow-[0_0_14px_var(--color-glow-accent)]')}
       >
-        Open security console <ArrowUpRight className="h-4 w-4" />
+        Open Cindertrace <ArrowUpRight className="h-4 w-4" />
       </a>
       {result ? (
         <>

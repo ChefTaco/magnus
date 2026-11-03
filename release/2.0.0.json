@@ -1,0 +1,42 @@
+{
+  "summary": "Move embedded Security Fusion ownership to standalone Cindertrace. Preserve inventory, durable export, summaries, compatibility redirects and a narrowly authenticated managed response bridge. Existing local-mode installations must migrate security state before upgrading. Historical tables and applied migrations remain intact.",
+  "breaking": true,
+  "minUpgradeFrom": "1.0.0",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [
+    {
+      "name": "CINDERTRACE_RESPONSE_SECRET",
+      "component": "server",
+      "secret": true,
+      "description": "Dedicated HMAC credential for the optional Cindertrace response bridge."
+    },
+    {
+      "name": "CINDERTRACE_RESTART_ALLOWLIST",
+      "component": "server",
+      "secret": false,
+      "description": "Services that Cindertrace may request to restart."
+    },
+    {
+      "name": "CINDERTRACE_PROTECTED_TARGET_IDS",
+      "component": "server",
+      "secret": false,
+      "description": "Targets excluded from host isolation."
+    },
+    {
+      "name": "MAGNUS_SECURITY_RESPONSE_ENABLED",
+      "component": "agent",
+      "secret": false,
+      "description": "Explicit opt-in to the managed security response adapter."
+    },
+    {
+      "name": "MAGNUS_SECURITY_CONTAINMENT_COMMAND",
+      "component": "agent",
+      "secret": false,
+      "description": "Root-controlled installed containment helper path."
+    }
+  ],
+  "removedEnv": [],
+  "migrations": [
+    "20261103000000_cindertrace_response_bridge"
+  ]
+}

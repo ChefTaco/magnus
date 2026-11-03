@@ -16,7 +16,7 @@ if (existsSync(envFile)) config({ path: envFile, quiet: true });
 const { validateSecrets } = await import('./utils/env.js');
 validateSecrets();
 
-const { securityFusionLocal, securityFusionMode, startSecurityExporter, stopSecurityExporter } = await import('./services/security-export.js');
+const { securityFusionMode, startSecurityExporter, stopSecurityExporter } = await import('./services/security-export.js');
 const { featureFlags } = await import('./config/features.js');
 const { serve } = await import('@hono/node-server');
 const { app } = await import('./server.js');
@@ -32,12 +32,7 @@ const { stopLogRetention } = await import('./services/log-retention.js');
 const { startHealthRetention } = await import('./services/health-retention.js');
 const { stopHealthRetention } = await import('./services/health-retention.js');
 const { startNotificationRetention, stopNotificationRetention } = await import('./services/notification-retention.js');
-const { startSecurityFusionRetention, stopSecurityFusionRetention } = await import('./services/security-fusion-service.js');
-const { reconcileSecurityFusionEvidence } = await import('./services/security-fusion-evidence-integrity.js');
-const {
-  startSecurityFusionOutboxDispatcher,
-  stopSecurityFusionOutboxDispatcher,
-} = await import('./services/security-fusion-outbox.js');
+
 const { startCommandWorker, closeCommandQueue } = await import('./queue/workers.js');
 const { startUpdateCheck, stopUpdateCheck } = await import('./services/update-check-service.js');
 const { startWebhookWorker, closeWebhookQueue } = await import('./services/webhook-service.js');
@@ -55,14 +50,6 @@ const features = featureFlags();
 console.log(`[startup] security-fusion=${securityFusionMode()} hermes-registry=${features.hermesRegistry ? 'on' : 'off'} `
   + `plugin-api=${features.pluginApi ? 'on' : 'off'} iam=${features.iam ? 'on' : 'off'}`);
 
-if (securityFusionLocal()) {
-  const evidenceReconciliation = await reconcileSecurityFusionEvidence();
-  console.log(
-    `[security-fusion] evidence reconciliation checked=${evidenceReconciliation.checked} `
-    + `updated=${evidenceReconciliation.updated} quarantined=${evidenceReconciliation.quarantined} `
-    + `mismatched_cases=${evidenceReconciliation.mismatchedCases}`,
-  );
-}
 
 const { writeRuntimeFile } = await import('./utils/runtime-file.js');
 const { CONTROL_API_VERSION } = await import('./config/version.js');
@@ -76,10 +63,7 @@ function startBackgroundServices(listenPort: number): void {
   startLogRetention();
   startHealthRetention();
   startNotificationRetention();
-  if (securityFusionLocal()) {
-    startSecurityFusionRetention();
-    startSecurityFusionOutboxDispatcher();
-  }
+
   startSecurityExporter();
   startCommandWorker();
   startRolloutReconciler();
@@ -155,9 +139,7 @@ async function shutdown(signal: string) {
       stopLogRetention();
       stopHealthRetention();
       stopNotificationRetention();
-      stopSecurityFusionRetention();
       stopSecurityExporter();
-      stopSecurityFusionOutboxDispatcher();
       stopCodexFleetMonitor();
       stopUpdateCheck();
       stopExtensionSourceMonitor();

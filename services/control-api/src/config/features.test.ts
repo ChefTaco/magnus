@@ -26,7 +26,7 @@ describe('optional integrations default to off', () => {
     vi.stubEnv('SECURITY_FUSION_MODE', 'bogus');
     expect(securityFusionMode()).toBe('off');
     vi.stubEnv('SECURITY_FUSION_MODE', 'local');
-    expect(securityFusionMode()).toBe('local');
+    expect(() => securityFusionMode()).toThrow(/retired/);
     vi.stubEnv('MAGNUS_SECURITY_CONSOLE_URL', 'https://security.example.com/');
     expect(securityConsoleUrl()).toBe('https://security.example.com');
     vi.stubEnv('MAGNUS_SECURITY_CONSOLE_URL', 'javascript:alert(1)');
@@ -40,7 +40,7 @@ describe('environment validation of optional features', () => {
   it('requires the receipt key only in local Security Fusion mode', () => {
     expect(() => loadEnv({ ...secrets, SECURITY_FUSION_MODE: 'off' })).not.toThrow();
     expect(() => loadEnv({ ...secrets, SECURITY_FUSION_MODE: 'remote' })).not.toThrow();
-    expect(() => loadEnv({ ...secrets, SECURITY_FUSION_MODE: 'local' })).toThrow(/SECURITY_FUSION_RECEIPT_SIGNING_KEY/);
+    expect(() => loadEnv({ ...secrets, SECURITY_FUSION_MODE: 'local' })).toThrow(/retired/);
   });
 
   it('requires plugin digests only when the plugin API is enabled', () => {

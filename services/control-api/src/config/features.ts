@@ -12,8 +12,8 @@ export interface FeatureFlags {
   router: boolean;
   /** HiveMem shared agent memory. */
   hivemem: boolean;
-  /** Security Fusion mode: off, local or remote (external security console). */
-  securityFusion: 'off' | 'local' | 'remote';
+  /** Security integration mode: off or remote (Cindertrace). */
+  securityFusion: 'off' | 'remote';
   /** URL of the external security console shown to operators in remote mode. */
   securityConsoleUrl: string | null;
   /** Hermes Agent plugin API (plugin-scoped bearer credentials). */
@@ -34,7 +34,7 @@ export function featureFlags(env: NodeJS.ProcessEnv = process.env): FeatureFlags
     iam: Boolean(env['IAM_CORE_URL']),
     router: Boolean(env['MAGNUS_ROUTER_URL'] || env['HIVE_ROUTER_URL']),
     hivemem: Boolean(env['HIVEMEM_URL']),
-    securityFusion: mode === 'local' || mode === 'remote' ? mode : 'off',
+    securityFusion: mode === 'remote' ? mode : 'off',
     securityConsoleUrl: env['MAGNUS_SECURITY_CONSOLE_URL'] || null,
     pluginApi: truthy(env['MAGNUS_PLUGIN_API_ENABLED']),
     hermesRegistry: truthy(env['MAGNUS_HERMES_REGISTRY_ENABLED']),

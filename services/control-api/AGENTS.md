@@ -63,8 +63,7 @@ scripts/                build helpers, the Compose check, legacy data migrations
 
 ## Optional integrations
 
-Hive IAM, Hive Router, HiveMem, Security Fusion (local or an external security
-console), the Hermes Agent plugin API, the Hermes registry sync and the AI
+Hive IAM, Hive Router, HiveMem, Cindertrace (an external security console), the Hermes Agent plugin API, the Hermes registry sync and the AI
 assistant providers are optional. Each is off until its environment variables
 are set (`src/config/features.ts`), and the server must start and work without
 any of them. Never hard-code their URLs, hosts or tokens; add new settings to

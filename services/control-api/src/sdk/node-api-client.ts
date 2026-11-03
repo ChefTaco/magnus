@@ -339,6 +339,18 @@ export class NodeApiClient {
 
   // ── Health ──
 
+  async securityResponseCapable(): Promise<boolean> {
+    const reply = await this.api.get('ping', { timeout: 5000, retry: 0 }).json<ApiResponse<{ features?: { securityResponse?: number } }>>();
+    return reply.success === true && reply.data?.features?.securityResponse === 1;
+  }
+
+  async securityResponse(body: { operation: 'execute' | 'release'; kind: 'service_restart' | 'host_isolation'; serviceName: string | null; isolationMinutes: number | null }, commandId: string): Promise<ManagedMutationResult<{ success: boolean; data: { exitCode: number } }>> {
+    if (!await this.securityResponseCapable()) throw new HttpError(409, 'RESPONSE_DISABLED', 'Target has not enabled its managed response adapter');
+    const result = await this.mutateWithEvidence<{ success: boolean; data: { exitCode: number } }>('POST', 'security-response', body, 120000, commandId, undefined, true);
+    if (!result.evidence) throw new Error('Response requires a signed managed receipt');
+    return { response: result.response, evidence: result.evidence };
+  }
+
   async collectHealth(): Promise<ApiResponse<HealthSnapshot>> {
     return this.api.get('health/collect').json();
   }

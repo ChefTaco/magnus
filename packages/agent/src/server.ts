@@ -90,6 +90,7 @@ export async function createApp(): Promise<Hono> {
           commandReceipts: ENABLE_NODE_MANAGEMENT ? 1 : 0,
           commandFencing: ENABLE_NODE_MANAGEMENT ? 1 : 0,
           managedMutations: ENABLE_NODE_MANAGEMENT ? 1 : 0,
+          securityResponse: ENABLE_NODE_MANAGEMENT && process.env["MAGNUS_SECURITY_RESPONSE_ENABLED"] === "true" ? 1 : 0,
           commandReconciliation: commandReconciliationEnabled() ? 1 : 0,
           commandCompletionRegistry: { version: COMMAND_COMPLETION_REGISTRY.version,
             sha256: COMMAND_COMPLETION_REGISTRY_SHA256, enabled: MAGNUS_EXECUTION_SUPERVISOR_ENABLED ? 1 : 0 },
@@ -165,6 +166,7 @@ export async function createApp(): Promise<Hono> {
           commandReceipts: ENABLE_NODE_MANAGEMENT ? 1 : 0,
           commandFencing: ENABLE_NODE_MANAGEMENT ? 1 : 0,
           managedMutations: ENABLE_NODE_MANAGEMENT ? 1 : 0,
+          securityResponse: ENABLE_NODE_MANAGEMENT && process.env["MAGNUS_SECURITY_RESPONSE_ENABLED"] === "true" ? 1 : 0,
           commandReconciliation: commandReconciliationEnabled() ? 1 : 0,
         },
         heartbeat: getHeartbeatStatus(),
@@ -225,6 +227,8 @@ export async function createApp(): Promise<Hono> {
     v1.route('/storage-evidence', storageEvidenceRoutes);
     v1.route('/health', healthRoutes);
     v1.route('/commands', commandRoutes);
+    const { securityResponseRoutes } = await import('./executors/security-response.js');
+    v1.route('/security-response', securityResponseRoutes);
     const { enrollmentDrainRoutes } = await import('./executors/enrollment-drain.js');
     v1.route('/commands', enrollmentDrainRoutes);
     v1.route('/cron', cronRoutes);

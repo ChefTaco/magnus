@@ -2183,3 +2183,16 @@ model ManagedCronOccurrence {
   @@index([nodeId, state])
   @@map("managed_cron_occurrences")
 }
+
+/// Narrow Cindertrace bridge ledger; never replays an uncertain response.
+model CindertraceResponse {
+  id String @id
+  actionOperation String @unique
+  nodeId String
+  requestSha256 String
+  requestJson String
+  status String @default("claimed")
+  responseJson String?
+  createdAt DateTime @default(now())
+  @@map("cindertrace_responses")
+}

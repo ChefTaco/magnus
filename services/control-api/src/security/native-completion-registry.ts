@@ -3,6 +3,8 @@ import { createHash } from 'node:crypto';
 export const NATIVE_COMPLETION_REGISTRY = {
   version: 1,
   descriptors: [
+    { id: 'security-response', method: 'POST', pathMatcher: { kind: 'exact', path: '/security-response' },
+      completionMode: 'buffered-synchronous-http', timeoutCeilingSeconds: 120, resourceClassifier: 'node-filesystem' },
     { id: 'file-write', method: 'POST', pathMatcher: { kind: 'exact', path: '/files/write' },
       completionMode: 'buffered-synchronous-http', timeoutCeilingSeconds: 3600, resourceClassifier: 'node-filesystem' },
     { id: 'skill-install', method: 'POST', pathMatcher: { kind: 'exact', path: '/skills/install' },
@@ -46,4 +48,13 @@ export function nativeCompletionResourceKey(descriptor: NativeCompletionDescript
   if (!nodeId || !['node-filesystem', 'node-skill-catalog', 'node-scheduler', 'node-ardent'].includes(descriptor.resourceClassifier))
     throw new Error('Native completion resource cannot be classified');
   return descriptor.resourceClassifier === 'node-ardent' ? `node:${nodeId}:ardent` : `node:${nodeId}`;
+}
+
+/** Preserve settlement of pre-extraction leases without granting the new response boundary retroactively. */
+export function knownNativeCompletionIdentity(version: number | null, sha256: string | null, descriptorId: string | null): boolean {
+  if (version !== 1 || !descriptorId) return false;
+  const descriptor = NATIVE_COMPLETION_REGISTRY.descriptors.find(item => item.id === descriptorId);
+  if (!descriptor) return false;
+  return sha256 === NATIVE_COMPLETION_REGISTRY_SHA256 || (descriptorId !== 'security-response'
+    && sha256 === 'b0f05a1eac40dba262ec5ff0cc0de8d2b7c9f119a6a2d7ed3a00d94dcb6b1d3d');
 }

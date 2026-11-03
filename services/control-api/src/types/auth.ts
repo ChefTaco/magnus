@@ -1,6 +1,7 @@
 // ─── Auth and Audit ───
 
 export type AuditAction =
+  | 'cindertrace.response_claimed'
   | 'node.register'
   | 'node.update'
   | 'node.repair_address'

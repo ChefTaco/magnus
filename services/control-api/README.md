@@ -187,3 +187,7 @@ migrations are never edited.
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
+
+## Cindertrace
+
+Embedded Security Fusion is retired. See [migration and response configuration](../../docs/CINDERTRACE_MIGRATION.md). CINDERTRACE_RESPONSE_SECRET, CINDERTRACE_RESTART_ALLOWLIST, and CINDERTRACE_PROTECTED_TARGET_IDS configure the optional managed response adapter.

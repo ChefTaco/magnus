@@ -1,8 +1,8 @@
+import { cindertraceResponseRouter } from './routes/cindertrace-response.js';
 import { resourceLeasesRouter } from './routes/resource-leases.js';
 import { sharedResourceLeasesRouter } from './routes/shared-resource-leases.js';
 import { securityBackupRouter } from './routes/security-backup.js';
 import { securityIntegrationRouter } from './routes/security-integration.js';
-import { securityConsoleUrl, securityFusionMode } from './services/security-export.js';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
@@ -101,6 +101,7 @@ app.use(
 );
 app.use('/api/v1/security-fusion/ingest/source-status', bodyLimitMiddleware(32_768));
 app.route('/api/v1/security-integration/backups', securityBackupRouter);
+app.use('/api/v1/security-integration/response/*', bodyLimitMiddleware(16_384));
 app.use('/api/v1/*', async (c, next) => {
   const limit = c.req.path === '/api/v1/hermes-registry/capture' || c.req.path === '/api/v1/hermes-registry/revisions'
     ? 4_500_000 : Number(process.env['API_BODY_LIMIT_BYTES'] ?? 1_048_576);
@@ -178,20 +179,8 @@ v1.route('/assistant', assistantRouter);
 v1.route('/events/stream', eventsStreamRouter);
 v1.route('/ops', opsRouter);
 v1.route('/mcp', mcpRouter);
+v1.route('/security-integration/response', cindertraceResponseRouter);
 v1.route('/security-integration', securityIntegrationRouter);
-v1.use('/security-fusion/*', async (c, next) => {
-  const mode = securityFusionMode();
-  if (mode === 'remote') {
-    const url = securityConsoleUrl();
-    return c.json({ success: false, error: { code: 'SECURITY_FUSION_MOVED',
-      message: 'Security Fusion is served by the external security console', ...(url ? { url } : {}) } }, 410);
-  }
-  if (mode === 'off') {
-    return c.json({ success: false, error: { code: 'SECURITY_FUSION_DISABLED',
-      message: 'Security Fusion is disabled; set SECURITY_FUSION_MODE=local or remote to enable it' } }, 404);
-  }
-  await next();
-});
 v1.route('/security-fusion', securityFusionRouter);
 
 app.route('/api/v1', v1);

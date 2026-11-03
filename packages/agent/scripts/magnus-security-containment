@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+readonly PATH
+
+die() { printf 'magnus-security-containment: %s\n' "$*" >&2; exit 64; }
+unknown() { printf 'magnus-security-containment: %s; inspect retained state before retry\n' "$*" >&2; exit 70; }
+policy_file() {
+  [[ -f "$1" && ! -L "$1" && "$(/usr/bin/stat -c '%u' "$1")" == 0 ]] || die "policy must be a root-owned regular file"
+  local mode
+  mode="$(/usr/bin/stat -c '%a' "$1")"
+  (( (8#$mode & 0022) == 0 )) || die "policy must not be writable by other users"
+}
+rollback_isolation() {
+  /usr/sbin/nft -f /run/magnus-security-pre-isolation.nft || unknown "isolation rollback failed; automatic release remains scheduled"
+  /usr/bin/rm -f /run/magnus-security-pre-isolation.nft
+  /usr/bin/systemctl stop magnus-security-auto-release.timer 2>/dev/null || true
+}
+[[ EUID -eq 0 ]] || die "must run as root"
+[[ $# -ge 1 ]] || die "operation required"
+
+exec 9>/run/magnus-security-containment.lock
+/usr/bin/flock -n 9 || die "another containment operation is running"
+
+operation="$1"
+shift
+case "$operation" in
+  restart-service)
+    [[ $# -eq 1 && "$1" =~ ^[a-zA-Z0-9@_.-]+\.service$ ]] || die "invalid service name"
+    allowlist="/etc/magnus/security-restart-services"
+    policy_file "$allowlist"
+    /usr/bin/grep -Fxq -- "$1" "$allowlist" || die "service is not allowlisted"
+    /usr/bin/systemctl is-active --quiet "$1" || die "service is not currently active"
+    /usr/bin/systemctl restart "$1"
+    /usr/bin/systemctl is-active --quiet "$1" || die "service failed post-restart verification"
+    printf '{"operation":"restart-service","service":"%s","active":true}\n' "$1"
+    ;;
+  isolate)
+    [[ $# -eq 2 && "$1" == "--minutes" && "$2" =~ ^[0-9]+$ ]] || die "usage: isolate --minutes 1..30"
+    minutes="$2"
+    (( minutes >= 1 && minutes <= 30 )) || die "isolation duration must be 1..30 minutes"
+    policy_file /etc/magnus/security-isolation.enabled
+    policy_file /etc/magnus/security-isolation.nft
+    policy_file /etc/magnus/security-control-url
+    for marker in magnus-control admin-ssh tailscale dns-ntp wazuh; do
+      /usr/bin/grep -Fq -- "$marker" /etc/magnus/security-isolation.nft ||
+        die "isolation policy is missing required preservation marker: $marker"
+    done
+    [[ ! -f /run/magnus-security-pre-isolation.nft ]] || die "isolation is already active; release before another isolation"
+    { printf 'flush ruleset\n'; /usr/sbin/nft list ruleset; } > /run/magnus-security-pre-isolation.nft
+    /usr/bin/systemctl stop magnus-security-auto-release.timer 2>/dev/null || true
+    /usr/bin/systemd-run --unit=magnus-security-auto-release --on-active="${minutes}m" \
+      "$(/usr/bin/readlink -f -- "$0")" release >/dev/null
+    /usr/bin/systemctl is-active --quiet magnus-security-auto-release.timer || die "automatic release timer did not activate"
+    if ! /usr/sbin/nft -f /etc/magnus/security-isolation.nft; then
+      rollback_isolation
+      die "isolation policy failed and prior rules were restored"
+    fi
+    control_url="$(/usr/bin/head -n 1 /etc/magnus/security-control-url)"
+    if [[ "$control_url" != https://* ]] || ! /usr/bin/curl --fail --silent --show-error --max-time 10 "$control_url" >/dev/null; then
+      rollback_isolation
+      die "control channel verification failed and prior rules were restored"
+    fi
+    printf '{"operation":"isolate","minutes":%s,"autoRelease":true}\n' "$minutes"
+    ;;
+  release)
+    [[ $# -eq 0 ]] || die "release takes no arguments"
+    [[ -f /run/magnus-security-pre-isolation.nft ]] || die "no isolation snapshot is available"
+    policy_file /run/magnus-security-pre-isolation.nft
+    /usr/sbin/nft -f /run/magnus-security-pre-isolation.nft || unknown "isolation release failed"
+    /usr/bin/rm -f /run/magnus-security-pre-isolation.nft
+    /usr/bin/systemctl stop magnus-security-auto-release.timer 2>/dev/null || true
+    printf '{"operation":"release","restored":true}\n'
+    ;;
+  *) die "unsupported operation" ;;
+esac

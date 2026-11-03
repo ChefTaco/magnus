@@ -1,11 +1,9 @@
 import { ResourceLeaseConflict } from '../services/command-resource-leases.js';
-import { securityFusionLocal } from '../services/security-export.js';
 import { recordMonitorPulse } from '../services/monitor-pulse.js';
 import { Queue, Worker, type Job } from 'bullmq';
 import { addDurableJob } from './requeue.js';
 import { validateRemediationCommandForDispatch } from '../services/remediation-service.js';
 import { reconcileCommands } from '../services/command-lifecycle.js';
-import { reconcileRestartVerification } from '../services/security-fusion-verification.js';
 import { getDb } from '../db/index.js';
 import { NodeApiClient } from '../sdk/index.js';
 import { getNodeBaseUrl } from '../utils/node-url.js';
@@ -18,7 +16,6 @@ import {
 import { safeParse } from '../utils/validate.js';
 import { commandFenceSchema, commandResultSchema } from '../schemas/node-responses.js';
 import { incMetric } from '../routes/metrics.js';
-import { securityFusionActionSources } from '../services/security-fusion-actions.js';
 import { verifyCommandResultSignature } from '../security/command-result-signature.js';
 
 // ─── Command execution queue ───
@@ -87,62 +84,6 @@ export async function enqueueCommand(commandId: string): Promise<void> {
     removeOnComplete: { age: 60 * 60, count: 1_000 },
     removeOnFail: { age: 24 * 60 * 60, count: 1_000 },
   });
-}
-
-/**
- * Verify agent HMAC-SHA256 signature over command result fields.
- * Returns true if valid, false if tampered. Skips if secret is not configured.
- */
-async function recordSecurityFusionCommandResult(
-  commandId: string,
-  succeeded: boolean,
-  detail: Record<string, unknown>,
-): Promise<void> {
-  const db = getDb();
-  const outbox = await db.securityFusionCommandOutbox.findUnique({
-    where: { remoteCommandId: commandId },
-  });
-  const action = outbox
-    ? await db.securityFusionAction.findUnique({ where: { id: outbox.actionId } })
-    : null;
-  if (action && outbox) {
-    if (succeeded && action.kind === 'service_restart') {
-      const transitioned = await db.securityFusionAction.updateMany({
-        where: { id: action.id, status: { in: securityFusionActionSources('verifying') } },
-        data: { status: 'verifying', resultJson: JSON.stringify({ commandId, ...detail }) },
-      });
-      if (transitioned.count !== 1) return;
-      await db.securityFusionCaseActivity.create({
-        data: {
-          caseId: action.caseId,
-          kind: 'containment.restart_verifying',
-          actorId: 'system:command-worker',
-          detailJson: JSON.stringify({ actionId: action.id, commandId }),
-        },
-      });
-      return;
-    }
-    const releasing = outbox.operation === 'release';
-    const status = succeeded ? (releasing ? 'released' : 'succeeded') : 'failed';
-    const transitioned = await db.securityFusionAction.updateMany({
-      where: {
-        id: action.id,
-        status: {
-          in: securityFusionActionSources(status),
-        },
-      },
-      data: { status, resultJson: JSON.stringify({ commandId, ...detail }) },
-    });
-    if (transitioned.count !== 1) return;
-    await db.securityFusionCaseActivity.create({
-      data: {
-        caseId: action.caseId,
-        kind: `containment.${status}`,
-        actorId: 'system:command-worker',
-        detailJson: JSON.stringify({ actionId: action.id, commandId, ...detail }),
-      },
-    });
-  }
 }
 
 /** Start the command execution worker. */
@@ -284,10 +225,7 @@ export function startCommandWorker(): Worker<CommandJobPayload> {
           return true;
         });
         if (!recorded) return;
-        if (securityFusionLocal()) await recordSecurityFusionCommandResult(commandId, result.exitCode === 0, {
-          exitCode: result.exitCode,
-          durationMs: result.durationMs,
-        });
+
 
         // Emit notification on command failure
         if (result.exitCode !== 0) {
@@ -328,7 +266,6 @@ export function startCommandWorker(): Worker<CommandJobPayload> {
           return true;
         });
         if (!failed) throw err;
-        if (securityFusionLocal()) await recordSecurityFusionCommandResult(commandId, false, { error: errMsg });
 
         // Emit notification on worker-level failure
         const node = nodeId ? await db.node.findUnique({
@@ -367,7 +304,6 @@ export function startCommandWorker(): Worker<CommandJobPayload> {
     reconciliationBusy = true;
     try {
       await reconcileCommands();
-      if (securityFusionLocal()) await reconcileRestartVerification();
       recordMonitorPulse('commands');
     } catch { console.error('[commands] reconciliation pending'); }
     finally { reconciliationBusy = false; }

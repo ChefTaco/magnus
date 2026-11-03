@@ -29,6 +29,8 @@ export interface EnvSchemaDocument {
 export const DEFAULT_PORT = 4100;
 
 export const agentEnvCatalog: EnvVarSpec[] = [
+  { name: 'MAGNUS_SECURITY_RESPONSE_ENABLED', required: false, secret: false, default: 'false', group: 'runtime', description: 'Opt in to the narrowly registered managed Cindertrace response endpoint.' },
+  { name: 'MAGNUS_SECURITY_CONTAINMENT_COMMAND', required: false, secret: false, group: 'runtime', description: 'Absolute path of a root-owned, non-writable containment helper; no default.' },
   { name: 'CONTROL_API_URL', required: true, secret: false, group: 'core', description: 'Base URL of the magnus-server Control API this node enrolls with, for example https://magnus.example.com:4000.' },
   { name: 'NODE_MANAGER_SECRET', required: true, secret: true, generate: 'hex32', group: 'core', description: 'Shared node credential. Must equal the value the Control API holds for this node (at least 32 characters).' },
   { name: 'RESULT_SIGNING_SECRET', required: true, secret: true, generate: 'hex32', group: 'core', description: 'Dedicated command-result signing key (at least 32 characters). Never reuse NODE_MANAGER_SECRET.' },

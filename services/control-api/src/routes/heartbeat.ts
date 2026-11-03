@@ -1,4 +1,4 @@
-import { enqueueSecurityObservations, securityFusionLocal } from '../services/security-export.js';
+import { enqueueSecurityObservations } from '../services/security-export.js';
 import { warnOnAgentVersionMismatch } from '../services/agent-version-warnings.js';
 import { recordSelfUpgradeReport } from '../services/agent-upgrade-service.js';
 import { Hono } from 'hono';
@@ -27,7 +27,6 @@ import { heartbeatHealthSchema } from '../schemas/node-responses.js';
 import { normalizeIpAddress, isLoopbackOrUnroutableIp, isUsableNodeIp } from '../utils/ip.js';
 import { AGENT_VERSION } from '../config/version.js';
 import { getHeartbeatStreamStats } from '../services/heartbeat-stream.js';
-import { ingestMagnusServiceHealth } from '../services/security-fusion-service.js';
 import {
   deriveAgentCertificateHostname,
   selectAgentEndpointHostname,
@@ -601,13 +600,7 @@ heartbeatRouter.post('/', async (c) => {
       return snapshot;
       });
 
-      if (securityFusionLocal()) void ingestMagnusServiceHealth(
-        nodeId,
-        existing?.name ?? fqdn ?? nodeId,
-        (h.services ?? []) as Array<{ name?: string; status?: string }>,
-      ).catch((err: unknown) => {
-        console.error(`[security-fusion] heartbeat conversion failed for ${nodeId}:`, err instanceof Error ? err.message : err);
-      });
+
 
       // Evaluate health against alert rules (fire-and-forget)
       const alertNodeName = existing?.name ?? fqdn ?? nodeId;
