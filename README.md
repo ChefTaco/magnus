@@ -1,5 +1,7 @@
 # Magnus
 
+[Project site: UI previews and installation walkthroughs](https://hivemagnus.com/).
+
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 **Magnus is self-hosted fleet management for Linux hosts and AI agents.** A small agent on each
