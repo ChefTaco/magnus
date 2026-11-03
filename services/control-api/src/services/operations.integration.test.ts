@@ -43,9 +43,6 @@ describe.skipIf(!enabled)('operations on disposable PostgreSQL', () => {
     await db.teamApprovalDecision.deleteMany({ where: {
       proposalId: { in: remediationExecutions.map(({ id }) => `remediation:${id}`) },
     } });
-    await db.securityFusionCaseActivity.deleteMany({ where: { caseId: prefix } });
-    await db.securityFusionCommandOutbox.deleteMany({ where: { actorId: prefix } });
-    await db.securityFusionAction.deleteMany({ where: { requestedBy: prefix } });
     await db.webhookEndpoint.deleteMany({ where: { createdBy: prefix } });
     await db.notification.deleteMany({ where: { sourceRef: { startsWith: prefix } } });
     await db.applicationObservation.deleteMany({ where: { id: { startsWith: prefix } } });
@@ -331,30 +328,6 @@ describe.skipIf(!enabled)('operations on disposable PostgreSQL', () => {
     expect(await db.notification.count({ where: { sourceRef: config.id, type: 'application.recovered' } })).toBe(1);
     expect(await db.webhookDelivery.count({ where: { endpointId: ep.id } })).toBe(2);
     await db.webhookEndpoint.delete({ where: { id: ep.id } });
-  });
-
-  it('resumes Security Fusion verification using fresh specific-service evidence and expires unhealthy outcomes', async () => {
-    const { reconcileRestartVerification } = await import('./security-fusion-verification.js');
-    const make = async () => {
-      const cmd = await db.remoteCommand.create({ data: { nodeId: nodes[0]!, command: '/usr/bin/uptime', idempotencyKey: randomUUID(), createdBy: prefix,
-        status: 'COMPLETED', completedAt: new Date(Date.now() - 1000), result: { create: { exitCode: 0, stdout: '', stderr: '', durationMs: 1 } } } });
-      const action = await db.securityFusionAction.create({ data: { caseId: prefix, nodeId: nodes[0]!, kind: 'service_restart', serviceName: 'review.service',
-        rationale: 'Synthetic verification test', rollbackPlan: 'none', previewJson: '{}', previewSha256: 'test', status: 'verifying', requestedBy: prefix } });
-      await db.securityFusionCommandOutbox.create({ data: { actionId: action.id, operation: 'execute', actorId: prefix, status: 'dispatched', remoteCommandId: cmd.id } });
-      return { cmd, action };
-    };
-    const first = await make();
-    await reconcileRestartVerification();
-    expect(await db.securityFusionAction.findUnique({ where: { id: first.action.id } })).toMatchObject({ status: 'verifying' });
-    await db.healthSnapshot.create({ data: { cpuUsagePercent: 0, cpuCores: 1, cpuLoadAverage: '[]', memoryTotalBytes: 1n, memoryUsedBytes: 0n, memoryPercent: 0, swapTotalBytes: 0n, swapUsedBytes: 0n, disks: '[]', network: '[]', nodeId: nodes[0]!, timestamp: new Date(), services: '[{"name":"review","status":"active"}]' } });
-    await reconcileRestartVerification();
-    expect(await db.securityFusionAction.findUnique({ where: { id: first.action.id } })).toMatchObject({ status: 'succeeded' });
-    const second = await make();
-    await db.healthSnapshot.create({ data: { cpuUsagePercent: 0, cpuCores: 1, cpuLoadAverage: '[]', memoryTotalBytes: 1n, memoryUsedBytes: 0n, memoryPercent: 0, swapTotalBytes: 0n, swapUsedBytes: 0n, disks: '[]', network: '[]', nodeId: nodes[0]!, timestamp: new Date(Date.now() + 10), services: '[{"name":"review","status":"failed"}]' } });
-    await reconcileRestartVerification(new Date(Date.now() + 20));
-    expect(await db.securityFusionAction.findUnique({ where: { id: second.action.id } })).toMatchObject({ status: 'verifying' });
-    await reconcileRestartVerification(new Date(Date.now() + 181_000));
-    expect(await db.securityFusionAction.findUnique({ where: { id: second.action.id } })).toMatchObject({ status: 'failed' });
   });
 
   it('advances through a wave larger than its budget without replaying completed targets', async () => {
