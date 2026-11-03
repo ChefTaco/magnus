@@ -1,6 +1,6 @@
 // Disposable browser harness: imports the real API without startup collectors or
 // remote command workers, and runs an isolated copy of the standalone dashboard.
-import { mkdtemp, cp, mkdir, rm } from 'node:fs/promises';
+import { mkdtemp, cp, mkdir, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -27,10 +27,11 @@ const testEnv = {
   JWT_SECRET: 'ci-only-api-jwt-0123456789abcdef0123456789',
   CREDENTIAL_ROTATION_KEY: 'ci-only-rotation-key-0123456789abcdef0123456789',
   CREDENTIAL_ROTATION_STATE_PATH: join(scratch, 'rotations.json'),
-  // Security Fusion export is off by default; the browser suite covers its local mode.
-  SECURITY_FUSION_MODE: 'local',
-  SECURITY_FUSION_RECEIPT_SIGNING_KEY: 'ci-only-receipt-key-0123456789abcdef0123456789',
-  SECURITY_FUSION_EVIDENCE_DIR: join(scratch, 'security-fusion/evidence'),
+  // The external console is unavailable; fleet operations must remain usable.
+  SECURITY_FUSION_MODE: 'remote',
+  MAGNUS_SECURITY_CONSOLE_URL: 'https://security.example.invalid',
+  SECURITY_FUSION_API_URL: 'https://security.example.invalid',
+  SECURITY_EXPORT_ENABLED: 'false',
   NODE_MANAGER_SECRET: 'ci-only-node-secret-0123456789abcdef0123456789',
   AUDIT_HMAC_SECRET: 'ci-only-audit-secret-0123456789abcdef0123456789',
   WEBHOOK_ENCRYPTION_KEY: 'ci-only-webhook-key-0123456789abcdef0123456789',
@@ -88,7 +89,9 @@ await db.node.upsert({
   },
   update: { lastHeartbeatAt: new Date() },
 });
-// A node whose agent reports that it can upgrade itself, one release behind.
+// A same-major prerelease remains behind even at the first stable major release.
+const targetVersion = JSON.parse(await readFile(join(root, 'package.json'), 'utf8')).version;
+const fixtureAgentVersion = `${targetVersion.split('-')[0]}-0`;
 await db.node.upsert({
   where: { id: 'browser-ci-upgradable' },
   create: {
@@ -104,8 +107,8 @@ await db.node.upsert({
     status: 'ONLINE',
     lastHeartbeatAt: new Date(),
     metadata: JSON.stringify({ agentSelfUpgrade: { protocol: 1, launcherProtocol: 1, layout: 'versioned', enabled: true, reason: null,
-      upgrade: { state: 'idle', from: null, to: '1.0.0' }, nodeVersion: 'v24.22.1', observedAt: new Date().toISOString() } }),
-    agent: { create: { version: '1.0.0', status: 'RUNNING', capabilities: '[]' } },
+      upgrade: { state: 'idle', from: null, to: fixtureAgentVersion }, nodeVersion: 'v24.22.1', observedAt: new Date().toISOString() } }),
+    agent: { create: { version: fixtureAgentVersion, status: 'RUNNING', capabilities: '[]' } },
   },
   update: { lastHeartbeatAt: new Date() },
 });

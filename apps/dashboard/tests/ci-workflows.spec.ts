@@ -51,7 +51,7 @@ test('real login, node read, failed mutation feedback and durable rollout contro
   await expect(page).toHaveURL('/login');
   expect((await page.request.get('/api/auth/me', { headers: { Cookie: `${copiedCookie.name}=${copiedCookie.value}` } })).status()).toBe(401);
 });
-test('named viewer reads Security Fusion metadata but cannot mutate or read evidence', async ({
+test('named viewer reads fleet metadata while retired security routes point to Cindertrace', async ({
   page,
   context,
 }) => {
@@ -101,8 +101,11 @@ test('named viewer reads Security Fusion metadata but cannot mutate or read evid
   expect((await page.request.post('/api/proxy/rollouts/browser-ci-rollout/resume')).status()).toBe(
     403,
   );
-  expect((await page.request.get('/api/proxy/security-fusion/cases')).status()).toBe(200);
-  expect((await page.request.get('/api/proxy/security-fusion/evidence')).status()).toBe(403);
+  for (const resource of ['cases', 'evidence']) {
+    const retired = await page.request.get(`/api/proxy/security-fusion/${resource}`);
+    expect(retired.status()).toBe(410);
+    expect((await retired.json()).error).toMatchObject({ code: 'SECURITY_FUSION_MOVED' });
+  }
   expect((await page.request.get('/api/control-nodes')).status()).toBe(403);
 });
 
@@ -173,7 +176,7 @@ test('agent upgrade dialog greys out agents that cannot upgrade themselves', asy
   await page.getByLabel('Password', { exact: true }).fill('ci-only-browser-password');
   await page.getByRole('button', { name: 'Sign In', exact: true }).click();
   await expect(page).toHaveURL('/');
-  // The fixture agent runs 1.0.0, behind the version this server ships with.
+  // The fixture is a same-major prerelease behind this server's stable release.
   await expect(page.getByTestId('update-banner')).toContainText(/agents? behind the server/);
   await page.goto('/nodes');
   await page.getByRole('main').getByRole('button', { name: 'Upgrade Agents', exact: true }).click();
