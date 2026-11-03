@@ -174,6 +174,17 @@ system updates, user management, server-side SSH deployment helpers and console 
 
 ### Execution supervisor
 
+Offline historical reconciliation keeps observations bounded to 16 exact record
+IDs. For a larger inventory, use
+`historical-mutation-cli inspect --output FILE --records UUID,UUID`
+to capture separate signed batches before the approved host
+reboot. Apply each retained batch afterward with the same exact IDs and the
+independent review credential. Selection rejects duplicate, missing, completed,
+settled, or active records; unselected claims remain unresolved. This does not
+expand the supported historical routes, replace the kernel boot requirement,
+authorize replay, or establish the original effects' outcomes. Original request
+bytes remain intact and settlements remain separate signed receipts.
+
 `MAGNUS_EXECUTION_SUPERVISOR_ENABLED=true` on a privileged agent runs each command in its own
 systemd unit. The agent records the launch intent first, binds observations to the boot,
 invocation and command digest, and can adopt a completed command after a restart without running

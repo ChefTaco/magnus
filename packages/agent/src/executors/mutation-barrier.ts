@@ -127,7 +127,10 @@ export class MutationBarrier {
   }
 
   /** Before-maintenance owner evidence; read-only and signed with the result key. */
-  async historicalObservation() {
+  async historicalObservation(recordIds?: readonly string[]) {
+    const selected = recordIds === undefined ? undefined
+      : z.array(z.string().guid()).min(1).max(16).parse(recordIds);
+    if (selected && new Set(selected).size !== selected.length) throw new Error('Exact distinct historical record IDs required');
     return this.lockedRead(async () => {
       const drain = await this.identity();
       if (!drain) throw new Error('Existing durable drain required');
@@ -137,10 +140,12 @@ export class MutationBarrier {
       for (const name of names) {
         const row = recordSchema.parse(await this.read(name));
         if (name !== 'request-' + row.id + '.json') throw new Error('Mutation record identity differs');
+        if (selected && !selected.includes(row.id)) continue;
         if (row.state === 'completed' || await this.historicalSettlement(row, drain)) continue;
         if (this.active.has(row.id)) throw new Error('Active operation cannot be retired');
         records.push({ id: row.id, recordSha256: await this.recordDigest(row.id), acceptedAt: row.acceptedAt, routeSha256: row.routeSha256 });
       }
+      if (selected && records.length !== selected.length) throw new Error('Selected historical records must all remain unsettled');
       return signHistoricalObservation({ version: 1, drain, boot: await this.bootReader(), observedAt: Date.now(), records }, this.historicalKeys.result);
     });
   }

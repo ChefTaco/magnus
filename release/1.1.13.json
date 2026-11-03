@@ -1,0 +1,9 @@
+{
+  "summary": "Allow the offline historical-mutation inspector to select exact batches of at most 16 record IDs. Larger inventories retain separate signed observations and decisions without increasing wire limits, weakening real host-boot proof, modifying original records, or permitting replay. Missing, duplicate, completed, settled and active selections fail closed. No migrations or new settings.",
+  "breaking": false,
+  "minUpgradeFrom": "1.0.0",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}

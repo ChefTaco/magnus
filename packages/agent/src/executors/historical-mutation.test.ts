@@ -36,6 +36,47 @@ function decision(overrides: Record<string, unknown> = {}, key = keys.reconcilia
 }
 
 describe('historical mutation process quiescence', () => {
+  it('observes and settles exact bounded batches without hiding remaining claims or rewriting originals', async () => {
+    const large = new MutationBarrier(join(root, 'large'), identity.nodeFqdn, keys, async () => boot, reviewed);
+    for (let index = 0; index < 36; index++) {
+      const token = await large.begin('POST', '/commands/execute');
+      await large.finish(token, 'unknown');
+    }
+    await large.drain(identity);
+    await expect(large.historicalObservation()).rejects.toThrow();
+    const rows = (await large.unknownInventory()).rows;
+    const batches: HistoricalObservation[] = [];
+    const originals = new Map<string, Buffer>();
+    for (let index = 0; index < rows.length; index += 16) {
+      const batch = await large.historicalObservation(rows.slice(index, index + 16).map(row => row.id));
+      batches.push(batch);
+      for (const row of batch.records) {
+        reviewed[row.id] = { nodeFqdn: identity.nodeFqdn, recordSha256: row.recordSha256 };
+        originals.set(row.id, await readFile(join(root, 'large', 'request-' + row.id + '.json')));
+      }
+    }
+    expect(batches.map(batch => batch.records.length)).toEqual([16, 16, 4]);
+    await expect(large.historicalObservation(rows.slice(0, 17).map(row => row.id))).rejects.toThrow();
+    await expect(large.historicalObservation([rows[0]!.id, rows[0]!.id])).rejects.toThrow('distinct');
+    await expect(large.historicalObservation([randomUUID()])).rejects.toThrow('unsettled');
+    await expect(large.historicalObservation([])).rejects.toThrow();
+    afterBoot();
+    for (const [index, batch] of batches.entries()) {
+      const receipt = await large.settleHistorical(decision({ before: batch, records: batch.records }));
+      expect(verifyHistoricalReceipt(receipt, keys)).toMatchObject({ originalOutcome: 'unknown', replayPermitted: false });
+      expect((await large.snapshot(identity)).unknownCount).toBe(36 - Math.min((index + 1) * 16, 36));
+      await expect(large.historicalObservation(batch.records.map(row => row.id))).rejects.toThrow('unsettled');
+    }
+    expect((await large.unknownInventory()).rows).toHaveLength(36);
+    for (const [id, bytes] of originals) expect(await readFile(join(root, 'large', 'request-' + id + '.json'))).toEqual(bytes);
+  });
+  it('rejects a selected active record and leaves unselected claims untouched', async () => {
+    const active = new MutationBarrier(join(root, 'active'), identity.nodeFqdn, keys, async () => boot, reviewed);
+    const token = await active.begin('POST', '/commands/execute');
+    await active.drain(identity);
+    await expect(active.historicalObservation([token.id])).rejects.toThrow('Active operation');
+    expect(await active.snapshot(identity)).toMatchObject({ activeCount: 1, unknownCount: 0 });
+  });
   it('refuses service restart as whole-host quiescence without touching originals', async () => {
     await expect(barrier.settleHistorical(decision())).rejects.toThrow('whole-host boot');
     expect((await readdir(root)).filter(n => n.startsWith('historical-'))).toEqual([]);

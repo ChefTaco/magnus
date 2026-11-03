@@ -23,14 +23,14 @@ async function writePrivate(path: string, value: unknown): Promise<void> {
 async function main() {
   if (process.getuid?.() !== 0 || process.platform !== 'linux') throw new Error('Offline Linux root controller required');
   const [mode, ...args] = process.argv.slice(2);
-  if (!['inspect', 'apply'].includes(mode ?? '') || args.length % 2) throw new Error('Usage: inspect --output FILE | apply --before FILE --records UUID,UUID --approval-ref REF --output FILE');
+  if (!['inspect', 'apply'].includes(mode ?? '') || args.length % 2) throw new Error('Usage: inspect --output FILE [--records UUID,UUID] | apply --before FILE --records UUID,UUID --approval-ref REF --output FILE');
   const options: Record<string, string> = {};
   for (let i = 0; i < args.length; i += 2) {
     const key = args[i]!;
     if (!['--output', '--before', '--records', '--approval-ref'].includes(key) || options[key] || !args[i + 1]) throw new Error('Invalid or duplicate option');
     options[key] = args[i + 1]!;
   }
-  if (!options['--output'] || (mode === 'inspect' && Object.keys(options).length !== 1) ||
+  if (!options['--output'] || (mode === 'inspect' && Object.keys(options).some(key => !['--output', '--records'].includes(key))) ||
       (mode === 'apply' && Object.keys(options).length !== 4)) throw new Error('Exact mode options required');
   const install = await lstat('/opt/magnus-agent');
   if (!install.isDirectory() || install.isSymbolicLink() || install.mode & 0o077 || await realpath('/opt/magnus-agent') !== '/opt/magnus-agent')
@@ -41,7 +41,7 @@ async function main() {
   const { MutationBarrier } = await import('./mutation-barrier.js');
   const barrier = new MutationBarrier('/opt/magnus-agent/.magnus/mutation-barrier');
   if (mode === 'inspect') {
-    const observation = await barrier.historicalObservation();
+    const observation = await barrier.historicalObservation(options['--records']?.split(','));
     await writePrivate(options['--output'], observation);
     console.log(JSON.stringify({ mode, records: observation.records.length, boot: observation.boot,
       output: options['--output'], originalOutcomes: 'unknown' }));

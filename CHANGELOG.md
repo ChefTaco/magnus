@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file. The format is b
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
+## [1.1.13] - 2026-11-02
+
+### Added
+
+- Select exact batches of at most 16 records in the offline historical-mutation inspector, allowing larger inventories without expanding signed wire limits or weakening the real host-boot requirement.
+- Reject missing, duplicate, completed, settled and active selections; regression coverage proves all original bytes and unknown outcomes remain intact across successive signed batches.
+
 ## [1.1.12] - 2026-11-03
 
 ### Added
