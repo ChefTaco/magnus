@@ -1,0 +1,9 @@
+{
+  "summary": "Complete the managed context-only adoption compatibility fixes: full-node authority uses the native Ardent fence without narrowing lease ownership, and existing SQLite read permissions are accepted only inside owner-private state directories. Database-backed admission/claim regressions and legacy-permission container adoption cover both supported Node versions. No migrations or new settings.",
+  "breaking": false,
+  "minUpgradeFrom": "1.0.0",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}

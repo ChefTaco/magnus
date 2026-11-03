@@ -66,7 +66,7 @@ await oldManager.prepare({ id: 'preview:original', session_id: session.id, calle
   'Original policy', [], { ...parseModelPolicy(policyBytes), path: policyPath }, AbortSignal.timeout(5000), { apply: true, force: true });
 const originalMessages = JSON.stringify(store.db.prepare('SELECT * FROM session_messages ORDER BY sequence').all());
 store.close();
-await chmod(databasePath, 0o600);
+await chmod(databasePath, 0o644);
 const unitPath = join(root.home, '.config/systemd/user', `ardent@${profile}.service`);
 await mkdir(join(root.home, '.config/systemd/user'), { recursive: true });
 await writeFile(unitPath, ardentUserUnit(root, profile, name));

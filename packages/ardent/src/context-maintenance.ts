@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { lstat, mkdir, open, readFile, writeFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import Database from 'better-sqlite3';
 import { parse } from 'dotenv';
@@ -62,8 +62,10 @@ export function assertContextIdle(database: Database.Database): void {
 
 async function ownedFile(path: string): Promise<void> {
   const info = await lstat(path);
-  if (!info.isFile() || info.isSymbolicLink() || info.uid !== process.getuid?.() || (info.mode & 0o077) !== 0)
-    throw new Error('Maintenance requires owner-only profile state');
+  const directory = await lstat(dirname(path));
+  if (!info.isFile() || info.isSymbolicLink() || info.uid !== process.getuid?.() || (info.mode & 0o022) !== 0
+    || !directory.isDirectory() || directory.isSymbolicLink() || directory.uid !== process.getuid?.() || (directory.mode & 0o077) !== 0)
+    throw new Error('Maintenance requires owner-private profile state');
 }
 
 export async function exerciseContext(store: TaskStore, summarize: CompactionCall,

@@ -4,7 +4,17 @@ All notable changes to this project are documented in this file. The format is b
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
+## [1.1.12] - 2026-11-03
+
+### Added
+
+- Include the full-enrollment native Ardent fence correction described below.
+- Accept legacy SQLite file read permissions only inside owner-only state directories without changing source permissions; reject exposed directories, symlinks and group/world-writable databases.
+- Exercise actual legacy SQLite permissions in both Node container adoption and rollback gates.
+
 ## [1.1.11] - 2026-11-03
+
+Publication withheld to include legacy SQLite compatibility in 1.1.12.
 
 ### Added
 

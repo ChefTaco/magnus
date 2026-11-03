@@ -13,7 +13,9 @@ The stateless Emberfold HTTP service is not involved.
 - Exactly one profile in the selected owner installation; the reviewed managed
   user-service unit must already match byte-for-byte.
 - A supported existing runtime with a legacy-readable checkpoint implementation,
-  an owner-only SQLite database, and enabled, pinned compaction policy.
+  owner-private SQLite state, and enabled, pinned compaction policy. Legacy
+  read permissions are accepted only inside an owner-only state directory;
+  group/world-writable databases and exposed state directories are rejected.
 - No queued, running, or input-required tasks, queued deliveries, or existing
   one-way profile admission fence. Unknown effects remain unknown.
 - Enough space for a runtime clone, retained previous runtime and SQLite backup.

@@ -25,6 +25,24 @@ async function fixture() {
 }
 
 describe('context-only maintenance preservation', () => {
+  it('accepts legacy SQLite permissions only inside an owner-private directory without changing permissions', async () => {
+    const { directory, policy } = await fixture();
+    vi.stubEnv('ARDENT_HOME', directory);
+    await mkdir(join(directory, 'model-policy'));
+    await writeFile(join(directory, 'model-policy/active.json'), await readFile(policy.path), { mode: 0o600 });
+    await writeFile(join(directory, 'config.yaml'), 'synthetic fixture');
+    const path = join(directory, 'state/ardent.sqlite');
+    await chmod(path, 0o644);
+    const request = { operation: 'inspect', profile_dir: directory, work_dir: directory, previous_module: '/unused',
+      expected_policy_sha256: policy.sha256, expected_config_sha256: createHash('sha256').update('synthetic fixture').digest('hex') };
+    expect(await contextMaintenance(request)).toMatchObject({ idle: true });
+    expect((await stat(path)).mode & 0o777).toBe(0o644);
+    await chmod(join(directory, 'state'), 0o755);
+    await expect(contextMaintenance(request)).rejects.toThrow('owner-private');
+    await chmod(join(directory, 'state'), 0o700);
+    await chmod(path, 0o660);
+    await expect(contextMaintenance(request)).rejects.toThrow('owner-private');
+  });
   it('allows append-only journal growth and rejects rewriting original rows', async () => {
     const { store } = await fixture();
     const task = store.accept({ caller: 'fixture', context: 'direct', prompt: 'Original work', backend: 'codex', deadlineMs: Date.now() + 60000 });
