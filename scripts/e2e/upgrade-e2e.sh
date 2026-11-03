@@ -80,10 +80,19 @@ curl -fsk "https://127.0.0.1:$SERVER_PORT/api/v1/health" >/dev/null || fail "$FR
 sudo journalctl -u magnus-server --no-pager | grep -q EACCES && fail "the server cannot write its data directory"
 
 step "Dry run and upgrade $FROM -> $VERSION"
-magnus upgrade --dir "$PROJECT" --source "$PACKS" --to "$VERSION" --dry-run | tee "$WORK/dry-run.log"
+major_flags=()
+if [[ ${FROM%%.*} != "$V_MAJOR" ]]; then
+  if magnus upgrade --dir "$PROJECT" --source "$PACKS" --to "$VERSION" --dry-run > "$WORK/major-refusal.log" 2>&1; then
+    fail "a major upgrade was accepted without explicit permission"
+  fi
+  grep -q 'crosses a major version' "$WORK/major-refusal.log" || fail "major upgrade refusal did not explain the required permission"
+  [[ $(magnus status --json --offline | json 'v.current') == "$FROM" ]] || fail "the rejected major upgrade changed the project"
+  major_flags=(--allow-major)
+fi
+magnus upgrade --dir "$PROJECT" --source "$PACKS" --to "$VERSION" "${major_flags[@]}" --dry-run | tee "$WORK/dry-run.log"
 grep -q "Upgrade $FROM -> $VERSION" "$WORK/dry-run.log" || fail "dry run did not describe the upgrade"
 [[ $(magnus status --json --offline | json 'v.current') == "$FROM" ]] || fail "the dry run changed the project"
-magnus upgrade --dir "$PROJECT" --source "$PACKS" --to "$VERSION" --yes --health-timeout 240 || fail "upgrade to $VERSION"
+magnus upgrade --dir "$PROJECT" --source "$PACKS" --to "$VERSION" "${major_flags[@]}" --yes --health-timeout 240 || fail "upgrade to $VERSION"
 STATUS=$(magnus status --json --offline)
 [[ $(json 'v.current' <<<"$STATUS") == "$VERSION" ]] || fail "current is not $VERSION"
 [[ $(json 'v.serving.version' <<<"$STATUS") == "$VERSION" ]] || fail "the serving runtime is not $VERSION"

@@ -1,0 +1,128 @@
+{
+  "schemaVersion": 1,
+  "migration": "20261103000000_cindertrace_response_bridge",
+  "classification": "schema-only",
+  "effects": [
+    {
+      "table": "cindertrace_responses",
+      "operation": "create-empty-table",
+      "expectedRows": 0
+    }
+  ],
+  "schemaEffects": [
+    {
+      "type": "column",
+      "identity": "public.cindertrace_responses.actionOperation",
+      "operation": "create",
+      "afterSha256": "457481149eb42973ffc9ff8d2ef366d76f86c86b67060944b7ed71e7fade4dee"
+    },
+    {
+      "type": "column",
+      "identity": "public.cindertrace_responses.createdAt",
+      "operation": "create",
+      "afterSha256": "c738ae7d397b6458fb77e1a5c5d0e45c176da1f1b23dff5c8e0287ac32657cfb"
+    },
+    {
+      "type": "column",
+      "identity": "public.cindertrace_responses.id",
+      "operation": "create",
+      "afterSha256": "457481149eb42973ffc9ff8d2ef366d76f86c86b67060944b7ed71e7fade4dee"
+    },
+    {
+      "type": "column",
+      "identity": "public.cindertrace_responses.nodeId",
+      "operation": "create",
+      "afterSha256": "457481149eb42973ffc9ff8d2ef366d76f86c86b67060944b7ed71e7fade4dee"
+    },
+    {
+      "type": "column",
+      "identity": "public.cindertrace_responses.requestJson",
+      "operation": "create",
+      "afterSha256": "457481149eb42973ffc9ff8d2ef366d76f86c86b67060944b7ed71e7fade4dee"
+    },
+    {
+      "type": "column",
+      "identity": "public.cindertrace_responses.requestSha256",
+      "operation": "create",
+      "afterSha256": "457481149eb42973ffc9ff8d2ef366d76f86c86b67060944b7ed71e7fade4dee"
+    },
+    {
+      "type": "column",
+      "identity": "public.cindertrace_responses.responseJson",
+      "operation": "create",
+      "afterSha256": "2a7dfe10f0d53943c328aa5aff320e3d46ef00ea7e9a6e1185909912cc2b4b49"
+    },
+    {
+      "type": "column",
+      "identity": "public.cindertrace_responses.status",
+      "operation": "create",
+      "afterSha256": "222458c4b395fd8478e5c334ec5485250ada4b47e6f57591e7c030d65834bf8a"
+    },
+    {
+      "type": "constraint",
+      "identity": "public.cindertrace_responses.cindertrace_responses_actionOperation_not_null",
+      "operation": "create",
+      "afterSha256": "8183f6cdc869d43ebb2f34fe24a356b179b2c82be296b0dc164e16a28b51ed0e"
+    },
+    {
+      "type": "constraint",
+      "identity": "public.cindertrace_responses.cindertrace_responses_createdAt_not_null",
+      "operation": "create",
+      "afterSha256": "217cb343ac8189a729cd1f07d448627a4ae74f8afdb99362b2e3ce0097372798"
+    },
+    {
+      "type": "constraint",
+      "identity": "public.cindertrace_responses.cindertrace_responses_id_not_null",
+      "operation": "create",
+      "afterSha256": "e7b643243977e7692df3d6151aecafb3ee916f1612593c7c35b0272fb315a145"
+    },
+    {
+      "type": "constraint",
+      "identity": "public.cindertrace_responses.cindertrace_responses_nodeId_not_null",
+      "operation": "create",
+      "afterSha256": "ff5bd491bcd090deecd11bc37c2de364b38abe9277d34f7a6acacf7cfe9c5515"
+    },
+    {
+      "type": "constraint",
+      "identity": "public.cindertrace_responses.cindertrace_responses_pkey",
+      "operation": "create",
+      "afterSha256": "660693e78c67ae23c6f23d327b4747fdcae396a2df9561bf5378c3169d0e9644"
+    },
+    {
+      "type": "constraint",
+      "identity": "public.cindertrace_responses.cindertrace_responses_requestJson_not_null",
+      "operation": "create",
+      "afterSha256": "75d1cc8be180d0f79c7b7524765de3939264fe158a1677ef9d876dfd7baebdef"
+    },
+    {
+      "type": "constraint",
+      "identity": "public.cindertrace_responses.cindertrace_responses_requestSha256_not_null",
+      "operation": "create",
+      "afterSha256": "76fc856b52c0d2b2ba3d3a3199e82079d108fd73840a75bd8b94e3e71119d451"
+    },
+    {
+      "type": "constraint",
+      "identity": "public.cindertrace_responses.cindertrace_responses_status_not_null",
+      "operation": "create",
+      "afterSha256": "f7237f3a7c1ae5d7fa369cffdbd200e599219726332e0882a791a2c78de56f36"
+    },
+    {
+      "type": "index",
+      "identity": "public.cindertrace_responses_actionOperation_key",
+      "operation": "create",
+      "afterSha256": "9c4741fba6da61618aec19957c4dedbd66767cb7a40200b798026e58a5b27bdd"
+    },
+    {
+      "type": "index",
+      "identity": "public.cindertrace_responses_pkey",
+      "operation": "create",
+      "afterSha256": "3a9cc34672b45d3dcc05d7f6760ffce281eec29f433711982e6cadd460d79f27"
+    },
+    {
+      "type": "table",
+      "identity": "public.cindertrace_responses",
+      "operation": "create",
+      "afterSha256": "577938e54f94a986377167fe24c850e59d65f8ec8df6eb9c8059bde0c3e156d2"
+    }
+  ]
+}
