@@ -19,7 +19,7 @@ import { RESULT_SIGNING_SECRET, RESULT_SIGNING_PREVIOUS_SECRET } from '../utils/
 import { getNodeBaseUrl } from '../utils/node-url.js';
 import { COMMAND_COMPLETION_REGISTRY, COMMAND_COMPLETION_REGISTRY_SHA256, commandCompletionDescriptor } from '../security/command-completion-registry.js';
 import { MANAGED_HTTP_COMMAND } from '../security/managed-http.js';
-import { NATIVE_COMPLETION_REGISTRY, NATIVE_COMPLETION_REGISTRY_SHA256, nativeCompletionDescriptor } from '../security/native-completion-registry.js';
+import { NATIVE_COMPLETION_REGISTRY, NATIVE_COMPLETION_REGISTRY_SHA256, nativeCompletionDescriptor, nativeCompletionResourceKey } from '../security/native-completion-registry.js';
 import { logAuditEvent } from './audit-service.js';
 
 const HELD = ['reserved', 'running', 'unknown'];
@@ -150,7 +150,9 @@ export async function admitResourceCommand(context: ResourceCommandContext, raw:
     }
     const resourceKey = scopedArdent ? `node:${node.id}:ardent`
       : serviceUnit ? `node:${node.id}:system-service:${serviceUnit}` : `node:${node.id}:all`;
-    const coordinationKey = scopedArdent ? resourceKey : `node:${node.id}`;
+    const native = payload.command === MANAGED_HTTP_COMMAND && payload.args.length === 3 && /^[a-f0-9]{64}$/.test(payload.args[2]!)
+      ? nativeCompletionDescriptor(payload.args[0]!, payload.args[1]!) : undefined;
+    const coordinationKey = native ? nativeCompletionResourceKey(native, node.id) : `node:${node.id}`;
     // The node ledger has one execution slot: service metadata never promises parallel fences.
     const conflict = await tx.commandResourceLease.findFirst({ where: { nodeId: node.id, state: { in: HELD } } });
     if (conflict) throw new ResourceLeaseConflict();

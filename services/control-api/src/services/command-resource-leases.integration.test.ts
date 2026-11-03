@@ -82,7 +82,7 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('durable finite-command resou
   });
   afterAll(async () => {
     if (db) {
-      await db.commandResourceFence.deleteMany({ where: { resourceKey: `node:${nodeId}` } });
+      await db.commandResourceFence.deleteMany({ where: { resourceKey: { in: [`node:${nodeId}`, `node:${nodeId}:ardent`] } } });
       await db.resourceEnrollment.deleteMany({ where: { nodeId } });
       await db.remediationRule.deleteMany({ where: { id: prefix } }); await db.node.deleteMany({ where: { id: nodeId } });
       await (await import('../db/index.js')).disconnectDb();
@@ -406,6 +406,38 @@ try { const row = await admitResourceCommand(JSON.parse(process.argv[2]), JSON.p
     const command = await db.remoteCommand.findUniqueOrThrow({ where: { id: nativeId } });
     expect(command.command).toBe('@magnus/native-http/v1'); expect(JSON.stringify(command)).not.toContain(content);
     expect((await lease.admitResourceCommand(context, request()))?.leaseId).toBeTruthy();
+  });
+
+  it.each(['context-stage', 'context-adopt', 'context-rollback'])('dispatches %s with full enrollment and the native Ardent fence, without granting narrow-scope authority', async action => {
+    expect(await db.ardentScopeEnrollment.findUnique({ where: { nodeId } })).toBeNull();
+    const router = (await import('../routes/resource-leases.js')).resourceLeasesRouter;
+    const app = new Hono().onError(errorHandler).route('/resource-leases', router);
+    let commandId = '';
+    vi.stubGlobal('fetch', vi.fn(async (req: Request) => {
+      if (req.url.endsWith('/ping')) return json({ features: { managedMutations: 1 } });
+      expect(req.url).toContain('/commands/managed-http');
+      const value = await req.json(); commandId = value.commandId;
+      expect(value.path).toBe('/ardent/action');
+      expect(value.coordination.resourceKey).toBe(`node:${nodeId}:ardent`);
+      expect((await db.commandResourceLease.findUniqueOrThrow({ where: { commandId } })).resourceKey).toBe(`node:${nodeId}:all`);
+      const input = { ...httpIdentity(value.commandId, value.method, value.path, value.body, value.timeoutSeconds), coordination: value.coordination };
+      const claimed = await app.request('/resource-leases/claim', { method: 'POST',
+        headers: { 'x-node-token': 'resource-lease-node-auth-fixture-at-least-32-characters', 'content-type': 'application/json' },
+        body: JSON.stringify({ ...value.claim, commandId, requestSha256: commandRequestDigest(input), coordination: value.coordination }) });
+      expect(claimed.status).toBe(200);
+      const response = { status: 200, body: JSON.stringify({ state: 'fixture-accepted' }) };
+      const receipt = { ...signed(input), stdout: httpReceiptBody(value.method, value.path, response.status, response.body) };
+      receipt.signature = createHmac('sha256', secret).update(commandResultSigningPayload(receipt)).digest('hex');
+      return json({ response, receipt });
+    }));
+    const result = await client().performArdentContextAction<{ state: string }>('example', action, {
+      release_id: randomUUID(), expected_bundle_sha256: 'a'.repeat(64), expected_base_sha256: 'b'.repeat(64),
+      expected_policy_sha256: 'c'.repeat(64), expected_config_sha256: 'd'.repeat(64) });
+    expect(result.response.state).toBe('fixture-accepted');
+    expect(result.evidence.commandId).toBe(commandId);
+    expect((await db.commandResourceLease.findUniqueOrThrow({ where: { commandId } })).state).toBe('released');
+    await expect(lease.admitResourceCommand({ ...context, scope: 'ardent-managed-http' },
+      httpIdentity('narrow-' + randomUUID(), 'POST', '/ardent/action', '{}', 10))).rejects.toThrow('Reviewed Ardent-only claim is required');
   });
 
   it('returns exact verified signed managed HTTP evidence for scheduler acknowledgements', async () => {

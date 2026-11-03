@@ -28,6 +28,8 @@ adoption are separate identities; the overlay does not relabel the base version.
 All Control API routes below are admin-only, beneath `/api/v1`. Node calls pass
 through the signed managed-mutation boundary, its resource lease and deadline.
 There is no unmanaged fallback. Responses contain metadata, not conversations.
+Full-node authority keeps node-wide lease ownership while using the native
+Ardent coordination fence; it does not create an Ardent-only enrollment.
 
 1. Read `GET /ardent/installations/{nodeId}/profiles/{name}/context-release`.
    Require `single_profile` and `service_unit_matches` to be true. Retain the

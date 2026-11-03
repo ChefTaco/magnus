@@ -1,0 +1,9 @@
+{
+  "summary": "Correct the native Ardent coordination fence under full-node enrollment while retaining node-wide lease ownership and all enrollment/claim checks. Database-backed regression tests cover staging, adoption and rollback through admission, authenticated claim and signed settlement. No migrations or new settings. Context-capable 1.1.10 node managers remain compatible.",
+  "breaking": false,
+  "minUpgradeFrom": "1.0.0",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}

@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file. The format is b
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
+## [1.1.11] - 2026-11-03
+
+### Added
+
+- Use the native Ardent coordination fence for context actions admitted under full-node enrollment, while retaining node-wide lease ownership and enrollment checks.
+- Add PostgreSQL-backed staging, adoption and rollback regressions covering reservation, authenticated claim, signed completion and refusal of unapproved narrow-scope authority.
+
 ## [1.1.10] - 2026-11-02
 
 ### Added
