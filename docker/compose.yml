@@ -89,6 +89,13 @@ services:
       METRICS_TOKEN: ${METRICS_TOKEN:?METRICS_TOKEN is required}
       WEBHOOK_ENCRYPTION_KEY: ${WEBHOOK_ENCRYPTION_KEY:?WEBHOOK_ENCRYPTION_KEY is required}
       SECURITY_FUSION_MODE: ${SECURITY_FUSION_MODE:-off}
+      # Browser console authentication; off unless set (see docs/console-api.md).
+      OATHWEAVE_ISSUER: ${OATHWEAVE_ISSUER:-}
+      OATHWEAVE_JWKS_URL: ${OATHWEAVE_JWKS_URL:-}
+      OATHWEAVE_USERINFO_URL: ${OATHWEAVE_USERINFO_URL:-}
+      MAGNUS_OATHWEAVE_IDENTITIES_JSON: ${MAGNUS_OATHWEAVE_IDENTITIES_JSON:-}
+      MAGNUS_HERMES_ENABLED: ${MAGNUS_HERMES_ENABLED:-false}
+      MAGNUS_CONSOLE_BASE_PATH: ${MAGNUS_CONSOLE_BASE_PATH:-}
     labels:
       com.centurylinklabs.watchtower.enable: "${MAGNUS_WATCHTOWER:-false}"
     security_opt: ["no-new-privileges:true"]

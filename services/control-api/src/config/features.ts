@@ -8,6 +8,10 @@
 export interface FeatureFlags {
   /** External Hive IAM verifies RS256 access tokens (`IAM_CORE_URL`). */
   iam: boolean;
+  /** Oathweave resource tokens authenticate the browser console (`OATHWEAVE_ISSUER`). */
+  oathweave: boolean;
+  /** Hermes Agent pages in the browser console (`MAGNUS_HERMES_ENABLED`). */
+  hermes: boolean;
   /** Hive Router (or any OpenAI-compatible router) for managed Hermes Agents. */
   router: boolean;
   /** HiveMem shared agent memory. */
@@ -32,6 +36,8 @@ export function featureFlags(env: NodeJS.ProcessEnv = process.env): FeatureFlags
   const mode = env['SECURITY_FUSION_MODE'];
   return {
     iam: Boolean(env['IAM_CORE_URL']),
+    oathweave: Boolean(env['OATHWEAVE_ISSUER']),
+    hermes: truthy(env['MAGNUS_HERMES_ENABLED']),
     router: Boolean(env['MAGNUS_ROUTER_URL'] || env['HIVE_ROUTER_URL']),
     hivemem: Boolean(env['HIVEMEM_URL']),
     securityFusion: mode === 'remote' ? mode : 'off',

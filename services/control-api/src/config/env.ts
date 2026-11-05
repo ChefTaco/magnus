@@ -6,6 +6,9 @@ import { webhookTypeAliases } from '../services/webhook-types.js';
 // ─── Shared environment schema — validated with Zod ───
 
 const portSchema = z.coerce.number().int().min(1).max(65535);
+import { isConsoleBasePath } from './console-path.js';
+import { oathweaveConfigurationIssues } from './oathweave.js';
+
 const booleanEnvSchema = z.enum(['true', 'false']).default('false').transform((value) => value === 'true');
 
 function configuredDigestValues(raw: string | undefined): string[] {
@@ -76,6 +79,10 @@ export const envSchema = z.object({
   SHARED_RESOURCE_MISSION_TRUST_JSON: z.string().optional(),
   SHARED_RESOURCE_RESULT_TRUST_JSON: z.string().optional(),
   DASHBOARD_PUBLIC_ORIGIN: z.string().url().optional(),
+  MAGNUS_CONSOLE_BASE_PATH: z.string()
+    .refine(isConsoleBasePath, 'must be an absolute path such as /fleet, without a trailing slash or dot segments')
+    .optional(),
+  MAGNUS_HERMES_ENABLED: booleanEnvSchema,
   MAGNUS_APPLICATION_PROBES_FILE: z.string().optional(),
   MAGNUS_OPERATIONS_CATALOG_FILE: z.string().optional(),
   MAGNUS_ENGINEERING_EVIDENCE_FILE: z.string().optional(),
@@ -129,6 +136,10 @@ export const envSchema = z.object({
   IAM_CORE_URL: z.string().url().optional(),
   IAM_TOKEN_ISSUER: z.string().min(1).optional(),
   IAM_TOKEN_AUDIENCE: z.string().min(1).optional(),
+  OATHWEAVE_ISSUER: z.string().url().optional(),
+  OATHWEAVE_JWKS_URL: z.string().url().optional(),
+  OATHWEAVE_USERINFO_URL: z.string().url().optional(),
+  MAGNUS_OATHWEAVE_IDENTITIES_JSON: z.string().optional(),
 
   // Skills
   SKILLS_DIR: z.string().default(DEFAULT_SKILLS_DIR),
@@ -210,6 +221,10 @@ export const envSchema = z.object({
       path: ['NOTIFICATION_READ_RETENTION_DAYS'],
       message: 'NOTIFICATION_READ_RETENTION_DAYS cannot exceed NOTIFICATION_MAX_RETENTION_DAYS',
     });
+  }
+
+  for (const issue of oathweaveConfigurationIssues(env)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: [issue.path], message: issue.message });
   }
 
   if (env.IAM_CORE_URL) {

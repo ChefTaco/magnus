@@ -51,6 +51,7 @@ export const ENV_CATALOG: readonly EnvVariable[] = [
   { name: 'ALLOW_INSECURE_HTTP', group: 'listener', default: 'false', description: 'Development only: serve cleartext HTTP on loopback when no certificate is configured.' },
   { name: 'CORS_ORIGIN', group: 'listener', default: 'https://localhost:3000', description: 'Comma-separated browser origins allowed to call the API (the dashboard).' },
   { name: 'DASHBOARD_PUBLIC_ORIGIN', group: 'listener', description: 'Public HTTPS origin of the dashboard, used for links in notifications.' },
+  { name: 'MAGNUS_CONSOLE_BASE_PATH', group: 'listener', description: 'Path the console is served under on DASHBOARD_PUBLIC_ORIGIN (for example /fleet), prefixed to links in notifications. Unset means the origin root.' },
 
   // ── Required secrets ──
   secret32('API_SECRET', 'Dashboard-to-server shared secret (x-api-secret).'),
@@ -79,6 +80,12 @@ export const ENV_CATALOG: readonly EnvVariable[] = [
   { name: 'IAM_CORE_URL', group: 'iam', description: 'Hive IAM base URL. When set, RS256 tokens from Hive IAM replace local JWTs.' },
   { name: 'IAM_TOKEN_ISSUER', group: 'iam', requiredWhen: 'IAM_CORE_URL set', description: 'Exact `iss` claim required on IAM access tokens.' },
   { name: 'IAM_TOKEN_AUDIENCE', group: 'iam', requiredWhen: 'IAM_CORE_URL set', description: 'Exact `aud` claim required on IAM access tokens.' },
+
+  // ── Oathweave browser console tokens ──
+  { name: 'OATHWEAVE_ISSUER', group: 'iam', description: 'Exact `iss` claim of Oathweave resource tokens (audience `magnus`). Cannot be combined with IAM_CORE_URL.' },
+  { name: 'OATHWEAVE_JWKS_URL', group: 'iam', requiredWhen: 'OATHWEAVE_ISSUER set', description: 'HTTPS JWKS URL that verifies Oathweave token signatures.' },
+  { name: 'OATHWEAVE_USERINFO_URL', group: 'iam', requiredWhen: 'OATHWEAVE_ISSUER set', description: 'HTTPS userinfo URL used for online session revocation (answers cached for at most 15 seconds).' },
+  { name: 'MAGNUS_OATHWEAVE_IDENTITIES_JSON', group: 'iam', requiredWhen: 'OATHWEAVE_ISSUER set', description: 'JSON array of {issuer,subject,localUserId,role}. Exact issuer and subject match, never by email; a missing or duplicate link is refused. `role` caps what the token permissions magnus:admin, magnus:operate and magnus:view can grant.' },
 
   // ── Hive Router ──
   { name: 'MAGNUS_ROUTER_URL', group: 'router', description: 'OpenAI-compatible model router (for example Hive Router) for managed Hermes Agents. HIVE_ROUTER_URL is accepted as an alias.' },

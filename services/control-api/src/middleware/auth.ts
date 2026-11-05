@@ -6,6 +6,9 @@
  * happens in Hive IAM itself.
  *
  * If IAM_CORE_URL is not set, local Magnus HS256/API-secret auth remains active.
+ *
+ * When OATHWEAVE_ISSUER is configured instead, RS256 bearer tokens are Oathweave
+ * resource tokens (see oathweave.ts). The two RS256 verifiers refuse to coexist.
  */
 
 import type { Context, Next } from 'hono';
@@ -32,6 +35,7 @@ import { verifyWithRotation } from '../services/credential-rotation-service.js';
 import { verifyIamAccessToken } from './iam-token.js';
 import { getCurrentUserStatus } from './user-status.js';
 import { safeEqual } from '../utils/safe-equal.js';
+import { OathweaveAccessDenied, oathweaveAuthentication } from './oathweave.js';
 
 /** Constant-time string comparison (re-exported for existing callers). */
 export { safeEqual };
@@ -302,6 +306,23 @@ export async function authMiddleware(c: Context<AppVariables>, next: Next): Prom
       await next();
       return;
     }
+  }
+
+  // ── Oathweave resource tokens: RS256 ──────────────────
+  // A token this verifier claims is decided here. Failure never falls through.
+  let oathweaveUser: AuthTokenPayload | undefined;
+  try {
+    oathweaveUser = await oathweaveAuthentication(token);
+  } catch (error) {
+    if (error instanceof OathweaveAccessDenied) {
+      throw new HttpError(403, 'FORBIDDEN', 'This identity has no linked Magnus account or permission');
+    }
+    throw new HttpError(401, 'UNAUTHORIZED', 'Invalid or inactive identity session');
+  }
+  if (oathweaveUser) {
+    c.set('user', oathweaveUser);
+    await next();
+    return;
   }
 
   // ── External Hive IAM verification mode: RS256 ────────

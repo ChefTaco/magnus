@@ -1,6 +1,64 @@
 import { describe, expect, it } from 'vitest';
 import { loadEnv } from './env.js';
 
+describe('Oathweave environment contract', () => {
+  const issuer = 'https://identity.example.com';
+  const link = { issuer, subject: 'fixture-subject', localUserId: 'alice', role: 'OPERATOR' };
+  const oathweave = {
+    OATHWEAVE_ISSUER: issuer,
+    OATHWEAVE_JWKS_URL: `${issuer}/oauth/jwks`,
+    OATHWEAVE_USERINFO_URL: `${issuer}/oauth/userinfo`,
+    MAGNUS_OATHWEAVE_IDENTITIES_JSON: JSON.stringify([link]),
+  };
+
+  it('stays off by default', () => {
+    expect(loadEnv({}).OATHWEAVE_ISSUER).toBeUndefined();
+    expect(loadEnv({}).MAGNUS_HERMES_ENABLED).toBe(false);
+  });
+
+  it('accepts a complete configuration', () => {
+    expect(loadEnv(oathweave).OATHWEAVE_ISSUER).toBe(issuer);
+  });
+
+  it('refuses IAM_CORE_URL and OATHWEAVE_ISSUER together', () => {
+    expect(() => loadEnv({ ...oathweave, IAM_CORE_URL: 'https://iam.example.com', IAM_TOKEN_ISSUER: 'iam', IAM_TOKEN_AUDIENCE: 'magnus' }))
+      .toThrow(/cannot both be configured/);
+  });
+
+  it.each(['OATHWEAVE_ISSUER', 'OATHWEAVE_JWKS_URL', 'OATHWEAVE_USERINFO_URL', 'MAGNUS_OATHWEAVE_IDENTITIES_JSON'] as const)(
+    'requires %s with the others',
+    (missing) => {
+      expect(() => loadEnv({ ...oathweave, [missing]: undefined })).toThrow(new RegExp(missing));
+    },
+  );
+
+  it.each(['OATHWEAVE_ISSUER', 'OATHWEAVE_JWKS_URL', 'OATHWEAVE_USERINFO_URL'] as const)('requires HTTPS for %s', (field) => {
+    expect(() => loadEnv({ ...oathweave, [field]: 'http://identity.example.com/path' })).toThrow(new RegExp(`${field} must be an HTTPS URL`));
+  });
+
+  it.each<[string, unknown]>([
+    ['a non-array', { issuer }],
+    ['an unknown role', [{ ...link, role: 'OWNER' }]],
+    ['an unknown key', [{ ...link, email: 'alice@example.com' }]],
+    ['an empty subject', [{ ...link, subject: '' }]],
+    ['a link impersonating the system actor', [{ ...link, localUserId: 'system' }]],
+    ['a link impersonating a service actor', [{ ...link, localUserId: 'service:magnus-plugin-read:approvals' }]],
+  ])('rejects identity links with %s', (_name, value) => {
+    expect(() => loadEnv({ ...oathweave, MAGNUS_OATHWEAVE_IDENTITIES_JSON: JSON.stringify(value) }))
+      .toThrow(/MAGNUS_OATHWEAVE_IDENTITIES_JSON must be a JSON array/);
+  });
+
+  it('rejects malformed identity JSON without echoing it', () => {
+    expect(() => loadEnv({ ...oathweave, MAGNUS_OATHWEAVE_IDENTITIES_JSON: '{secret-looking' })).toThrow(/must be a JSON array/);
+  });
+
+  it('rejects duplicate links and links from another issuer', () => {
+    expect(() => loadEnv({ ...oathweave, MAGNUS_OATHWEAVE_IDENTITIES_JSON: JSON.stringify([link, link]) })).toThrow(/unique per issuer and subject/);
+    expect(() => loadEnv({ ...oathweave, MAGNUS_OATHWEAVE_IDENTITIES_JSON: JSON.stringify([{ ...link, issuer: `${issuer}/` }]) }))
+      .toThrow(/must exactly equal OATHWEAVE_ISSUER/);
+  });
+});
+
 describe('Hive IAM environment contract', () => {
   it('keeps resource enrollment disabled unless explicitly enabled', () => {
     expect(loadEnv({}).MAGNUS_RESOURCE_LEASES_ENABLED).toBe(false);

@@ -10,6 +10,16 @@ All notable changes to this project are documented in this file. The format is b
 
 ## Unreleased
 
+- Authenticate a static browser console directly with Oathweave resource tokens (audience `magnus`): JWKS signature, issuer, audience, lifetime and actor checks, online revocation cached for at most 15 seconds, and exact account links whose role caps the token's `magnus:*` permissions. Refuse startup when `IAM_CORE_URL` and `OATHWEAVE_ISSUER` are both set. New environment variables: `OATHWEAVE_ISSUER`, `OATHWEAVE_JWKS_URL`, `OATHWEAVE_USERINFO_URL`, `MAGNUS_OATHWEAVE_IDENTITIES_JSON`.
+
+- Add `GET /api/v1/console/session`, reporting the mapped role and console capabilities. `MAGNUS_HERMES_ENABLED` on the server now supplies the `hermes` capability.
+
+- Key rate limits on the verified Oathweave subject so browsers behind a shared ingress keep separate buckets. Other requests stay keyed on the socket peer.
+
+- Add `MAGNUS_CONSOLE_BASE_PATH` for notification links to a console served under a path. The default is unchanged.
+
+- Stop returning the node token from `PATCH /api/v1/cron/:cronId`.
+
 - Add opt-in native Hermes messaging artifacts from the unchanged frozen public lock, with explicit provenance and exact dependency preflight; retain headless default and disabled runtime installs.
 
 - Verify exact native Skills target mappings and immutable client digests through read-only authenticated posture APIs; reject infrastructure credentials in dedicated native client environments.

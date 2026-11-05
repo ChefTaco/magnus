@@ -2,6 +2,7 @@ import type { MiddlewareHandler } from 'hono';
 import { Redis } from 'ioredis';
 import { incMetric } from '../routes/metrics.js';
 import { heartbeatPeerAddress } from '../utils/heartbeat-peer.js';
+import { oathweaveRateLimitSubject } from './oathweave.js';
 
 const REDIS_URL = process.env['REDIS_URL'] ?? 'redis://127.0.0.1:6379';
 const REDIS_PREFIX = process.env['REDIS_PREFIX'] ?? 'magnus-';
@@ -22,7 +23,8 @@ function getRedis(): Redis {
 
 /**
  * Sliding-window rate limiter backed by Redis.
- * Keyed by client IP address. Falls through (allows) if Redis is unavailable.
+ * Keyed by the verified subject of an Oathweave token, otherwise by client IP
+ * address. Falls through (allows) if Redis is unavailable.
  *
  * @param opts.windowMs  Time window in milliseconds (default: 60_000 = 1 minute)
  * @param opts.max       Maximum requests per window (default: 100)
@@ -40,9 +42,16 @@ export function rateLimitMiddleware(
     // forwarding header must not let login or mutation clients rotate their
     // rate-limit identity. The helper prefers the Node socket peer and only
     // falls back to forwarded metadata in adapter-free/test contexts.
-    const ip = heartbeatPeerAddress(c) || 'unknown-peer';
+    const authorization = c.req.header('Authorization');
+    const subject = authorization?.startsWith('Bearer ')
+      ? await oathweaveRateLimitSubject(authorization.slice(7))
+      : undefined;
+    // Behind a same-origin ingress every browser shares one peer address, so a
+    // verified subject gets its own bucket. Anything else, including a token
+    // that failed verification, stays on the peer bucket.
+    const identity = subject ? `subject:${subject}` : heartbeatPeerAddress(c) || 'unknown-peer';
 
-    const key = `${REDIS_PREFIX}${prefix}:${ip}`;
+    const key = `${REDIS_PREFIX}${prefix}:${identity}`;
     const now = Date.now();
     const windowStart = now - windowMs;
 

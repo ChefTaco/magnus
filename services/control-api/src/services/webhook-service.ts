@@ -1,3 +1,4 @@
+import { consolePagePath } from '../config/console-path.js';
 import { bullQueueIdentity } from '../queue/names.js';
 import { assertLiveExecution } from '../config/rehearsal.js';
 import { recordMonitorPulse } from './monitor-pulse.js';
@@ -209,7 +210,7 @@ export function formatPayload(type: string, event: string, payload: string): { b
     const clean = (value: unknown) => String(redactUnknown(value) ?? '').replace(/@[a-z0-9_]+/gi, '[mention]').replace(/(?:https?:\/\/)[^\s]+/g, '[link omitted]').replace(/(?:password|token|secret|authorization)\s*[:=]\s*\S+/gi, '[credential omitted]').slice(0, 2000);
     const origin = process.env['DASHBOARD_PUBLIC_ORIGIN'];
     let link = '';
-    if (origin) { try { const parsed = new URL(origin); if (parsed.protocol === 'https:' && !parsed.username && !parsed.password) link = `${parsed.origin}/incidents`; } catch { /* no link */ } }
+    if (origin) { try { const parsed = new URL(origin); const page = consolePagePath('/incidents'); if (page && parsed.protocol === 'https:' && !parsed.username && !parsed.password) link = `${parsed.origin}${page}`; } catch { /* no link */ } }
     return { body: JSON.stringify({ text: `[Magnus] ${clean(event)} · ${clean(data.severity)}\n${clean(data.title)}\n${clean(data.message)}\nObserved: ${clean(data.createdAt ?? data.timestamp)}${link ? `\nReview: ${link}` : ''}` }), contentType: 'application/json' };
   }
 

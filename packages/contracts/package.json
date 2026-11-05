@@ -30,6 +30,10 @@
     "./upgrade-remedies": {
       "types": "./dist/upgrade-remedies.d.ts",
       "default": "./dist/upgrade-remedies.js"
+    },
+    "./browser": {
+      "types": "./dist/browser.d.ts",
+      "default": "./dist/browser.js"
     }
   },
   "files": [

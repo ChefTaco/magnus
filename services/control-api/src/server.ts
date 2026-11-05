@@ -64,6 +64,7 @@ import { fleetChecksRouter } from './routes/fleet-checks.js';
 import { opsRouter } from './routes/ops.js';
 import { mcpRouter } from './routes/mcp.js';
 import { securityFusionRouter } from './routes/security-fusion.js';
+import { consoleRouter } from './routes/console.js';
 import { resolveCorsConfiguration } from './config/cors.js';
 import { rehearsalReadOnly } from './config/rehearsal.js';
 
@@ -181,6 +182,7 @@ v1.route('/ai-schedules', aiScheduleRouter);
 v1.route('/profiling', profilingRouter);
 v1.route('/assistant', assistantRouter);
 v1.route('/events/stream', eventsStreamRouter);
+v1.route('/console', consoleRouter);
 v1.route('/ops', opsRouter);
 v1.route('/mcp', mcpRouter);
 v1.route('/security-integration/response', cindertraceResponseRouter);

@@ -2205,6 +2205,35 @@ const paths: Record<string, Record<string, unknown>> = {
   },
 
   // ──────────────── Stats ────────────────
+  '/console/session': {
+    get: {
+      tags: ['Stats'],
+      summary: 'Role and capabilities of the signed-in browser console user',
+      security: [{ bearerAuth: [] }, { apiSecret: [] }],
+      responses: {
+        '200': success('Mapped role and console capabilities', {
+          type: 'object',
+          required: ['userId', 'role', 'capabilities'],
+          properties: {
+            userId: { type: 'string' },
+            role: { type: 'string', enum: ['ADMIN', 'OPERATOR', 'VIEWER'] },
+            capabilities: {
+              type: 'object',
+              required: ['hermes', 'agentVersion', 'magnusVersion', 'securityConsoleUrl'],
+              properties: {
+                hermes: { type: 'boolean' },
+                agentVersion: { type: 'string' },
+                magnusVersion: { type: 'string' },
+                securityConsoleUrl: { type: ['string', 'null'] },
+              },
+            },
+          },
+        }),
+        '401': err401,
+        '403': err403,
+      },
+    },
+  },
   '/stats/overview': {
     get: {
       tags: ['Stats'],

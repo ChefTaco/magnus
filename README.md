@@ -164,6 +164,7 @@ them, and `magnus-server check` and `magnus-ui check` print which ones are on.
 | Integration | What it adds | Enable with |
 |---|---|---|
 | [Hive IAM](https://github.com/ChefTaco/hive) login | Named-user OIDC sign-in to the console, and IAM-issued access tokens for the API | Console: `HIVE_OAUTH_DISCOVERY_URL`, `HIVE_OAUTH_CLIENT_ID`, `HIVE_OAUTH_ISSUER`, `HIVE_OAUTH_API_AUDIENCE`. Server: `IAM_CORE_URL`, `IAM_TOKEN_ISSUER`, `IAM_TOKEN_AUDIENCE` |
+| Oathweave browser console | A static browser console calls the API directly with short-lived resource tokens, through a same-origin ingress ([route inventory](docs/console-api.md)). Cannot be combined with `IAM_CORE_URL` | Server: `OATHWEAVE_ISSUER`, `OATHWEAVE_JWKS_URL`, `OATHWEAVE_USERINFO_URL`, `MAGNUS_OATHWEAVE_IDENTITIES_JSON`, and optionally `MAGNUS_HERMES_ENABLED`, `MAGNUS_CONSOLE_BASE_PATH` |
 | [Hive Router](https://github.com/ChefTaco/hive) | Model routing for managed Hermes Agents, and the router admin UI embedded in the console | Server: `MAGNUS_ROUTER_URL`, `MAGNUS_ROUTER_MODEL`, `MAGNUS_ROUTER_API_KEY`. Console: `HIVE_ROUTER_ADMIN_URL` |
 | [HiveMem](https://github.com/ChefTaco/hive) | Shared long-term memory for Hermes Agents, Ardent and operational lessons | Server: `HIVEMEM_URL`, `HIVEMEM_TOKEN`. Ardent: `memory.provider: hivemem` |
 | External security console | Exports security observations and links the console's security pages to it | Server: `SECURITY_FUSION_MODE=remote`, `MAGNUS_SECURITY_CONSOLE_URL`, `SECURITY_EXPORT_ENABLED=true`. Console: `MAGNUS_SECURITY_CONSOLE_URL` |
