@@ -3,6 +3,8 @@ import { createHash } from 'node:crypto';
 export const NATIVE_COMPLETION_REGISTRY = {
   version: 1,
   descriptors: [
+    { id: 'hiveskills-sync', method: 'POST', pathMatcher: { kind: 'exact', path: '/hiveskills/sync' },
+      completionMode: 'buffered-synchronous-http', timeoutCeilingSeconds: 120, resourceClassifier: 'node-skill-catalog' },
     { id: 'security-response', method: 'POST', pathMatcher: { kind: 'exact', path: '/security-response' },
       completionMode: 'buffered-synchronous-http', timeoutCeilingSeconds: 120, resourceClassifier: 'node-filesystem' },
     { id: 'file-write', method: 'POST', pathMatcher: { kind: 'exact', path: '/files/write' },
@@ -55,6 +57,6 @@ export function knownNativeCompletionIdentity(version: number | null, sha256: st
   if (version !== 1 || !descriptorId) return false;
   const descriptor = NATIVE_COMPLETION_REGISTRY.descriptors.find(item => item.id === descriptorId);
   if (!descriptor) return false;
-  return sha256 === NATIVE_COMPLETION_REGISTRY_SHA256 || (descriptorId !== 'security-response'
+  return sha256 === NATIVE_COMPLETION_REGISTRY_SHA256 || (descriptorId !== 'hiveskills-sync' && sha256 === 'e1303b169387f536c257e686eb95a29c1ff9b09e26fc38ac0d71d6c0daf9eb55') || (descriptorId !== 'security-response' && descriptorId !== 'hiveskills-sync'
     && sha256 === 'b0f05a1eac40dba262ec5ff0cc0de8d2b7c9f119a6a2d7ed3a00d94dcb6b1d3d');
 }

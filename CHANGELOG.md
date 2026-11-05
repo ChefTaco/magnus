@@ -6,6 +6,10 @@ All notable changes to this project are documented in this file. The format is b
 
 ## Unreleased
 
+- Commit base-data initialization and its completion receipt atomically. The new
+  read-only `verify-initialization` command holds activation after an interrupted
+  seed, even when all SQL migrations finished, without replaying initialization.
+
 - Package reviewed public Hermes headless native artifacts with frozen
   dependencies, bundled Python, fixed SQLite, protected explicit profiles and
   external HTTPS generation/streaming acceptance.
@@ -95,6 +99,8 @@ Publication withheld after the container-context gate failed; superseded by 1.1.
 - Offline published-runtime adoption and rollback acceptance runs on both supported Node versions in CI and gates publication.
 
 ## [Unreleased]
+
+- Add a fixed endpoint-scoped HiveSkills execution bridge with explicit target grants, enrolled native signed receipts and no replay of admitted or unknown jobs.
 
 ## [1.1.8] - 2026-11-02
 

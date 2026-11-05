@@ -2809,6 +2809,7 @@ export function buildOpenApiSpec() {
     tags,
     components: {
       securitySchemes: {
+        skillsExecutorBearer:{type:'http',scheme:'bearer',bearerFormat:'opaque',description:'Dedicated endpoint-scoped registry credential; only configured targets and exact native sync operations, never general commands.'},
         cindertraceSignature: { type: 'apiKey', in: 'header', name: 'x-cindertrace-signature', description: 'Dedicated response HMAC bound to method, path, exact body, x-cindertrace-time and x-cindertrace-nonce. Responses are signed against the same request binding.' },
         apiSecret: {
           type: 'apiKey',
@@ -2842,6 +2843,7 @@ export function buildOpenApiSpec() {
       schemas: componentSchemas,
     },
     paths: { ...paths,
+      '/api/v1/hiveskills/jobs/{id}': { post: { summary: 'Execute one exact approved HiveSkills publication through enrolled native admission', tags:['Skills'], security: [{skillsExecutorBearer:[]}], parameters:[{name:'id',in:'path',required:true,schema:{type:'string',format:'uuid'}}], responses:{200:{description:'Bounded durable outcome; admitted operations are never replayed'},409:{description:'Publication conflict, not admitted or uncertain'}} }, get:{summary:'Reconcile only the original signed HiveSkills operation receipt',tags:['Skills'],security:[{skillsExecutorBearer:[]}],parameters:[{name:'id',in:'path',required:true,schema:{type:'string',format:'uuid'}},{name:'target',in:'query',required:true,schema:{type:'string'}}],responses:{200:{description:'Existing durable outcome'}}} },
       '/api/v1/security-integration/response/execute': { post: { summary: 'Execute an exact Cindertrace-approved response through managed node admission', tags: ['Cindertrace'], security: [{cindertraceSignature:[]}], requestBody: {required:true,content:{'application/json':{schema:zSchema.toJSONSchema(responseRequestSchema)}}}, responses: { 200: { description: 'Signed completion receipt' }, 409: { description: 'Expired, already claimed, blocked, or uncertain execution' } } } },
       '/api/v1/security-integration/response/{id}': { get: { summary: 'Read an existing Cindertrace execution without replay', tags: ['Cindertrace'], security: [{cindertraceSignature:[]}], parameters:[{name:'id',in:'path',required:true,schema:{type:'string'}}], responses: { 200: { description: 'Signed existing execution status' } } } },
       '/api/v1/security-integration/response/targets/{id}/health': { get: { summary: 'Read fresh target health for Cindertrace', tags: ['Cindertrace'], security: [{cindertraceSignature:[]}], parameters:[{name:'id',in:'path',required:true,schema:{type:'string'}}], responses: { 200: { description: 'Signed minimal health snapshot' } } } },

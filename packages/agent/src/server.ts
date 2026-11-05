@@ -234,6 +234,7 @@ export async function createApp(): Promise<Hono> {
     v1.route('/cron', cronRoutes);
     v1.route('/files', fileRoutes);
     v1.route('/skills', skillRoutes);
+    v1.route('/hiveskills', (await import('./executors/hiveskills-sync.js')).hiveSkillsRoutes);
     v1.route('/update', updateRoutes);
     v1.route('/drift', driftRoutes);
     v1.route('/network-info', networkInfoRoutes);

@@ -200,3 +200,22 @@ Apache-2.0. See [LICENSE](LICENSE).
 ## Cindertrace
 
 Embedded Security Fusion is retired. See [migration and response configuration](../../docs/CINDERTRACE_MIGRATION.md). CINDERTRACE_RESPONSE_SECRET, CINDERTRACE_RESTART_ALLOWLIST, and CINDERTRACE_PROTECTED_TARGET_IDS configure the optional managed response adapter.
+
+### HiveSkills execution bridge
+
+`MAGNUS_HIVESKILLS_DEPLOYMENTS_JSON` maps each registry to a dedicated token SHA-256
+and exact logical-target bindings (`nodeId`, `agentTarget`). This optional integration
+accepts only POST/GET `/api/v1/hiveskills/jobs/:id`, with exact publication digests
+and a durable registry-owned UUID. It cannot submit general commands. Nodes must
+already have completed managed resource enrollment. Repeated requests inspect the
+original signed receipt; they never dispatch an admitted job again. Unknown outcomes
+retain their node ownership for explicit reconciliation.
+
+Each node explicitly configures `MAGNUS_AGENT_HIVESKILLS_TARGETS_JSON`: registry ID,
+registry target, owner, home, Hermes profile directory, protected environment-file
+path, root-owned pinned sync script and Node executable. The privileged native
+handler runs that fixed product client as the configured owner, with sanitized
+environment and bounded output. No infrastructure or native target credential is
+sent by the browser or included in a job body. The client receives the frozen
+approved publication and independently checks archive origin, digest and local
+Hermes compatibility. No SSH or Docker socket is used by this path.

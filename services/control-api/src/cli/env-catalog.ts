@@ -114,6 +114,7 @@ export const ENV_CATALOG: readonly EnvVariable[] = [
 
   // ── Hermes Agent plugin API ──
   { name: 'MAGNUS_PLUGIN_API_ENABLED', group: 'plugins', default: 'false', description: 'Accept Hermes Agent plugin credentials on the plugin-scoped routes.' },
+  { name: 'MAGNUS_HIVESKILLS_DEPLOYMENTS_JSON', group: 'plugins', description: 'Optional endpoint-scoped HiveSkills executor grants: registry ID -> tokenSha256 and exact target -> nodeId/agentTarget mapping; no administrator credentials.' },
   { name: 'MAGNUS_PLUGIN_READ_TOKEN_DIGESTS_JSON', group: 'plugins', requiredWhen: 'MAGNUS_PLUGIN_API_ENABLED=true', description: 'JSON object {consumerId: sha256(token)} of 1-16 read-only plugin credentials.' },
   { name: 'MAGNUS_PLUGIN_OPERATOR_TOKEN_SHA256', group: 'plugins', requiredWhen: 'MAGNUS_PLUGIN_API_ENABLED=true', description: 'SHA-256 digest of the server-local plugin operator credential.' },
   { name: 'MAGNUS_APPROVAL_BRIDGE_CONSUMER', group: 'plugins', description: 'Plugin read consumer allowed to list approval plans and relay signed decisions.' },
