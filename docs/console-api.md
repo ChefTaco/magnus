@@ -11,7 +11,7 @@ moved without updating it.
 | Class | Meaning | Rows | At the ingress |
 |---|---|---|---|
 | `browser` | A person's console drives it with a user token | 137 | Allow the exact method and path |
-| `machine` | Agents, services and integrations, with their own credentials | 71 | Deny |
+| `machine` | Agents, services and integrations, with their own credentials | 73 | Deny |
 | `exclude` | Reachable with a user token, but no console needs it, or it was written for a server-side caller | 143 | Deny until a feature needs it and it is reviewed |
 | `retired` | Always answers 404 or 410 | 64 | Deny |
 
@@ -82,6 +82,7 @@ is never tried against another verifier.
     "role": "OPERATOR",
     "capabilities": {
       "hermes": true,
+      "terminal": false,
       "agentVersion": "1.2.3",
       "magnusVersion": "1.2.3",
       "securityConsoleUrl": null
@@ -90,8 +91,15 @@ is never tried against another verifier.
 }
 ```
 
-Terminal access is out of scope: no permission grants it and no route here offers it. The only terminal
-route, `POST /api/v1/terminal/ticket`, is retired.
+`terminal` is true when a fleet gateway is deployed (`FLEET_GATEWAY_URL`, `FLEET_GATEWAY_TOKEN_SHA256`)
+and this person holds an `ADMIN` link and `magnus:terminal`. It only says whether to offer the terminal.
+
+## Web terminal
+
+No route on this server offers a terminal, and `POST /api/v1/terminal/ticket` stays retired, so this
+process never holds the SSH key. The [fleet gateway](../services/fleet-gateway/README.md) is a separate
+service with its own endpoints, its own ingress mapping and its own security model. The `magnus:terminal`
+permission grants nothing here.
 
 ## Browser contract export
 
@@ -146,7 +154,8 @@ These remain, and are not closed by the rules above:
 The dashboard computes these in its own server, so a static console needs another source or must drop them:
 
 - `/api/federation` (fan-out over several control nodes) and `/api/control-nodes`
-- `/api/terminal/*`, the Hermes dashboard proxy and the router admin proxy
+- `/api/terminal/*`, replaced by the [fleet gateway](../services/fleet-gateway/README.md)
+- The Hermes dashboard proxy and the router admin proxy
 - The mission-control Hermes tiles, computed from `/hermes/installations` in a server component
 
 The dashboard's nodes page calls `POST /api/v1/discovery/scan` and its mission-control page reads
@@ -316,6 +325,8 @@ Each row is a non-browser route that a broader `browser` pattern also matches. D
 | POST | `/api/v1/cron/managed-occurrences/admit` | machine | `node-token` | Agent scheduler coordination with the node credential. |
 | POST | `/api/v1/cron/managed-occurrences/settle` | machine | `node-token` | Agent scheduler coordination with the node credential. |
 | POST | `/api/v1/cron/managed-occurrences/status` | machine | `node-token` | Agent scheduler coordination with the node credential. |
+| POST | `/api/v1/fleet-gateway/audit` | machine | `fleet-gateway-token` | Fleet gateway records terminal session metadata. |
+| POST | `/api/v1/fleet-gateway/target` | machine | `fleet-gateway-token` | Fleet gateway resolves a node id to inventory facts. |
 | POST | `/api/v1/discovery/scan` | machine | `user:ADMIN\|OPERATOR` | Discovery kept machine-only by instruction, though the nodes page calls it. |
 | GET | `/api/v1/health/watchdog` | machine | `public` | Public off-host watchdog signal. |
 | POST | `/api/v1/heartbeat` | machine | `node-token` | Agent heartbeat with the shared node credential. |
@@ -498,7 +509,7 @@ Each row is a non-browser route that a broader `browser` pattern also matches. D
 | GET | `/api/v1/resource-leases/admission/:nodeId` | exclude | `user:ADMIN\|OPERATOR` | Operator runbook control for node admission fences; no console caller. |
 | POST | `/api/v1/resource-leases/admission/:nodeId/close` | exclude | `user:ADMIN` | Operator runbook control for node admission fences; no console caller. |
 | POST | `/api/v1/resource-leases/admission/:nodeId/release` | exclude | `user:ADMIN` | Operator runbook control for node admission fences; no console caller. |
-| GET | `/api/v1/resource-leases/ssh-admission` | exclude | `user:ADMIN\|OPERATOR` | Dashboard server-side terminal admission decision. |
+| GET | `/api/v1/resource-leases/ssh-admission` | exclude | `user:ADMIN\|OPERATOR` | Server-side terminal admission decision. |
 | GET | `/api/v1/roles/applications/:appId` | exclude | `user:any` | No call site: an unused client wrapper only. Add when a console feature needs it. |
 | POST | `/api/v1/rollouts` | exclude | `user:ADMIN\|OPERATOR` | No dashboard call site. Add when a console feature needs it. |
 | POST | `/api/v1/rollouts/:id/cancel` | exclude | `user:ADMIN` | No dashboard call site. Add when a console feature needs it. |
@@ -599,4 +610,4 @@ Each row is a non-browser route that a broader `browser` pattern also matches. D
 | DELETE | `/api/v1/orchestra/toolset-policies/:id` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
 | PATCH | `/api/v1/orchestra/toolset-policies/:id` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
 | ALL | `/api/v1/security-fusion/*` | retired | `retired-410` | Permanent 410 stub, or 404 when the mode is off; moved to the security console. |
-| POST | `/api/v1/terminal/ticket` | retired | `retired-410` | Permanent 410 stub after authentication; terminal lives elsewhere. |
+| POST | `/api/v1/terminal/ticket` | retired | `retired-410` | Permanent 410 stub after authentication; the fleet gateway carries the terminal. |

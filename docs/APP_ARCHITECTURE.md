@@ -26,6 +26,8 @@ the server publishes to hosts.
 | --- | --- |
 | `apps/dashboard` | `@hivemagnus/magnus-ui`: Next.js 16 web console, default port `3000` |
 | `services/control-api` | `@hivemagnus/magnus-server`: Hono API server, default port `4000` |
+| `services/fleet-gateway` | `@hivemagnus/magnus-fleet-gateway`: holds the restricted SSH key and carries the browser web terminal, default port `4310` |
+| `packages/oathweave` | `@hivemagnus/magnus-oathweave`: Oathweave token verifier and identity links shared by the server and fleet gateway |
 | `packages/agent` | `@hivemagnus/magnus-agent`: node agent on each managed host, default port `4100` |
 | `packages/ardent` | `@hivemagnus/ardent`: headless agent runtime, management API on `127.0.0.1:9910` by default |
 | `packages/contracts` | `@hivemagnus/magnus-contracts`: Zod schemas shared by the server, the console and the agent |
@@ -72,11 +74,16 @@ remains the identity provider; Magnus does not administer it.
 
 ### Terminals and SSH
 
-The node terminal opens an SSH session to a managed host with a dedicated, unprivileged SSH
-identity (`DASHBOARD_SSH_*`). Both terminal transports (WebSocket and HTTP streaming) validate the
-console session first, and terminal metadata is audited without recording what was typed. Host
-keys are pinned on first use (`src/lib/terminal-host-key.ts`). In the default `enforce` mode an
-unreadable or unsafe pin store, a lock failure, or a key mismatch rejects the connection.
+The browser console's terminal goes through the separate
+[fleet gateway](../services/fleet-gateway/README.md), so neither the browser nor the API process
+holds the SSH key. It requires an `ADMIN` account link, `magnus:terminal` and recent identity
+verification, pins host keys that an operator approved explicitly, and audits metadata only.
+
+The standalone dashboard's own node terminal, deprecated with that console, opens an SSH session to
+a managed host with a dedicated, unprivileged SSH identity (`DASHBOARD_SSH_*`) over HTTP streaming.
+It validates the console session first, and terminal metadata is audited without recording what was
+typed. Host keys are pinned on first use (`src/lib/terminal-host-key.ts`). In the default `enforce`
+mode an unreadable or unsafe pin store, a lock failure, or a key mismatch rejects the connection.
 
 The Hermes dashboard proxy does not trust on first use. It uses a reviewed inventory
 (`HERMES_SSH_AUTHORIZATIONS_FILE`) that binds each Hermes installation and node to exact

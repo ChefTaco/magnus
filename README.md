@@ -15,6 +15,7 @@ them.
 |---|---|
 | [**Magnus UI**](apps/dashboard) | Next.js web console. The browser talks only to the console; it calls the API server and the agents server-side, so secrets never reach the browser. |
 | [**Magnus server**](services/control-api) | Hono API server backed by PostgreSQL and Redis. It keeps the inventory and desired state, ingests heartbeats and logs, dispatches signed commands through a durable queue, and records every change in the audit log. |
+| [**Fleet gateway**](services/fleet-gateway) | Separate service that holds the restricted SSH key and carries the browser web terminal, with fresh identity verification, strict host-key pinning and metadata-only audit. |
 | [**Magnus agent**](packages/agent) | Daemon for each managed Linux host. It sends heartbeats, runs commands, manages cron, files and skills, and manages Hermes Agent, Codex and Ardent when they are installed. |
 | [**Ardent**](packages/ardent) | Headless TypeScript agent runtime with durable tasks, A2A 1.0, scheduled jobs, skills, and optional Telegram and Mattermost channels. It runs standalone or under Magnus management. |
 | [**Skills**](packages/skills) | Ubuntu operations skills (shell script plus `SKILL.md`) in the Hermes Agent skill format. |
@@ -30,6 +31,8 @@ for registry setup and release verification.
 |---|---|---|
 | `apps/dashboard` | [`@hivemagnus/magnus-ui`](https://www.npmjs.com/package/@hivemagnus/magnus-ui) | The web console (`magnus-ui start`), shipped as a prebuilt Next.js standalone server |
 | `services/control-api` | [`@hivemagnus/magnus-server`](https://www.npmjs.com/package/@hivemagnus/magnus-server) | The API server (`magnus-server migrate`, `magnus-server start`) with its Prisma schema and migrations |
+| `services/fleet-gateway` | [`@hivemagnus/magnus-fleet-gateway`](https://www.npmjs.com/package/@hivemagnus/magnus-fleet-gateway) | The web terminal gateway (`magnus-fleet-gateway start`, `magnus-fleet-gateway trust`) |
+| `packages/oathweave` | [`@hivemagnus/magnus-oathweave`](https://www.npmjs.com/package/@hivemagnus/magnus-oathweave) | Oathweave resource token verification shared by the server and fleet gateway |
 | `packages/agent` | [`@hivemagnus/magnus-agent`](https://www.npmjs.com/package/@hivemagnus/magnus-agent) | The node agent (`magnus-agent`) with example systemd units |
 | `packages/ardent` | [`@hivemagnus/ardent`](https://www.npmjs.com/package/@hivemagnus/ardent) | The Ardent agent runtime (`ardent init`, `ardent chat`, `ardent gateway run`) |
 | `packages/contracts` | [`@hivemagnus/magnus-contracts`](https://www.npmjs.com/package/@hivemagnus/magnus-contracts) | Zod schemas and types shared by the server, the console and the agent |

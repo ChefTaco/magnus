@@ -63,6 +63,8 @@ change.
 |---|---|---|
 | `apps/dashboard` | `@hivemagnus/magnus-ui` | Next.js web console for fleets, nodes, jobs, Hermes Agent and Ardent |
 | `services/control-api` | `@hivemagnus/magnus-server` | Hono API server: fleet inventory, desired state, jobs, audit (PostgreSQL + Redis) |
+| `services/fleet-gateway` | `@hivemagnus/magnus-fleet-gateway` | Separate service that holds the restricted SSH key and carries the browser web terminal |
+| `packages/oathweave` | `@hivemagnus/magnus-oathweave` | Oathweave token verifier and identity links shared by the server and fleet gateway |
 | `packages/agent` | `@hivemagnus/magnus-agent` | Node agent that runs on each managed host and reports to the server |
 | `packages/ardent` | `@hivemagnus/ardent` | Headless TypeScript agent runtime with A2A, jobs, skills and channel adapters |
 | `packages/contracts` | `@hivemagnus/magnus-contracts` | Zod schemas shared by the server, UI and agent |

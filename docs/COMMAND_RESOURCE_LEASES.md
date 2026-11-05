@@ -142,6 +142,15 @@ cannot submit counts or acknowledgements on a participant's behalf. Agent eviden
 `RESULT_SIGNING_SECRET` and console evidence with `RESOURCE_ENROLLMENT_DASHBOARD_SECRET`, which must
 differ from every other key.
 
+The console participant is the [fleet gateway](../services/fleet-gateway/README.md), reached at
+`FLEET_GATEWAY_URL`; it answers from the durable counts on this server, and it keeps the participant
+name `dashboard` on the wire. Without a usable URL the refresh stays pending with the cause
+`gateway-origin-unavailable`. An installation with no gateway sets
+`RESOURCE_ENROLLMENT_DASHBOARD_PARTICIPANT=absent`. The server then records the evidence itself, but
+only while the node has no `dashboard` work rows in any state: otherwise the cause is
+`dashboard-work-exists`, and completing enrollment re-checks this. Evidence recorded in one mode does
+not verify in the other.
+
 `GET /enrollment/:nodeId` also lists `lastFailures`: each participant's last refresh failure on this
 server process as a fixed code (`participant-unreachable`, `participant-http-<status>`,
 `participant-response-too-large`, `participant-receipt-invalid`, `participant-receipt-unauthenticated`
@@ -164,7 +173,7 @@ Administrator routes, all under `/api/v1/resource-leases`:
 | `POST /enrollment/:nodeId/complete` | Verify all four participants and enroll the node |
 | `GET /enrollment/work/:workId/historical`, `POST /enrollment/work/:workId/historical-reconcile` | Inspect and reconcile console work recorded before tracking existed |
 
-Console terminals and the Hermes dashboard proxy reserve durable work and consume a single-use
+Fleet gateway terminals and the Hermes dashboard proxy reserve durable work and consume a single-use
 start grant before they open an SSH connection. A crash, disconnect or shell exit leaves that work
 `unknown`, because processes started in the session may still be running.
 
