@@ -5,17 +5,35 @@
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 **Magnus is self-hosted fleet management for Linux hosts and AI agents.** A small agent on each
-host reports to a central API server, and a web console lets you see and operate the whole fleet:
+host reports to a central API server, and a browser console lets you see and operate the whole fleet:
 inventory and health, commands, cron jobs, files, logs, skills, rollouts, incidents and an
 append-only audit log. Magnus can also manage the AI agents that run on those hosts (Hermes Agent,
 the Codex CLI and its own Ardent runtime) and ships a catalogue of Ubuntu operations skills for
 them.
 
+## Browser console
+
+[HiveXUI](https://github.com/ChefTaco/HiveXUI) is the browser console of the Hive:Magnus suite,
+including the Magnus fleet pages, and the [Hive installer](https://github.com/ChefTaco/hive) deploys
+it. Magnus keeps its own independent API and still runs on its own, without HiveXUI or any other
+suite product.
+
+`apps/dashboard` remains the console for standalone installs, and is what the
+[quick start](#quick-start-standalone) below sets up. It will be deprecated once HiveXUI's Magnus
+module passes acceptance. Published versions stay available.
+
+The browser web terminal in HiveXUI needs [`services/fleet-gateway`](services/fleet-gateway), a
+separate gateway that is off by default. Opening a terminal requires an `ADMIN` account link, the
+`magnus:terminal` permission and fresh identity verification. Its image is published from the next
+tagged release; until then, build it from `services/fleet-gateway/Dockerfile`.
+
+## Components
+
 | Component | What it does |
 |---|---|
-| [**Magnus UI**](apps/dashboard) | Next.js web console. The browser talks only to the console; it calls the API server and the agents server-side, so secrets never reach the browser. |
+| [**Magnus UI**](apps/dashboard) | Next.js web console for standalone installs. The browser talks only to the console; it calls the API server and the agents server-side, so secrets never reach the browser. |
 | [**Magnus server**](services/control-api) | Hono API server backed by PostgreSQL and Redis. It keeps the inventory and desired state, ingests heartbeats and logs, dispatches signed commands through a durable queue, and records every change in the audit log. |
-| [**Fleet gateway**](services/fleet-gateway) | Separate service that holds the restricted SSH key and carries the browser web terminal, with fresh identity verification, strict host-key pinning and metadata-only audit. |
+| [**Fleet gateway**](services/fleet-gateway) | Separate, optional service that holds the restricted SSH key and carries the HiveXUI web terminal, with fresh identity verification, strict host-key pinning and metadata-only audit. |
 | [**Magnus agent**](packages/agent) | Daemon for each managed Linux host. It sends heartbeats, runs commands, manages cron, files and skills, and manages Hermes Agent, Codex and Ardent when they are installed. |
 | [**Ardent**](packages/ardent) | Headless TypeScript agent runtime with durable tasks, A2A 1.0, scheduled jobs, skills, and optional Telegram and Mattermost channels. It runs standalone or under Magnus management. |
 | [**Skills**](packages/skills) | Ubuntu operations skills (shell script plus `SKILL.md`) in the Hermes Agent skill format. |
@@ -29,13 +47,13 @@ for registry setup and release verification.
 
 | Path | Package | Description |
 |---|---|---|
-| `apps/dashboard` | [`@hivemagnus/magnus-ui`](https://www.npmjs.com/package/@hivemagnus/magnus-ui) | The web console (`magnus-ui start`), shipped as a prebuilt Next.js standalone server |
+| `apps/dashboard` | [`@hivemagnus/magnus-ui`](https://www.npmjs.com/package/@hivemagnus/magnus-ui) | The standalone web console (`magnus-ui start`), shipped as a prebuilt Next.js standalone server |
 | `services/control-api` | [`@hivemagnus/magnus-server`](https://www.npmjs.com/package/@hivemagnus/magnus-server) | The API server (`magnus-server migrate`, `magnus-server start`) with its Prisma schema and migrations |
 | `services/fleet-gateway` | `@hivemagnus/magnus-fleet-gateway` (container image `ghcr.io/cheftaco/magnus-fleet-gateway`, not on npm) | The web terminal gateway (`magnus-fleet-gateway start`, `magnus-fleet-gateway trust`) |
 | `packages/oathweave` | `@hivemagnus/magnus-oathweave` (private, bundled into the server and gateway, not on npm) | Oathweave resource token verification shared by the server and fleet gateway |
 | `packages/agent` | [`@hivemagnus/magnus-agent`](https://www.npmjs.com/package/@hivemagnus/magnus-agent) | The node agent (`magnus-agent`) with example systemd units |
 | `packages/ardent` | [`@hivemagnus/ardent`](https://www.npmjs.com/package/@hivemagnus/ardent) | The Ardent agent runtime (`ardent init`, `ardent chat`, `ardent gateway run`) |
-| `packages/contracts` | [`@hivemagnus/magnus-contracts`](https://www.npmjs.com/package/@hivemagnus/magnus-contracts) | Zod schemas and types shared by the server, the console and the agent |
+| `packages/contracts` | [`@hivemagnus/magnus-contracts`](https://www.npmjs.com/package/@hivemagnus/magnus-contracts) | Zod schemas and types shared by the server, the standalone console and the agent |
 | `packages/skills` | [`@hivemagnus/magnus-skills`](https://www.npmjs.com/package/@hivemagnus/magnus-skills) | The skills catalogue, with a small API to list and locate the bundled skills |
 | `packages/magnus` | [`@hivemagnus/magnus`](https://www.npmjs.com/package/@hivemagnus/magnus) | The installer and upgrade tool (`magnus init`, `magnus upgrade`, `magnus rollback`), which pins tested versions of every component |
 
@@ -48,7 +66,10 @@ for registry setup and release verification.
 - TLS certificates for the server, the console and each agent. Cleartext HTTP is a loopback-only
   development option.
 
-## Quick start
+## Quick start (standalone)
+
+These steps install Magnus by itself, with `apps/dashboard` as its console. To deploy Magnus as part
+of the suite with HiveXUI, use the [Hive installer](https://github.com/ChefTaco/hive) instead.
 
 **One command, for a single host.** This installs the server and the console, generates secrets and
 a self-signed certificate, runs PostgreSQL and Redis through docker compose (or uses
@@ -98,7 +119,7 @@ The server refuses to start while a required secret is missing; there are no def
 `magnus-server env-schema --format table` lists every variable. The API is served under `/api/v1`,
 with interactive documentation at `https://localhost:4000/api/docs`.
 
-### 2. Start the console
+### 2. Start the standalone console
 
 ```bash
 npm install -g --allow-scripts=argon2,ssh2,cpu-features @hivemagnus/magnus-ui
@@ -141,7 +162,7 @@ See the [agent README](packages/agent) for both modes.
 
 ## Upgrading
 
-Server, console and agent are released together. Within a major version, an upgrade is one command
+Server, standalone console and agent are released together. Within a major version, an upgrade is one command
 or one click:
 
 - **Managed install** (`magnus init` or `magnus adopt`): `magnus upgrade`, or `magnus-server upgrade`.
@@ -167,11 +188,11 @@ them, and `magnus-server check` and `magnus-ui check` print which ones are on.
 | Integration | What it adds | Enable with |
 |---|---|---|
 | [Hive IAM](https://github.com/ChefTaco/hive) login | Named-user OIDC sign-in to the console, and IAM-issued access tokens for the API | Console: `HIVE_OAUTH_DISCOVERY_URL`, `HIVE_OAUTH_CLIENT_ID`, `HIVE_OAUTH_ISSUER`, `HIVE_OAUTH_API_AUDIENCE`. Server: `IAM_CORE_URL`, `IAM_TOKEN_ISSUER`, `IAM_TOKEN_AUDIENCE` |
-| Oathweave browser console | A static browser console calls the API directly with short-lived resource tokens, through a same-origin ingress ([route inventory](docs/console-api.md)). Cannot be combined with `IAM_CORE_URL` | Server: `OATHWEAVE_ISSUER`, `OATHWEAVE_JWKS_URL`, `OATHWEAVE_USERINFO_URL`, `MAGNUS_OATHWEAVE_IDENTITIES_JSON`, and optionally `MAGNUS_HERMES_ENABLED`, `MAGNUS_CONSOLE_BASE_PATH` |
-| [Hive Router](https://github.com/ChefTaco/hive) | Model routing for managed Hermes Agents, and the router admin UI embedded in the console | Server: `MAGNUS_ROUTER_URL`, `MAGNUS_ROUTER_MODEL`, `MAGNUS_ROUTER_API_KEY`. Console: `HIVE_ROUTER_ADMIN_URL` |
-| [HiveMem](https://github.com/ChefTaco/hive) | Shared long-term memory for Hermes Agents, Ardent and operational lessons | Server: `HIVEMEM_URL`, `HIVEMEM_TOKEN`. Ardent: `memory.provider: hivemem` |
-| External security console | Exports security observations and links the console's security pages to it | Server: `SECURITY_FUSION_MODE=remote`, `MAGNUS_SECURITY_CONSOLE_URL`, `SECURITY_EXPORT_ENABLED=true`. Console: `MAGNUS_SECURITY_CONSOLE_URL` |
-| [Hermes Agent](https://github.com/NousResearch/hermes-agent) | Installation, profile, skill and drift management, and the Hermes dashboard embedded over SSH | Console: `MAGNUS_HERMES_ENABLED=true`, `HERMES_SSH_AUTHORIZATIONS_FILE`, `DASHBOARD_SSH_*`. Agent: `HERMES_USER`. Registry sync: `MAGNUS_HERMES_REGISTRY_ENABLED=true` on the server |
+| Oathweave browser console | HiveXUI calls the API directly with short-lived resource tokens, through a same-origin ingress ([route inventory](docs/console-api.md)). Cannot be combined with `IAM_CORE_URL` | Server: `OATHWEAVE_ISSUER`, `OATHWEAVE_JWKS_URL`, `OATHWEAVE_USERINFO_URL`, `MAGNUS_OATHWEAVE_IDENTITIES_JSON`, and optionally `MAGNUS_HERMES_ENABLED`, `MAGNUS_CONSOLE_BASE_PATH` |
+| [Emberpath](https://github.com/ChefTaco/Emberpath) | Model routing for managed Hermes Agents. The standalone console can also embed the admin UI of a release that still bundles one; Emberpath's current source has none | Server: `MAGNUS_ROUTER_URL`, `MAGNUS_ROUTER_MODEL`, `MAGNUS_ROUTER_API_KEY`. Console: `HIVE_ROUTER_ADMIN_URL` |
+| [HiveMem](https://github.com/ChefTaco/HiveMem) | Shared long-term memory for Hermes Agents, Ardent and operational lessons | Server: `HIVEMEM_URL`, `HIVEMEM_TOKEN`. Ardent: `memory.provider: hivemem` |
+| External security console | Exports security observations and links the standalone console's security pages to it | Server: `SECURITY_FUSION_MODE=remote`, `MAGNUS_SECURITY_CONSOLE_URL`, `SECURITY_EXPORT_ENABLED=true`. Console: `MAGNUS_SECURITY_CONSOLE_URL` |
+| [Hermes Agent](https://github.com/NousResearch/hermes-agent) | Installation, profile, skill and drift management, and, in the standalone console only, the Hermes dashboard embedded over SSH | Console: `MAGNUS_HERMES_ENABLED=true`, `HERMES_SSH_AUTHORIZATIONS_FILE`, `DASHBOARD_SSH_*`. Agent: `HERMES_USER`. Registry sync: `MAGNUS_HERMES_REGISTRY_ENABLED=true` on the server |
 | Codex CLI | Fleet view of Codex CLI versions and ChatGPT sign-in state, with update and device-code login actions | Agent: `CODEX_USER` (the CLI is detected automatically) |
 | Telegram and Mattermost (Ardent) | Chat with an Ardent profile | Ardent `config.yaml`: `channels.telegram` (`TELEGRAM_BOT_TOKEN`) or `channels.mattermost` (`MATTERMOST_URL`, `MATTERMOST_TOKEN`) |
 

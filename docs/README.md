@@ -6,7 +6,7 @@ README is the reference for its installation, configuration and environment vari
 
 ## Architecture
 
-- [Architecture](APP_ARCHITECTURE.md): the console, the server, the agent, Ardent, and how requests
+- [Architecture](APP_ARCHITECTURE.md): the consoles, the server, the agent, Ardent, and how requests
   and credentials flow between them.
 - [Hermes Agent management](APP_ARCHITECTURE_HERMES.md): desired state, reconciliation through the
   node agent, managed configuration and the plugin API.
@@ -44,6 +44,7 @@ README is the reference for its installation, configuration and environment vari
 | --- | --- |
 | `@hivemagnus/magnus-ui` | [apps/dashboard/README.md](../apps/dashboard/README.md) |
 | `@hivemagnus/magnus-server` | [services/control-api/README.md](../services/control-api/README.md) |
+| `@hivemagnus/magnus-fleet-gateway` | [services/fleet-gateway/README.md](../services/fleet-gateway/README.md) |
 | `@hivemagnus/magnus-agent` | [packages/agent/README.md](../packages/agent/README.md) |
 | `@hivemagnus/ardent` | [packages/ardent/README.md](../packages/ardent/README.md) |
 | `@hivemagnus/magnus-contracts` | [packages/contracts/README.md](../packages/contracts/README.md) |

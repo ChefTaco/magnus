@@ -1,8 +1,14 @@
 # Magnus architecture
 
-Magnus has three runtime parts: a web console, an API server, and an agent on every managed Linux
-host. Ardent is a separate agent runtime that Magnus can manage, and the skills catalogue is data
-the server publishes to hosts.
+Magnus has three runtime parts: a browser console, an API server, and an agent on every managed
+Linux host. Ardent is a separate agent runtime that Magnus can manage, and the skills catalogue is
+data the server publishes to hosts.
+
+There are two consoles. [HiveXUI](https://github.com/ChefTaco/HiveXUI) is the Hive:Magnus suite's
+console, a separate static application that calls the API directly with Oathweave resource tokens
+([route inventory](console-api.md)). `apps/dashboard` remains for standalone installs, and is what
+the diagram and the Console section below describe. It will be deprecated once HiveXUI's Magnus
+module passes acceptance; published versions stay available.
 
 ```text
  Operator (browser)
@@ -24,7 +30,7 @@ the server publishes to hosts.
 
 | Path | Role |
 | --- | --- |
-| `apps/dashboard` | `@hivemagnus/magnus-ui`: Next.js 16 web console, default port `3000` |
+| `apps/dashboard` | `@hivemagnus/magnus-ui`: Next.js 16 web console for standalone installs, default port `3000` |
 | `services/control-api` | `@hivemagnus/magnus-server`: Hono API server, default port `4000` |
 | `services/fleet-gateway` | `@hivemagnus/magnus-fleet-gateway`: holds the restricted SSH key and carries the browser web terminal, default port `4310` |
 | `packages/oathweave` | `@hivemagnus/magnus-oathweave`: Oathweave token verifier and identity links shared by the server and fleet gateway |
@@ -37,7 +43,7 @@ the server publishes to hosts.
 
 ## Console
 
-The console is a same-origin web application. Browser code calls only Next.js route handlers.
+This section describes the standalone console, `apps/dashboard`. It is a same-origin web application. Browser code calls only Next.js route handlers.
 Those handlers run on the server, add credentials such as `API_SECRET`, and forward the request
 to the API server (`/api/proxy/<path>`) or to an agent. No API, node or SSH credential is ever sent to
 the browser.
@@ -57,8 +63,9 @@ Main areas:
   the Codex CLI, and, when Hermes Agent is enabled, `/orchestra`, `/orchestra/installations`,
   `/orchestra/profiles`, `/orchestra/web-gateway`, `/hermes-drift` and `/hermes-security`.
 - Security: `/security-fusion` when Security Fusion runs locally in the server.
-- Embedded services: the Hermes dashboard under `/api/hermes/dashboard` and the Hive Router admin
-  UI under `/api/hive-router/dashboard`, each only when its integration is configured.
+- Embedded services: the Hermes dashboard under `/api/hermes/dashboard` and a router admin UI under
+  `/api/hive-router/dashboard`, each only when its integration is configured. Emberpath's current
+  source has no admin UI to embed; only a release that still bundles one does.
 
 ### Sign-in
 
@@ -74,7 +81,7 @@ remains the identity provider; Magnus does not administer it.
 
 ### Terminals and SSH
 
-The browser console's terminal goes through the separate
+HiveXUI's terminal goes through the separate
 [fleet gateway](../services/fleet-gateway/README.md), so neither the browser nor the API process
 holds the SSH key. It requires an `ADMIN` account link, `magnus:terminal` and recent identity
 verification, pins host keys that an operator approved explicitly, and audits metadata only.
@@ -155,7 +162,7 @@ API. See the [Ardent README](../packages/ardent/README.md).
 
 ## Integrations
 
-Hive IAM, Hive Router, HiveMem, an external security console, Hermes Agent and Codex are all
+Hive IAM, Emberpath, HiveMem, an external security console, Hermes Agent and Codex are all
 optional. Each one is off until its environment variables are set, and nothing falls back to a
 built-in host. See the integration tables in the [root README](../README.md#optional-integrations)
 and in each package README.

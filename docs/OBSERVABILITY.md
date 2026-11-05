@@ -46,9 +46,10 @@ Start with these objectives and tighten them once you have a baseline.
 | Stale fleet rising | the stale node count grows for 10 minutes | Open the incident workspace and group the stale nodes by network or site. |
 | Deployment health failure | application health or the browser smoke test fails after a deployment | Roll back the code. Do not restore the database automatically. |
 
-The console pages for operators are `/mission-control`, `/incidents`, `/rollouts`,
+The standalone console's pages for operators are `/mission-control`, `/incidents`, `/rollouts`,
 `/fleet-readiness`, `/fleet-timeline`, `/retention` and `/application-operations`, plus
-`/hermes-drift` and `/hermes-security` when Hermes Agent is enabled.
+`/hermes-drift` and `/hermes-security` when Hermes Agent is enabled. HiveXUI's Magnus module has
+most of them, but not `/fleet-timeline`, `/retention` or `/hermes-security`.
 
 ## Data retention
 
@@ -106,7 +107,7 @@ variable, the authenticated checks report `unconfigured` instead of failing.
 
 ## Hermes proxy security events
 
-When Hermes Agent is enabled, `/hermes-security` reads the console's bounded JSONL event log at
+When Hermes Agent is enabled, the standalone console's `/hermes-security` reads its bounded JSONL event log at
 `.magnus/hermes-proxy-security.jsonl` in the console's data directory. It shows rejected origins,
 invalid console sessions, blocked DNS destinations, rejected WebSocket paths, queue pressure,
 sustained backpressure per direction (duration and peak bytes), connection durations and

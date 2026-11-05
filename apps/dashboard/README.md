@@ -1,7 +1,9 @@
 # Magnus UI
 
-`@hivemagnus/magnus-ui` is the web console for the [Magnus](https://github.com/ChefTaco/magnus)
-fleet control plane. It shows fleet and node inventory, runs commands, browses files and logs,
+`@hivemagnus/magnus-ui` is the standalone web console for the [Magnus](https://github.com/ChefTaco/magnus)
+fleet control plane. In the Hive:Magnus suite the console is
+[HiveXUI](https://github.com/ChefTaco/HiveXUI). This package will be deprecated once HiveXUI's Magnus
+module passes acceptance; published versions stay available. It shows fleet and node inventory, runs commands, browses files and logs,
 manages rollouts, cron jobs, webhooks, retention and audit, and surveys Ardent and Codex agents
 on managed nodes. Hermes Agent pages and other integrations are optional.
 

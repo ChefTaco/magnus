@@ -1,7 +1,7 @@
 # Console API route inventory
 
-A static browser console reaches the control API directly, through a same-origin ingress, with a
-short-lived Oathweave resource token. This inventory is the ingress allowlist. It covers every route
+[HiveXUI](https://github.com/ChefTaco/HiveXUI), the suite's static browser console, reaches the
+control API directly, through a same-origin ingress, with a short-lived Oathweave resource token. This inventory is the ingress allowlist. It covers every route
 mounted on the server, audited from the router files, and
 `services/control-api/src/routes/console-inventory.test.ts` fails when a route is added, removed or
 moved without updating it.
@@ -163,7 +163,7 @@ describes the fleet and the anomaly page checks for it. The tool approval routes
 
 ## Dashboard features with no route here
 
-The dashboard computes these in its own server, so a static console needs another source or must drop them:
+The standalone dashboard computes these in its own server, so a static console needs another source or must drop them:
 
 - `/api/federation` (fan-out over several control nodes) and `/api/control-nodes`
 - `/api/terminal/*`, replaced by the [fleet gateway](../services/fleet-gateway/README.md)
