@@ -71,3 +71,12 @@ describe('node agent endpoint identity', () => {
     expect(getNodeBaseUrl('127.0.0.1', 4100)).toBe('http://127.0.0.1:4100');
   });
 });
+
+describe('node agent base URL', () => {
+  it('brackets an IPv6 address', () => {
+    delete process.env['TLS_CERT_PATH'];
+    delete process.env['TLS_KEY_PATH'];
+    expect(getNodeBaseUrl('2001:db8::1', 4100)).toBe('http://[2001:db8::1]:4100');
+    expect(getNodeBaseUrl('192.0.2.10', 4100)).toBe('http://192.0.2.10:4100');
+  });
+});

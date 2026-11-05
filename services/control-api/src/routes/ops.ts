@@ -2,6 +2,8 @@ import { applicationProbeContractDigest, getApplicationProbeCollectorStatus } fr
 import { lessonSchema, publishLesson, lessonSuggestions, supersedeLesson } from '../services/incident-lessons.js';
 import { exportIncidentEvidence } from '../services/incident-evidence.js';
 import { getNodeManagerSecret } from '../utils/env.js';
+import { getNodeBaseUrl } from '../utils/node-url.js';
+import { describeTransportFailure } from '../utils/safe-errors.js';
 import { Hono } from 'hono';
 import type { AppVariables } from '../types/index.js';
 import { authMiddleware, getUser, requireRole } from '../middleware/auth.js';
@@ -241,14 +243,27 @@ opsRouter.post('/maintenance/:id/cancel', requireRole('ADMIN', 'OPERATOR'), asyn
 
 opsRouter.get('/incidents/:id/evidence', requireRole('ADMIN', 'OPERATOR'), async c => c.json({ success: true, data: await exportIncidentEvidence(c.req.param('id')!) }));
 opsRouter.get('/storage-evidence/:nodeId', requireRole('ADMIN', 'OPERATOR'), async c => {
-  const node = await getDb().node.findUnique({ where: { id: c.req.param('nodeId')! }, select: { ipAddress: true, port: true } });
+  const nodeId = c.req.param('nodeId')!;
+  const node = await getDb().node.findUnique({ where: { id: nodeId }, select: { name: true, ipAddress: true, port: true } });
   const mount = c.req.query('mount');
   if (!node || !mount || mount.length > 4096) return c.json({ success: false, error: { message: 'Valid node and mount required' } }, 400);
-  const host = node.ipAddress.includes(':') ? `[${node.ipAddress}]` : node.ipAddress;
-  const response = await fetch(`https://${host}:${node.port}/api/v1/storage-evidence?${new URLSearchParams({ mount })}`, { headers: { 'x-node-token': getNodeManagerSecret() }, signal: AbortSignal.timeout(15000), redirect: 'error' });
+  const audit = (success: boolean) => logAuditEvent({ action: 'storage.investigate', actorId: getUser(c).userId, targetType: 'node', targetId: nodeId, details: { operation: 'storage-evidence', readOnly: true, success } });
+  let response: Response;
+  try {
+    response = await fetch(`${getNodeBaseUrl(node.ipAddress, node.port)}/api/v1/storage-evidence?${new URLSearchParams({ mount })}`, { headers: { 'x-node-token': getNodeManagerSecret() }, signal: AbortSignal.timeout(15000), redirect: 'error' });
+  } catch (error) {
+    await audit(false);
+    throw new HttpError(502, 'NODE_UNREACHABLE', `Could not reach the agent on ${node.name}: ${describeTransportFailure(error)}. Check that the agent is running and that this server can reach its port.`);
+  }
   const { boundedJson } = await import('../services/application-probes.js');
-  const body = await boundedJson(response);
-  await logAuditEvent({ action: 'storage.investigate', actorId: getUser(c).userId, targetType: 'node', targetId: c.req.param('nodeId')!, details: { operation: 'storage-evidence', readOnly: true, success: response.ok } });
+  let body: unknown;
+  try {
+    body = await boundedJson(response);
+  } catch {
+    await audit(false);
+    throw new HttpError(502, 'NODE_BAD_RESPONSE', `The agent on ${node.name} answered HTTP ${response.status} with no readable storage report. Check that it is running a version that supports storage evidence.`);
+  }
+  await audit(response.ok);
   return c.json(body as object, response.ok ? 200 : 502);
 });
 

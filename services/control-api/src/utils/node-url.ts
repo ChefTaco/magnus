@@ -10,7 +10,8 @@ import { isIP } from 'node:net';
 export function getNodeBaseUrl(ipAddress: string, port: number): string {
   const useTls = process.env['TLS_CERT_PATH'] && process.env['TLS_KEY_PATH'];
   const protocol = useTls ? 'https' : 'http';
-  return `${protocol}://${ipAddress}:${port}`;
+  const host = ipAddress.includes(':') && !ipAddress.startsWith('[') ? `[${ipAddress}]` : ipAddress;
+  return `${protocol}://${host}:${port}`;
 }
 
 const DNS_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
