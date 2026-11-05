@@ -4,6 +4,7 @@ import { assertLiveExecution } from '../config/rehearsal.js';
 import { recordMonitorPulse } from './monitor-pulse.js';
 import { WEBHOOK_FORMATS, webhookFormat } from './webhook-types.js';
 import { redactUnknown } from '../utils/redact.js';
+import { clientErrorMessage } from '../utils/safe-errors.js';
 import { createHmac, randomBytes, createCipheriv } from 'node:crypto';
 import { nanoid } from 'nanoid';
 import { Queue, Worker, type Job } from 'bullmq';
@@ -536,7 +537,7 @@ export async function testWebhookEndpoint(id: string): Promise<{ success: boolea
     const res = await postWebhook(webhookUrl(endpoint), { headers, body, timeoutMs: endpoint.timeoutMs });
     return { success: res.ok, error: res.ok ? undefined : `HTTP ${res.status}` };
   } catch (err) {
-    return { success: false, error: err instanceof Error ? err.message : 'Unknown error' };
+    return { success: false, error: clientErrorMessage(err, 'Unknown error') };
   }
 }
 

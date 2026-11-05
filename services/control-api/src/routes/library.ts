@@ -1,3 +1,4 @@
+import { clientErrorMessage } from '../utils/safe-errors.js';
 import { Hono } from 'hono';
 import type { AppVariables } from '../types/index.js';
 import { getDb } from '../db/index.js';
@@ -428,7 +429,7 @@ libraryRouter.post(
             nodeId: node.id,
             nodeName: node.name,
             status: 'failed' as const,
-            error: err instanceof Error ? err.message : 'Unknown error',
+            error: clientErrorMessage(err, 'Unknown error'),
           };
         }
       }),
@@ -441,7 +442,7 @@ libraryRouter.post(
             nodeId: 'unknown',
             nodeName: 'unknown',
             status: 'failed' as const,
-            error: r.reason instanceof Error ? r.reason.message : 'Unknown error',
+            error: clientErrorMessage(r.reason, 'Unknown error'),
           },
     );
 

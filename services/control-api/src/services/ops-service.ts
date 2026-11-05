@@ -9,6 +9,7 @@ import { getRateLimitHealth } from '../middleware/rate-limit.js';
 import { listHermesInstallations } from './hermes-service.js';
 import { getHealthRetentionCutoffs, getHealthRetentionPolicy, getRetentionPolicyReadiness } from './health-retention.js';
 import { getNotificationRetentionPolicy } from './notification-retention.js';
+import { databaseFailure, describeTransportFailure } from '../utils/safe-errors.js';
 
 const STALE_THRESHOLD_MS = Number(process.env['STALE_NODE_THRESHOLD_MS'] ?? 120_000);
 
@@ -45,22 +46,9 @@ async function timed<T>(fn: () => Promise<T>): Promise<{ value?: T; latencyMs: n
   } catch (err) {
     return {
       latencyMs: Math.round((performance.now() - started) * 100) / 100,
-      error: err instanceof Error ? err.message : String(err),
+      error: databaseFailure(err)?.message ?? describeTransportFailure(err),
     };
   }
-}
-
-function describeDependencyError(error: unknown): string {
-  if (!(error instanceof Error)) return String(error);
-  const cause = error.cause;
-  if (cause && typeof cause === 'object') {
-    const code = 'code' in cause && typeof cause.code === 'string' ? cause.code : undefined;
-    const message = 'message' in cause && typeof cause.message === 'string' ? cause.message : undefined;
-    if (code && message) return `${error.message} (${code}: ${message})`;
-    if (code) return `${error.message} (${code})`;
-    if (message) return `${error.message} (${message})`;
-  }
-  return error.message;
 }
 
 export function resolveRouterHealthUrl(routerUrl: string | undefined, explicitHealthUrl?: string): string | undefined {
@@ -86,7 +74,7 @@ export async function checkHttp(name: string, url: string | undefined, timeoutMs
     return {
       name,
       status: 'warn',
-      message: describeDependencyError(error),
+      message: describeTransportFailure(error),
       latencyMs: Math.round((performance.now() - started) * 100) / 100,
     };
   } finally {

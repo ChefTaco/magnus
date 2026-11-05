@@ -16,6 +16,7 @@ import { logAuditEvent } from './audit-service.js';
 import { listSkills, getSkill, getSkillFile, createSkill } from './skill-service.js';
 import { NodeApiClient } from '../sdk/node-api-client.js';
 import { getNodeBaseUrl } from '../utils/node-url.js';
+import { clientErrorMessage } from '../utils/safe-errors.js';
 import { getNodeManagerSecret } from '../utils/env.js';
 import { correlateAnomalies, getAnomalyTimeline } from './ai-correlation-service.js';
 import { getHiveMemClient } from './hivemem-client.js';
@@ -1542,7 +1543,7 @@ export async function executeAiTool(call: AiToolCall): Promise<AiToolResult> {
       name: call.name,
       success: false,
       result: null,
-      error: err instanceof Error ? err.message : 'Tool execution failed',
+      error: clientErrorMessage(err, 'Tool execution failed'),
     };
   }
 }

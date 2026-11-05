@@ -37,6 +37,9 @@ export async function withReadRetry<T>(
     }
   }
 
+  // An error that retrying cannot help is not an outage: keep it, so its handler can classify it.
+  if (!isTransientReadError(lastErr)) throw lastErr;
   const message = lastErr instanceof Error ? lastErr.message : String(lastErr);
-  throw new Error(`${label} failed after ${attempts} read attempts: ${message}`);
+  console.error(`[db] ${label} failed after ${attempts} read attempts: ${message}`);
+  throw Object.assign(new Error('The database is temporarily unavailable. Try again shortly.'), { status: 503, code: 'DATABASE_UNAVAILABLE' });
 }

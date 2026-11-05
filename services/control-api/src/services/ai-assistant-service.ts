@@ -14,6 +14,7 @@ import { z } from 'zod';
 import { getDb } from '../db/index.js';
 import { executeAiTool, listAvailableTools, type AiToolCall, type AiToolResult } from './ai-tools.js';
 import { logAuditEvent } from './audit-service.js';
+import { clientErrorMessage } from '../utils/safe-errors.js';
 import { autoStoreToolResult, listScratchpadEntries } from './ai-scratchpad-service.js';
 import { getLlmProvider, getLlmProviderStatuses, type LlmChatResult, type LlmMessage, type LlmToolDefinition, type ProviderFallback, type ProviderId, type ThinkingMode } from './llm-providers/index.js';
 import { getOllamaThinkingCapability } from './llm-providers/ollama.js';
@@ -2820,7 +2821,7 @@ export async function chatStream(
   } catch (err) {
     onEvent({
       event: 'error',
-      data: { message: err instanceof Error ? err.message : 'Unknown streaming error' },
+      data: { message: clientErrorMessage(err, 'Unknown streaming error') },
     });
   }
 }

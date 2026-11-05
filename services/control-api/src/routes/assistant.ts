@@ -26,6 +26,7 @@ import { streamSSE } from 'hono/streaming';
 import type { AppVariables } from '../types/index.js';
 import { authMiddleware, requireRole } from '../middleware/auth.js';
 import { HttpError } from '../middleware/error-handler.js';
+import { clientErrorMessage } from '../utils/safe-errors.js';
 import {
   chat,
   chatStream,
@@ -350,7 +351,7 @@ assistantRouter.post('/chat/stream', requireRole('ADMIN', 'OPERATOR'), async (c)
     } catch (err) {
       await stream.writeSSE({
         event: 'error',
-        data: JSON.stringify({ type: 'error', error: err instanceof Error ? err.message : 'Stream failed' }),
+        data: JSON.stringify({ type: 'error', error: clientErrorMessage(err, 'Stream failed') }),
       });
     }
   });

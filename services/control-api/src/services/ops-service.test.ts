@@ -77,10 +77,10 @@ describe('ops-service', () => {
     );
 
     vi.stubGlobal('fetch', vi.fn().mockRejectedValueOnce(
-      new TypeError('fetch failed', { cause: Object.assign(new Error('connect refused'), { code: 'ECONNREFUSED' }) }),
+      new TypeError('fetch failed', { cause: Object.assign(new Error('connect ECONNREFUSED 192.0.2.1:4020'), { code: 'ECONNREFUSED' }) }),
     ));
     await expect(checkHttp('router', 'https://router.example/health')).resolves.toEqual(
-      expect.objectContaining({ status: 'warn', message: 'fetch failed (ECONNREFUSED: connect refused)' }),
+      expect.objectContaining({ status: 'warn', message: 'the connection was refused (ECONNREFUSED)' }),
     );
   });
 

@@ -1,3 +1,4 @@
+import { clientErrorMessage } from '../utils/safe-errors.js';
 import { Hono } from 'hono';
 import type { AppVariables } from '../types/index.js';
 import { getDb } from '../db/index.js';
@@ -155,7 +156,7 @@ filesRouter.post('/update', requireRole('ADMIN', 'OPERATOR'), async (c) => {
         });
         return { ...task, status: 'completed' };
       } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = clientErrorMessage(err, 'File update failed');
         await db.filePatchTask.update({
           where: { id: task.id },
           data: { status: 'failed', error: message },
