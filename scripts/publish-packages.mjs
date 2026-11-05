@@ -5,8 +5,8 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const PACKAGE_DIRECTORIES = [
-  'packages/contracts', 'packages/skills', 'packages/ardent', 'packages/agent',
-  'services/control-api', 'apps/dashboard',
+  'packages/contracts', 'packages/oathweave', 'packages/skills', 'packages/ardent', 'packages/agent',
+  'services/control-api', 'services/fleet-gateway', 'apps/dashboard',
   // Last: the installer pins every component above at this exact version.
   'packages/magnus',
 ];

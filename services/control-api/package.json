@@ -85,6 +85,7 @@
   },
   "dependencies": {
     "@hivemagnus/magnus-contracts": "2.0.0",
+    "@hivemagnus/magnus-oathweave": "2.0.0",
     "@hono/node-server": "^2.1.5",
     "@hono/swagger-ui": "^0.6.2",
     "@prisma/adapter-pg": "7.10.1",

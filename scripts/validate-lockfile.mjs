@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 
 const root = process.cwd();
 const lock = JSON.parse(readFileSync(`${root}/package-lock.json`, 'utf8'));
-const workspacePaths = ['apps/dashboard', 'services/control-api', 'packages/agent', 'packages/ardent', 'packages/contracts', 'packages/skills'];
+const workspacePaths = ['apps/dashboard', 'services/control-api', 'services/fleet-gateway', 'packages/agent', 'packages/ardent', 'packages/contracts', 'packages/oathweave', 'packages/skills'];
 const failures = [];
 
 for (const workspacePath of workspacePaths) {

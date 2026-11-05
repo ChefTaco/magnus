@@ -103,6 +103,7 @@ jobs:
       matrix:
         image:
           - { name: magnus-server, dockerfile: services/control-api/Dockerfile }
+          - { name: magnus-fleet-gateway, dockerfile: services/fleet-gateway/Dockerfile }
           - { name: magnus-ui, dockerfile: apps/dashboard/Dockerfile }
           - { name: magnus-agent, dockerfile: packages/agent/Dockerfile }
     steps:

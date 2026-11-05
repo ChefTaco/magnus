@@ -40,7 +40,7 @@
     }
   },
   "scripts": {
-    "build": "npm run build -w @hivemagnus/magnus-contracts -w @hivemagnus/magnus-skills -w @hivemagnus/ardent -w @hivemagnus/magnus-agent -w @hivemagnus/magnus-server -w @hivemagnus/magnus-ui -w @hivemagnus/magnus",
+    "build": "npm run build -w @hivemagnus/magnus-contracts -w @hivemagnus/magnus-oathweave -w @hivemagnus/magnus-skills -w @hivemagnus/ardent -w @hivemagnus/magnus-agent -w @hivemagnus/magnus-server -w @hivemagnus/magnus-fleet-gateway -w @hivemagnus/magnus-ui -w @hivemagnus/magnus",
     "test": "npm run test --workspaces --if-present && npm run test:native-artifact",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "verify:ui": "npm --workspace @hivemagnus/magnus-ui run test:e2e -- --project=chromium tests/navigation.spec.ts",

@@ -14,10 +14,12 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 export const PUBLISHABLE = [
   'packages/contracts',
+  'packages/oathweave',
   'packages/skills',
   'packages/ardent',
   'packages/agent',
   'services/control-api',
+  'services/fleet-gateway',
   'apps/dashboard',
   'packages/magnus',
 ];
