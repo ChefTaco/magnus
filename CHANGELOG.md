@@ -6,6 +6,10 @@ All notable changes to this project are documented in this file. The format is b
 
 ## Unreleased
 
+- Package reviewed public Hermes headless native artifacts with frozen
+  dependencies, bundled Python, fixed SQLite, protected explicit profiles and
+  external HTTPS generation/streaming acceptance.
+
 - Preserve configured issuer trust for container health probes when the service
   uses a private CA; exercise the actual probe during isolated queue rehearsals.
 

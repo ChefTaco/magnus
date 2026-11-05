@@ -1,0 +1,16 @@
+This headless native artifact includes the reviewed public Hermes Agent release
+v2026.9.14 (0.21.3), revision 345cd2b057a452236de401d3534b8502a7465e8d,
+from https://github.com/NousResearch/hermes-agent under its MIT license.
+See source/LICENSE and provenance.json. No upstream contributor attribution or
+license is replaced by Magnus's wrapper license.
+
+The bundled CPython 3.13.13 runtime and rebuilt standard SQLite module retain
+Python's license in the bundled Python distribution. Source changes are limited
+to packaging the standard SQLite extension against the fixed SQLite release and
+selecting that extension through the separately included site customization.
+
+SQLite 3.53.4 is in the public domain. Its exact source archive and digest are
+recorded in provenance.json; see https://sqlite.org/copyright.html.
+
+Python dependency license files and distribution metadata remain in dependencies/.
+Magnus's build tooling, launchers and acceptance wrappers are Apache-2.0.

@@ -103,13 +103,20 @@ export function buildNativeAgent(
     ardent: { root: '/opt/ardent', name: '@hivemagnus/ardent', bin: 'ardent', entry: 'native-entry.js',
       arguments: ['--env-file', '@ENV_FILE@', '--profile-path', '@PROFILE@', 'gateway', 'run'],
       acceptanceArguments: ['--env-file', '@ENV_FILE@', '--profile-path', '@PROFILE@', 'acceptance'] },
+    hermes: { root: '/opt/hermes-native', name: 'hermes-agent', bin: 'hermes', launcher: 'launcher.mjs',
+      arguments: ['--env-file', '@ENV_FILE@', '--profile-path', '@PROFILE@', 'gateway', 'run'],
+      versionPrefix: 'hermes-agent ',
+      initializationArguments: ['--env-file', '@ENV_FILE@', '--profile-path', '@PROFILE@', '--native-init-profile'],
+      verificationArguments: ['--env-file', '@ENV_FILE@', '--profile-path', '@PROFILE@', '--native-verify-profile'],
+      acceptanceArguments: ['--env-file', '@ENV_FILE@', '--profile-path', '@PROFILE@', '--native-acceptance'],
+      preflightArguments: ['--env-file', '@ENV_FILE@', '--profile-path', '@PROFILE@', '--native-preflight'] },
     codex: { root: '/opt/codex', name: '@openai/codex', bin: 'codex', launcher: 'launcher.mjs',
       arguments: ['--env-file', '@ENV_FILE@', '--profile-path', '@PROFILE@', 'app-server', '--listen', 'stdio://'],
       versionPrefix: 'codex-cli ',
       preflightArguments: ['--env-file', '@ENV_FILE@', '--profile-path', '@PROFILE@', '--version'] },
   };
   const layout = layouts[selected];
-  if (!layout) throw Error('Select an owned native product: magnus, ardent or codex');
+  if (!layout) throw Error('Select an owned native product: magnus, ardent, codex or hermes');
   const destination = resolve(output);
   if (existsSync(destination))
     throw Error(
@@ -155,6 +162,7 @@ export function buildNativeAgent(
     copyRuntimeTree(exported, join(bundle, 'app'));
     mkdirSync(join(bundle, 'runtime'), { mode: 0o700 });
     mkdirSync(join(bundle, 'bin'), { mode: 0o700 });
+    writeFileSync(join(bundle, 'MAGNUS-LICENSE'), readFileSync(new URL('../LICENSE', import.meta.url)), { mode: 0o600 });
     execute('docker', [
       'cp',
       '--follow-link',
@@ -188,6 +196,7 @@ export function buildNativeAgent(
     const profile = join(temporary, 'preflight-profile'), environmentFile = join(temporary, 'preflight.env');
     mkdirSync(profile, { mode: 0o700 });
     writeFileSync(environmentFile, '', { mode: 0o600 });
+    if (layout.initializationArguments) execute(launcher, layout.initializationArguments.map(value => value === '@PROFILE@' ? profile : value === '@ENV_FILE@' ? environmentFile : value), nativeEnvironment);
     const version = execute(launcher, preflightArguments.map(value => value === '@PROFILE@' ? profile : value === '@ENV_FILE@' ? environmentFile : value), nativeEnvironment);
     if (version !== (layout.versionPrefix ?? '') + product.version)
       throw Error('Native launcher version does not match its package');
@@ -217,6 +226,7 @@ export function buildNativeAgent(
       architecture,
       sourceImage: image,
       sourceImageID: inspected.Id,
+      ...(selected === 'hermes' ? { provenance: JSON.parse(readFileSync(join(bundle, 'app/provenance.json'), 'utf8')) } : {}),
       nodeVersion,
       nodeSHA256: createHash('sha256')
         .update(readFileSync(join(bundle, 'runtime/node')))
@@ -227,6 +237,8 @@ export function buildNativeAgent(
       arguments: layout.arguments,
       preflight: { arguments: preflightArguments, expectedOutput: version },
       acceptanceArguments: layout.acceptanceArguments,
+      initializationArguments: layout.initializationArguments,
+      verificationArguments: layout.verificationArguments,
       published: false,
     });
     return { archive, sha256, version: product.version, architecture };
@@ -252,7 +264,7 @@ if (
         value = process.argv[index + 1];
       if (!['--image', '--output', '--product'].includes(key) || !value)
         throw Error(
-          'Usage: build-native-agent.mjs --image PINNED_IMAGE --output NEW_DIRECTORY [--product magnus|ardent|codex]',
+          'Usage: build-native-agent.mjs --image PINNED_IMAGE --output NEW_DIRECTORY [--product magnus|ardent|codex|hermes]',
         );
       options[key.slice(2)] = value;
     }
