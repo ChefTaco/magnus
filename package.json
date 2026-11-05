@@ -41,7 +41,7 @@
   },
   "scripts": {
     "build": "npm run build -w @hivemagnus/magnus-contracts -w @hivemagnus/magnus-skills -w @hivemagnus/ardent -w @hivemagnus/magnus-agent -w @hivemagnus/magnus-server -w @hivemagnus/magnus-ui -w @hivemagnus/magnus",
-    "test": "npm run test --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present && npm run test:native-artifact",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "verify:ui": "npm --workspace @hivemagnus/magnus-ui run test:e2e -- --project=chromium tests/navigation.spec.ts",
     "verify:ui:ci": "npm --workspace @hivemagnus/magnus-ui run test:e2e -- --config playwright.ci.config.ts",
@@ -87,7 +87,9 @@
     "release:bump": "node scripts/bump-version.mjs",
     "release:test": "node --test scripts/test-release-tooling.mjs",
     "hooks:install": "git config core.hooksPath .githooks",
-    "verify": "npm run privacy:test && npm run reasons:test && npm run check:reasons && npm run check:remedies && npm run scan:secrets && npm run check:private && npm run build && npm run typecheck && npm run test && npm run skills:check && npm run openapi:check && npm run ardent:openapi:check && npm run ardent:pack:check && npm run check:packs && npm run release:manifest:check && npm run release:test && npm run docs:check && npm run docs:test && npm run clean:local:test"
+    "verify": "npm run privacy:test && npm run reasons:test && npm run check:reasons && npm run check:remedies && npm run scan:secrets && npm run check:private && npm run build && npm run typecheck && npm run test && npm run skills:check && npm run openapi:check && npm run ardent:openapi:check && npm run ardent:pack:check && npm run check:packs && npm run release:manifest:check && npm run release:test && npm run docs:check && npm run docs:test && npm run clean:local:test",
+    "build:native-agent": "node scripts/build-native-agent.mjs",
+    "test:native-artifact": "node --test scripts/build-native-agent.test.mjs"
   },
   "allowScripts": {
     "@prisma/engines@7.10.1": true,

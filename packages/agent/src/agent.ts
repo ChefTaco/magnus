@@ -7,6 +7,7 @@ import { controlApiFetch } from './tls.js';
 import { startSpan, formatTraceparent } from './collectors/otel-collector.js';
 import { collectHermesState } from './executors/hermes-manager.js';
 import { existsSync } from 'node:fs';
+import { parseHeartbeatAcknowledgement } from './heartbeat-ack.js';
 import { heartbeatDrift } from './upgrade/preflight.js';
 import { confirmTrial, controlApiUnreachable, recordTrialAlive, selfUpgradeStatus, trialOf } from './upgrade/self-upgrade.js';
 import { commandLedger } from './executors/command-executor.js';
@@ -149,7 +150,8 @@ export function startHeartbeatLoop(): void {
         },
         timeout: 10_000,
         fetch: controlApiFetch,
-      }).json<{ data?: { accepted?: boolean; expectedVersion?: string; updateAvailable?: boolean } }>().then((resp) => {
+      }).json<unknown>().then((raw) => {
+        const resp = parseHeartbeatAcknowledgement(raw);
         // The first accepted heartbeat from a version on trial confirms the upgrade.
         if (resp.data?.accepted && confirmTrial(AGENT_VERSION)) logger.info(`Self-upgrade to ${AGENT_VERSION} confirmed`);
         if (resp.data?.updateAvailable && resp.data.expectedVersion) {

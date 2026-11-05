@@ -286,3 +286,22 @@ production.
 ## License
 
 Apache-2.0
+
+### Native installation acceptance
+
+Set `MAGNUS_AGENT_SELF_URL` to the running agent's verified HTTPS origin and,
+when needed, `MAGNUS_AGENT_SELF_CA_PATH` to its private CA bundle.
+`magnus-agent --env-file /opt/magnus-agent/agent.env acceptance --json` waits up
+to 60 seconds for authenticated healthy status, the expected product version and
+a recently accepted heartbeat. Use `--wait-seconds 0` for one probe. It emits only
+bounded evidence, without raw health diagnostics, credential fingerprints or tokens.
+A reachable listener alone does not pass this check. Existing profiles and
+provider authorizations remain operator-owned.
+
+Release maintainers can export a reviewed image into a native artifact with its
+exact Node runtime using `npm run build:native-agent -- --image PINNED_IMAGE
+--output NEW_DIRECTORY`. The source must be an immutable registry digest or
+local image ID, on matching Linux architecture. The image is never started.
+The archive contains public runtime files and licenses, a native launcher and
+SHA-256 metadata. Review privacy and sign the release matrix before publication;
+artifact construction does not authorize deployment.

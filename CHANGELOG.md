@@ -6,6 +6,11 @@ All notable changes to this project are documented in this file. The format is b
 
 ## Unreleased
 
+- Add authenticated native-agent acceptance with a recent explicitly accepted
+  heartbeat, exact running version, verified TLS and private diagnostics.
+- Export reviewed immutable agent images into native artifacts containing the
+  exact Node runtime, preserved licenses, launchers and checksum metadata.
+
 - Retain existing Redis job keys while supporting colon-separated queue namespaces
   with the current queue library.
 

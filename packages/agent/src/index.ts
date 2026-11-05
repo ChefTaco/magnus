@@ -12,6 +12,7 @@ const USAGE = `Magnus Agent: node daemon that enrolls with a magnus-server and m
 Usage:
   magnus-agent [start] [--env-file <path>]          Start the agent (default)
   magnus-agent check [--json] [--env-file <path>]   Validate configuration without starting
+  magnus-agent acceptance [--json] [--wait-seconds 60]  Verify native health and recent accepted heartbeat
   magnus-agent env-schema                           Print the configuration schema as JSON
   magnus-agent install-service [--unprivileged]     (root, once) Versioned layout, upgrade launcher and systemd unit
   magnus-agent --help | --version
@@ -55,6 +56,13 @@ export async function main(argv: string[]): Promise<number | null> {
   }
 
   switch (cli.command) {
+    case 'acceptance': {
+      const { runAgentAcceptance } = await import('./acceptance.js');
+      const result = await runAgentAcceptance(cli.rest, process.env, version());
+      if (cli.rest.includes('--json')) console.log(JSON.stringify(result));
+      else console.log(result.ok ? 'Native agent health and heartbeat accepted.' : `Native agent acceptance failed: ${result.reason}`);
+      return result.ok ? 0 : 1;
+    }
     case 'start':
       if (cli.rest.length > 0) return fail(`unexpected argument for start: ${cli.rest[0]}`);
       await import('./start.js');
