@@ -6,6 +6,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ## Unreleased
 
+- Verify exact native Skills target mappings and immutable client digests through read-only authenticated posture APIs; reject infrastructure credentials in dedicated native client environments.
+
 - Keep native Hermes preflight read-only before profile initialization; validate
   runtime dependencies and SQLite without executing profile-dependent hooks.
 

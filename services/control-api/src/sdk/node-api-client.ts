@@ -1,4 +1,4 @@
-import type { HiveSkillsSyncInput } from '@hivemagnus/magnus-contracts';
+import type { HiveSkillsTargetPosture, HiveSkillsSyncInput } from '@hivemagnus/magnus-contracts';
 import { createHash, randomUUID } from 'node:crypto';
 import { assertLiveExecution } from '../config/rehearsal.js';
 import { MANAGED_CLAIM_HEADER, credentialMutationIdentity, httpIdentity, httpReceiptBody, managedHttpRequestSchema } from '../security/managed-http.js';
@@ -340,6 +340,10 @@ export class NodeApiClient {
   }
 
   // ── Health ──
+
+  async hiveSkillsTargetPosture(target:string,registryId:string):Promise<ApiResponse<HiveSkillsTargetPosture>> {
+    return this.api.get('hiveskills/targets/'+encodeURIComponent(target),{searchParams:{registryId},retry:0}).json();
+  }
 
   async syncHiveSkills(body: HiveSkillsSyncInput, commandId: string): Promise<ManagedMutationResult<{ success: boolean }>> {
     const result = await this.mutateWithEvidence<{ success: boolean }>('POST', 'hiveskills/sync', body, 120000, commandId, undefined, true);

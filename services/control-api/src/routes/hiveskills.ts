@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { HiveSkillsPublicationSchema } from '@hivemagnus/magnus-contracts';
+import { HiveSkillsTargetPostureSchema, HiveSkillsPublicationSchema } from '@hivemagnus/magnus-contracts';
 import type { AppVariables } from '../types/index.js';
 import { getDb } from '../db/index.js';
 import { HttpError } from '../middleware/error-handler.js';
@@ -45,6 +45,13 @@ async function observed(registry:ReturnType<typeof authorize>,target:string,id:s
   return {jobId,status:receipt.state==='running'?'running':'unknown',result:'Original operation retained; never replayed'};
  }catch{return {jobId,status:'unknown',result:'Receipt unavailable; original operation retained'}}
 }
+hiveskillsRouter.get('/targets/:target',async c=>{
+ const registry=authorize(c.req.header('authorization')),target=slug.safeParse(c.req.param('target'));if(!target.success)throw new HttpError(400,'VALIDATION_ERROR','Exact logical target required');
+ const {binding,node,client}=await targetClient(registry,target.data),enrollment=await getDb().resourceEnrollment.findUnique({where:{nodeId:node.id}});
+ const base={registryId:registry.registryId,target:target.data,nodeId:node.id,agentTarget:binding.agentTarget};
+ if(enrollment?.state!=='enrolled'||enrollment.nodeFqdn!==node.hostname||node.status!=='ONLINE'||!node.lastHeartbeatAt||Date.now()-node.lastHeartbeatAt.getTime()>120000||await getDb().commandResourceLease.count({where:{nodeId:node.id,state:{in:['reserved','running','unknown']}}}))return c.json({...base,ready:false,reason:'Node enrollment, health or retained ownership requires operator review'});
+ try{const reply=await client.hiveSkillsTargetPosture(binding.agentTarget,registry.registryId),posture=HiveSkillsTargetPostureSchema.parse(reply.data);if(!reply.success||posture.registryId!==registry.registryId||posture.target!==binding.agentTarget)throw new Error('Native target binding differs');return c.json({...base,ready:posture.ready,reason:posture.reason,configurationSha256:posture.configurationSha256,clientSha256:posture.clientSha256})}catch{return c.json({...base,ready:false,reason:'Native target posture unavailable'})}
+});
 hiveskillsRouter.get('/jobs/:id',async c=>{const registry=authorize(c.req.header('authorization'));const target=slug.safeParse(c.req.query('target'));if(!target.success)throw new HttpError(400,'VALIDATION_ERROR','Exact target required');return c.json(await observed(registry,target.data,c.req.param('id')))});
 hiveskillsRouter.post('/jobs/:id',async c=>{
  const registry=authorize(c.req.header('authorization')),parsed=skillJobRequest.safeParse(await c.req.json().catch(()=>null));

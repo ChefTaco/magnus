@@ -214,4 +214,4 @@ export * from './upgrade-remedies.js';
 
 export { responseRequestSchema, type ResponseRequest } from './cindertrace-response.js';
 
-export { HiveSkillsPublicationEntrySchema, HiveSkillsPublicationSchema, HiveSkillsSyncInputSchema, type HiveSkillsPublication, type HiveSkillsSyncInput } from './hiveskills-sync.js';
+export { HiveSkillsTargetPostureSchema, type HiveSkillsTargetPosture, HiveSkillsPublicationEntrySchema, HiveSkillsPublicationSchema, HiveSkillsSyncInputSchema, type HiveSkillsPublication, type HiveSkillsSyncInput } from './hiveskills-sync.js';

@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto';
-import { lstat, realpath } from 'node:fs/promises';
+import { lstat, realpath, readFile } from 'node:fs/promises';
 import { dirname, isAbsolute } from 'node:path';
 import { userInfo } from 'node:os';
+import { parseEnv } from 'node:util';
+import { agentPrivileged } from '../privileged.js';
 import { spawn } from 'node:child_process';
 import { Hono } from 'hono';
 import { z } from 'zod';
@@ -19,11 +21,32 @@ async function trustedProgram(file:string){
  let current=file;
  for(;;){const info=await lstat(current);if(info.uid!==0||(info.mode&0o022)!==0||info.isSymbolicLink())throw new Error('Configured executable path is writable or not root-owned');if(current===file&&!info.isFile())throw new Error('Configured executable is not a regular file');const parent=dirname(current);if(parent===current)break;current=parent}
 }
+const nativeEnvironmentKeys = new Set(['HIVE_SKILLS_URL','HIVE_SKILLS_TARGET_TOKEN','HIVE_SKILLS_HERMES_VERSION','HIVE_SKILLS_TARGET','HERMES_HOME','HERMES_BIN','NODE_EXTRA_CA_CERTS']);
+async function nativeEnvironment(target:z.infer<typeof hiveSkillsTargets>[string]) {
+ const bytes=await readFile(target.envFile,'utf8');if(Buffer.byteLength(bytes)>65536)throw new Error('Native target environment exceeds its bound');
+ const values=parseEnv(bytes);if(Object.keys(values).some(key=>!nativeEnvironmentKeys.has(key)))throw new Error('Native target environment must contain only dedicated Skills client values; node and infrastructure credentials are forbidden');
+ const url=new URL(values['HIVE_SKILLS_URL']??'');if(url.protocol!=='https:'||url.username||url.password||url.hash||url.search)throw new Error('Native target registry requires verified HTTPS');
+ const token=values['HIVE_SKILLS_TARGET_TOKEN'];if(!token||token.length<32||token.length>4096||/[\r\n]/.test(token))throw new Error('Protected native target token is required');
+ if(values['NODE_EXTRA_CA_CERTS']&&values['NODE_EXTRA_CA_CERTS']!==target.caFile)throw new Error('Native trust must use the explicitly configured startup caFile');
+}
+export async function hiveSkillsTargetPosture(targetKey:string,registryId:string,targets:z.infer<typeof hiveSkillsTargets>) {
+ const target=targets[targetKey];if(!target||target.registryId!==registryId)throw new Error('Exact registry and native target required');
+ const configurationSha256=createHash('sha256').update(JSON.stringify(Object.fromEntries(Object.entries(target).sort(([a],[b])=>a.localeCompare(b))))).digest('hex');
+ const base={registryId,target:targetKey,configurationSha256,clientSha256:null as string|null};
+ if((process.geteuid?.()===0||target.owner!==userInfo().username)&&!agentPrivileged())return {...base,ready:false,reason:'privilege_required' as const};
+ try {
+  await trustedProgram(target.nodeBinary);await trustedProgram(target.syncScript);
+  const credentials=await lstat(target.envFile);if(!credentials.isFile()||credentials.isSymbolicLink()||(credentials.mode&0o077)!==0||await realpath(target.envFile)!==target.envFile)throw new Error('Protected native credential file required');
+  await nativeEnvironment(target);
+  return {...base,clientSha256:createHash('sha256').update(await readFile(target.syncScript)).digest('hex'),ready:true,reason:'ready' as const};
+ }catch{return {...base,ready:false,reason:'unavailable' as const}}
+}
 export async function runHiveSkillsSync(input:z.infer<typeof hiveSkillsSyncInput>,targets:z.infer<typeof hiveSkillsTargets>,execute:typeof spawn=spawn){
  const target=targets[input.target];if(!target||target.registryId!==input.registryId)throw new Error('Exact registry and target binding required');
  if(createHash('sha256').update(JSON.stringify(input.manifest)).digest('hex')!==input.publicationSha256)throw new Error('Publication digest mismatch');
  await trustedProgram(target.nodeBinary);await trustedProgram(target.syncScript);
  const credentials=await lstat(target.envFile);if(!credentials.isFile()||credentials.isSymbolicLink()||(credentials.mode&0o077)!==0||await realpath(target.envFile)!==target.envFile)throw new Error('Protected target credential file required');
+ await nativeEnvironment(target);
  const own=userInfo(),root=process.geteuid?.()===0;
  if(!root&&target.owner!==own.username)throw new Error('Explicit target owner differs from this agent');
  const command=root?'/usr/sbin/runuser':target.nodeBinary;
@@ -41,6 +64,7 @@ export async function runHiveSkillsSync(input:z.infer<typeof hiveSkillsSyncInput
  });
 }
 export const hiveSkillsRoutes=new Hono();
+hiveSkillsRoutes.get('/targets/:target',async c=>{let targets;try{targets=hiveSkillsTargets.parse(JSON.parse(process.env['MAGNUS_AGENT_HIVESKILLS_TARGETS_JSON']??'{}'))}catch{return c.json({success:false,error:{code:'TARGET_UNCONFIGURED'}},409)};try{return c.json({success:true,data:await hiveSkillsTargetPosture(c.req.param('target'),c.req.query('registryId')??'',targets)})}catch{return c.json({success:false,error:{code:'TARGET_UNCONFIGURED'}},404)}});
 hiveSkillsRoutes.post('/sync',async c=>{
  const input=hiveSkillsSyncInput.safeParse(await c.req.json().catch(()=>null));if(!input.success)return c.json({success:false,error:{code:'VALIDATION_ERROR',message:'Exact approved publication required'}},400);
  if(!managedExecution.getStore())return c.json({success:false,error:{code:'MANAGED_EXECUTION_REQUIRED'}},409);

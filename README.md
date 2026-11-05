@@ -209,3 +209,20 @@ Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) and the
 ## License
 
 [Apache License 2.0](LICENSE) © ChefTaco and contributors.
+
+
+Optional Skills deployments use a dedicated server-owned registry grant and an
+explicit already-enrolled node/profile map. Before enabling a registry, its
+operator may read `GET /api/v1/hiveskills/targets/{target}` with that registry's
+endpoint-scoped credential. This performs no dispatch: it checks current
+resource enrollment, heartbeat, retained ownership and the authenticated native
+client's configuration and file digests. An unavailable or changed target stays
+held for operator review. It does not enroll nodes or install software.
+
+The native target credential file must contain only `HIVE_SKILLS_URL`,
+`HIVE_SKILLS_TARGET_TOKEN`, `HIVE_SKILLS_HERMES_VERSION`, `HIVE_SKILLS_TARGET`,
+`HERMES_HOME`, `HERMES_BIN` and optionally `NODE_EXTRA_CA_CERTS` matching the
+explicit native `caFile`. Select a dedicated protected file, never the agent or
+server environment file; infrastructure credential variables are rejected before
+launch. The native client and Node executable, including their parent directories,
+must remain root-owned and unwritable by the managed profile owner.

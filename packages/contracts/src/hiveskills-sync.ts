@@ -22,3 +22,11 @@ export const HiveSkillsSyncInputSchema = z.object({
   manifest: HiveSkillsPublicationSchema,
 }).strict();
 export type HiveSkillsSyncInput = z.infer<typeof HiveSkillsSyncInputSchema>;
+
+export const HiveSkillsTargetPostureSchema = z.object({
+  ready: z.boolean(), registryId: slug, target: slug,
+  configurationSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  clientSha256: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+  reason: z.enum(['ready', 'unavailable', 'privilege_required']),
+}).strict();
+export type HiveSkillsTargetPosture = z.infer<typeof HiveSkillsTargetPostureSchema>;
