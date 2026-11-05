@@ -415,7 +415,8 @@ describe('open streams', () => {
       await vi.advanceTimersByTimeAsync(1_000);
       await flush();
     }
-    expect(onRevoked).toHaveBeenCalledOnce();
+    // Verification awaits real crypto, which fake timers cannot flush.
+    await vi.waitFor(() => expect(onRevoked).toHaveBeenCalledOnce());
     await vi.advanceTimersByTimeAsync(30_000);
     expect(onRevoked).toHaveBeenCalledOnce();
     stop();
@@ -432,7 +433,7 @@ describe('open streams', () => {
     expect(onRevoked).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(5_000);
     await flush();
-    expect(onRevoked).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(onRevoked).toHaveBeenCalledOnce());
     stop();
   });
 
