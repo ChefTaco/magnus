@@ -3,7 +3,7 @@ import type { AppVariables } from '../types/index.js';
 import { nodeForRole } from '../services/secret-views.js';
 import { nanoid } from 'nanoid';
 import { AGENT_VERSION } from '../config/index.js';
-import { getDb } from '../db/index.js';
+import { getDb, Prisma } from '../db/index.js';
 import { promises as dns } from 'node:dns';
 import { authMiddleware, getUser, requireRole } from '../middleware/auth.js';
 import { logAuditEvent } from '../services/audit-service.js';
@@ -117,6 +117,49 @@ async function tryResolveHostnameToIp(hostname: string): Promise<string | null> 
   }
 }
 
+interface LatestHealthRow {
+  nodeId: string;
+  timestamp: Date;
+  cpuUsagePercent: number;
+  cpuCores: number;
+  memoryTotalBytes: bigint;
+  memoryUsedBytes: bigint;
+  memoryPercent: number;
+  swapTotalBytes: bigint;
+  swapUsedBytes: bigint;
+  disks: string;
+}
+
+/**
+ * The latest snapshot of each node, in one statement, for what a list row shows. An
+ * indexed lookup per node avoids hydrating retained history, which a Prisma relation
+ * with `take: 1` would load. A node with no snapshot is simply absent.
+ */
+async function latestHealthSummaries(nodeIds: string[]) {
+  if (nodeIds.length === 0) return new Map<string, never>();
+  const rows = await getDb().$queryRaw<LatestHealthRow[]>`
+    SELECT snapshot."nodeId", snapshot."timestamp", snapshot."cpuUsagePercent", snapshot."cpuCores",
+      snapshot."memoryTotalBytes", snapshot."memoryUsedBytes", snapshot."memoryPercent",
+      snapshot."swapTotalBytes", snapshot."swapUsedBytes", snapshot."disks"
+    FROM "nodes" AS node
+    INNER JOIN "health_snapshots" AS snapshot ON snapshot."id" = (
+      SELECT candidate."id"
+      FROM "health_snapshots" AS candidate
+      WHERE candidate."nodeId" = node."id"
+      ORDER BY candidate."timestamp" DESC
+      LIMIT 1
+    )
+    WHERE node."id" IN (${Prisma.join(nodeIds)})
+  `;
+  return new Map(rows.map(({ nodeId, memoryTotalBytes, memoryUsedBytes, swapTotalBytes, swapUsedBytes, ...row }) => [nodeId, {
+    ...row,
+    memoryTotalBytes: Number(memoryTotalBytes),
+    memoryUsedBytes: Number(memoryUsedBytes),
+    swapTotalBytes: Number(swapTotalBytes),
+    swapUsedBytes: Number(swapUsedBytes),
+  }]));
+}
+
 export const nodesRouter = new Hono<AppVariables>();
 
 // All routes require auth
@@ -159,11 +202,14 @@ nodesRouter.get('/', async (c) => {
   // Strip token from API response — never expose node secrets to the frontend
   const viewer = getUser(c).role;
   const safeNodes = nodes.map((node) => nodeForRole(node, viewer));
-  const readiness = await readinessOfNodes(safeNodes);
+  const [readiness, health] = await Promise.all([
+    readinessOfNodes(safeNodes),
+    withReadRetry('nodes list health', () => latestHealthSummaries(safeNodes.map((node) => node.id))),
+  ]);
 
   return c.json({
     success: true,
-    data: safeNodes.map(node => ({ ...node, upgradeReadiness: readiness.get(node.id) ?? null })),
+    data: safeNodes.map(node => ({ ...node, upgradeReadiness: readiness.get(node.id) ?? null, health: health.get(node.id) ?? null })),
     meta: { total, page, pageSize, hasMore: page * pageSize < total },
   });
 });

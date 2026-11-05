@@ -293,6 +293,7 @@ const componentSchemas: Record<string, JsonSchema> = {
       createdAt: { type: 'string', format: 'date-time' },
       updatedAt: { type: 'string', format: 'date-time' },
       agent: { type: 'object', nullable: true, properties: { version: { type: 'string' }, status: { type: 'string' } } },
+      health: { type: 'object', nullable: true, description: 'GET /nodes only: headline figures of the newest snapshot, null until the node reports one', properties: { timestamp: { type: 'string', format: 'date-time' }, cpuUsagePercent: { type: 'number' }, cpuCores: { type: 'integer' }, memoryTotalBytes: { type: 'number' }, memoryUsedBytes: { type: 'number' }, memoryPercent: { type: 'number' }, swapTotalBytes: { type: 'number' }, swapUsedBytes: { type: 'number' }, disks: { type: 'string', description: 'JSON-encoded disk array' } } },
     },
   },
   User: {
@@ -738,7 +739,7 @@ const paths: Record<string, Record<string, unknown>> = {
     get: {
       tags: ['Nodes'],
       summary: 'List nodes',
-      description: 'Returns all fleet nodes with agent info and health metadata. Supports pagination and status filtering. Each node has `upgradeReadiness`: `status` (ok, not-ready, or unknown for agents that do not report it) and `problems` with a code, a detail, a cause and a remedy, such as an enrollment stuck draining, a marker the server does not share, a fence ahead of the server, an unresolved ledger, low disk or missing npm.',
+      description: 'Returns all fleet nodes with agent info and health metadata. Supports pagination and status filtering. Each node has `upgradeReadiness`: `status` (ok, not-ready, or unknown for agents that do not report it) and `problems` with a code, a detail, a cause and a remedy, such as an enrollment stuck draining, a marker the server does not share, a fence ahead of the server, an unresolved ledger, low disk or missing npm. Each node also has `health`, the headline figures of its newest snapshot, or null when it has none, so a list needs no request per row.',
       security: apiSecretAuth,
       parameters: [
         qp('page', 'Page number (1-based)', { type: 'integer' }),
