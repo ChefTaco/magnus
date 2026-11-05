@@ -57,7 +57,7 @@ try {
     CONTROL_API_BIND_HOST: '0.0.0.0', CONTROL_API_PORT: '4000', CONTROL_API_URL: 'https://localhost:' + apiPort,
     DATABASE_URL: 'postgresql://fixture:synthetic@unconfigured.invalid:5432/magnus_fixture',
     REDIS_URL: `redis://:${password}@${redisName}:6379`, REDIS_PREFIX: 'synthetic-rehearsal:',
-    CORS_ORIGIN: 'https://console.example.com', TLS_CERT_PATH: '/config/server.pem', TLS_KEY_PATH: '/config/server.key',
+    CORS_ORIGIN: 'https://console.example.com', TLS_CERT_PATH: '/config/server.pem', TLS_KEY_PATH: '/config/server.key', NODE_EXTRA_CA_CERTS: '/config/authority.pem',
     AUDIT_LOG_DIR: '/state/audit', CREDENTIAL_ROTATION_STATE_FILE: '/state/credential-rotations.json',
   };
   for (const name of ['JWT_SECRET', 'API_SECRET', 'NODE_MANAGER_SECRET', 'AUDIT_HMAC_SECRET', 'RESULT_SIGNING_SECRET', 'LOG_INGEST_SIGNING_SECRET', 'CREDENTIAL_ROTATION_KEY', 'METRICS_TOKEN', 'WEBHOOK_ENCRYPTION_KEY']) environment[name] = randomBytes(32).toString('hex');
@@ -75,6 +75,7 @@ try {
     await new Promise(done => setTimeout(done, 500));
   }
   assert(ready, 'Isolated API did not become ready; inspect its protected log');
+  docker('exec', apiName, 'magnus-server-entrypoint', 'healthcheck');
   for (const path of ['/api/v1/commands', '/api/v1/heartbeat', '/api/v1/auth/login', '/api/v1/terminal/tickets']) {
     const response = await request(path, 'POST'); assert.equal(response.status, 503); assert.equal(response.body.error.code, 'REHEARSAL_READ_ONLY');
   }

@@ -6,6 +6,9 @@ All notable changes to this project are documented in this file. The format is b
 
 ## Unreleased
 
+- Preserve configured issuer trust for container health probes when the service
+  uses a private CA; exercise the actual probe during isolated queue rehearsals.
+
 - Fence isolated restore candidates from queue workers, background writes, host
   contact and API mutations; verify exact completed migration checksums without
   applying or repairing schema changes.

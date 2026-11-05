@@ -21,8 +21,9 @@ fi
 if [ "${1:-}" = "healthcheck" ]; then
   port="${CONTROL_API_PORT:-4000}"
   if [ -n "${TLS_CERT_PATH:-}" ]; then
-    # Trust the server's own certificate for this local probe only.
-    exec env NODE_EXTRA_CA_CERTS="$TLS_CERT_PATH" node -e "fetch('https://localhost:$port/').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+    # Preserve an explicitly configured issuer bundle. A CA-signed leaf is not
+    # itself a trust anchor; the leaf fallback serves self-signed evaluation.
+    exec env NODE_EXTRA_CA_CERTS="${NODE_EXTRA_CA_CERTS:-$TLS_CERT_PATH}" node -e "fetch('https://localhost:$port/').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
   fi
   exec node -e "fetch('http://127.0.0.1:$port/').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
 fi
