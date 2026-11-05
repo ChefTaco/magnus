@@ -9,6 +9,7 @@
  */
 
 import { getDb } from '../db/index.js';
+import { SENTINEL_NODE_IDS } from '../utils/sentinel-nodes.js';
 import { connect, type Socket } from 'node:net';
 
 // ── Types ──
@@ -95,7 +96,7 @@ function probeNode(host: string, port: number, timeoutMs = 3000): Promise<number
 export async function scanTopology(probeTimeoutMs = 3000): Promise<TopologyMap> {
   const db = getDb();
   const nodes = await db.node.findMany({
-    where: { status: { not: 'DECOMMISSIONED' } },
+    where: { id: { notIn: SENTINEL_NODE_IDS }, status: { not: 'DECOMMISSIONED' } },
     select: { id: true, name: true, hostname: true, ipAddress: true, port: true, status: true, lastHeartbeatAt: true },
   });
 

@@ -16,6 +16,7 @@ import { logAuditEvent } from './audit-service.js';
 import { listSkills, getSkill, getSkillFile, createSkill } from './skill-service.js';
 import { NodeApiClient } from '../sdk/node-api-client.js';
 import { getNodeBaseUrl } from '../utils/node-url.js';
+import { SENTINEL_NODE_IDS } from '../utils/sentinel-nodes.js';
 import { clientErrorMessage } from '../utils/safe-errors.js';
 import { getNodeManagerSecret } from '../utils/env.js';
 import { correlateAnomalies, getAnomalyTimeline } from './ai-correlation-service.js';
@@ -123,6 +124,7 @@ function parseWazuhPosture(value: string): WazuhAgentPosture | null {
 registerTool('getFleetStatus', async () => {
   const db = getDb();
   const nodes = await db.node.findMany({
+    where: { id: { notIn: SENTINEL_NODE_IDS } },
     orderBy: { name: 'asc' },
     select: {
       id: true,
@@ -243,6 +245,7 @@ registerTool('getNodeHealth', async (args) => {
 registerTool('getWazuhFleetStatus', async () => {
   const db = getDb();
   const nodes = await db.node.findMany({
+    where: { id: { notIn: SENTINEL_NODE_IDS } },
     orderBy: { name: 'asc' },
     select: {
       id: true,
@@ -284,6 +287,7 @@ registerTool('getWazuhFleetStatus', async () => {
 registerTool('getSystemUpdateFleetStatus', async () => {
   const db = getDb();
   const nodes = await db.node.findMany({
+    where: { id: { notIn: SENTINEL_NODE_IDS } },
     orderBy: { name: 'asc' },
     select: {
       id: true, name: true, hostname: true, status: true, lastHeartbeatAt: true,
@@ -678,7 +682,7 @@ registerTool('searchNodes', async (args) => {
 
   if (!query && !status) return { error: 'query or status is required' };
 
-  const where: Record<string, unknown> = {};
+  const where: Record<string, unknown> = { id: { notIn: SENTINEL_NODE_IDS } };
   if (status) where['status'] = status;
   if (query) {
     where['OR'] = [
@@ -777,10 +781,10 @@ registerTool('getDashboardStats', async () => {
     totalCronJobs,
     activeCronJobs,
   ] = await Promise.all([
-    db.node.count(),
-    db.node.count({ where: { status: 'ONLINE' } }),
-    db.node.count({ where: { status: 'OFFLINE' } }),
-    db.node.count({ where: { status: 'DEGRADED' } }),
+    db.node.count({ where: { id: { notIn: SENTINEL_NODE_IDS } } }),
+    db.node.count({ where: { id: { notIn: SENTINEL_NODE_IDS }, status: 'ONLINE' } }),
+    db.node.count({ where: { id: { notIn: SENTINEL_NODE_IDS }, status: 'OFFLINE' } }),
+    db.node.count({ where: { id: { notIn: SENTINEL_NODE_IDS }, status: 'DEGRADED' } }),
     db.remoteCommand.count(),
     db.remoteCommand.count({ where: { status: 'RUNNING' } }),
     db.remoteCommand.count({ where: { status: 'PENDING' } }),
@@ -1364,7 +1368,7 @@ registerTool('executeNaturalCommand', async (args) => {
   } else {
     // If no node specified, try to extract from intent text
     const nodes = await db.node.findMany({
-      where: { status: 'ONLINE' },
+      where: { id: { notIn: SENTINEL_NODE_IDS }, status: 'ONLINE' },
       select: { id: true, name: true, hostname: true },
     });
 

@@ -9,6 +9,7 @@
  */
 
 import { getDb } from '../db/index.js';
+import { SENTINEL_NODE_IDS } from '../utils/sentinel-nodes.js';
 import { createNotification } from './notification-service.js';
 import { eventBus, EventChannels } from './event-bus.js';
 import type { NotificationType } from '../types/index.js';
@@ -342,7 +343,7 @@ export async function getFleetPredictions(): Promise<{
 }> {
   const db = getDb();
   const nodes = await db.node.findMany({
-    where: { status: 'ONLINE' },
+    where: { id: { notIn: SENTINEL_NODE_IDS }, status: 'ONLINE' },
     select: { id: true, name: true, hostname: true },
   });
 

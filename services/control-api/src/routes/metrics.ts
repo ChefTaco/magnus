@@ -4,6 +4,7 @@ import { getDb } from '../db/index.js';
 import { getRedis } from '../queue/redis.js';
 import { getHeartbeatStreamStats } from '../services/heartbeat-stream.js';
 import { safeEqual } from '../utils/safe-equal.js';
+import { SENTINEL_NODE_IDS } from '../utils/sentinel-nodes.js';
 
 export const metricsRouter = new Hono<AppVariables>();
 
@@ -128,10 +129,10 @@ metricsRouter.get('/', async (c) => {
   try {
     const db = getDb();
     const [nodeCount, onlineNodes, pendingCommands, staleNodes, versions, oldestQueued] = await Promise.all([
-      db.node.count(),
-      db.node.count({ where: { status: 'ONLINE' } }),
+      db.node.count({ where: { id: { notIn: SENTINEL_NODE_IDS } } }),
+      db.node.count({ where: { id: { notIn: SENTINEL_NODE_IDS }, status: 'ONLINE' } }),
       db.remoteCommand.count({ where: { status: { in: ['PENDING', 'QUEUED'] } } }),
-      db.node.count({ where: { lastHeartbeatAt: { lt: new Date(Date.now() - 120_000) } } }),
+      db.node.count({ where: { id: { notIn: SENTINEL_NODE_IDS }, lastHeartbeatAt: { lt: new Date(Date.now() - 120_000) } } }),
       db.agent.groupBy({ by: ['version'], _count: true }),
       db.remoteCommand.findFirst({ where: { status: { in: ['PENDING', 'QUEUED'] } }, orderBy: { createdAt: 'asc' }, select: { createdAt: true } }),
     ]);

@@ -9,6 +9,7 @@ import { getRateLimitHealth } from '../middleware/rate-limit.js';
 import { listHermesInstallations } from './hermes-service.js';
 import { getHealthRetentionCutoffs, getHealthRetentionPolicy, getRetentionPolicyReadiness } from './health-retention.js';
 import { getNotificationRetentionPolicy } from './notification-retention.js';
+import { SENTINEL_NODE_IDS } from '../utils/sentinel-nodes.js';
 import { databaseFailure, describeTransportFailure } from '../utils/safe-errors.js';
 
 const STALE_THRESHOLD_MS = Number(process.env['STALE_NODE_THRESHOLD_MS'] ?? 120_000);
@@ -186,6 +187,7 @@ export async function getFleetReadiness(options: { includeSecretFingerprints?: b
   const db = getDb();
   const [nodes, latestHealthSnapshots] = await withReadRetry('fleet readiness', () => Promise.all([
     db.node.findMany({
+      where: { id: { notIn: SENTINEL_NODE_IDS } },
       orderBy: { name: 'asc' },
       include: {
         agent: true,

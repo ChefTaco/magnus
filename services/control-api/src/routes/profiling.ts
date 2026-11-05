@@ -4,6 +4,7 @@ import { authMiddleware, requireRole } from '../middleware/auth.js'
 import { getDb } from '../db/index.js'
 import { HttpError } from '../middleware/error-handler.js'
 import { getNodeManagerSecret } from '../utils/env.js'
+import { SENTINEL_NODE_IDS } from '../utils/sentinel-nodes.js'
 
 export const profilingRouter = new Hono<AppVariables>()
 profilingRouter.use('*', authMiddleware)
@@ -55,7 +56,7 @@ profilingRouter.get('/:nodeId', requireRole('ADMIN', 'OPERATOR'), async (c) => {
 profilingRouter.get('/', requireRole('ADMIN', 'OPERATOR'), async (c) => {
   const db = getDb()
   const nodes = await db.node.findMany({
-    where: { status: { notIn: ['DECOMMISSIONED', 'OFFLINE'] } },
+    where: { id: { notIn: SENTINEL_NODE_IDS }, status: { notIn: ['DECOMMISSIONED', 'OFFLINE'] } },
     select: { id: true, name: true, ipAddress: true, port: true },
   })
 
