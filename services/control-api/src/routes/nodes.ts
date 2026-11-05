@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import type { AppVariables } from '../types/index.js';
+import { nodeForRole } from '../services/secret-views.js';
 import { nanoid } from 'nanoid';
 import { AGENT_VERSION } from '../config/index.js';
 import { getDb } from '../db/index.js';
@@ -156,7 +157,8 @@ nodesRouter.get('/', async (c) => {
   ]));
 
   // Strip token from API response — never expose node secrets to the frontend
-  const safeNodes = nodes.map(({ token: _token, ...rest }) => rest);
+  const viewer = getUser(c).role;
+  const safeNodes = nodes.map((node) => nodeForRole(node, viewer));
   const readiness = await readinessOfNodes(safeNodes);
 
   return c.json({
@@ -565,7 +567,7 @@ nodesRouter.get('/:nodeId', async (c) => {
     include: { agent: true, role: { select: { id: true, name: true } } },
   });
   if (!node) throw new HttpError(404, 'NOT_FOUND', 'Node not found');
-  const { token: _token, ...safeNode } = node;
+  const safeNode = nodeForRole(node, getUser(c).role);
   const readiness = await readinessOfNodes([safeNode]);
   return c.json({ success: true, data: { ...safeNode, upgradeReadiness: readiness.get(safeNode.id) ?? null } });
 });
@@ -610,6 +612,8 @@ nodesRouter.post('/register', requireRole('ADMIN', 'OPERATOR'), async (c) => {
     details: { name: body.name, hostname: body.hostname },
   });
 
+  // The only response that ever carries this token: no cache may keep it.
+  c.header('Cache-Control', 'no-store');
   return c.json(
     {
       success: true,
@@ -645,7 +649,7 @@ nodesRouter.patch('/:nodeId', requireRole('ADMIN', 'OPERATOR'), async (c) => {
     if ((err as { code?: unknown }).code === 'P2025') throw new HttpError(404, 'NOT_FOUND', 'Node not found');
     throw err;
   });
-  const { token: _token, ...safeNode } = node;
+  const safeNode = nodeForRole(node, getUser(c).role);
 
   await logAuditEvent({
     action: 'node.update',
@@ -711,7 +715,7 @@ nodesRouter.post('/:nodeId/repair-address', requireRole('ADMIN', 'OPERATOR'), as
   const hostnameChanged = targetHostname !== node.hostname;
 
   if (!ipChanged && !hostnameChanged) {
-    const { token: _token, ...safeNode } = node;
+    const safeNode = nodeForRole(node, getUser(c).role);
     return c.json({
       success: true,
       data: {
@@ -744,7 +748,7 @@ nodesRouter.post('/:nodeId/repair-address', requireRole('ADMIN', 'OPERATOR'), as
     },
   });
 
-  const { token: _token, ...safeNode } = updated;
+  const safeNode = nodeForRole(updated, getUser(c).role);
   return c.json({
     success: true,
     data: {

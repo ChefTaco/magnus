@@ -103,21 +103,40 @@ This writes the committed `browser.ts` and a `provenance.json` with the revision
 SHA-256. It refuses an existing directory and exports committed bytes, not the working tree. The
 contract imports only `zod`.
 
-## What the contract leaves out
+## Secrets and roles
 
-These fields are in raw responses but not in the contract, so a parsed response never holds them.
-They still cross the wire, so restrict the route if that matters for your deployment.
+The server enforces these by role, so they hold for a raw response and not only a parsed one.
 
-| Route | Field | Visible to |
+| Field | `ADMIN` | Below `ADMIN` |
 |---|---|---|
-| `POST /api/v1/nodes/register` | The new node's `token` | `ADMIN`, `OPERATOR` |
-| `GET /api/v1/roles`, `GET /api/v1/roles/:roleId` | `envConfig`, unredacted | Any role |
-| `GET /api/v1/ops/readiness` | `expectedFingerprints` and per-node secret fingerprints | Any role |
-| `GET /api/v1/nodes` and others | `nodeManagerSecretFingerprint` inside the JSON-encoded `metadata` | Any role |
-| `GET /api/v1/cron`, `GET /api/v1/cron/:cronId` | `environment`; secret-named keys are rejected on write, values are not inspected | Any role |
-| `GET /api/v1/self-update/status` | `repoRoot` | Any role |
+| Role `envConfig` | Values and `envConfigKeys` | `envConfigKeys` only |
+| Cron `environment` | Values and `environmentKeys` | `environmentKeys` only |
+| Readiness `expectedFingerprints` | Yes | Absent |
+| Readiness `secretFingerprint` | `match`, `state` and both fingerprints | `match` and `state` |
+| `nodeManagerSecretFingerprint` in node `metadata` | Yes | Removed; `nodeManagerSecretState` stays |
+| Hermes `apiServerKeyFingerprint`, `keyFingerprint` | Yes, with `apiServerKeyConfigured`, `keyConfigured` | The `Configured` boolean only |
+| Node `token` | Only in the `POST /api/v1/nodes/register` response | Same, for `OPERATOR`. `VIEWER` is refused |
 
-Some wave 1 routes return free text to any role: command lines, log messages and rollout metadata.
+A `PATCH` below `ADMIN` merges environment values, because that caller only saw key names. A key left
+out or left blank keeps its value, so sending back a redacted response changes nothing. Setting a value
+adds or replaces that key. Removing a key takes an `ADMIN`, whose `PATCH` still replaces the whole map.
+
+A node token is shown once. That response is `Cache-Control: no-store`, and the token is not in audit
+detail or logs. No other route returns it. The contract's schema strips it from the parsed response.
+
+`services/control-api/src/routes/console-secret-sweep.integration.test.ts` plants a value in each
+sensitive column and reads every `browser` and `exclude` `GET` route as each role.
+
+These remain, and are not closed by the rules above:
+
+- `OPERATOR` can run commands (`POST /api/v1/commands`, `POST /api/v1/quick-command/:nodeId/exec`) and
+  read files (`GET /api/v1/files/read`) on hosts. The role environment file a host received is
+  therefore reachable to an `OPERATOR` through those routes, even though the API hides its values.
+- Command lines, log messages and rollout metadata are free text, returned to any role.
+- `GET /api/v1/library/files/:fileId` returns file content to any role.
+- `GET /api/v1/assistant/conversations` lists every user's conversations to any role.
+- `GET /api/v1/self-update/status` returns the server's `repoRoot` path to any role.
+- `Node.token` is stored in plaintext in the database.
 
 `GET /api/v1/ops/timeline` returns each `href` relative to the dashboard's routes, without
 `MAGNUS_CONSOLE_BASE_PATH`. A console at another path must map them.

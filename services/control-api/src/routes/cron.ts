@@ -5,6 +5,7 @@ import { canStageLegacyCronForEnrollment, cronMutationMode, finalizeManagedCronR
 import { managedCronRegistrationSchema, schedulerSourceSettlementSchema, type ManagedCronIdentity } from '../schemas/managed-cron.js';
 import { Hono } from 'hono';
 import type { AppVariables } from '../types/index.js';
+import { cronJobForRole, mergeEnvironmentEdit, nodeForRole } from '../services/secret-views.js';
 import { getDb } from '../db/index.js';
 import { authMiddleware, getUser, requireRole } from '../middleware/auth.js';
 import { logAuditEvent, sanitizeDetails } from '../services/audit-service.js';
@@ -90,7 +91,8 @@ cronRouter.get('/', async (c) => {
     include: { node: { select: { name: true } } },
   });
 
-  return c.json({ success: true, data: jobs });
+  const viewer = getUser(c).role;
+  return c.json({ success: true, data: jobs.map((job) => cronJobForRole(job, viewer)) });
 });
 
 // ── Get single cron job ──
@@ -101,7 +103,7 @@ cronRouter.get('/:cronId', async (c) => {
     include: { executions: { orderBy: { startedAt: 'desc' }, take: 10 } },
   });
   if (!job) throw new HttpError(404, 'NOT_FOUND', 'Cron job not found');
-  return c.json({ success: true, data: job });
+  return c.json({ success: true, data: cronJobForRole(job, getUser(c).role) });
 });
 
 // ── Create cron job ──
@@ -161,7 +163,7 @@ cronRouter.post('/', requireRole('ADMIN', 'OPERATOR'), async (c) => {
     });
   }
 
-  return c.json({ success: true, data: job }, 201);
+  return c.json({ success: true, data: cronJobForRole(job, user.role) }, 201);
 });
 
 cronRouter.post('/scheduler-sources/reconcile', requireRole('ADMIN'), async c => {
@@ -237,7 +239,9 @@ cronRouter.patch('/:cronId', requireRole('ADMIN', 'OPERATOR'), async (c) => {
       ...(body.command && { command: body.command }),
       ...(body.args && { args: JSON.stringify(body.args) }),
       ...(body.workingDirectory !== undefined && { workingDirectory: body.workingDirectory }),
-      ...(body.environment !== undefined && { environment: JSON.stringify(sanitizeDetails(body.environment)) }),
+      ...(body.environment !== undefined && { environment: JSON.stringify(sanitizeDetails(
+        user.role === 'ADMIN' ? body.environment : mergeEnvironmentEdit(initial.environment, body.environment),
+      )) }),
       ...(nextStatus && { status: nextStatus }),
       ...(body.timeoutSeconds && { timeoutSeconds: body.timeoutSeconds }),
   };
@@ -276,8 +280,7 @@ cronRouter.patch('/:cronId', requireRole('ADMIN', 'OPERATOR'), async (c) => {
   })();
 
   // The agent connection above needs the node; its token must never leave the server.
-  const { token: _nodeToken, ...safeNode } = job.node;
-  return c.json({ success: true, data: { ...job, node: safeNode } });
+  return c.json({ success: true, data: { ...cronJobForRole(job, user.role), node: nodeForRole(job.node, user.role) } });
 });
 
 // ── Delete cron job ──

@@ -48,7 +48,8 @@ export const opsRouter = new Hono<AppVariables>();
 opsRouter.use('*', authMiddleware);
 
 opsRouter.get('/dependency-health', async (c) => c.json({ success: true, data: await getDependencyHealth() }));
-opsRouter.get('/readiness', async (c) => c.json({ success: true, data: await getFleetReadiness() }));
+opsRouter.get('/readiness', async (c) => c.json({ success: true,
+  data: await getFleetReadiness({ includeSecretFingerprints: getUser(c).role === 'ADMIN' }) }));
 opsRouter.get('/timeline', async (c) => {
   const limit = Math.min(Number(c.req.query('limit') ?? '80'), 200);
   return c.json({ success: true, data: await getFleetTimeline(limit) });

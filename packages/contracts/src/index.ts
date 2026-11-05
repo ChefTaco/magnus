@@ -34,10 +34,11 @@ export const fleetReadinessNodeSchema = z.object({
 export const fleetReadinessSchema = z.object({
   generatedAt: z.string(),
   thresholds: z.object({ staleNodeMs: z.number() }),
+  /** Present for ADMIN only. */
   expectedFingerprints: z.object({
     nodeManagerSecret: z.string().nullable(),
     apiSecret: z.string().nullable(),
-  }),
+  }).optional(),
   nodes: z.array(fleetReadinessNodeSchema),
 });
 

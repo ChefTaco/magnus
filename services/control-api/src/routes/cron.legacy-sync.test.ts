@@ -31,7 +31,7 @@ vi.mock('../sdk/index.js', () => ({ NodeApiClient: class {
 const { cronRouter } = await import('./cron.js');
 const { signUserToken } = await import('../middleware/auth.js');
 const app = new Hono().onError(errorHandler).route('/cron', cronRouter);
-const node = { ipAddress: '10.0.0.5', port: 4100 };
+const node = { ipAddress: '10.0.0.5', port: 4100, metadata: '{}' };
 const job = (overrides: Record<string, unknown>) => ({ id: 'cron-1', nodeId: 'node-1', name: 'backup', description: '',
   schedule: '0 * * * *', command: '/usr/bin/true', args: '[]', workingDirectory: null, environment: '{}',
   timeoutSeconds: 60, status: 'ACTIVE', node, ...overrides });

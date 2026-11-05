@@ -407,7 +407,9 @@ export interface Role {
   skillNames: string[];
   aptPackages: string[];
   npmPackages: string[];
-  envConfig: Record<string, string>;
+  /** Present for ADMIN only. */
+  envConfig?: Record<string, string>;
+  envConfigKeys: string[];
   dockerEnabled: boolean;
   dockerNonRoot: boolean;
   dockerImage: string | null;

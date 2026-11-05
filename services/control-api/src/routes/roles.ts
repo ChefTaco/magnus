@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
-import type { AppVariables } from '../types/index.js';
+import type { AppVariables, UserRole } from '../types/index.js';
+import { mergeEnvironmentEdit } from '../services/secret-views.js';
 import { getDb } from '../db/index.js';
 import type { Role, RoleApplication } from '../db/generated/prisma/client.js';
 import { authMiddleware, getUser, requireRole } from '../middleware/auth.js';
@@ -31,7 +32,8 @@ interface FormattedRole {
   skillNames: string[];
   aptPackages: string[];
   npmPackages: string[];
-  envConfig: Record<string, string>;
+  envConfig?: Record<string, string>;
+  envConfigKeys: string[];
   dockerEnabled: boolean;
   dockerNonRoot: boolean;
   dockerImage: string | null;
@@ -59,17 +61,23 @@ interface FormattedApplication {
 }
 
 /** Transform a DB role record into a clean API response. */
-function formatRole<T extends Role>(role: T): Omit<T, keyof Role> & FormattedRole {
-  return {
-    ...role,
+function formatRole<T extends Role>(role: T, viewer: UserRole) {
+  // Values in envConfig are written to hosts and may be secrets: below ADMIN a
+  // role shows its key names only.
+  const { envConfig: rawEnvConfig, ...rest } = role;
+  const envConfig = parseStringRecord(rawEnvConfig);
+  const formatted = {
+    ...rest,
     libraryFileIds: parseStringArray(role.libraryFileIds),
     skillNames: parseStringArray(role.skillNames),
     aptPackages: parseStringArray(role.aptPackages),
     npmPackages: parseStringArray(role.npmPackages),
-    envConfig: parseStringRecord(role.envConfig),
+    ...(viewer === 'ADMIN' ? { envConfig } : {}),
+    envConfigKeys: Object.keys(envConfig).sort(),
     dockerVolumes: parseStringArray(role.dockerVolumes),
     firewallAllowRules: parseStringArray(role.firewallAllowRules),
   };
+  return formatted satisfies FormattedRole;
 }
 
 /** Transform a DB role application record. */
@@ -90,7 +98,8 @@ rolesRouter.get('/', async (c) => {
     },
   });
 
-  const data = roles.map((r) => formatRole(r));
+  const viewer = getUser(c).role;
+  const data = roles.map((r) => formatRole(r, viewer));
   return c.json({ success: true, data });
 });
 
@@ -108,7 +117,7 @@ rolesRouter.get('/:roleId', async (c) => {
   });
   if (!role) throw new HttpError(404, 'NOT_FOUND', 'Role not found');
 
-  return c.json({ success: true, data: formatRole(role) });
+  return c.json({ success: true, data: formatRole(role, getUser(c).role) });
 });
 
 // ─── Create role ───
@@ -165,7 +174,7 @@ rolesRouter.post('/', requireRole('ADMIN', 'OPERATOR'), async (c) => {
     details: { name: role.name, status: role.status },
   });
 
-  return c.json({ success: true, data: formatRole(role) }, 201);
+  return c.json({ success: true, data: formatRole(role, user.role) }, 201);
 });
 
 // ─── Update role ───
@@ -193,7 +202,9 @@ rolesRouter.patch('/:roleId', requireRole('ADMIN', 'OPERATOR'), async (c) => {
       ...(body.skillNames !== undefined && { skillNames: serializeStringArray(body.skillNames) }),
       ...(body.aptPackages !== undefined && { aptPackages: serializeStringArray(body.aptPackages) }),
       ...(body.npmPackages !== undefined && { npmPackages: serializeStringArray(body.npmPackages) }),
-      ...(body.envConfig !== undefined && { envConfig: serializeRecord(body.envConfig as Record<string, unknown>) }),
+      ...(body.envConfig !== undefined && { envConfig: serializeRecord(
+        user.role === 'ADMIN' ? body.envConfig as Record<string, unknown> : mergeEnvironmentEdit(existing.envConfig, body.envConfig),
+      ) }),
       ...(body.dockerEnabled !== undefined && { dockerEnabled: body.dockerEnabled }),
       ...(body.dockerNonRoot !== undefined && { dockerNonRoot: body.dockerNonRoot }),
       ...(body.dockerImage !== undefined && { dockerImage: body.dockerImage }),
@@ -213,7 +224,7 @@ rolesRouter.patch('/:roleId', requireRole('ADMIN', 'OPERATOR'), async (c) => {
     details: { name: body.name, status: body.status },
   });
 
-  return c.json({ success: true, data: formatRole(role) });
+  return c.json({ success: true, data: formatRole(role, user.role) });
 });
 
 // ─── Delete role ───

@@ -10,6 +10,12 @@ All notable changes to this project are documented in this file. The format is b
 
 ## Unreleased
 
+- **Behavior change.** Below `ADMIN`, role `envConfig` and cron `environment` now return key names only (`envConfigKeys`, `environmentKeys`), and a `PATCH` merges so a redacted response cannot wipe a value. Removing a key now takes an `ADMIN`.
+
+- **Behavior change.** Secret fingerprints are `ADMIN` only: readiness fingerprints, `nodeManagerSecretFingerprint` in node metadata, and Hermes API-server key fingerprints. Other roles see `state` or a `Configured` boolean. Assistant tools and MCP no longer receive readiness fingerprints.
+
+- Send `Cache-Control: no-store` with the node token from `POST /api/v1/nodes/register`.
+
 - Authenticate a static browser console directly with Oathweave resource tokens (audience `magnus`): JWKS signature, issuer, audience, lifetime and actor checks, online revocation effective within 15 seconds, including on open event streams, and exact account links whose role caps the token's `magnus:*` permissions. Refuse startup when `IAM_CORE_URL` and `OATHWEAVE_ISSUER` are both set. New environment variables: `OATHWEAVE_ISSUER`, `OATHWEAVE_JWKS_URL`, `OATHWEAVE_USERINFO_URL`, `MAGNUS_OATHWEAVE_IDENTITIES_JSON`.
 
 - Add `GET /api/v1/console/session`, reporting the mapped role and console capabilities. `MAGNUS_HERMES_ENABLED` on the server now supplies the `hermes` capability.

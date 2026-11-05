@@ -1,6 +1,7 @@
 import { Hono, type Context } from 'hono';
-import type { AppVariables } from '../types/index.js';
-import { authMiddleware } from '../middleware/auth.js';
+import type { AppVariables, UserRole } from '../types/index.js';
+import { authMiddleware, getUser } from '../middleware/auth.js';
+import { hermesProfileForRole } from '../services/secret-views.js';
 import { HttpError } from '../middleware/error-handler.js';
 import { hermesJobListQuerySchema } from '../schemas/hermes.js';
 import {
@@ -24,26 +25,43 @@ function requiredParam(c: Context<AppVariables>, name: string): string {
 
 // Read-only inventory/status endpoints remain available because they use the
 // Control database and never open SSH connections.
-hermesRouter.get('/installations', async (c) =>
-  c.json({ success: true, data: await listHermesInstallations() }));
+function installationForRole<T extends { profiles?: Array<{ apiServerKeyFingerprint?: string | null }> | undefined }>(installation: T, role: UserRole) {
+  return installation.profiles
+    ? { ...installation, profiles: installation.profiles.map((profile) => hermesProfileForRole(profile, role)) }
+    : installation;
+}
+
+hermesRouter.get('/installations', async (c) => {
+  const role = getUser(c).role;
+  return c.json({ success: true, data: (await listHermesInstallations()).map((installation) => installationForRole(installation, role)) });
+});
 
 hermesRouter.get('/installations/:id', async (c) => {
   const data = await getHermesInstallation(requiredParam(c, 'id'));
   if (!data) throw new HttpError(404, 'NOT_FOUND', 'Hermes installation not found');
-  return c.json({ success: true, data });
+  return c.json({ success: true, data: installationForRole(data, getUser(c).role) });
 });
 
 hermesRouter.get('/installations/:id/profiles', async (c) => {
   const installation = await getHermesInstallation(requiredParam(c, 'id'));
   if (!installation) throw new HttpError(404, 'NOT_FOUND', 'Hermes installation not found');
-  return c.json({ success: true, data: await listHermesProfiles(installation.id) });
+  const role = getUser(c).role;
+  return c.json({ success: true, data: (await listHermesProfiles(installation.id)).map((profile) => hermesProfileForRole(profile, role)) });
 });
 
-hermesRouter.get('/profiles', async (c) =>
-  c.json({ success: true, data: await listHermesProfiles() }));
+hermesRouter.get('/profiles', async (c) => {
+  const role = getUser(c).role;
+  return c.json({ success: true, data: (await listHermesProfiles()).map((profile) => hermesProfileForRole(profile, role)) });
+});
 
-hermesRouter.get('/profiles/:id/api-server/status', async (c) =>
-  c.json({ success: true, data: await getHermesApiServerStatus(requiredParam(c, 'id')) }));
+hermesRouter.get('/profiles/:id/api-server/status', async (c) => {
+  const { keyFingerprint, ...status } = await getHermesApiServerStatus(requiredParam(c, 'id'));
+  return c.json({ success: true, data: {
+    ...status,
+    ...(getUser(c).role === 'ADMIN' ? { keyFingerprint } : {}),
+    keyConfigured: Boolean(keyFingerprint),
+  } });
+});
 
 hermesRouter.get('/jobs', async (c) => {
   const parsed = hermesJobListQuerySchema.safeParse({

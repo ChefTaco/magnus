@@ -90,10 +90,12 @@ describe('ops-service', () => {
     expect(health.checks.some((check) => check.name === 'rate-limiter')).toBe(true);
   });
 
-  it('returns readiness with secret fingerprints and nodes array', async () => {
+  it('returns readiness without secret fingerprints unless asked', async () => {
     const readiness = await getFleetReadiness();
     expect(readiness.nodes).toEqual([]);
-    expect(readiness.expectedFingerprints).toHaveProperty('nodeManagerSecret');
+    expect(readiness).not.toHaveProperty('expectedFingerprints');
+    const admin = await getFleetReadiness({ includeSecretFingerprints: true });
+    expect(admin.expectedFingerprints).toHaveProperty('nodeManagerSecret');
   });
 
   it('returns retention table summaries', async () => {

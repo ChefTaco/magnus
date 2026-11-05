@@ -65,7 +65,7 @@ Includes:
 #### `getFleetReadiness()`
 
 Returns stale-node, deploy-eligibility, destructive-action, agent-version, and
-credential-fingerprint posture from `/api/v1/ops/readiness`.
+credential state from `/api/v1/ops/readiness`, without secret fingerprints.
 
 #### `getCodexFleetStatus()`
 

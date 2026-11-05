@@ -183,12 +183,18 @@ export async function getDependencyHealth(): Promise<{
   return { status, checks, generatedAt: new Date().toISOString() };
 }
 
-export async function getFleetReadiness(): Promise<{
+/**
+ * Fleet readiness. Secret fingerprints are opt-in, and only an ADMIN response
+ * asks for them: every other caller, including assistant tools and MCP, sees
+ * whether a node's credential is current without the value that identifies it.
+ */
+export async function getFleetReadiness(options: { includeSecretFingerprints?: boolean } = {}): Promise<{
   generatedAt: string;
   thresholds: { staleNodeMs: number };
-  expectedFingerprints: { nodeManagerSecret: string | null; apiSecret: string | null };
+  expectedFingerprints?: { nodeManagerSecret: string | null; apiSecret: string | null };
   nodes: Array<Record<string, unknown>>;
 }> {
+  const includeSecretFingerprints = options.includeSecretFingerprints === true;
   const db = getDb();
   const [nodes, latestHealthSnapshots] = await withReadRetry('fleet readiness', () => Promise.all([
     db.node.findMany({
@@ -217,10 +223,12 @@ export async function getFleetReadiness(): Promise<{
   return {
     generatedAt: new Date().toISOString(),
     thresholds: { staleNodeMs: STALE_THRESHOLD_MS },
-    expectedFingerprints: {
-      nodeManagerSecret: fingerprint(getNodeManagerSecret()),
-      apiSecret: fingerprint(API_SECRET),
-    },
+    ...(includeSecretFingerprints ? {
+      expectedFingerprints: {
+        nodeManagerSecret: fingerprint(getNodeManagerSecret()),
+        apiSecret: fingerprint(API_SECRET),
+      },
+    } : {}),
     nodes: nodes.map((node) => {
       const heartbeatAgeMs = node.lastHeartbeatAt ? now - node.lastHeartbeatAt.getTime() : null;
       const stale = heartbeatAgeMs === null || heartbeatAgeMs > STALE_THRESHOLD_MS;
@@ -263,9 +271,9 @@ export async function getFleetReadiness(): Promise<{
           lastDetectedAt: hermes.lastDetectedAt?.toISOString() ?? null,
         } : null,
         secretFingerprint: {
-          expectedNodeManagerSecret,
-          observedNodeManagerSecret,
+          ...(includeSecretFingerprints ? { expectedNodeManagerSecret, observedNodeManagerSecret } : {}),
           match: observedNodeManagerSecret === null ? 'unknown' : observedNodeManagerSecret === expectedNodeManagerSecret ? 'match' : 'mismatch',
+          state: typeof metadata['nodeManagerSecretState'] === 'string' ? metadata['nodeManagerSecretState'] : 'unknown',
         },
       };
     }),

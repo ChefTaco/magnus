@@ -36,6 +36,7 @@ import {
   getHermesEffectiveState,
   getPackageSecurityPosture,
 } from './ops-service.js';
+import { nodeMetadataForRole } from './secret-views.js';
 import { getCodexFleetPosture } from './codex-service.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -867,7 +868,8 @@ registerTool('getNodeDetails', async (args) => {
     os: node.os,
     arch: node.arch,
     tags: node.tags ? JSON.parse(node.tags as string) : [],
-    metadata: node.metadata ? JSON.parse(node.metadata as string) : {},
+    // Tool results reach a model provider and stored conversations whatever the caller's role.
+    metadata: node.metadata ? JSON.parse(nodeMetadataForRole(node.metadata as string, 'VIEWER')) : {},
     lastHeartbeatAt: node.lastHeartbeatAt?.toISOString() ?? null,
     createdAt: node.createdAt.toISOString(),
     updatedAt: node.updatedAt.toISOString(),

@@ -41,7 +41,9 @@ export interface RoleData {
   skillNames: string[];
   aptPackages: string[];
   npmPackages: string[];
-  envConfig: Record<string, string>;
+  /** Present for ADMIN only. */
+  envConfig?: Record<string, string>;
+  envConfigKeys: string[];
   dockerEnabled: boolean;
   dockerNonRoot: boolean;
   dockerImage: string | null;
@@ -379,9 +381,9 @@ export default function RolesPageClient({ initialRoles }: RolesPageClientProps):
                         ? `npm: ${selectedRole.npmPackages.join(', ')}`
                         : 'No npm packages'}
                     </p>
-                    {Object.keys(selectedRole.envConfig).length > 0 && (
+                    {selectedRole.envConfigKeys.length > 0 && (
                       <p className="text-xs text-text-muted mt-1">
-                        {Object.keys(selectedRole.envConfig).length} env var(s): {Object.keys(selectedRole.envConfig).join(', ')}
+                        {selectedRole.envConfigKeys.length} env var(s): {selectedRole.envConfigKeys.join(', ')}
                       </p>
                     )}
                   </div>

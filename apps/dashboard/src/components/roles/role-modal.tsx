@@ -14,7 +14,9 @@ interface RoleData {
   skillNames: string[];
   aptPackages: string[];
   npmPackages: string[];
-  envConfig: Record<string, string>;
+  /** Present for ADMIN only. */
+  envConfig?: Record<string, string>;
+  envConfigKeys: string[];
   dockerEnabled: boolean;
   dockerNonRoot: boolean;
   dockerImage: string | null;
@@ -104,7 +106,10 @@ export function RoleModal({ open, mode, role, onClose, onSaved }: RoleModalProps
       setAptPackagesStr(role.aptPackages.join(', '));
       setNpmPackagesStr(role.npmPackages.join(', '));
       setEnvEntries(
-        Object.entries(role.envConfig).map(([key, value]) => ({ key, value })),
+        // Below ADMIN only key names arrive. A blank value is kept on save.
+        role.envConfig
+          ? Object.entries(role.envConfig).map(([key, value]) => ({ key, value }))
+          : role.envConfigKeys.map((key) => ({ key, value: '' })),
       );
       setDockerEnabled(role.dockerEnabled);
       setDockerNonRoot(role.dockerNonRoot);
