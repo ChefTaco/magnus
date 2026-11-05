@@ -130,6 +130,16 @@ function tailnetPins(origin: string): Set<string> | undefined {
   return pins ? new Set(pins) : undefined;
 }
 
+/** The one refusal that is safe and useful to explain: it names a setting, and no address or allowlist entry. */
+export class WebhookOriginNotAllowedError extends Error {
+  constructor(allowlistIsEmpty: boolean) {
+    super(allowlistIsEmpty
+      ? 'Webhook target origin is not allowlisted: no webhook can be created until WEBHOOK_ALLOWED_ORIGINS is set on the control API. Set it to a comma-separated list of exact HTTPS origins, such as https://hooks.example.com, and restart the server.'
+      : 'Webhook target origin is not allowlisted. Add its exact HTTPS origin to WEBHOOK_ALLOWED_ORIGINS on the control API and restart the server.');
+    this.name = 'WebhookOriginNotAllowedError';
+  }
+}
+
 export interface ResolvedWebhookTarget {
   url: URL;
   address: string;
@@ -173,7 +183,7 @@ async function resolveWebhookTarget(
   url.hostname = hostname;
   const allowlist = allowedOrigins(options.allowedOriginsRaw);
   if (!allowlist.has(canonicalOrigin(url))) {
-    throw new Error('Webhook target origin is not allowlisted');
+    throw new WebhookOriginNotAllowedError(allowlist.size === 0);
   }
   const pins = tailnetPins(canonicalOrigin(url));
   let addresses: readonly { address: string; family: number }[];

@@ -51,6 +51,9 @@ chmod 600 ~/.magnus/server.env
 production `TLS_CERT_PATH` / `TLS_KEY_PATH`. The server refuses to start while
 any is missing; there are no fallback secret values.
 
+Webhooks are refused until `WEBHOOK_ALLOWED_ORIGINS` lists the exact HTTPS origins
+they may target, as a comma-separated list.
+
 Local data (audit logs, credential rotation state, uploaded backups) lives
 under `MAGNUS_HOME`, default `~/.magnus`.
 

@@ -5,6 +5,7 @@ import {
   encryptWebhookCredential,
   postWebhook,
   validateWebhookTarget,
+  WebhookOriginNotAllowedError,
 } from './webhook-security.js';
 import { createWebhookJobPayload, redactWebhookEndpoint, formatPayload } from './webhook-service.js';
 
@@ -73,6 +74,17 @@ describe('webhook SSRF boundary', () => {
     ]) {
       await expect(validateWebhookTarget(url, { lookup: publicLookup })).rejects.toThrow();
     }
+  });
+
+  it('tells an operator which setting a refused origin needs, without weakening the refusal', async () => {
+    await expect(validateWebhookTarget('https://unapproved.example/path', { lookup: publicLookup })).rejects.toThrow(/Add its exact HTTPS origin to WEBHOOK_ALLOWED_ORIGINS/);
+    await expect(validateWebhookTarget('https://hooks.example/path', { lookup: publicLookup, allowedOriginsRaw: '' })).rejects.toThrow(WebhookOriginNotAllowedError);
+    delete process.env['WEBHOOK_ALLOWED_ORIGINS'];
+    const refusal = await validateWebhookTarget('https://hooks.example/path', { lookup: publicLookup }).catch((error: unknown) => error as Error);
+    expect(refusal).toBeInstanceOf(WebhookOriginNotAllowedError);
+    expect((refusal as Error).message).toMatch(/no webhook can be created until WEBHOOK_ALLOWED_ORIGINS is set/);
+    expect((refusal as Error).message).not.toContain('hooks.example/path');
+    expect(publicLookup).not.toHaveBeenCalled();
   });
 
   it('rejects private, reserved, and mixed public/private DNS answers', async () => {

@@ -14,11 +14,21 @@ import {
   dispatchWebhook,
   redeliverWebhookDelivery,
 } from '../services/webhook-service.js';
-import { validateWebhookTarget } from '../services/webhook-security.js';
+import { validateWebhookTarget, WebhookOriginNotAllowedError } from '../services/webhook-security.js';
 
 /** Audit only the target origin: webhook paths and queries often embed tokens. */
 function webhookOrigin(url: string): string {
   try { return new URL(url).origin; } catch { return 'invalid'; }
+}
+
+/** Refused targets stay indistinguishable, so this cannot probe DNS or internal addresses. Only the allowlist is explained. */
+async function assertApprovedTarget(url: string): Promise<void> {
+  try {
+    await validateWebhookTarget(url);
+  } catch (error) {
+    if (error instanceof WebhookOriginNotAllowedError) throw new HttpError(400, 'VALIDATION_ERROR', error.message);
+    throw new HttpError(400, 'VALIDATION_ERROR', 'Webhook target is not an approved public HTTPS endpoint');
+  }
 }
 
 export const webhooksRouter = new Hono<AppVariables>();
@@ -57,11 +67,7 @@ webhooksRouter.post('/', async (c) => {
     throw new HttpError(400, 'VALIDATION_ERROR', 'name and url are required');
   }
 
-  try {
-    await validateWebhookTarget(body.url);
-  } catch {
-    throw new HttpError(400, 'VALIDATION_ERROR', 'Webhook target is not an approved public HTTPS endpoint');
-  }
+  await assertApprovedTarget(body.url);
 
   const user = c.get('user');
   const endpoint = await createWebhookEndpoint({
@@ -95,13 +101,7 @@ webhooksRouter.patch('/:id', async (c) => {
     timeoutMs: number;
   }>>();
 
-  if (body.url !== undefined) {
-    try {
-      await validateWebhookTarget(body.url);
-    } catch {
-      throw new HttpError(400, 'VALIDATION_ERROR', 'Webhook target is not an approved public HTTPS endpoint');
-    }
-  }
+  if (body.url !== undefined) await assertApprovedTarget(body.url);
 
   const endpoint = await updateWebhookEndpoint(id, body);
   // Record which fields changed, never secret or header values.
