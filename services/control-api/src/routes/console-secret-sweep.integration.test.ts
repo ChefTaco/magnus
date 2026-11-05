@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { createServer, type AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -33,6 +34,19 @@ const CANARY = {
 const ADMIN_MAY_SEE = new Set<string>([CANARY.roleEnvValue, CANARY.cronEnvValue, CANARY.observedFingerprint, CANARY.hermesKeyFingerprint]);
 const ROLES = ['VIEWER', 'OPERATOR', 'ADMIN'] as const;
 
+/**
+ * The fixture node's agent address: a local port nothing listens on, so a route that calls the agent
+ * gets its unreachable-agent answer at once. An address that drops packets makes that answer depend
+ * on the network, and makes each such route wait out its timeouts: 32 seconds for a Codex read.
+ */
+async function refusingPort(): Promise<number> {
+  const server = createServer();
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as AddressInfo;
+  await new Promise((resolve) => server.close(resolve));
+  return port;
+}
+
 describe.skipIf(!process.env['TEST_DATABASE_URL'])('secrets in browser-facing responses', () => {
   const prefix = `sweep-${randomUUID()}`;
   const nodeId = prefix;
@@ -64,7 +78,7 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('secrets in browser-facing re
       tokens[role] = await signUserToken({ userId: id, email: `${id}@example.com`, role });
     }
     await db.node.create({ data: {
-      id: nodeId, name: prefix, hostname: `${prefix}.example.com`, ipAddress: '192.0.2.20', os: 'linux', arch: 'x64', token: CANARY.nodeToken,
+      id: nodeId, name: prefix, hostname: `${prefix}.example.com`, ipAddress: '127.0.0.1', port: await refusingPort(), os: 'linux', arch: 'x64', token: CANARY.nodeToken,
       status: 'ONLINE', lastHeartbeatAt: new Date(), tags: '[]',
       metadata: JSON.stringify({ nodeManagerSecretFingerprint: CANARY.observedFingerprint, nodeManagerSecretState: 'previous' }),
     } });
