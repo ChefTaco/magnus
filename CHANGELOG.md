@@ -6,6 +6,9 @@ All notable changes to this project are documented in this file. The format is b
 
 ## Unreleased
 
+- Add protected Ardent native artifacts from locked production dependencies,
+  private environment references and authenticated gateway acceptance. Verify
+  exact version/profile and dependency readiness without invoking tools.
 - Add authenticated native-agent acceptance with a recent explicitly accepted
   heartbeat, exact running version, verified TLS and private diagnostics.
 - Export reviewed immutable agent images into native artifacts containing the

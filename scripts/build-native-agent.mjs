@@ -86,7 +86,7 @@ function protectTree(root) {
   }
 }
 export function buildNativeAgent(
-  { image, output },
+  { image, output, product: selected = 'magnus' },
   execute = (command, args) =>
     execFileSync(command, args, {
       encoding: 'utf8',
@@ -95,6 +95,16 @@ export function buildNativeAgent(
     }).trim(),
 ) {
   assertPinnedImage(image);
+  const layouts = {
+    magnus: { root: '/opt/magnus-agent', name: '@hivemagnus/magnus-agent', bin: 'magnus-agent', entry: 'index.js',
+      arguments: ['--env-file', '@ENV_FILE@', 'start'],
+      acceptanceArguments: ['--env-file', '@ENV_FILE@', 'acceptance', '--json', '--wait-seconds', '60'] },
+    ardent: { root: '/opt/ardent', name: '@hivemagnus/ardent', bin: 'ardent', entry: 'native-entry.js',
+      arguments: ['--env-file', '@ENV_FILE@', '--profile-path', '@PROFILE@', 'gateway', 'run'],
+      acceptanceArguments: ['--env-file', '@ENV_FILE@', '--profile-path', '@PROFILE@', 'acceptance'] },
+  };
+  const layout = layouts[selected];
+  if (!layout) throw Error('Select an owned native product: magnus or ardent');
   const destination = resolve(output);
   if (existsSync(destination))
     throw Error(
@@ -130,7 +140,7 @@ export function buildNativeAgent(
     created = true;
     const exported = join(temporary, 'exported');
     mkdirSync(exported, { mode: 0o700 });
-    execute('docker', ['cp', container + ':/opt/magnus-agent/.', exported]);
+    execute('docker', ['cp', container + ':' + layout.root + '/.', exported]);
     validateRuntimeTree(exported);
     const bundle = join(temporary, 'bundle');
     mkdirSync(bundle, { mode: 0o700 });
@@ -147,27 +157,29 @@ export function buildNativeAgent(
     const nodeVersion = execute(join(bundle, 'runtime/node'), ['--version']);
     const packageFile = join(
       bundle,
-      'app/node_modules/@hivemagnus/magnus-agent/package.json',
+      'app/node_modules/' + layout.name + '/package.json',
     );
     const product = JSON.parse(readFileSync(packageFile, 'utf8'));
     if (
-      product.name !== '@hivemagnus/magnus-agent' ||
+      product.name !== layout.name ||
       !/^\d+\.\d+\.\d+$/.test(product.version)
     )
       throw Error(
         'Exported image does not contain the expected independently versioned product',
       );
-    const launcher = join(bundle, 'bin/magnus-agent');
+    const launcher = join(bundle, 'bin', layout.bin);
     writeFileSync(
       launcher,
-      '#!/usr/bin/env bash\nset -euo pipefail\nartifact=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)\nexec "$artifact/runtime/node" "$artifact/app/node_modules/@hivemagnus/magnus-agent/dist/index.js" "$@"\n',
+      '#!/usr/bin/env bash\nset -euo pipefail\numask 077\nartifact=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)\n' +
+      'exec "$artifact/runtime/node" ' +
+      '"$artifact/app/node_modules/' + layout.name + '/dist/' + layout.entry + '" "$@"\n',
       { mode: 0o700 },
     );
     protectTree(bundle);
     const version = execute(launcher, ['--version']);
     if (version !== product.version)
       throw Error('Native launcher version does not match its package');
-    const name = `magnus-agent-${product.version}-linux-${architecture}.tar.gz`,
+    const name = `${layout.bin}-${product.version}-linux-${architecture}.tar.gz`,
       archive = join(destination, name);
     execute('tar', [
       '--sort=name',
@@ -199,17 +211,10 @@ export function buildNativeAgent(
         .digest('hex'),
       archive: name,
       sha256,
-      executable: 'bin/magnus-agent',
-      arguments: ['--env-file', '@ENV_FILE@', 'start'],
+      executable: 'bin/' + layout.bin,
+      arguments: layout.arguments,
       preflight: { arguments: ['--version'], expectedOutput: version },
-      acceptanceArguments: [
-        '--env-file',
-        '@ENV_FILE@',
-        'acceptance',
-        '--json',
-        '--wait-seconds',
-        '60',
-      ],
+      acceptanceArguments: layout.acceptanceArguments,
       published: false,
     });
     return { archive, sha256, version: product.version, architecture };
@@ -233,9 +238,9 @@ if (
     for (let index = 2; index < process.argv.length; index += 2) {
       const key = process.argv[index],
         value = process.argv[index + 1];
-      if (!['--image', '--output'].includes(key) || !value)
+      if (!['--image', '--output', '--product'].includes(key) || !value)
         throw Error(
-          'Usage: build-native-agent.mjs --image PINNED_IMAGE --output NEW_DIRECTORY',
+          'Usage: build-native-agent.mjs --image PINNED_IMAGE --output NEW_DIRECTORY [--product magnus|ardent]',
         );
       options[key.slice(2)] = value;
     }

@@ -1800,6 +1800,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        version: string;
                         profile: string;
                         /** @enum {string} */
                         backend: "llamacpp" | "codex";

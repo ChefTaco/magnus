@@ -73,6 +73,37 @@ ardent gateway run                       # management API, A2A, channels, jobs
 
 `ardent help` lists every command.
 
+### Native suite artifact
+
+Build `packages/ardent/Dockerfile` from the repository root, then select that
+reviewed immutable image ID or digest:
+
+```bash
+npm run build:native-agent -- --product ardent --image PINNED_IMAGE --output NEW_DIRECTORY
+```
+
+The archive includes the exact Node binary, the public Ardent package, locked
+production dependencies and their licenses. It contains no inference runtime or
+models. The descriptor supplies literal launch arguments, an exact version
+preflight and a read-only acceptance command for Hive's signed release matrix.
+Local export does not publish or certify an artifact.
+
+Select an existing profile explicitly with `--profile-path` and keep credentials
+in an owned, mode `0600` environment file selected with `--env-file`. The native
+launcher loads that file before Node starts, including `NODE_EXTRA_CA_CERTS`
+when a private CA is required. It never evaluates the file as shell code.
+Profile initialization is a separate operator action and refuses an existing
+profile. Provider sign-in remains explicit.
+
+`ardent --env-file FILE --profile-path DIR acceptance` checks the running
+gateway's authenticated status, exact version, profile, backend and dependency
+readiness. It returns bounded JSON without credentials or upstream diagnostics.
+The default target is the profile's loopback management listener; an optional
+`ARDENT_ACCEPTANCE_URL` must be an HTTPS origin, with an optional protected
+`ARDENT_ACCEPTANCE_CA_FILE`. Redirects and nonlocal cleartext are refused.
+Acceptance executes no model generation or tools. Verify scoped inference,
+memory, skills and channel workflows separately before enabling consumers.
+
 ## Configuration
 
 `config.yaml` (schema 1) is validated strictly; unknown keys are rejected. A

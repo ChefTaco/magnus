@@ -14,6 +14,7 @@ import {
   assertPinnedImage,
   validateRuntimeTree,
   copyRuntimeTree,
+  buildNativeAgent,
 } from './build-native-agent.mjs';
 test('native export requires an immutable image before any Docker command', () => {
   for (const value of [
@@ -24,6 +25,15 @@ test('native export requires an immutable image before any Docker command', () =
   ])
     assert.throws(() => assertPinnedImage(value), /exact reviewed image/);
   assert.doesNotThrow(() => assertPinnedImage('sha256:' + '0'.repeat(64)));
+});
+test('native product layouts are explicitly owned and reviewed before Docker access', () => {
+  const temporary = mkdtempSync(join(tmpdir(), 'magnus-native-product-'));
+  try {
+    const execute = () => { throw Error('Reached immutable image review'); };
+    for (const product of ['magnus', 'ardent'])
+      assert.throws(() => buildNativeAgent({ image: 'sha256:' + '0'.repeat(64), output: join(temporary, product), product }, execute), /immutable image review/);
+    assert.throws(() => buildNativeAgent({ image: 'sha256:' + '0'.repeat(64), output: join(temporary, 'other'), product: '../other' }, execute), /owned native product/);
+  } finally { rmSync(temporary, { recursive: true, force: true }); }
 });
 test('native runtime review refuses model assets and directory link cycles', () => {
   const temporary = mkdtempSync(join(tmpdir(), 'magnus-native-boundary-'));

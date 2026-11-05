@@ -1808,6 +1808,9 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "version": {
+                      "type": "string"
+                    },
                     "profile": {
                       "type": "string"
                     },
@@ -1825,6 +1828,7 @@
                     }
                   },
                   "required": [
+                    "version",
                     "profile",
                     "backend",
                     "tasks"

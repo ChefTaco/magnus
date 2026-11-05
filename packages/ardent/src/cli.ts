@@ -31,11 +31,14 @@ import { ContextCheckpoints } from './context-checkpoints.js';
 import { loadModelPolicy } from './model-policy.js';
 import { loadPlugins, pluginContext, pluginJobHandlers, validationContext, type ArdentPlugin } from './plugins.js';
 
+import { ARDENT_VERSION } from './version.js';
+import { acceptRuntime, readProtectedFile } from './acceptance.js';
+
 type Parsed = { words: string[]; options: Map<string, string | true> };
 function args(argv: string[]): Parsed {
   const words: string[] = [];
   const options = new Map<string, string | true>();
-  const valued = new Set(['profile', 'profile-path', 'api-port', 'template', 'prompt', 'prompt-file', 'idempotency-key', 'session-id', 'login-id', 'source', 'schedule-id', 'window-key', 'release-id', 'caller', 'context', 'expected-head', 'expected-policy-revision']);
+  const valued = new Set(['env-file', 'profile', 'profile-path', 'api-port', 'template', 'prompt', 'prompt-file', 'idempotency-key', 'session-id', 'login-id', 'source', 'schedule-id', 'window-key', 'release-id', 'caller', 'context', 'expected-head', 'expected-policy-revision']);
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (!arg) continue;
@@ -56,13 +59,13 @@ function value(options: Parsed['options'], name: string): string | undefined {
   const found = options.get(name);
   return typeof found === 'string' ? found : undefined;
 }
-async function environment(dir: string): Promise<NodeJS.ProcessEnv> {
+async function environment(dir: string, explicitFile?: string): Promise<NodeJS.ProcessEnv> {
   const env: NodeJS.ProcessEnv = { ...process.env };
   try {
-    const data = parse(await readFile(join(dir, '.env')));
+    const data = parse(explicitFile ? await readProtectedFile(explicitFile) : await readFile(join(dir, '.env')));
     for (const [name, val] of Object.entries(data)) if (env[name] === undefined) env[name] = val;
   } catch (error: unknown) {
-    if (!(error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')) throw error;
+    if (explicitFile || !(error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')) throw error;
   }
   return env;
 }
@@ -81,9 +84,11 @@ async function assertNoGateway(dir: string): Promise<void> {
     throw error;
   }
 }
-const USAGE = `Usage: ardent [--profile NAME | --profile-path DIR] <command>
+const USAGE = `Usage: ardent [--env-file FILE] [--profile NAME | --profile-path DIR] <command>
 
 Commands:
+  --version                                Print the independent product version
+  acceptance                               Verify the authenticated running gateway
   init --non-interactive [--api-port N]   Create a profile from the bundled template
   profile list | profile show              List profiles / show the selected profile
   config validate | show | schema          Inspect configuration
@@ -107,6 +112,7 @@ Commands:
 async function main(): Promise<void> {
   const parsed = args(process.argv.slice(2));
   const [command, subcommand, id] = parsed.words;
+  if (parsed.options.has('version')) { stdout.write(`${ARDENT_VERSION}\n`); return; }
   if (!command || command === 'help' || parsed.options.has('help')) { stdout.write(`${USAGE}\n`); return; }
   const profile = value(parsed.options, 'profile') ?? DEFAULT_PROFILE;
   const dir = profilePath(profile, value(parsed.options, 'profile-path'));
@@ -124,7 +130,13 @@ async function main(): Promise<void> {
     return;
   }
   const loaded = await loadConfig(dir);
-  const env = await environment(dir);
+  const env = await environment(dir, value(parsed.options, 'env-file'));
+  if (command === 'acceptance') {
+    const result = await acceptRuntime(loaded.config, env);
+    print(result);
+    if (!result.ok) process.exitCode = 1;
+    return;
+  }
   const plugins = await loadPlugins(loaded.config, dir);
   for (const plugin of plugins) {
     const pluginCommand = command ? plugin.cliCommands?.[command] : undefined;
