@@ -1,4 +1,5 @@
 import { getDb } from '../db/index.js';
+import { SENTINEL_NODE_IDS } from '../utils/sentinel-nodes.js';
 
 import type { DiskForecast } from '../types/index.js';
 
@@ -27,13 +28,16 @@ function linearRegression(points: Point[]): RegressionResult {
   const denom = n * sumX2 - sumX ** 2;
   if (denom === 0) return { slope: 0, intercept: sumY / n, r2: 0 };
 
-  const slope = (n * sumXY - sumX * sumY) / denom;
-  const intercept = (sumY - slope * sumX) / n;
-
   // R² for confidence
   const yMean = sumY / n;
   const ssTot = points.reduce((a, p) => a + (p.y - yMean) ** 2, 0);
-  if (ssTot === 0) return { slope, intercept, r2: 1 };
+  // Identical samples have no trend. The formula below would still answer with a
+  // rounding residue, which reads as a tiny growth rate at full confidence.
+  if (ssTot === 0) return { slope: 0, intercept: yMean, r2: 1 };
+
+  const slope = (n * sumXY - sumX * sumY) / denom;
+  const intercept = (sumY - slope * sumX) / n;
+  if (!Number.isFinite(slope)) return { slope: 0, intercept: yMean, r2: 0 };
 
   const ssRes = points.reduce(
     (a, p) => a + (p.y - (slope * p.x + intercept)) ** 2,
@@ -62,6 +66,10 @@ const MS_PER_DAY = 86_400_000;
 const MIN_DATA_POINTS = 3;
 const MIN_FORECAST_CONFIDENCE = 0.25;
 const DEFAULT_LOOKBACK_DAYS = 30;
+/** Samples closer together than this are a burst, not a growth trend. */
+const MIN_TREND_SPAN_MS = 60 * 60 * 1000;
+/** A fill date further out than this says nothing useful, and far enough out it is not a valid Date at all. */
+const MAX_FORECAST_DAYS = 36_500;
 
 const SYSTEM_MOUNT_PREFIXES = ['/boot', '/snap', '/var/lib/docker/', '/var/lib/containers/'];
 const READ_ONLY_FILESYSTEMS = new Set(['iso9660', 'squashfs']);
@@ -156,17 +164,22 @@ export async function forecastDisk(
       y: s.usedBytes,
     }));
 
-    const reg = linearRegression(points);
+    const reg = latest.timestamp - t0 >= MIN_TREND_SPAN_MS
+      ? linearRegression(points)
+      : { slope: 0, intercept: latest.usedBytes, r2: 0 };
     const growthRatePerDay = reg.slope; // bytes per day
 
     let estimatedFullDate: string | null = null;
     let daysUntilFull: number | null = null;
 
     if (growthRatePerDay > 0 && reg.r2 >= MIN_FORECAST_CONFIDENCE) {
-      const availableBytes = totalBytes - latest.usedBytes;
-      daysUntilFull = Math.ceil(availableBytes / growthRatePerDay);
-      const fullDate = new Date(Date.now() + daysUntilFull * MS_PER_DAY);
-      estimatedFullDate = fullDate.toISOString().split('T')[0] ?? null;
+      const availableBytes = Math.max(0, totalBytes - latest.usedBytes);
+      const days = Math.ceil(availableBytes / growthRatePerDay);
+      if (days <= MAX_FORECAST_DAYS) {
+        daysUntilFull = days;
+        const fullDate = new Date(Date.now() + days * MS_PER_DAY);
+        estimatedFullDate = fullDate.toISOString().split('T')[0] ?? null;
+      }
     }
 
     forecasts.push({
@@ -191,6 +204,7 @@ export async function forecastAtRisk(
   const db = getDb();
 
   const nodes = await db.node.findMany({
+    where: { id: { notIn: SENTINEL_NODE_IDS } },
     select: { id: true, hostname: true },
   });
 
