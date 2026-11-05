@@ -7,7 +7,7 @@
 #
 #   docker build -f services/control-api/Dockerfile -t magnus-server:local .
 #
-# Stage 1 builds @hivemagnus/magnus-contracts, @hivemagnus/magnus-skills and
+# Stage 1 builds @hivemagnus/magnus-contracts, @hivemagnus/magnus-oathweave, @hivemagnus/magnus-skills and
 # @hivemagnus/magnus-server and packs them with `npm pack`. Stage 2 installs
 # those tarballs exactly as `npm install @hivemagnus/magnus-server` would, so
 # the image runs the same artifact that is published to npm.
@@ -25,15 +25,17 @@ WORKDIR /opt/magnus-build
 COPY . .
 RUN npm ci --no-audit --no-fund --ignore-scripts \
       --workspace @hivemagnus/magnus-contracts \
+      --workspace @hivemagnus/magnus-oathweave \
       --workspace @hivemagnus/magnus-skills \
       --workspace @hivemagnus/magnus-server \
   && npm rebuild esbuild prisma @prisma/engines
 RUN npm --workspace @hivemagnus/magnus-contracts run build \
+  && npm --workspace @hivemagnus/magnus-oathweave run build \
   && npm --workspace @hivemagnus/magnus-skills run build \
   && npm --workspace @hivemagnus/magnus-server run db:generate \
   && npm --workspace @hivemagnus/magnus-server run build
 RUN mkdir -p /packages \
-  && for workspace in packages/contracts packages/skills services/control-api; do \
+  && for workspace in packages/contracts packages/oathweave packages/skills services/control-api; do \
        (cd "$workspace" && npm pack --ignore-scripts --pack-destination /packages); \
      done \
   && ls -l /packages
@@ -69,6 +71,7 @@ RUN node -e ' \
       const find = (prefix) => "file:/tmp/packages/" + files.find((file) => file.startsWith(prefix)); \
       const local = { \
         "@hivemagnus/magnus-contracts": find("hivemagnus-magnus-contracts-"), \
+        "@hivemagnus/magnus-oathweave": find("hivemagnus-magnus-oathweave-"), \
         "@hivemagnus/magnus-skills": find("hivemagnus-magnus-skills-"), \
       }; \
       fs.writeFileSync("package.json", JSON.stringify({ \

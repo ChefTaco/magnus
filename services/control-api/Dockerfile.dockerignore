@@ -1,6 +1,6 @@
 # Build context filter for services/control-api/Dockerfile (context: repo root).
 # Only the root manifests, every workspace manifest (so `npm ci` can validate
-# the lockfile) and the three workspaces this image bundles are sent.
+# the lockfile) and the workspaces this image bundles are sent.
 **
 !package.json
 !package-lock.json
@@ -8,6 +8,7 @@
 !packages/*/package.json
 !services/*/package.json
 !packages/contracts/**
+!packages/oathweave/**
 !packages/skills/**
 !services/control-api/**
 

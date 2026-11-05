@@ -1,37 +1,12 @@
 import { z } from 'zod';
+import { isOathweaveEndpoint, parseOathweaveLinks } from '@hivemagnus/magnus-oathweave';
 
-/** The only resource audience this server accepts on Oathweave tokens. */
-export const OATHWEAVE_AUDIENCE = 'magnus';
-
-const localUserId = z.string().min(1).max(256)
-  // These identifiers name server-owned actors; a link must never impersonate one.
-  .refine((value) => value !== 'system' && !value.startsWith('service:'), {
-    message: 'localUserId must not name the system or a service actor',
-  });
-
-const identityLinkSchema = z.object({
-  issuer: z.url(),
-  subject: z.string().min(1).max(256),
-  localUserId,
-  role: z.enum(['ADMIN', 'OPERATOR', 'VIEWER']),
-}).strict();
-
-export type OathweaveIdentityLink = z.infer<typeof identityLinkSchema>;
-
-/** Parse MAGNUS_OATHWEAVE_IDENTITIES_JSON. Throws on anything malformed. */
-export function parseOathweaveLinks(raw: string): OathweaveIdentityLink[] {
-  return z.array(identityLinkSchema).max(10_000).parse(JSON.parse(raw));
-}
-
-/** Oathweave endpoints carry bearer tokens, so only verified HTTPS is acceptable. */
-export function isOathweaveEndpoint(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return url.protocol === 'https:' && !url.username && !url.password && !url.hash;
-  } catch {
-    return false;
-  }
-}
+export {
+  isOathweaveEndpoint,
+  OATHWEAVE_AUDIENCE,
+  parseOathweaveLinks,
+  type OathweaveIdentityLink,
+} from '@hivemagnus/magnus-oathweave';
 
 type OathweaveEnv = {
   IAM_CORE_URL?: string | undefined;
