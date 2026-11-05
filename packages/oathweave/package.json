@@ -1,6 +1,6 @@
 {
   "name": "@hivemagnus/magnus-oathweave",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "private": true,
   "description": "Oathweave resource token verification and identity links shared by the Magnus server and the Magnus fleet gateway.",
   "keywords": [

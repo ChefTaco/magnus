@@ -1,84 +1,31 @@
 # Changelog
 
-- Add bounded native Codex acceptance using an isolated provider-only profile,
-  explicit protected credential references and immutable runtime version checks.
-  Refuse linked, ambiguous or conflicting native profile selections.
-
 All notable changes to this project are documented in this file. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## [2.1.0] - 2026-11-05
+
+### Added
 
 - Add `services/fleet-gateway` (`@hivemagnus/magnus-fleet-gateway`, shipped as the container image `ghcr.io/cheftaco/magnus-fleet-gateway` and not on npm), a separate service holding the restricted SSH key that carries the browser web terminal over HTTP streaming. It requires an `ADMIN` identity link, `magnus:terminal` and identity verified within five minutes, strict host-key pinning with explicit operator approval, per-subject session ownership, re-checks revocation every five seconds, and audits metadata only. See `services/fleet-gateway/README.md`.
-
 - Add `capabilities.terminal` to `GET /api/v1/console/session`, true when a fleet gateway is deployed and the caller holds an `ADMIN` link and `magnus:terminal`.
-
 - Add the machine routes `POST /api/v1/fleet-gateway/target` and `POST /api/v1/fleet-gateway/audit`. New environment variables: `FLEET_GATEWAY_URL`, `FLEET_GATEWAY_TOKEN_SHA256`.
-
 - Add the private workspace package `@hivemagnus/magnus-oathweave`, moving the Oathweave verifier and identity link parser out of the server so the gateway shares them. It is not on npm: `@hivemagnus/magnus-server` carries it in its tarball, and needs no new registry package.
-
-- **Behavior change.** Resource enrollment now sends console drain challenges to the fleet gateway at `FLEET_GATEWAY_URL` rather than to the dashboard at `DASHBOARD_PUBLIC_ORIGIN`, and fails closed without it. `RESOURCE_ENROLLMENT_DASHBOARD_PARTICIPANT=absent` declares that no console participant exists, and is honoured only for a node with no console work rows in any state. The dashboard's internal drain route is removed.
-
-- **Security.** The dashboard's `POST /api/terminal/open` now refuses a host outside the allowlist. It previously logged a warning and connected anyway.
-
-- Remove the dashboard's unused `/api/terminal/ws`, `join`, `share` and `promote` routes and its WebSocket terminal.
-
-- **Behavior change.** Assistant conversations belong to whoever started them. The list, each `/assistant/conversations/:id` route, chat continuation, the unread count and marking messages read answer only for the caller's own, for every role including `ADMIN`, and someone else's conversation answers 404. The server's heartbeat conversation stays readable by every role.
-
-- **Behavior change.** The global error handler no longer sends Prisma text. A duplicate answers 409 `CONFLICT` naming the record and field, a missing record 404, an invalid value 400, and an unreachable database 503 `DATABASE_UNAVAILABLE`. Routes and dependency checks that pass an error's message through to a client no longer carry database text or a peer's address.
-
-- Exclude sentinel records from `GET /topology` and the topology scan, fleet readiness, predictions, the at-risk forecast, profiling, Prometheus node counts and the assistant's fleet tools.
-
-- Stop `GET /health/:nodeId/forecast` failing with 500 on a flat disk, whose rounding residue overflowed the fill date. A burst of heartbeats no longer draws a growth trend, and a fill date more than 100 years out is not published.
-
-- Add `health` to each row of `GET /nodes`: the headline figures of the node's newest snapshot, or null when it has none, so a list needs no request per row.
-
-- `GET /ops/storage-evidence/:nodeId` now reaches agents over the same scheme as other agent calls, instead of always HTTPS. A failure answers 502 `NODE_UNREACHABLE` or `NODE_BAD_RESPONSE` with the reason and what to check, and names no address.
-
-- Name `WEBHOOK_ALLOWED_ORIGINS` when a webhook target is refused for not being allowlisted, and document the setting. The refusal itself is unchanged.
-
-- Publish browser contracts for anomalies, remediation, notifications, retention, conversations, webhooks and topology, with a checked copy of the upgrade remedies. `GET /api/docs/openapi.json` is now a `browser` row in `docs/console-api.md`.
-
-- **Behavior change.** Below `ADMIN`, role `envConfig` and cron `environment` now return key names only (`envConfigKeys`, `environmentKeys`), and a `PATCH` merges so a redacted response cannot wipe a value. Removing a key now takes an `ADMIN`.
-
-- **Behavior change.** Secret fingerprints are `ADMIN` only: readiness fingerprints, `nodeManagerSecretFingerprint` in node metadata, and Hermes API-server key fingerprints. Other roles see `state` or a `Configured` boolean. Assistant tools and MCP no longer receive readiness fingerprints.
-
-- Send `Cache-Control: no-store` with the node token from `POST /api/v1/nodes/register`.
-
 - Authenticate a static browser console directly with Oathweave resource tokens (audience `magnus`): JWKS signature, issuer, audience, lifetime and actor checks, online revocation effective within 15 seconds, including on open event streams, and exact account links whose role caps the token's `magnus:*` permissions. Refuse startup when `IAM_CORE_URL` and `OATHWEAVE_ISSUER` are both set. New environment variables: `OATHWEAVE_ISSUER`, `OATHWEAVE_JWKS_URL`, `OATHWEAVE_USERINFO_URL`, `MAGNUS_OATHWEAVE_IDENTITIES_JSON`.
-
 - Add `GET /api/v1/console/session`, reporting the mapped role and console capabilities. `MAGNUS_HERMES_ENABLED` on the server now supplies the `hermes` capability.
-
-- Key rate limits on the verified Oathweave subject so browsers behind a shared ingress keep separate buckets. Other requests stay keyed on the socket peer.
-
+- Add `health` to each row of `GET /nodes`: the headline figures of the node's newest snapshot, or null when it has none, so a list needs no request per row.
 - Add `MAGNUS_CONSOLE_BASE_PATH` for notification links to a console served under a path. The default is unchanged.
-
-- Stop returning the node token from `PATCH /api/v1/cron/:cronId`.
-
+- Publish browser contracts for anomalies, remediation, notifications, retention, conversations, webhooks and topology, with a checked copy of the upgrade remedies. `GET /api/docs/openapi.json` is now a `browser` row in `docs/console-api.md`.
 - Add the `@hivemagnus/magnus-contracts/browser` export, `npm run contracts:browser` to export it with SHA-256 provenance, and `docs/console-api.md`, the route inventory an ingress can use as its allowlist.
-
+- Add a fixed endpoint-scoped HiveSkills execution bridge with explicit target grants, enrolled native signed receipts and no replay of admitted or unknown jobs.
 - Add opt-in native Hermes messaging artifacts from the unchanged frozen public lock, with explicit provenance and exact dependency preflight; retain headless default and disabled runtime installs.
-
-- Verify exact native Skills target mappings and immutable client digests through read-only authenticated posture APIs; reject infrastructure credentials in dedicated native client environments.
-
-- Keep native Hermes preflight read-only before profile initialization; validate
-  runtime dependencies and SQLite without executing profile-dependent hooks.
-
-- Commit base-data initialization and its completion receipt atomically. The new
-  read-only `verify-initialization` command holds activation after an interrupted
-  seed, even when all SQL migrations finished, without replaying initialization.
-
 - Package reviewed public Hermes headless native artifacts with frozen
   dependencies, bundled Python, fixed SQLite, protected explicit profiles and
   external HTTPS generation/streaming acceptance.
-
-- Preserve configured issuer trust for container health probes when the service
-  uses a private CA; exercise the actual probe during isolated queue rehearsals.
-
-- Fence isolated restore candidates from queue workers, background writes, host
-  contact and API mutations; verify exact completed migration checksums without
-  applying or repairing schema changes.
+- Add bounded native Codex acceptance using an isolated provider-only profile,
+  explicit protected credential references and immutable runtime version checks.
+  Refuse linked, ambiguous or conflicting native profile selections.
 - Export pinned Codex native artifacts with explicit private profile selection,
   preserved credentials and verified external Responses streaming acceptance.
 - Add protected Ardent native artifacts from locked production dependencies,
@@ -88,9 +35,56 @@ All notable changes to this project are documented in this file. The format is b
   heartbeat, exact running version, verified TLS and private diagnostics.
 - Export reviewed immutable agent images into native artifacts containing the
   exact Node runtime, preserved licenses, launchers and checksum metadata.
+- Verify exact native Skills target mappings and immutable client digests through read-only authenticated posture APIs; reject infrastructure credentials in dedicated native client environments.
 
+### Changed
+
+- **Behavior change.** Resource enrollment now sends console drain challenges to the fleet gateway at `FLEET_GATEWAY_URL` rather than to the dashboard at `DASHBOARD_PUBLIC_ORIGIN`, and fails closed without it. `RESOURCE_ENROLLMENT_DASHBOARD_PARTICIPANT=absent` declares that no console participant exists, and is honoured only for a node with no console work rows in any state. The dashboard's internal drain route is removed.
+- **Behavior change.** Assistant conversations belong to whoever started them. The list, each `/assistant/conversations/:id` route, chat continuation, the unread count and marking messages read answer only for the caller's own, for every role including `ADMIN`, and someone else's conversation answers 404. The server's heartbeat conversation stays readable by every role.
+- **Behavior change.** The global error handler no longer sends Prisma text. A duplicate answers 409 `CONFLICT` naming the record and field, a missing record 404, an invalid value 400, and an unreachable database 503 `DATABASE_UNAVAILABLE`. Routes and dependency checks that pass an error's message through to a client no longer carry database text or a peer's address.
+- **Behavior change.** Below `ADMIN`, role `envConfig` and cron `environment` now return key names only (`envConfigKeys`, `environmentKeys`), and a `PATCH` merges so a redacted response cannot wipe a value. Removing a key now takes an `ADMIN`.
+- **Behavior change.** Secret fingerprints are `ADMIN` only: readiness fingerprints, `nodeManagerSecretFingerprint` in node metadata, and Hermes API-server key fingerprints. Other roles see `state` or a `Configured` boolean. Assistant tools and MCP no longer receive readiness fingerprints.
+- Key rate limits on the verified Oathweave subject so browsers behind a shared ingress keep separate buckets. Other requests stay keyed on the socket peer.
+- `GET /ops/storage-evidence/:nodeId` now reaches agents over the same scheme as other agent calls, instead of always HTTPS. A failure answers 502 `NODE_UNREACHABLE` or `NODE_BAD_RESPONSE` with the reason and what to check, and names no address.
+- Name `WEBHOOK_ALLOWED_ORIGINS` when a webhook target is refused for not being allowlisted, and document the setting. The refusal itself is unchanged.
+- Exclude sentinel records from `GET /topology` and the topology scan, fleet readiness, predictions, the at-risk forecast, profiling, Prometheus node counts and the assistant's fleet tools.
+- Commit base-data initialization and its completion receipt atomically. The new
+  read-only `verify-initialization` command holds activation after an interrupted
+  seed, even when all SQL migrations finished, without replaying initialization.
+- Keep native Hermes preflight read-only before profile initialization; validate
+  runtime dependencies and SQLite without executing profile-dependent hooks.
+- Permit non-root HiveSkills synchronization only for the explicitly configured owner profile; owner transitions continue to require privileged mode.
+- Fence isolated restore candidates from queue workers, background writes, host
+  contact and API mutations; verify exact completed migration checksums without
+  applying or repairing schema changes.
 - Retain existing Redis job keys while supporting colon-separated queue namespaces
   with the current queue library.
+
+### Removed
+
+- Remove the dashboard's unused `/api/terminal/ws`, `join`, `share` and `promote` routes and its WebSocket terminal.
+
+### Fixed
+
+- Stop `GET /health/:nodeId/forecast` failing with 500 on a flat disk, whose rounding residue overflowed the fill date. A burst of heartbeats no longer draws a growth trend, and a fill date more than 100 years out is not published.
+- Preserve configured issuer trust for container health probes when the service
+  uses a private CA; exercise the actual probe during isolated queue rehearsals.
+
+### Security
+
+- **Security.** The dashboard's `POST /api/terminal/open` now refuses a host outside the allowlist. It previously logged a warning and connected anyway.
+- Send `Cache-Control: no-store` with the node token from `POST /api/v1/nodes/register`.
+- Stop returning the node token from `PATCH /api/v1/cron/:cronId`.
+
+### New environment variables
+
+- Server: `FLEET_GATEWAY_URL`, `FLEET_GATEWAY_TOKEN_SHA256`, `RESOURCE_ENROLLMENT_DASHBOARD_PARTICIPANT`, `OATHWEAVE_ISSUER`, `OATHWEAVE_JWKS_URL`, `OATHWEAVE_USERINFO_URL`, `MAGNUS_OATHWEAVE_IDENTITIES_JSON`, `MAGNUS_CONSOLE_BASE_PATH`, `HIVE_REHEARSAL`, `MAGNUS_HIVESKILLS_DEPLOYMENTS_JSON`. The server now also reads `MAGNUS_HERMES_ENABLED` for the console's `hermes` capability.
+- Node agent: `MAGNUS_AGENT_HIVESKILLS_TARGETS_JSON`, `MAGNUS_AGENT_SELF_URL`, `MAGNUS_AGENT_SELF_CA_PATH`.
+- Fleet gateway: see `services/fleet-gateway/README.md` and `services/fleet-gateway/.env.example`.
+
+### Migration impact
+
+- `20261105010000_base_initialization` adds the `product_initializations` completion receipt table. It is fast and leaves existing application rows unchanged. Upgrade to 2.0.0 first from earlier versions.
 
 ## [2.0.0] - 2026-11-03
 
@@ -156,12 +150,6 @@ Publication withheld after the container-context gate failed; superseded by 1.1.
 - Revision-bound staging verifies isolated compaction, primary-model continuation, exact source recovery, rebuild and previous-reader compatibility; activation exercises real runtime rollback and preserves original journals and uncertain effects.
 - Admin-only release and journal inspection, signed managed completion receipts, bounded owner subprocesses and fail-closed cancellation; no unmanaged installation fallback or automatic replay.
 - Offline published-runtime adoption and rollback acceptance runs on both supported Node versions in CI and gates publication.
-
-## [Unreleased]
-
-- Permit non-root HiveSkills synchronization only for the explicitly configured owner profile; owner transitions continue to require privileged mode.
-
-- Add a fixed endpoint-scoped HiveSkills execution bridge with explicit target grants, enrolled native signed receipts and no replay of admitted or unknown jobs.
 
 ## [1.1.8] - 2026-11-02
 

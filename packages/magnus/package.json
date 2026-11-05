@@ -1,6 +1,6 @@
 {
   "name": "@hivemagnus/magnus",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Install, upgrade and roll back a Magnus server and console with one command: `npx @hivemagnus/magnus init`, then `magnus upgrade`. Pins exact, tested component versions, backs up PostgreSQL before every migration and reverts automatically when the new version fails its health check.",
   "keywords": [
     "magnus",
@@ -47,7 +47,7 @@
     "clean": "node -e \"const fs=require('node:fs');fs.rmSync('dist',{recursive:true,force:true});fs.rmSync('tsconfig.tsbuildinfo',{force:true})\""
   },
   "dependencies": {
-    "@hivemagnus/magnus-contracts": "2.0.0"
+    "@hivemagnus/magnus-contracts": "2.1.0"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
@@ -56,66 +56,114 @@
   },
   "magnusRelease": {
     "schema": 1,
-    "version": "2.0.0",
+    "version": "2.1.0",
     "engines": {
       "node": "^24.22.1 || ^26.13.0"
     },
     "components": {
-      "@hivemagnus/magnus-server": "2.0.0",
-      "@hivemagnus/magnus-ui": "2.0.0",
-      "@hivemagnus/magnus-contracts": "2.0.0",
-      "@hivemagnus/magnus-agent": "2.0.0"
+      "@hivemagnus/magnus-server": "2.1.0",
+      "@hivemagnus/magnus-ui": "2.1.0",
+      "@hivemagnus/magnus-contracts": "2.1.0",
+      "@hivemagnus/magnus-agent": "2.1.0"
     },
     "breaking": true,
-    "minUpgradeFrom": "1.0.0",
+    "minUpgradeFrom": "2.0.0",
     "engineProtocol": 2,
     "newRequiredEnv": [],
     "newOptionalEnv": [
       {
-        "name": "CINDERTRACE_RESPONSE_SECRET",
-        "component": "server",
-        "secret": true,
-        "description": "Dedicated HMAC credential for the optional Cindertrace response bridge."
-      },
-      {
-        "name": "CINDERTRACE_RESTART_ALLOWLIST",
+        "name": "FLEET_GATEWAY_URL",
         "component": "server",
         "secret": false,
-        "description": "Services that Cindertrace may request to restart."
+        "description": "HTTPS origin of the fleet gateway. Enables the console terminal capability and receives resource enrollment console drain challenges."
       },
       {
-        "name": "CINDERTRACE_PROTECTED_TARGET_IDS",
+        "name": "FLEET_GATEWAY_TOKEN_SHA256",
         "component": "server",
         "secret": false,
-        "description": "Targets excluded from host isolation."
+        "description": "SHA-256 digest of the credential the fleet gateway presents; required when FLEET_GATEWAY_URL is set."
       },
       {
-        "name": "MAGNUS_SECURITY_RESPONSE_ENABLED",
+        "name": "RESOURCE_ENROLLMENT_DASHBOARD_PARTICIPANT",
+        "component": "server",
+        "secret": false,
+        "description": "gateway (default) sends console drain challenges to FLEET_GATEWAY_URL; absent declares no console participant and is honoured only for a node with no console work rows."
+      },
+      {
+        "name": "OATHWEAVE_ISSUER",
+        "component": "server",
+        "secret": false,
+        "description": "Exact issuer of Oathweave resource tokens (audience magnus). Cannot be combined with IAM_CORE_URL."
+      },
+      {
+        "name": "OATHWEAVE_JWKS_URL",
+        "component": "server",
+        "secret": false,
+        "description": "HTTPS JWKS URL that verifies Oathweave token signatures; required when OATHWEAVE_ISSUER is set."
+      },
+      {
+        "name": "OATHWEAVE_USERINFO_URL",
+        "component": "server",
+        "secret": false,
+        "description": "HTTPS userinfo URL for online session revocation; required when OATHWEAVE_ISSUER is set."
+      },
+      {
+        "name": "MAGNUS_OATHWEAVE_IDENTITIES_JSON",
+        "component": "server",
+        "secret": false,
+        "description": "Exact issuer and subject links to local users and role ceilings; required when OATHWEAVE_ISSUER is set."
+      },
+      {
+        "name": "MAGNUS_CONSOLE_BASE_PATH",
+        "component": "server",
+        "secret": false,
+        "description": "Path the console is served under, prefixed to links in notifications. Unset means the origin root."
+      },
+      {
+        "name": "HIVE_REHEARSAL",
+        "component": "server",
+        "secret": false,
+        "description": "Isolated restore mode with no workers, timers, queue activation, mutations or host execution. Explicit true or false."
+      },
+      {
+        "name": "MAGNUS_HIVESKILLS_DEPLOYMENTS_JSON",
+        "component": "server",
+        "secret": false,
+        "description": "Optional endpoint-scoped HiveSkills executor grants by registry ID and exact target mapping."
+      },
+      {
+        "name": "MAGNUS_AGENT_HIVESKILLS_TARGETS_JSON",
         "component": "agent",
         "secret": false,
-        "description": "Explicit opt-in to the managed security response adapter."
+        "description": "Optional exact target mapping for native HiveSkills jobs; protected credentials stay on the host."
       },
       {
-        "name": "MAGNUS_SECURITY_CONTAINMENT_COMMAND",
+        "name": "MAGNUS_AGENT_SELF_URL",
         "component": "agent",
         "secret": false,
-        "description": "Root-controlled installed containment helper path."
+        "description": "Verified HTTPS origin of this running agent for the acceptance command."
+      },
+      {
+        "name": "MAGNUS_AGENT_SELF_CA_PATH",
+        "component": "agent",
+        "secret": false,
+        "description": "Optional private CA bundle for the agent acceptance endpoint."
       }
     ],
     "removedEnv": [],
     "migrations": [
       {
-        "name": "20261103000000_cindertrace_response_bridge",
+        "name": "20261105010000_base_initialization",
         "impact": "fast",
-        "note": ""
+        "note": "Add a product-owned atomic base initialization completion receipt; existing application rows remain unchanged."
       }
     ],
     "agent": {
       "selfUpgradeProtocol": 1,
       "minLauncher": 1
     },
-    "summary": "Move embedded Security Fusion ownership to standalone Cindertrace. Preserve inventory, durable export, summaries, compatibility redirects and a narrowly authenticated managed response bridge. Existing local-mode installations must migrate security state before upgrading. Historical tables and applied migrations remain intact.",
-    "notesUrl": "https://github.com/ChefTaco/magnus/releases/tag/v2.0.0",
+    "summary": "Add the separate fleet gateway service, which holds the restricted SSH key and carries the browser web terminal, and direct Oathweave authentication for a static browser console. Resource enrollment now sends console drain challenges to the gateway at FLEET_GATEWAY_URL and fails closed without it, unless RESOURCE_ENROLLMENT_DASHBOARD_PARTICIPANT=absent. Assistant conversations, role and cron environment values and secret fingerprints are narrowed by ownership and role, and database error text no longer reaches clients. Base-data initialization and its completion receipt are committed atomically, verified before activation after an interrupted fresh install.",
+    "notesUrl": "https://github.com/ChefTaco/magnus/releases/tag/v2.1.0",
     "allowScripts": {
       "@prisma/engines": true,
       "argon2": true,
