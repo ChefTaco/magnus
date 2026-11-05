@@ -132,6 +132,19 @@ async function commandCheck(format: 'json' | 'table'): Promise<number> {
 }
 
 /** Applied and pending migrations, with impact notes (`--format json` for tooling). */
+async function commandVerifyMigrations(): Promise<number> {
+  const { resolveDatabaseUrl } = await import('./db/client.js');
+  const { verifyCurrentMigrations } = await import('./cli/migrations.js');
+  const pg = (await import('pg')).default;
+  const client = new pg.Client({ connectionString: process.env['MAGNUS_MIGRATE_DATABASE_URL']?.trim() || resolveDatabaseUrl(), connectionTimeoutMillis: 10_000 });
+  await client.connect();
+  try {
+    await verifyCurrentMigrations(client, MIGRATIONS_DIR);
+    console.log(JSON.stringify({ ok: true, migrations: 'current' }));
+    return 0;
+  } finally { await client.end().catch(() => undefined); }
+}
+
 async function commandMigrations(format: 'json' | 'table'): Promise<number> {
   const { resolveDatabaseUrl } = await import('./db/client.js');
   const { readMigrationState } = await import('./cli/migrations.js');
@@ -268,6 +281,8 @@ async function commandStart(options: CliOptions): Promise<void> {
   // too so startup switches such as MAGNUS_AUTO_MIGRATE see the same values.
   const packageEnv = join(PACKAGE_ROOT, '.env');
   if (!process.env['MAGNUS_ENV_FILE'] && existsSync(packageEnv)) { process.loadEnvFile(packageEnv); dropEmptyValues(); }
+  const { rehearsalEnabled } = await import('./config/rehearsal.js');
+  if (rehearsalEnabled() && (options.migrate || process.env['MAGNUS_AUTO_MIGRATE'] === 'true')) fatal('Isolated rehearsal requires explicit migrations before startup; automatic migration must be disabled.');
   if (options.migrate) await migrate();
   else await startupAutoMigrate();
   await import('./index.js');
@@ -290,6 +305,9 @@ async function run(argv: readonly string[]): Promise<number> {
     case 'check':
       loadEnvFiles(options.envFiles);
       return commandCheck(options.formatGiven ? options.format : 'table');
+    case 'verify-migrations':
+      loadEnvFiles(options.envFiles);
+      return commandVerifyMigrations();
     case 'migrations':
       loadEnvFiles(options.envFiles);
       return commandMigrations(options.formatGiven ? options.format : 'table');

@@ -3,6 +3,7 @@
  * `magnus-server migrate`, `check` and startup auto-migrate.
  */
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { basename, dirname, join } from 'node:path';
@@ -38,6 +39,25 @@ export function packagedMigrations(migrationsDir: string): string[] {
     .filter(entry => entry.isDirectory() && existsSync(join(migrationsDir, entry.name, 'migration.sql')))
     .map(entry => entry.name)
     .sort();
+}
+
+/** Strict initialization receipt verification. SELECT only; never repairs history. */
+export async function verifyCurrentMigrations(client: Pick<pg.Client, 'query'>, migrationsDir: string): Promise<void> {
+  const packaged = packagedMigrations(migrationsDir);
+  if (!packaged.length) throw new Error('Packaged migrations are unavailable; select the owned migration artifact');
+  const table = await client.query<{ exists: boolean }>(`SELECT to_regclass('public._prisma_migrations') IS NOT NULL AS exists`);
+  if (!table.rows[0]?.exists) throw new Error('Migration history is absent; initialization has not completed');
+  const rows = (await client.query<{ migration_name: string; checksum: string; finished_at: Date | null; rolled_back_at: Date | null }>(
+    'SELECT migration_name, checksum, finished_at, rolled_back_at FROM _prisma_migrations ORDER BY migration_name')).rows;
+  const active = rows.filter(row => !row.rolled_back_at);
+  if (active.some(row => !row.finished_at)) throw new Error('An unfinished migration requires explicit recovery');
+  if (active.length !== packaged.length || active.some(row => !packaged.includes(row.migration_name)))
+    throw new Error('Database migration history differs from this exact release');
+  for (const name of packaged) {
+    const matching = active.filter(row => row.migration_name === name);
+    const expected = createHash('sha256').update(readFileSync(join(migrationsDir, name, 'migration.sql'))).digest('hex');
+    if (matching.length !== 1 || matching[0]!.checksum !== expected) throw new Error('A completed migration checksum differs from its immutable packaged source');
+  }
 }
 
 /**

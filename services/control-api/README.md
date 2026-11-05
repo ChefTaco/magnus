@@ -121,6 +121,15 @@ without any of them. `magnus-server check` prints which are on.
 | Agent discovery | Agents self-register | `ENABLE_AGENT_DISCOVERY=true`, `AGENT_DISCOVERY_SECRET` |
 | Resource leases | Durable node and shared-resource lease coordination | `MAGNUS_RESOURCE_LEASES_ENABLED=true` |
 
+For an isolated restore, set `HIVE_REHEARSAL=true` and
+`MAGNUS_AUTO_MIGRATE=false`. The API keeps read access but holds mutations,
+terminal WebSockets, queue activation, host contact, collectors, retention,
+reconciliation, updates and catalogue imports. Existing queued work remains
+dormant. Run explicitly reviewed migrations separately before starting the
+candidate. `magnus-server verify-migrations` verifies the exact packaged,
+completed migration checksums using read-only queries; pending, failed, missing,
+unknown or changed migrations fail. It does not initialize or repair the database.
+
 Credentials for services that call Magnus are stored only as SHA-256 digests.
 
 SSH helpers require `SSH_HOST_KEY_PINS_FILE` before they open a connection.

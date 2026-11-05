@@ -1,0 +1,4 @@
+**
+!tooling/native-codex/package.json
+!tooling/native-codex/package-lock.json
+!tooling/native-codex/launcher.mjs

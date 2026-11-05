@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import { readFileSync, existsSync } from 'node:fs';
 import { createServer } from 'node:https';
 import { resolveListenerSecurity } from './config/listener-security.js';
+import { rehearsalEnabled, startLiveBackgroundServices } from './config/rehearsal.js';
 
 // Load the env file before any other imports read process.env. The CLI passes
 // `--env-file` through MAGNUS_ENV_FILE; otherwise the package-level .env is used
@@ -11,6 +12,7 @@ import { resolveListenerSecurity } from './config/listener-security.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const envFile = process.env['MAGNUS_ENV_FILE'] ? resolve(process.env['MAGNUS_ENV_FILE']) : resolve(__dirname, '../.env');
 if (existsSync(envFile)) config({ path: envFile, quiet: true });
+rehearsalEnabled(); // Invalid safety flags fail before opening any listener.
 
 // Validate required secrets before starting anything
 const { validateSecrets } = await import('./utils/env.js');
@@ -56,6 +58,7 @@ const { CONTROL_API_VERSION } = await import('./config/version.js');
 
 /** Background services shared by the TLS and development listeners. */
 function startBackgroundServices(listenPort: number): void {
+  const started = startLiveBackgroundServices(() => {
   writeRuntimeFile({ version: CONTROL_API_VERSION, port: listenPort, host: listener.hostname });
   startNodeIssueMonitor();
   startUpgradeReadinessMonitor();
@@ -75,6 +78,8 @@ function startBackgroundServices(listenPort: number): void {
     void importPackageSkills().then(result => console.log(`[hermes-registry] catalog import: ${JSON.stringify(result)}`))
       .catch(error => console.error('[hermes-registry] catalog import failed', error));
   }
+  });
+  if (!started) console.log('[startup] isolated rehearsal: background consumers and queue activation disabled');
 }
 
 // Relative TLS paths resolve against the working directory; prefer absolute paths.
@@ -116,7 +121,7 @@ const server = listener.useTls
     console.log(`🚀 Magnus server listening on http://${listener.hostname}:${info.port} (development opt-in)`);
     startBackgroundServices(info.port);
   });
-const terminalWss = setupTerminalWebSocket(server);
+const terminalWss = rehearsalEnabled() ? undefined : setupTerminalWebSocket(server);
 
 // ── Graceful shutdown ──
 let shuttingDown = false;
@@ -143,10 +148,10 @@ async function shutdown(signal: string) {
       stopCodexFleetMonitor();
       stopUpdateCheck();
       stopExtensionSourceMonitor();
-      for (const client of terminalWss.clients) client.terminate();
+      for (const client of terminalWss?.clients ?? []) client.terminate();
       const httpClosed = new Promise<void>((resolvePromise) => server.close(() => resolvePromise()));
       (server as typeof server & { closeAllConnections?: () => void }).closeAllConnections?.();
-      const webSocketsClosed = new Promise<void>((resolvePromise) => terminalWss.close(() => resolvePromise()));
+      const webSocketsClosed = terminalWss ? new Promise<void>((resolvePromise) => terminalWss.close(() => resolvePromise())) : Promise.resolve();
       await Promise.all([httpClosed, webSocketsClosed]);
       await closeCommandQueue();
       await closeWebhookQueue();

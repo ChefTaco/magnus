@@ -22,6 +22,7 @@ function configuredDigestValues(raw: string | undefined): string[] {
 const DEFAULT_SKILLS_DIR = path.resolve(import.meta.dirname, '../../skills');
 
 export const envSchema = z.object({
+  HIVE_REHEARSAL: booleanEnvSchema,
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error', 'fatal']).default('info'),
 

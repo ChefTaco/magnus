@@ -30,7 +30,7 @@ test('native product layouts are explicitly owned and reviewed before Docker acc
   const temporary = mkdtempSync(join(tmpdir(), 'magnus-native-product-'));
   try {
     const execute = () => { throw Error('Reached immutable image review'); };
-    for (const product of ['magnus', 'ardent'])
+    for (const product of ['magnus', 'ardent', 'codex'])
       assert.throws(() => buildNativeAgent({ image: 'sha256:' + '0'.repeat(64), output: join(temporary, product), product }, execute), /immutable image review/);
     assert.throws(() => buildNativeAgent({ image: 'sha256:' + '0'.repeat(64), output: join(temporary, 'other'), product: '../other' }, execute), /owned native product/);
   } finally { rmSync(temporary, { recursive: true, force: true }); }

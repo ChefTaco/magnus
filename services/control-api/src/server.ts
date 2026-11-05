@@ -64,8 +64,10 @@ import { opsRouter } from './routes/ops.js';
 import { mcpRouter } from './routes/mcp.js';
 import { securityFusionRouter } from './routes/security-fusion.js';
 import { resolveCorsConfiguration } from './config/cors.js';
+import { rehearsalReadOnly } from './config/rehearsal.js';
 
 export const app = new Hono<AppVariables>();
+app.use('*', rehearsalReadOnly);
 
 // ── Global middleware ──
 app.use('*', logger());

@@ -6,6 +6,11 @@ All notable changes to this project are documented in this file. The format is b
 
 ## Unreleased
 
+- Fence isolated restore candidates from queue workers, background writes, host
+  contact and API mutations; verify exact completed migration checksums without
+  applying or repairing schema changes.
+- Export pinned Codex native artifacts with explicit private profile selection,
+  preserved credentials and verified external Responses streaming acceptance.
 - Add protected Ardent native artifacts from locked production dependencies,
   private environment references and authenticated gateway acceptance. Verify
   exact version/profile and dependency readiness without invoking tools.

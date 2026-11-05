@@ -25,6 +25,7 @@ const secret32 = (name: string, description: string): EnvVariable =>
 
 export const ENV_CATALOG: readonly EnvVariable[] = [
   // ── Core ──
+  { name: 'HIVE_REHEARSAL', group: 'core', default: 'false', description: 'Isolated restore mode: no workers, timers, queue activation, mutations, host execution or terminal WebSockets. Explicit true/false only.' },
   { name: 'NODE_ENV', group: 'core', default: 'development', description: 'development, production or test. Production enforces TLS, DATABASE_URL and strict CORS.' },
   { name: 'LOG_LEVEL', group: 'core', default: 'info', description: 'debug, info, warn, error or fatal.' },
   { name: 'MAGNUS_ROUTE_ALIASES_JSON', group: 'core', description: 'Optional JSON object mapping legacy /api/v1 path prefixes to current ones, for clients built against older route names. Requests are rewritten before routing, so auth and audit see the current path. Unset means no aliases.' },

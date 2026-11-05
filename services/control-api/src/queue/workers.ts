@@ -2,6 +2,7 @@ import { ResourceLeaseConflict } from '../services/command-resource-leases.js';
 import { recordMonitorPulse } from '../services/monitor-pulse.js';
 import { Queue, Worker, type Job } from 'bullmq';
 import { bullQueueIdentity } from './names.js';
+import { assertLiveExecution } from '../config/rehearsal.js';
 import { addDurableJob } from './requeue.js';
 import { validateRemediationCommandForDispatch } from '../services/remediation-service.js';
 import { reconcileCommands } from '../services/command-lifecycle.js';
@@ -39,6 +40,7 @@ const NODE_HEARTBEAT_FRESHNESS_MS = Number(
 
 /** Get the singleton command queue instance. */
 export function getCommandQueue(): Queue<CommandJobPayload> {
+  assertLiveExecution();
   if (!_commandQueue) {
     _commandQueue = new Queue<CommandJobPayload>(COMMAND_QUEUE.name, {
       prefix: COMMAND_QUEUE.prefix,
@@ -90,6 +92,7 @@ export async function enqueueCommand(commandId: string): Promise<void> {
 
 /** Start the command execution worker. */
 export function startCommandWorker(): Worker<CommandJobPayload> {
+  assertLiveExecution();
   if (_commandWorker) return _commandWorker;
   const worker = new Worker<CommandJobPayload>(
     COMMAND_QUEUE.name,

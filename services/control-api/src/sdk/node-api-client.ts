@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { assertLiveExecution } from '../config/rehearsal.js';
 import { MANAGED_CLAIM_HEADER, credentialMutationIdentity, httpIdentity, httpReceiptBody, managedHttpRequestSchema } from '../security/managed-http.js';
 import { nativeCompletionDescriptor, nativeCompletionResourceKey } from '../security/native-completion-registry.js';
 import { COMMAND_COMPLETION_REGISTRY, COMMAND_COMPLETION_REGISTRY_SHA256, commandCompletionDescriptor } from '../security/command-completion-registry.js';
@@ -245,7 +246,7 @@ export class NodeApiClient {
       headers: {
         'x-node-token': options.nodeToken,
       },
-      hooks: { afterResponse: [rejectUnprivilegedAgent] },
+      hooks: { beforeRequest: [() => assertLiveExecution()], afterResponse: [rejectUnprivilegedAgent] },
     });
   }
 

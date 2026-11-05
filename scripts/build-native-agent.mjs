@@ -87,8 +87,9 @@ function protectTree(root) {
 }
 export function buildNativeAgent(
   { image, output, product: selected = 'magnus' },
-  execute = (command, args) =>
+  execute = (command, args, environment) =>
     execFileSync(command, args, {
+      ...(environment ? { env: environment } : {}),
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       maxBuffer: 16 * 1024 * 1024,
@@ -102,9 +103,13 @@ export function buildNativeAgent(
     ardent: { root: '/opt/ardent', name: '@hivemagnus/ardent', bin: 'ardent', entry: 'native-entry.js',
       arguments: ['--env-file', '@ENV_FILE@', '--profile-path', '@PROFILE@', 'gateway', 'run'],
       acceptanceArguments: ['--env-file', '@ENV_FILE@', '--profile-path', '@PROFILE@', 'acceptance'] },
+    codex: { root: '/opt/codex', name: '@openai/codex', bin: 'codex', launcher: 'launcher.mjs',
+      arguments: ['--env-file', '@ENV_FILE@', '--profile-path', '@PROFILE@', 'app-server', '--listen', 'stdio://'],
+      versionPrefix: 'codex-cli ',
+      preflightArguments: ['--env-file', '@ENV_FILE@', '--profile-path', '@PROFILE@', '--version'] },
   };
   const layout = layouts[selected];
-  if (!layout) throw Error('Select an owned native product: magnus or ardent');
+  if (!layout) throw Error('Select an owned native product: magnus, ardent or codex');
   const destination = resolve(output);
   if (existsSync(destination))
     throw Error(
@@ -122,6 +127,9 @@ export function buildNativeAgent(
   chmodSync(destination, 0o700);
   const temporary = mkdtempSync(join(tmpdir(), 'magnus-native-')),
     container = 'magnus-native-export-' + randomBytes(8).toString('hex');
+  const preflightHome = join(temporary, 'preflight-home');
+  mkdirSync(preflightHome, { mode: 0o700 });
+  const nativeEnvironment = { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: preflightHome, LANG: 'C.UTF-8' };
   let created = false;
   const put = (name, value) => {
     const path = join(destination, name);
@@ -154,7 +162,7 @@ export function buildNativeAgent(
       join(bundle, 'runtime/node'),
     ]);
     chmodSync(join(bundle, 'runtime/node'), 0o700);
-    const nodeVersion = execute(join(bundle, 'runtime/node'), ['--version']);
+    const nodeVersion = execute(join(bundle, 'runtime/node'), ['--version'], nativeEnvironment);
     const packageFile = join(
       bundle,
       'app/node_modules/' + layout.name + '/package.json',
@@ -172,12 +180,16 @@ export function buildNativeAgent(
       launcher,
       '#!/usr/bin/env bash\nset -euo pipefail\numask 077\nartifact=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)\n' +
       'exec "$artifact/runtime/node" ' +
-      '"$artifact/app/node_modules/' + layout.name + '/dist/' + layout.entry + '" "$@"\n',
+      '"$artifact/app/' + (layout.launcher ?? 'node_modules/' + layout.name + '/dist/' + layout.entry) + '" "$@"\n',
       { mode: 0o700 },
     );
     protectTree(bundle);
-    const version = execute(launcher, ['--version']);
-    if (version !== product.version)
+    const preflightArguments = layout.preflightArguments ?? ['--version'];
+    const profile = join(temporary, 'preflight-profile'), environmentFile = join(temporary, 'preflight.env');
+    mkdirSync(profile, { mode: 0o700 });
+    writeFileSync(environmentFile, '', { mode: 0o600 });
+    const version = execute(launcher, preflightArguments.map(value => value === '@PROFILE@' ? profile : value === '@ENV_FILE@' ? environmentFile : value), nativeEnvironment);
+    if (version !== (layout.versionPrefix ?? '') + product.version)
       throw Error('Native launcher version does not match its package');
     const name = `${layout.bin}-${product.version}-linux-${architecture}.tar.gz`,
       archive = join(destination, name);
@@ -213,7 +225,7 @@ export function buildNativeAgent(
       sha256,
       executable: 'bin/' + layout.bin,
       arguments: layout.arguments,
-      preflight: { arguments: ['--version'], expectedOutput: version },
+      preflight: { arguments: preflightArguments, expectedOutput: version },
       acceptanceArguments: layout.acceptanceArguments,
       published: false,
     });
@@ -240,7 +252,7 @@ if (
         value = process.argv[index + 1];
       if (!['--image', '--output', '--product'].includes(key) || !value)
         throw Error(
-          'Usage: build-native-agent.mjs --image PINNED_IMAGE --output NEW_DIRECTORY [--product magnus|ardent]',
+          'Usage: build-native-agent.mjs --image PINNED_IMAGE --output NEW_DIRECTORY [--product magnus|ardent|codex]',
         );
       options[key.slice(2)] = value;
     }

@@ -1,4 +1,5 @@
 import { bullQueueIdentity } from '../queue/names.js';
+import { assertLiveExecution } from '../config/rehearsal.js';
 import { recordMonitorPulse } from './monitor-pulse.js';
 import { WEBHOOK_FORMATS, webhookFormat } from './webhook-types.js';
 import { redactUnknown } from '../utils/redact.js';
@@ -33,6 +34,7 @@ let _webhookWorker: Worker<WebhookJobPayload> | null = null;
 
 /** Get the singleton webhook queue instance. */
 export function getWebhookQueue(): Queue {
+  assertLiveExecution();
   if (!_webhookQueue) {
     _webhookQueue = new Queue(WEBHOOK_QUEUE.name, { prefix: WEBHOOK_QUEUE.prefix, connection: { url: REDIS_URL } });
   }
@@ -261,6 +263,7 @@ export async function claimMattermostAttempt(deliveryId: string): Promise<boolea
 
 /** Start the webhook delivery worker. */
 export function startWebhookWorker(): Worker<WebhookJobPayload> {
+  assertLiveExecution();
   if (_webhookWorker) return _webhookWorker;
   // Force the dedicated at-rest key to be present before accepting queued work.
   encryptWebhookCredential('', 'startup-check', 'secret');
