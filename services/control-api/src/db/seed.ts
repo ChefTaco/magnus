@@ -6,7 +6,7 @@
  */
 import { randomBytes } from 'node:crypto';
 import argon2 from 'argon2';
-import type { PrismaClient } from './generated/prisma/client.js';
+import type { PrismaClient, Prisma } from './generated/prisma/client.js';
 
 /** Argon2id config per project security conventions. */
 const ARGON2_OPTIONS = {
@@ -22,6 +22,15 @@ async function hashPassword(password: string): Promise<string> {
 
 /** Idempotently create the system actor, sentinel nodes and library content. */
 export async function seedDatabase(prisma: PrismaClient, log: (line: string) => void = console.log): Promise<void> {
+  await prisma.$transaction(async (transaction) => {
+    await seedBaseData(transaction, log);
+    await transaction.productInitialization.upsert({
+      where: { id: 'base-data-v1' }, update: {}, create: { id: 'base-data-v1' },
+    });
+  }, { timeout: 60_000 });
+}
+
+async function seedBaseData(prisma: Prisma.TransactionClient, log: (line: string) => void): Promise<void> {
   log('🌱 Seeding database…');
 
   // ── System user (used by API-secret / agent auth) ──

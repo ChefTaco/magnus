@@ -132,7 +132,7 @@ async function commandCheck(format: 'json' | 'table'): Promise<number> {
 }
 
 /** Applied and pending migrations, with impact notes (`--format json` for tooling). */
-async function commandVerifyMigrations(): Promise<number> {
+async function commandVerifyMigrations(initialization = false): Promise<number> {
   const { resolveDatabaseUrl } = await import('./db/client.js');
   const { verifyCurrentMigrations } = await import('./cli/migrations.js');
   const pg = (await import('pg')).default;
@@ -140,7 +140,11 @@ async function commandVerifyMigrations(): Promise<number> {
   await client.connect();
   try {
     await verifyCurrentMigrations(client, MIGRATIONS_DIR);
-    console.log(JSON.stringify({ ok: true, migrations: 'current' }));
+    if (initialization) {
+      const { verifyInitialization } = await import('./cli/verify-initialization.js');
+      await verifyInitialization(client);
+    }
+    console.log(JSON.stringify({ ok: true, migrations: 'current', ...(initialization ? { initialization: 'complete' } : {}) }));
     return 0;
   } finally { await client.end().catch(() => undefined); }
 }
@@ -308,6 +312,9 @@ async function run(argv: readonly string[]): Promise<number> {
     case 'verify-migrations':
       loadEnvFiles(options.envFiles);
       return commandVerifyMigrations();
+    case 'verify-initialization':
+      loadEnvFiles(options.envFiles);
+      return commandVerifyMigrations(true);
     case 'migrations':
       loadEnvFiles(options.envFiles);
       return commandMigrations(options.formatGiven ? options.format : 'table');

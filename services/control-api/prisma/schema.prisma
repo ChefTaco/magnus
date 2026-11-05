@@ -44,6 +44,15 @@ enum UserRole {
   VIEWER
 }
 
+// Product-owned completion receipt. A schema migration alone does not prove that
+// the fresh installation's required base-data transaction committed.
+model ProductInitialization {
+  id          String   @id
+  completedAt DateTime @default(now())
+
+  @@map("product_initializations")
+}
+
 // ─── Nodes ───
 
 model Node {

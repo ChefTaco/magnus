@@ -1,0 +1,1 @@
+{"schema":1,"migration":"20261105010000_base_initialization","impact":"fast","note":"Add a product-owned atomic base initialization completion receipt; existing application rows remain unchanged."}

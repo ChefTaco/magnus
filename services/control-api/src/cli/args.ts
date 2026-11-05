@@ -1,5 +1,5 @@
 /** Argument parsing for the `magnus-server` CLI (no dependencies, strict). */
-export type CliCommand = 'start' | 'check' | 'migrate' | 'migrations' | 'verify-migrations' | 'backup' | 'restore' | 'upgrade' | 'rollback' | 'agents' | 'env-schema' | 'help' | 'version';
+export type CliCommand = 'start' | 'check' | 'migrate' | 'migrations' | 'verify-migrations' | 'verify-initialization' | 'backup' | 'restore' | 'upgrade' | 'rollback' | 'agents' | 'env-schema' | 'help' | 'version';
 
 export interface CliOptions {
   command: CliCommand;
@@ -29,6 +29,7 @@ Commands:
   check         Validate configuration and reach PostgreSQL and Redis; list enabled integrations
   migrate       Apply pending migrations (prisma migrate deploy) and base data
   verify-migrations Verify exact completed migration checksums without applying changes
+  verify-initialization Verify migrations and committed base initialization without changes
   migrations    Show applied and pending migrations with their impact notes
   backup        Dump PostgreSQL (pg_dump -Fc) into MAGNUS_BACKUP_DIR and print the restore command
   restore FILE  Replace the database with a dump (stop the server first; asks unless --yes)
@@ -49,7 +50,7 @@ Options:
   -v, --version       Print the version
 `;
 
-const COMMANDS = new Set<CliCommand>(['start', 'check', 'migrate', 'migrations', 'verify-migrations', 'backup', 'restore', 'upgrade', 'rollback', 'agents', 'env-schema', 'help', 'version']);
+const COMMANDS = new Set<CliCommand>(['start', 'check', 'migrate', 'migrations', 'verify-migrations', 'verify-initialization', 'backup', 'restore', 'upgrade', 'rollback', 'agents', 'env-schema', 'help', 'version']);
 /** Commands whose remaining arguments belong to another tool. */
 const PASSTHROUGH = new Set<CliCommand>(['upgrade', 'rollback', 'agents']);
 
