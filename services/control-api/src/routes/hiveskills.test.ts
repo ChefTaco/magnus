@@ -9,7 +9,7 @@ vi.mock('../utils/env.js',()=>({getNodeManagerSecret:()=> 'obviously-fake-node-s
 const {hiveskillsRouter}=await import('./hiveskills.js');
 const app=new Hono().route('/hiveskills',hiveskillsRouter).onError((e,c)=>c.json({error:e.message},'status' in e?Number(e.status) as 400:500));
 const token='obviously-fake-endpoint-scoped-registry-credential',hash=(value:string)=>createHash('sha256').update(value).digest('hex');
-const manifest={schemaVersion:1,channel:'stable',skills:[{slug:'fixture-skill',version:'1.0.0',sha256:'a'.repeat(64)}]};
+const manifest={schemaVersion:1,channel:'stable',skills:[{slug:'fixture-skill',name:'Fixture Skill',version:'1.0.0',sha256:'a'.repeat(64),compatibility:{minHermesVersion:null,maxHermesVersion:null},archiveUrl:'https://skills.example.com/v1/skills/fixture-skill/releases/1.0.0/archive'}]};
 const body=()=>({target:'fixture-target',manifest,publicationSha256:hash(JSON.stringify(manifest)),approvedBy:'admin'});
 function send(id:string,input:unknown=body(),credential=token){return app.request('/hiveskills/jobs/'+id,{method:'POST',headers:{authorization:'Bearer '+credential,'content-type':'application/json'},body:JSON.stringify(input)})}
 beforeEach(()=>{vi.clearAllMocks();process.env['MAGNUS_HIVESKILLS_DEPLOYMENTS_JSON']=JSON.stringify({'fixture-registry':{tokenSha256:hash(token),targets:{'fixture-target':{nodeId:'fixture-node',agentTarget:'fixture-agent-target'}}}});mocks.db.node.findUnique.mockResolvedValue({id:'fixture-node',hostname:'node.example.com',ipAddress:'192.0.2.1',port:4100,status:'ONLINE'});mocks.db.remoteCommand.findUnique.mockResolvedValue(null);mocks.sync.mockResolvedValue({response:{success:true},evidence:{commandSha256:'b'.repeat(64)}})});

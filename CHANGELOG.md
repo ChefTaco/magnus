@@ -100,6 +100,8 @@ Publication withheld after the container-context gate failed; superseded by 1.1.
 
 ## [Unreleased]
 
+- Permit non-root HiveSkills synchronization only for the explicitly configured owner profile; owner transitions continue to require privileged mode.
+
 - Add a fixed endpoint-scoped HiveSkills execution bridge with explicit target grants, enrolled native signed receipts and no replay of admitted or unknown jobs.
 
 ## [1.1.8] - 2026-11-02

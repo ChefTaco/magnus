@@ -11,7 +11,7 @@ export type PrivilegedFeature = 'cron' | 'users' | 'system-updates' | 'docker-gr
 
 /** Features that need root, with the routes or loops they cover. */
 export const PRIVILEGED_FEATURES: ReadonlyArray<{ feature: PrivilegedFeature; covers: string }> = [
-  { feature: 'hiveskills-sync', covers: 'POST /api/v1/hiveskills/sync (owner-scoped product client reconciliation)' },
+  { feature: 'hiveskills-sync', covers: 'POST /api/v1/hiveskills/sync when changing owner or running as root; own-profile non-root synchronization remains available' },
   { feature: 'cron', covers: '/api/v1/cron/* (system and managed crontab, scheduler inventory and drain)' },
   { feature: 'users', covers: '/api/v1/users/* (local account provisioning and passwords)' },
   { feature: 'system-updates', covers: 'POST /api/v1/health/system-updates/enable (APT package install, systemd timers)' },

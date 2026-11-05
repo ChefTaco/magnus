@@ -213,9 +213,9 @@ retain their node ownership for explicit reconciliation.
 
 Each node explicitly configures `MAGNUS_AGENT_HIVESKILLS_TARGETS_JSON`: registry ID,
 registry target, owner, home, Hermes profile directory, protected environment-file
-path, root-owned pinned sync script and Node executable. The privileged native
+path, root-owned pinned sync script, Node executable and optional `caFile` trust bundle. The trust bundle is passed at Node startup; target bearer credentials remain in the protected environment file. The owner-scoped native
 handler runs that fixed product client as the configured owner, with sanitized
 environment and bounded output. No infrastructure or native target credential is
 sent by the browser or included in a job body. The client receives the frozen
 approved publication and independently checks archive origin, digest and local
-Hermes compatibility. No SSH or Docker socket is used by this path.
+Hermes compatibility. A non-root agent may synchronize its own explicit profile. Changing owner or running as root requires privileged mode. No SSH or Docker socket is used by this path.

@@ -29,7 +29,7 @@ export interface EnvSchemaDocument {
 export const DEFAULT_PORT = 4100;
 
 export const agentEnvCatalog: EnvVarSpec[] = [
-  { name: 'MAGNUS_AGENT_HIVESKILLS_TARGETS_JSON', required: false, secret: false, group: 'skills', description: 'Optional target -> exact registryId, owner, home, hermesHome, envFile, syncScript and nodeBinary mapping for native HiveSkills jobs; protected credentials stay on the host.' },
+  { name: 'MAGNUS_AGENT_HIVESKILLS_TARGETS_JSON', required: false, secret: false, group: 'skills', description: 'Optional target -> exact registryId, owner, home, hermesHome, envFile, syncScript, nodeBinary and optional caFile mapping for native HiveSkills jobs; protected credentials stay on the host.' },
   { name: 'MAGNUS_AGENT_SELF_URL', required: false, secret: false, group: 'runtime', description: 'Verified HTTPS origin of this running agent for the acceptance command. No credentials, path or query.' },
   { name: 'MAGNUS_AGENT_SELF_CA_PATH', required: false, secret: false, group: 'tls', description: 'Optional private CA bundle for the agent acceptance endpoint. Certificate verification remains mandatory.' },
   { name: 'MAGNUS_SECURITY_RESPONSE_ENABLED', required: false, secret: false, default: 'false', group: 'runtime', description: 'Opt in to the narrowly registered managed Cindertrace response endpoint.' },

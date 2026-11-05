@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { Hono } from 'hono';
 import { z } from 'zod';
+import { HiveSkillsPublicationSchema } from '@hivemagnus/magnus-contracts';
 import type { AppVariables } from '../types/index.js';
 import { getDb } from '../db/index.js';
 import { HttpError } from '../middleware/error-handler.js';
@@ -13,7 +14,7 @@ import { httpIdentity } from '../security/managed-http.js';
 
 const slug=z.string().regex(/^[a-z0-9][a-z0-9-]{1,62}$/);
 export const skillsExecutorConfig=z.record(slug,z.object({tokenSha256:z.string().regex(/^[a-f0-9]{64}$/),targets:z.record(slug,z.object({nodeId:z.string().min(1).max(128),agentTarget:slug}).strict())}).strict());
-export const skillJobRequest=z.object({target:slug,publicationSha256:z.string().regex(/^[a-f0-9]{64}$/),manifest:z.object({schemaVersion:z.literal(1),channel:z.enum(['stable','canary']),skills:z.array(z.record(z.string(),z.unknown())).max(1000)}).strict(),approvedBy:z.string().min(1).max(200)}).strict();
+export const skillJobRequest=z.object({target:slug,publicationSha256:z.string().regex(/^[a-f0-9]{64}$/),manifest:HiveSkillsPublicationSchema,approvedBy:z.string().min(1).max(200)}).strict();
 export const hiveskillsRouter=new Hono<AppVariables>();
 function authorize(header:string|undefined){
  let raw:unknown;try{raw=JSON.parse(process.env['MAGNUS_HIVESKILLS_DEPLOYMENTS_JSON']??'{}')}catch{throw new HttpError(503,'HIVESKILLS_UNCONFIGURED','Invalid Skills executor configuration')}
