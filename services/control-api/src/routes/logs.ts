@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { streamSSE } from 'hono/streaming';
+import { watchOathweaveStream } from '../middleware/oathweave.js';
 import { getDb } from '../db/index.js';
 import type { AppVariables, LogChunk, LogLevel, LogSource } from '../types/index.js';
 import { authMiddleware } from '../middleware/auth.js';
@@ -176,9 +177,14 @@ logsRouter.get('/stream', (c) => {
       });
     });
 
+    const stopWatching = watchOathweaveStream(c.req.header('Authorization'), () => {
+      void stream.close();
+    });
+
     // Wait until the client disconnects
     stream.onAbort(() => {
       clearInterval(heartbeatTimer);
+      stopWatching();
       unsubscribe();
     });
 

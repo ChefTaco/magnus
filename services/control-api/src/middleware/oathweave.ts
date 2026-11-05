@@ -82,3 +82,31 @@ export async function oathweaveRateLimitSubject(token: string): Promise<string |
     return undefined;
   }
 }
+
+/** How often an open stream re-checks its token. See OATHWEAVE_SESSION_CACHE_TTL_MS. */
+export const OATHWEAVE_STREAM_RECHECK_MS = 5_000;
+
+/**
+ * Authentication runs once when a stream opens, so a long-lived stream would
+ * otherwise outlive logout and token expiry. Calls onRevoked once the bearer
+ * token stops authenticating; the browser reconnects with a fresh token.
+ * Returns a function that stops watching. Other credentials are not watched.
+ */
+export function watchOathweaveStream(authorization: string | undefined, onRevoked: () => void): () => void {
+  const token = authorization?.startsWith('Bearer ') ? authorization.slice(7) : '';
+  if (!isOathweaveToken(token)) return () => undefined;
+  let stopped = false;
+  const stop = () => {
+    stopped = true;
+    clearInterval(timer);
+  };
+  const timer = setInterval(() => {
+    oathweaveAuthentication(token).catch(() => {
+      if (stopped) return;
+      stop();
+      onRevoked();
+    });
+  }, OATHWEAVE_STREAM_RECHECK_MS);
+  timer.unref();
+  return stop;
+}

@@ -26,11 +26,12 @@ export interface OathweaveIdentity {
 }
 
 /**
- * Upper bound on how long a revoked session keeps working here. Measured from
- * the moment the last userinfo request started, not from when it answered, so
- * a slow identity service cannot stretch the bound.
+ * How long a userinfo answer is reused. Measured from the moment that request
+ * started, not from when it answered, so a slow identity service cannot stretch
+ * it. Together with OATHWEAVE_STREAM_RECHECK_MS this keeps logout effective
+ * within 15 seconds on open streams as well as on ordinary requests.
  */
-export const OATHWEAVE_SESSION_CACHE_TTL_MS = 15_000;
+export const OATHWEAVE_SESSION_CACHE_TTL_MS = 10_000;
 // Long enough to stop one failing request verifying twice, short enough that a
 // network blip does not lock anyone out.
 const FAILED_CHECK_TTL_MS = 2_000;
@@ -51,7 +52,7 @@ export function createOathweaveVerifier(
     if (!isOathweaveEndpoint(value)) throw new Error('Oathweave endpoints require verified HTTPS');
   }
   const request: typeof fetch = overrides.fetch ?? ((input, init) => fetch(input, init));
-  const now = overrides.now ?? Date.now;
+  const now = overrides.now ?? (() => Date.now());
   const keys = overrides.keys ?? createRemoteJWKSet(new URL(options.jwksUrl), {
     [customFetch]: (url, init) => request(url, {
       ...init,

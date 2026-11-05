@@ -24,7 +24,7 @@ vi.mock('../services/credential-rotation-service.js', () => ({
 const { authMiddleware, signUserToken } = await import('./auth.js');
 const { errorHandler } = await import('./error-handler.js');
 const { createOathweaveVerifier, OATHWEAVE_SESSION_CACHE_TTL_MS, resetOathweaveVerifier } = await import('./oathweave-verifier.js');
-const { linkedMagnusIdentity } = await import('./oathweave.js');
+const { linkedMagnusIdentity, OATHWEAVE_STREAM_RECHECK_MS, watchOathweaveStream } = await import('./oathweave.js');
 const { consoleRouter } = await import('../routes/console.js');
 const { consoleSessionResponseSchema } = await import('@hivemagnus/magnus-contracts/browser');
 
@@ -298,20 +298,21 @@ describe('session revocation cache', () => {
   }
   const issuedAtStart = () => mint({ issuedAt: START / 1000, expiresAt: START / 1000 + 600 });
 
-  it('allows at most fifteen seconds of caching', () => {
+  it('allows at most fifteen seconds of staleness, including on an open stream', () => {
     expect(OATHWEAVE_SESSION_CACHE_TTL_MS).toBeLessThanOrEqual(15_000);
+    expect(OATHWEAVE_SESSION_CACHE_TTL_MS + OATHWEAVE_STREAM_RECHECK_MS).toBeLessThanOrEqual(15_000);
   });
 
   it('collapses five-second pollers onto one userinfo request per window', async () => {
     const clock = { now: START };
     const { verify, calls } = verifierAt(clock, () => Response.json({ sub: SUBJECT }));
     const token = await issuedAtStart();
-    for (let seconds = 0; seconds < 15; seconds += 5) {
-      clock.now = START + seconds * 1000;
+    for (let ms = 0; ms < OATHWEAVE_SESSION_CACHE_TTL_MS; ms += 5_000) {
+      clock.now = START + ms;
       await verify(token);
     }
     expect(calls.count).toBe(1);
-    clock.now = START + 15_000;
+    clock.now = START + OATHWEAVE_SESSION_CACHE_TTL_MS;
     await verify(token);
     expect(calls.count).toBe(2);
   });
@@ -391,6 +392,71 @@ describe('session revocation cache', () => {
     const { verify, calls } = verifierAt({ now: START }, () => Response.json({ sub: SUBJECT }));
     await expect(verify(await mint({ issuedAt: START / 1000, expiresAt: START / 1000 + 600, key: foreignKey }))).rejects.toThrow();
     expect(calls.count).toBe(0);
+  });
+});
+
+describe('open streams', () => {
+  const flush = async () => { for (let i = 0; i < 25; i += 1) await vi.advanceTimersByTimeAsync(0); };
+
+  it('ends a stream within fifteen seconds of logout', async () => {
+    const token = await mint();
+    await get(token);
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'], now: Date.now() });
+    let loggedOut = false;
+    stubIdentityService(() => loggedOut ? new Response(null, { status: 401 }) : Response.json({ sub: SUBJECT }));
+    const onRevoked = vi.fn();
+    const stop = watchOathweaveStream(`Bearer ${token}`, onRevoked);
+    await vi.advanceTimersByTimeAsync(OATHWEAVE_STREAM_RECHECK_MS);
+    await flush();
+    expect(onRevoked).not.toHaveBeenCalled();
+
+    loggedOut = true;
+    for (let elapsed = 0; elapsed < 15_000 && !onRevoked.mock.calls.length; elapsed += 1_000) {
+      await vi.advanceTimersByTimeAsync(1_000);
+      await flush();
+    }
+    expect(onRevoked).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(onRevoked).toHaveBeenCalledOnce();
+    stop();
+  });
+
+  it('ends a stream when its token expires', async () => {
+    const issuedAt = Math.floor(Date.now() / 1000);
+    const token = await mint({ issuedAt, expiresAt: issuedAt + 8 });
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'], now: Date.now() });
+    const onRevoked = vi.fn();
+    const stop = watchOathweaveStream(`Bearer ${token}`, onRevoked);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await flush();
+    expect(onRevoked).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(5_000);
+    await flush();
+    expect(onRevoked).toHaveBeenCalledOnce();
+    stop();
+  });
+
+  it('stops watching when told to', async () => {
+    const token = await mint();
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'], now: Date.now() });
+    stubIdentityService(() => new Response(null, { status: 401 }));
+    const onRevoked = vi.fn();
+    watchOathweaveStream(`Bearer ${token}`, onRevoked)();
+    await vi.advanceTimersByTimeAsync(60_000);
+    await flush();
+    expect(onRevoked).not.toHaveBeenCalled();
+    expect(userinfo).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['an opaque service credential', 'Bearer opaque-service-credential'],
+    ['no credential', undefined],
+  ])('does not watch %s', async (_name, authorization) => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'], now: Date.now() });
+    const onRevoked = vi.fn();
+    watchOathweaveStream(authorization, onRevoked);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(onRevoked).not.toHaveBeenCalled();
   });
 });
 

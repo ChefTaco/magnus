@@ -20,6 +20,14 @@ vi.mock('../services/event-bus.js', () => ({
   },
 }));
 
+const watch = vi.hoisted(() => ({ onRevoked: undefined as (() => void) | undefined, stop: vi.fn() }));
+vi.mock('../middleware/oathweave.js', () => ({
+  watchOathweaveStream: (_authorization: string | undefined, onRevoked: () => void) => {
+    watch.onRevoked = onRevoked;
+    return watch.stop;
+  },
+}));
+
 const { eventsStreamRouter } = await import('./events-stream.js');
 
 describe('events SSE stream cleanup', () => {
@@ -30,6 +38,19 @@ describe('events SSE stream cleanup', () => {
     await reader.read();
     await reader.cancel();
     expect(bus.off).toHaveBeenCalledOnce();
+  });
+
+  it('ends the stream and unsubscribes when the session is revoked', async () => {
+    bus.off.mockClear();
+    watch.stop.mockClear();
+    const response = await eventsStreamRouter.request('/');
+    const reader = response.body!.getReader();
+    await reader.read();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    watch.onRevoked!();
+    expect((await reader.read()).done).toBe(true);
+    expect(bus.off).toHaveBeenCalledOnce();
+    expect(watch.stop).toHaveBeenCalledOnce();
   });
 
   it('unsubscribes a client that disconnected while the subscription was pending', async () => {

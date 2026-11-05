@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { AppVariables } from '../types/index.js';
 import { authMiddleware } from '../middleware/auth.js';
+import { watchOathweaveStream } from '../middleware/oathweave.js';
 import { eventBus } from '../services/event-bus.js';
 
 export const eventsStreamRouter = new Hono<{ Variables: AppVariables }>();
@@ -25,10 +26,12 @@ eventsStreamRouter.get('/', async (c) => {
   let keepAlive: ReturnType<typeof setInterval> | undefined;
   let unsubscribe: (() => void) | undefined;
   let closed = false;
+  let stopWatching: (() => void) | undefined;
   // Idempotent cleanup for every exit path: client abort, stream cancel, or a
   // disconnect that happened while the subscription was still being set up.
   const cleanup = () => {
     closed = true;
+    stopWatching?.();
     if (keepAlive) clearInterval(keepAlive);
     keepAlive = undefined;
     unsubscribe?.();
@@ -48,6 +51,11 @@ eventsStreamRouter.get('/', async (c) => {
           // Stream closed
         }
       };
+
+      stopWatching = watchOathweaveStream(c.req.header('Authorization'), () => {
+        cleanup();
+        try { controller.close(); } catch { /* already closed */ }
+      });
 
       // Send initial connection event
       send('connected', { timestamp: new Date().toISOString() });

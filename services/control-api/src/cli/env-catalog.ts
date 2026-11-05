@@ -84,7 +84,7 @@ export const ENV_CATALOG: readonly EnvVariable[] = [
   // ── Oathweave browser console tokens ──
   { name: 'OATHWEAVE_ISSUER', group: 'iam', description: 'Exact `iss` claim of Oathweave resource tokens (audience `magnus`). Cannot be combined with IAM_CORE_URL.' },
   { name: 'OATHWEAVE_JWKS_URL', group: 'iam', requiredWhen: 'OATHWEAVE_ISSUER set', description: 'HTTPS JWKS URL that verifies Oathweave token signatures.' },
-  { name: 'OATHWEAVE_USERINFO_URL', group: 'iam', requiredWhen: 'OATHWEAVE_ISSUER set', description: 'HTTPS userinfo URL used for online session revocation (answers cached for at most 15 seconds).' },
+  { name: 'OATHWEAVE_USERINFO_URL', group: 'iam', requiredWhen: 'OATHWEAVE_ISSUER set', description: 'HTTPS userinfo URL used for online session revocation (logout takes effect within 15 seconds, including on open streams).' },
   { name: 'MAGNUS_OATHWEAVE_IDENTITIES_JSON', group: 'iam', requiredWhen: 'OATHWEAVE_ISSUER set', description: 'JSON array of {issuer,subject,localUserId,role}. Exact issuer and subject match, never by email; a missing or duplicate link is refused. `role` caps what the token permissions magnus:admin, magnus:operate and magnus:view can grant.' },
 
   // ── Hive Router ──
