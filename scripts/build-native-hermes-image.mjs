@@ -22,7 +22,12 @@ export function publicHermesPaths(paths) {
   for (const file of ['LICENSE','pyproject.toml','uv.lock','hermes_cli/main.py','run_agent.py']) if (!selected.includes(file)) throw Error('Incomplete public Hermes source');
   return selected;
 }
-export function buildHermesImage({ source, tag }) {
+export function hermesBuildExtras(value = 'none') {
+  if (!['none', 'messaging'].includes(value)) throw Error('Select --extras none or messaging; arbitrary runtime dependency additions are forbidden');
+  return value === 'none' ? [] : ['messaging'];
+}
+export function buildHermesImage({ source, tag, extras = 'none' }) {
+  const selectedExtras = hermesBuildExtras(extras);
   if (!source || !tag || !/^[a-z0-9][a-z0-9._/-]*:[a-z0-9][a-z0-9._-]*$/.test(tag)) throw Error('Select --source PUBLIC_GIT_OBJECT_STORE --tag LOCAL_REVIEW_TAG');
   const git = args => execute('git', ['--no-replace-objects', '-C', resolve(source), ...args]);
   if (git(['rev-parse', HERMES_REVISION + '^{commit}']).trim() !== HERMES_REVISION) throw Error('The exact reviewed public revision is required');
@@ -47,18 +52,18 @@ export function buildHermesImage({ source, tag }) {
     if (!project.includes('version = "' + HERMES_VERSION + '"')) throw Error('Reviewed product version mismatch');
     const provenance = { schema:1, source:HERMES_SOURCE, revision:HERMES_REVISION, tag:'v2026.9.14', version:HERMES_VERSION,
       sourceArchiveSHA256:createHash('sha256').update(data).digest('hex'), lockSHA256:createHash('sha256').update(readFileSync(join(sourceRoot,'uv.lock'))).digest('hex'),
-      sqlite:'3.53.4', sqliteSourceSHA256:'0e9483900e92cd5de8fd48d16bf9200145a61f7fd5be542a5ac81d8a9516eb9c', pythonSourceSHA256:'2ab91ff401783ccca64f75d10c882e957bdfd60e2bf5a72f8421793729b78a71', python:'3.13.13', uv:'0.11.6', installMode:'frozen-public-source-no-install-project', inference:'external-only' };
+      sqlite:'3.53.4', sqliteSourceSHA256:'0e9483900e92cd5de8fd48d16bf9200145a61f7fd5be542a5ac81d8a9516eb9c', pythonSourceSHA256:'2ab91ff401783ccca64f75d10c882e957bdfd60e2bf5a72f8421793729b78a71', python:'3.13.13', uv:'0.11.6', installMode:'frozen-public-source-no-install-project', extras:selectedExtras, inference:'external-only' };
     writeFileSync(join(temporary,'provenance.json'),JSON.stringify(provenance,null,2)+'\n');
     const tooling=fileURLToPath(new URL('../tooling/native-hermes/',import.meta.url));
     for(const file of ['Dockerfile','launcher.mjs','runner.py','sqlite-loader.py','NOTICE'])copyFileSync(join(tooling,file),join(temporary,file));
-    execute('docker',['build','-t',tag,temporary], { stdio:'inherit' });
+    execute('docker',['build','--build-arg','HERMES_NATIVE_EXTRA='+extras,'-t',tag,temporary], { stdio:'inherit' });
     return provenance;
   } finally { rmSync(temporary,{recursive:true,force:true}); }
 }
 if(process.argv[1] && import.meta.url===pathToFileURL(resolve(process.argv[1])).href){
   try {
     const options={};
-    for(let index=2;index<process.argv.length;index+=2){const name=process.argv[index],value=process.argv[index+1];if(!['--source','--tag'].includes(name)||!value||options[name.slice(2)])throw Error('Select --source PUBLIC_GIT_OBJECT_STORE --tag LOCAL_REVIEW_TAG');options[name.slice(2)]=value;}
+    for(let index=2;index<process.argv.length;index+=2){const name=process.argv[index],value=process.argv[index+1];if(!['--source','--tag','--extras'].includes(name)||!value||options[name.slice(2)])throw Error('Select --source PUBLIC_GIT_OBJECT_STORE --tag LOCAL_REVIEW_TAG');options[name.slice(2)]=value;}
     console.log(JSON.stringify(buildHermesImage(options)));
   } catch { process.stderr.write('Reviewed public Hermes image build failed; preserve protected build diagnostics\n');process.exitCode=1; }
 }

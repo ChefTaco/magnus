@@ -27,6 +27,14 @@ if sys.argv[1:] == ["--native-preflight"]:
     with sqlite3.connect(":memory:") as database:
         database.execute("CREATE VIRTUAL TABLE docs USING fts5(content, tokenize=trigram)")
     provenance = json.loads((root / "provenance.json").read_text(encoding="utf-8"))
+    extras = provenance.get("extras", [])
+    if extras not in ([], ["messaging"]):
+        raise SystemExit("Unreviewed optional native dependency selection")
+    if extras == ["messaging"]:
+        import aiohttp
+        from importlib.metadata import version
+        if version("aiohttp") != "3.14.3":
+            raise SystemExit("Messaging requires the exact reviewed locked aiohttp version")
     if hermes_cli.__version__ != provenance["version"]:
         raise SystemExit("Public Hermes runtime version does not match provenance")
     print("hermes-agent " + hermes_cli.__version__)

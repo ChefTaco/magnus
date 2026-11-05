@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, copyFileSync, chmodSync, symlink
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { publicHermesPaths, HERMES_REVISION } from './build-native-hermes-image.mjs';
+import { publicHermesPaths, hermesBuildExtras, HERMES_REVISION } from './build-native-hermes-image.mjs';
 
 test('public Hermes allowlist preserves runtime and attribution while excluding operational and repository state', () => {
   const required=['LICENSE','pyproject.toml','uv.lock','hermes_cli/main.py','run_agent.py'];
@@ -42,4 +42,12 @@ test('native Hermes refuses unsafe profile, credential and interpreter selection
     writeFileSync(join(profile,'config.yaml'),'model: synthetic\n',{mode:0o644});assert.throws(()=>run(['--native-preflight']));chmodSync(join(profile,'config.yaml'),0o600);
     symlinkSync(environment,join(profile,'.env'));assert.throws(()=>run(['--native-preflight']));
   } finally {rmSync(scratch,{recursive:true,force:true});}
+});
+
+test('optional native messaging uses only the explicit frozen public dependency group', () => {
+  assert.deepEqual(hermesBuildExtras(), []);
+  assert.deepEqual(hermesBuildExtras('none'), []);
+  assert.deepEqual(hermesBuildExtras('messaging'), ['messaging']);
+  for (const value of ['all', 'voice', 'messaging --extra voice', ['messaging'], null])
+    assert.throws(() => hermesBuildExtras(value), /Select --extras/);
 });

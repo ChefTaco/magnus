@@ -36,7 +36,9 @@ COPY --from=python_sqlite /opt/hermes-native/python /opt/hermes-native/python
 ENV UV_PYTHON_INSTALL_DIR=/opt/hermes-native/python UV_PYTHON_PREFERENCE=only-managed UV_LINK_MODE=copy UV_NO_BUILD=1
 WORKDIR /opt/hermes-native
 COPY source/ ./source/
-RUN uv sync --project source --python 3.13.13 --frozen --no-dev --no-install-project && \
+ARG HERMES_NATIVE_EXTRA=none
+RUN case "$HERMES_NATIVE_EXTRA" in none) set --;; messaging) set -- --extra messaging;; *) exit 64;; esac && \
+    uv sync --project source --python 3.13.13 --frozen --no-dev --no-install-project "$@" && \
     mkdir dependencies && cp -a source/.venv/lib/python3.13/site-packages/. dependencies/ && \
     rm -rf source/.venv /root/.cache/uv && \
     find python -mindepth 1 -maxdepth 1 -type l -delete && \

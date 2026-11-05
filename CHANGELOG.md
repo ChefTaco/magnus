@@ -10,6 +10,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ## Unreleased
 
+- Add opt-in native Hermes messaging artifacts from the unchanged frozen public lock, with explicit provenance and exact dependency preflight; retain headless default and disabled runtime installs.
+
 - Verify exact native Skills target mappings and immutable client digests through read-only authenticated posture APIs; reject infrastructure credentials in dedicated native client environments.
 
 - Keep native Hermes preflight read-only before profile initialization; validate

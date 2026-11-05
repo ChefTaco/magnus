@@ -9,6 +9,8 @@ license metadata remain in the artifact. Magnus's wrappers remain Apache-2.0.
 
 ```bash
 npm run build:native-hermes -- --source PUBLIC_GIT_OBJECT_STORE --tag native-hermes:review
+# Optional Chat-capable artifact, still using the unchanged public frozen lock:
+npm run build:native-hermes -- --source PUBLIC_GIT_OBJECT_STORE --tag native-hermes:messaging --extras messaging
 npm run build:native-agent -- --product hermes --image PINNED_IMAGE --output NEW_DIRECTORY
 node scripts/check-native-hermes.mjs --artifact PRIVATE_DESCRIPTOR
 ```
@@ -17,6 +19,12 @@ Review the exact resulting image ID before exporting. Source provenance records
 the public commit, source archive and `uv.lock` checksums. Dependencies use the
 unchanged public lock with `uv sync --frozen --no-dev --no-install-project`;
 unlocked package builds and runtime lazy dependency installation are disabled.
+The default `--extras none` omits optional messaging dependencies. Selecting
+`--extras messaging` includes only that upstream frozen dependency group, records
+it in provenance, and makes preflight verify the exact locked aiohttp version.
+The bundled Mattermost plugin requires this Chat-capable artifact. Plugin source
+presence alone does not prove its dependencies or native Chat acceptance. No
+other optional dependency group is accepted by this builder.
 The native archive contains an exact Python 3.13.13 standalone runtime from the
 checksum catalogue in pinned uv 0.11.6, plus the pinned Node launcher runtime.
 No host Python, pip, Node or global package installation is needed. The bundled
@@ -39,7 +47,7 @@ configuration and credential bytes, sets only the selected profile, disables
 runtime dependency changes and leaves provider authorization to the operator.
 Hermes retains native authentication and provider resolution. TUI/web/desktop
 assets and optional provider/tool extras are not installed by this headless
-artifact; use a separately reviewed artifact if those capabilities are required.
+artifact (except the explicitly selected messaging group); use a separately reviewed artifact if those capabilities are required.
 
 For an external gateway, configure the native `config.yaml` provider's HTTPS
 `base_url`, `key_env` naming its scoped credential in the protected environment,
