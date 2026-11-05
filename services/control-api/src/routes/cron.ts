@@ -275,7 +275,9 @@ cronRouter.patch('/:cronId', requireRole('ADMIN', 'OPERATOR'), async (c) => {
     });
   })();
 
-  return c.json({ success: true, data: job });
+  // The agent connection above needs the node; its token must never leave the server.
+  const { token: _nodeToken, ...safeNode } = job.node;
+  return c.json({ success: true, data: { ...job, node: safeNode } });
 });
 
 // ── Delete cron job ──

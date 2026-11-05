@@ -59,6 +59,16 @@ describe('legacy cron PATCH agent push', () => {
     expect(fixture.calls).toEqual(['delete:backup', 'sync:backup-v2']);
   });
 
+  it('never returns the node token', async () => {
+    const withToken = { ...node, token: 'node-fixture-token', name: 'node-1' };
+    fixture.initial = job({ node: withToken }); fixture.updated = job({ node: withToken, schedule: '5 * * * *' });
+    const response = await patch({ schedule: '5 * * * *' });
+    expect(response.status).toBe(200);
+    const raw = await response.text();
+    expect(raw).not.toContain('node-fixture-token');
+    expect((JSON.parse(raw) as { data: { node: Record<string, unknown> } }).data.node).toEqual({ ...node, name: 'node-1' });
+  });
+
   it('re-syncs an active job in place', async () => {
     fixture.initial = job({}); fixture.updated = job({ schedule: '5 * * * *' });
     expect((await patch({ schedule: '5 * * * *' })).status).toBe(200);
