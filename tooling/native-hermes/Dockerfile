@@ -44,8 +44,9 @@ RUN uv sync --project source --python 3.13.13 --frozen --no-dev --no-install-pro
 COPY launcher.mjs runner.py provenance.json NOTICE ./
 RUN node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync("provenance.json"));fs.mkdirSync("node_modules/hermes-agent",{recursive:true});fs.writeFileSync("node_modules/hermes-agent/package.json",JSON.stringify({name:"hermes-agent",version:p.version,license:"MIT",source:p.source,revision:p.revision}));' && \
     mkdir -m 0700 /tmp/hermes-preflight && touch /tmp/hermes-preflight.env && chmod 0600 /tmp/hermes-preflight.env && \
-    node launcher.mjs --env-file /tmp/hermes-preflight.env --profile-path /tmp/hermes-preflight --native-init-profile && \
     node launcher.mjs --env-file /tmp/hermes-preflight.env --profile-path /tmp/hermes-preflight --native-preflight && \
+    test -z "$(find /tmp/hermes-preflight -mindepth 1 -print -quit)" && \
+    node launcher.mjs --env-file /tmp/hermes-preflight.env --profile-path /tmp/hermes-preflight --native-init-profile && \
     rm -rf /tmp/hermes-preflight /tmp/hermes-preflight.env && \
     chmod -R go-rwx /opt/hermes-native && chown -R node:node /opt/hermes-native
 USER node

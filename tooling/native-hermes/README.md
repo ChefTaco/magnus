@@ -58,7 +58,10 @@ protected-file checks. It never creates missing directories or changes files.
 The lifecycle controller must bind config/environment digests before initialization
 and compare them after verification, including recovery from a claimed step.
 
-`--native-preflight` imports the actual native runtime and checks its version.
+`--native-preflight` checks the public runtime version, locked client dependencies,
+SQLite ABI and native entrypoint syntax without importing profile initialization
+hooks. It runs before profile setup and leaves a missing profile layout untouched.
+The separate acceptance command imports the actual agent and exercises streaming.
 `--native-acceptance` makes one harmless, tool-free generation turn through the
 configured native provider and requires streamed response deltas. Acceptance is
 explicit and can incur the provider's normal usage charge. The disposable proof

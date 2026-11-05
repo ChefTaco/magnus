@@ -74,6 +74,10 @@ try {
     'import sqlite3,sys; assert sqlite3.sqlite_version_info >= (3,51,3); db=sqlite3.connect(sys.argv[1]); assert db.execute("PRAGMA journal_mode=WAL").fetchone()[0]=="wal"; db.execute("CREATE TABLE preserved(value TEXT)"); db.execute("INSERT INTO preserved VALUES (?)", ("synthetic",)); db.commit(); db.close(); db=sqlite3.connect(sys.argv[1]); assert db.execute("SELECT value FROM preserved").fetchone()[0]=="synthetic"; print(sqlite3.sqlite_version)', join(scratch, 'synthetic.sqlite')], { env, timeout: 20_000 });
   assert.equal(sqliteProof.stdout.trim(), descriptor.provenance.sqlite);
   const executable = join(runtime, descriptor.executable), args = ['--env-file', file, '--profile-path', profile];
+  const beforePreflight = (await readdir(profile)).sort();
+  const uninitialized = await execute(executable, [...args, '--native-preflight'], { env, timeout: 60_000 });
+  assert.equal(uninitialized.stdout.trim(), 'hermes-agent ' + descriptor.version);
+  assert.deepEqual((await readdir(profile)).sort(), beforePreflight, 'Preflight must not initialize the selected profile');
   const initialized = await execute(executable, [...args, '--native-init-profile'], { env, timeout: 20_000 });
   assert.equal(JSON.parse(initialized.stdout).initialized, true);
   const verified = await execute(executable, [...args, '--native-verify-profile'], { env, timeout: 20_000 });
@@ -90,7 +94,7 @@ try {
   await chmod(file, 0o644);
   await assert.rejects(execute(executable, [...args, '--native-preflight'], { env, timeout: 20_000 }));
   console.log(JSON.stringify({ product: descriptor.product, version: descriptor.version, artifactSHA256: descriptor.sha256,
-    isolatedProfile: true, nativeChatGeneration: true, streaming: true, privateCaVerified: true, fixedSqliteWalReopen: true, existingCredentialBytesRetained: true,
+    isolatedProfile: true, preflightBeforeInitialization: true, nativeChatGeneration: true, streaming: true, privateCaVerified: true, fixedSqliteWalReopen: true, existingCredentialBytesRetained: true,
     wrongProfileAndWideEnvironmentRefused: true, inferenceRuntimeInstalled: false, productionCutover: false }));
 } finally {
   if (calls !== 1) console.error(JSON.stringify({ fixtureDiagnostics: diagnostics, generationCalls: calls }));

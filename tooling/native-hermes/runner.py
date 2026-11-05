@@ -17,8 +17,15 @@ if sys.argv[1:] == ["--native-preflight"]:
     import openai
     import httpx
     import yaml
-    import hermes_state
-    from run_agent import AIAgent
+    # Importing the agent initializes profile-dependent allowlists and cron
+    # helpers. Preflight runs before the separately journaled profile setup.
+    # Compile native entrypoints without executing those initialization hooks;
+    # the explicit acceptance command below exercises the actual agent runtime.
+    for module in ["hermes_state.py", "run_agent.py", "hermes_cli/main.py"]:
+        path = root / "source" / module
+        compile(path.read_bytes(), str(path), "exec")
+    with sqlite3.connect(":memory:") as database:
+        database.execute("CREATE VIRTUAL TABLE docs USING fts5(content, tokenize=trigram)")
     provenance = json.loads((root / "provenance.json").read_text(encoding="utf-8"))
     if hermes_cli.__version__ != provenance["version"]:
         raise SystemExit("Public Hermes runtime version does not match provenance")

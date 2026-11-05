@@ -6,6 +6,9 @@ All notable changes to this project are documented in this file. The format is b
 
 ## Unreleased
 
+- Keep native Hermes preflight read-only before profile initialization; validate
+  runtime dependencies and SQLite without executing profile-dependent hooks.
+
 - Commit base-data initialization and its completion receipt atomically. The new
   read-only `verify-initialization` command holds activation after an interrupted
   seed, even when all SQL migrations finished, without replaying initialization.
