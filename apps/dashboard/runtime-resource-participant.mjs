@@ -1,13 +1,12 @@
 /** Dashboard managed SSH participant. Durable ownership lives in Control API Postgres. */
-import { randomUUID, createHmac, createHash, timingSafeEqual } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { request as httpsRequest } from 'node:https';
 import { controlApiTlsOptions } from './runtime-hermes-security.mjs';
 
 const PREFIX = '/api/v1/resource-leases/enrollment/dashboard';
-const DOMAIN = 'magnus.resource-enrollment.v1\n';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA = /^[0-9a-f]{64}$/;
-const kinds = new Set(['terminal-http', 'terminal-ws', 'hermes-http', 'hermes-ws']);
+const kinds = new Set(['terminal-http', 'hermes-http', 'hermes-ws']);
 export function canonicalDrainJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalDrainJson).join(',')}]`;
   if (value && typeof value === 'object') return `{${Object.keys(value).sort().map(k => `${JSON.stringify(k)}:${canonicalDrainJson(value[k])}`).join(',')}}`;
@@ -91,34 +90,10 @@ export function createResourceParticipant({ env = process.env, request = (path, 
         },
       };
     },
-    async drain(descriptor, suppliedKey) {
-      const secret = secretFor(env);
-      if (typeof suppliedKey !== 'string' || Buffer.byteLength(suppliedKey) !== Buffer.byteLength(secret) ||
-          !timingSafeEqual(Buffer.from(suppliedKey), Buffer.from(secret))) throw new Error('Invalid drain authentication');
-      const expectedKeys = ['version','participant','nodeId','nodeFqdn','epoch','barrierId','challengeId','expiresAt'].sort();
-      if (!descriptor || Object.keys(descriptor).sort().join() !== expectedKeys.join() || descriptor.version !== 1 ||
-          descriptor.participant !== 'dashboard' || typeof descriptor.nodeId !== 'string' || !descriptor.nodeId ||
-          typeof descriptor.nodeFqdn !== 'string' || !descriptor.nodeFqdn || !Number.isSafeInteger(descriptor.epoch) ||
-          !UUID.test(descriptor.barrierId) || !UUID.test(descriptor.challengeId) || !Number.isSafeInteger(descriptor.expiresAt) ||
-          descriptor.expiresAt <= Date.now()) throw new Error('Invalid or expired drain challenge');
-      const nonce = randomUUID();
-      const snapshot = await request('/status', { nodeId: descriptor.nodeId, nonce });
-      if (snapshot.version !== 1 || snapshot.nodeId !== descriptor.nodeId || snapshot.nodeFqdn !== descriptor.nodeFqdn ||
-          snapshot.nonce !== nonce || snapshot.epoch !== descriptor.epoch || snapshot.barrierId !== descriptor.barrierId ||
-          snapshot.challenge?.challengeId !== descriptor.challengeId || snapshot.challenge?.expiresAt !== descriptor.expiresAt ||
-          descriptor.expiresAt <= Date.now() || snapshot.state !== 'draining' ||
-          !Number.isSafeInteger(snapshot.activeCount) || snapshot.activeCount < 0 ||
-          !Number.isSafeInteger(snapshot.unknownCount) || snapshot.unknownCount < 0 || !SHA.test(snapshot.evidenceSha256))
-        throw new Error('Drain challenge did not match authoritative durable state');
-      const receipt = { ...descriptor, status: snapshot.activeCount === 0 && snapshot.unknownCount === 0 ? 'drained' : 'pending',
-        activeCount: snapshot.activeCount, unknownCount: snapshot.unknownCount, evidenceSha256: snapshot.evidenceSha256 };
-      return { ...receipt, signature: createHmac('sha256', secret).update(DOMAIN + canonicalDrainJson(receipt)).digest('hex') };
-    },
   };
 }
 const participant = createResourceParticipant();
 export const beginManagedSshWork = (host, kind) => participant.begin(host, kind);
-export const dashboardDrainReceipt = (descriptor, suppliedKey) => participant.drain(descriptor, suppliedKey);
 export function observeManagedSshEnd(work, disposition = 'unknown') {
   void work.finish(disposition).catch(() => {
     // Do not include session content, credentials, or response bodies. Failure retains the durable reservation.

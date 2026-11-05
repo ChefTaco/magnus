@@ -1,6 +1,6 @@
-import { createHmac, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
-import { canonicalDrainJson, createResourceParticipant } from '../../runtime-resource-participant.mjs';
+import { createResourceParticipant } from '../../runtime-resource-participant.mjs';
 
 const env = { RESOURCE_ENROLLMENT_DASHBOARD_SECRET: 'fixture-dashboard-secret-separate-32bytes', API_SECRET: 'other-secret' };
 function ledger() {
@@ -41,17 +41,11 @@ describe('durable dashboard SSH participant', () => {
     expect(db.request.mock.calls.map(c => c[0])).toEqual(['/work/reserve', `/work/${work.workId}/start`]);
     await work.finish('remote-ended');
     expect(db.rows.get(work.workId).state).toBe('unknown');
-    db.drain(); const receipt = await participant.drain(db.descriptor, env.RESOURCE_ENROLLMENT_DASHBOARD_SECRET);
-    expect(receipt).toMatchObject({ status: 'pending', activeCount: 0, unknownCount: 1 });
   });
-  it('fresh worker cannot claim zero for another worker or after worker crash', async () => {
+  it('a retired WebSocket terminal kind cannot be reserved', async () => {
     const db = ledger();
-    await createResourceParticipant({ env, request: db.request }).begin('fixture.lab', 'terminal-ws');
-    db.drain();
-    const restarted = createResourceParticipant({ env, request: db.request });
-    const receipt = await restarted.drain(db.descriptor, env.RESOURCE_ENROLLMENT_DASHBOARD_SECRET);
-    expect(receipt).toMatchObject({ status: 'pending', activeCount: 1, unknownCount: 0 });
-    await expect(restarted.begin('fixture.lab', 'hermes-ws')).rejects.toThrow('draining');
+    await expect(createResourceParticipant({ env, request: db.request }).begin('fixture.lab', 'terminal-ws' as 'terminal-http')).rejects.toThrow('Invalid managed SSH');
+    expect(db.request).not.toHaveBeenCalled();
   });
   it('drain between reservation and dispatch denies execution', async () => {
     const db = ledger();
@@ -75,22 +69,8 @@ describe('durable dashboard SSH participant', () => {
     expect(request.mock.calls.filter(c => c[0].endsWith('/finish'))).toHaveLength(1);
     expect(db.rows.get(work.workId).state).toBe('unknown');
   });
-  it('signs exact epoch/challenge and independently verified empty central ledger', async () => {
-    const db = ledger(); db.drain();
-    const result = await createResourceParticipant({ env, request: db.request }).drain(db.descriptor, env.RESOURCE_ENROLLMENT_DASHBOARD_SECRET);
-    const { signature, ...receipt } = result;
-    expect(receipt.status).toBe('drained');
-    expect(signature).toBe(createHmac('sha256', env.RESOURCE_ENROLLMENT_DASHBOARD_SECRET).update('magnus.resource-enrollment.v1\n' + canonicalDrainJson(receipt)).digest('hex'));
-  });
-  it.each(['epoch','barrierId','challengeId','expiresAt','nodeFqdn'])('rejects mismatched authoritative %s', async key => {
-    const db = ledger(); db.drain();
-    const descriptor = { ...db.descriptor, [key]: key === 'epoch' ? 3 : key === 'expiresAt' ? Date.now() + 120_000 : key === 'nodeFqdn' ? 'other.lab' : randomUUID() };
-    await expect(createResourceParticipant({ env, request: db.request }).drain(descriptor, env.RESOURCE_ENROLLMENT_DASHBOARD_SECRET)).rejects.toThrow();
-  });
-  it('rejects auth before contacting authority and rejects reused secrets', async () => {
+  it('rejects reused secrets', async () => {
     const db = ledger();
-    await expect(createResourceParticipant({ env, request: db.request }).drain(db.descriptor, 'wrong')).rejects.toThrow('authentication');
-    expect(db.request).not.toHaveBeenCalled();
     await expect(createResourceParticipant({ env: { ...env, API_SECRET: env.RESOURCE_ENROLLMENT_DASHBOARD_SECRET }, request: db.request }).begin('fixture.lab', 'terminal-http')).rejects.toThrow('dedicated');
   });
   it('rejects incomplete successful start receipt and unavailable authority', async () => {

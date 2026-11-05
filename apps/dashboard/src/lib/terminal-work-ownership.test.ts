@@ -11,7 +11,6 @@ vi.mock('ssh2', () => ({ Client: class extends EventEmitter {
   constructor() { super(); fixture.clients.push(this); }
 } }));
 import { openSession, closeSession, sessions } from './terminal-sessions';
-import { attachWebSocketTerminal } from './terminal-ws';
 
 beforeEach(() => { fixture.clients.length = 0; fixture.begin.mockReset(); fixture.finish.mockReset().mockResolvedValue({ state: 'unknown' }); fixture.begin.mockResolvedValue({ workId: 'fixture', finish: fixture.finish }); });
 afterEach(() => { for (const id of sessions.keys()) closeSession(id); });
@@ -44,15 +43,5 @@ describe('native terminal ownership lifecycle', () => {
     const rejection = expect(pending).rejects.toThrow('connection lost'); await turn();
     fixture.clients[0].emit('error', Error('connection lost')); await rejection;
     expect(fixture.finish).toHaveBeenCalledWith('unknown');
-  });
-  it('WebSocket disconnect during handshake retains unknown ownership', async () => {
-    const server = new EventEmitter();
-    const wss = attachWebSocketTerminal(server as any);
-    const ws = Object.assign(new EventEmitter(), { OPEN: 1, readyState: 1, send: vi.fn(), close: vi.fn(), ping: vi.fn() });
-    wss.emit('connection', ws, { url: '/api/terminal/ws?host=fixture.lab', headers: { cookie: 'magnus_session=fixture' } });
-    await turn(); expect(fixture.begin).toHaveBeenCalledWith('fixture.lab', 'terminal-ws');
-    ws.emit('close'); await turn();
-    expect(fixture.finish).toHaveBeenCalledWith('unknown');
-    expect(fixture.clients[0].end).toHaveBeenCalled();
   });
 });

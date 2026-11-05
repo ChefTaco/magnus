@@ -49,10 +49,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     // are known via registered nodes on a control node)
     const result = await validateProxyTarget(`https://${host}:4100`);
     if (!result.allowed) {
-      // Allow the connection anyway if host is a known IP or hostname pattern
-      // but log the fact it wasn't in the allowlist. For strict mode, uncomment:
-      // return NextResponse.json({ error: 'Host not in allowlist' }, { status: 403 });
-      console.warn(`[terminal] Host '${host}' not in proxy allowlist, allowing with caution`);
+      return NextResponse.json({ error: 'Host not in allowlist' }, { status: 403 });
     }
 
     const sessionId = await openSession({

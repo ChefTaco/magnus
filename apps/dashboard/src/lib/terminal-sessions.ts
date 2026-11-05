@@ -29,14 +29,6 @@ export interface TerminalSession {
   /** Close reason (for the client). */
   closeReason: string;
   lastActivity: number;
-  /** Token for sharing this session with others. null = not shared. */
-  shareToken: string | null;
-  /** Additional stream controllers for viewers/collaborators. */
-  viewers: Map<string, { controller: ReadableStreamDefaultController<Uint8Array>; canWrite: boolean }>;
-  /** Shared output buffer for replay to newly joined viewers. Capped at ~512KB. */
-  sharedBuffer: Uint8Array[];
-  /** Total bytes in sharedBuffer. */
-  sharedBufferBytes: number;
 }
 
 /**
@@ -178,23 +170,19 @@ export async function openSession(opts: OpenSessionOptions): Promise<string> {
             ended: false,
             closeReason: '',
             lastActivity: Date.now(),
-            shareToken: null,
-            viewers: new Map(),
-            sharedBuffer: [],
-            sharedBufferBytes: 0,
           };
 
           // Buffer output until a stream reader connects
           stream.on('data', (data: Buffer) => {
             session.lastActivity = Date.now();
             const chunk = new Uint8Array(data);
-            broadcastChunk(session, chunk);
+            deliverChunk(session, chunk);
           });
 
           stream.stderr.on('data', (data: Buffer) => {
             session.lastActivity = Date.now();
             const chunk = new Uint8Array(data);
-            broadcastChunk(session, chunk);
+            deliverChunk(session, chunk);
           });
 
           stream.on('close', (code: unknown) => {
@@ -249,25 +237,7 @@ export async function openSession(opts: OpenSessionOptions): Promise<string> {
   });
 }
 
-// ── Shared buffer max size (512 KB) ──
-const SHARED_BUFFER_MAX_BYTES = 512 * 1024;
-
-/**
- * Send a chunk to the owner's controller, all viewer controllers,
- * and append to the shared buffer for replay.
- */
-function broadcastChunk(session: TerminalSession, chunk: Uint8Array): void {
-  // Append to shared buffer (for replay on viewer join)
-  session.sharedBuffer.push(chunk);
-  session.sharedBufferBytes += chunk.byteLength;
-
-  // Trim shared buffer if it exceeds max size
-  while (session.sharedBufferBytes > SHARED_BUFFER_MAX_BYTES && session.sharedBuffer.length > 1) {
-    const removed = session.sharedBuffer.shift()!;
-    session.sharedBufferBytes -= removed.byteLength;
-  }
-
-  // Send to owner controller
+function deliverChunk(session: TerminalSession, chunk: Uint8Array): void {
   if (session.controller) {
     try {
       session.controller.enqueue(chunk);
@@ -276,141 +246,6 @@ function broadcastChunk(session: TerminalSession, chunk: Uint8Array): void {
     }
   } else {
     session.outputQueue.push(chunk);
-  }
-
-  // Send to all viewer controllers
-  for (const [viewerId, viewer] of session.viewers) {
-    try {
-      viewer.controller.enqueue(chunk);
-    } catch {
-      // Viewer's controller is broken — remove them
-      session.viewers.delete(viewerId);
-    }
-  }
-}
-
-// ── Collaborative session sharing ──
-
-/** Share tokens → session IDs for reverse lookup. */
-const globalForShares = globalThis as unknown as {
-  __shareTokenMap?: Map<string, string>;
-};
-const shareTokenMap: Map<string, string> = globalForShares.__shareTokenMap ??= new Map();
-
-/**
- * Generate a share token for a session (owner only).
- */
-export function shareSession(sessionId: string): string | null {
-  const session = sessions.get(sessionId);
-  if (!session || session.ended) return null;
-
-  // If already shared, return existing token
-  if (session.shareToken) return session.shareToken;
-
-  const token = nanoid(32);
-  session.shareToken = token;
-  shareTokenMap.set(token, sessionId);
-  return token;
-}
-
-/**
- * Stop sharing a session (owner only).
- */
-export function unshareSession(sessionId: string): void {
-  const session = sessions.get(sessionId);
-  if (!session) return;
-
-  if (session.shareToken) {
-    shareTokenMap.delete(session.shareToken);
-    session.shareToken = null;
-  }
-
-  // Disconnect all viewers
-  for (const [viewerId, viewer] of session.viewers) {
-    try { viewer.controller.close(); } catch { /* ignore */ }
-    session.viewers.delete(viewerId);
-  }
-}
-
-/**
- * Join a shared session as a viewer. Returns the session ID and a viewer key,
- * or null if the token is invalid.
- */
-export function joinSharedSession(
-  shareToken: string,
-  _viewerId: string,
-): { sessionId: string; viewerKey: string } | null {
-  const sessionId = shareTokenMap.get(shareToken);
-  if (!sessionId) return null;
-
-  const session = sessions.get(sessionId);
-  if (!session || session.ended) return null;
-
-  const viewerKey = `v_${nanoid(12)}`;
-  // Will be fully set up when the viewer connects to the stream
-  return { sessionId, viewerKey };
-}
-
-/**
- * Look up session by share token.
- */
-export function getSessionByShareToken(shareToken: string): TerminalSession | undefined {
-  const sessionId = shareTokenMap.get(shareToken);
-  if (!sessionId) return undefined;
-  return sessions.get(sessionId);
-}
-
-/**
- * Promote a viewer to interactive (can write input).
- */
-export function promoteViewer(sessionId: string, viewerKey: string): boolean {
-  const session = sessions.get(sessionId);
-  if (!session) return false;
-
-  const viewer = session.viewers.get(viewerKey);
-  if (!viewer) return false;
-
-  viewer.canWrite = true;
-  return true;
-}
-
-/**
- * Check if a viewer key has write access.
- */
-export function canViewerWrite(sessionId: string, viewerKey: string): boolean {
-  const session = sessions.get(sessionId);
-  if (!session) return false;
-
-  const viewer = session.viewers.get(viewerKey);
-  return viewer?.canWrite ?? false;
-}
-
-/**
- * Register a viewer's stream controller on the session.
- */
-export function registerViewerController(
-  sessionId: string,
-  viewerKey: string,
-  controller: ReadableStreamDefaultController<Uint8Array>,
-): boolean {
-  const session = sessions.get(sessionId);
-  if (!session || session.ended) return false;
-
-  session.viewers.set(viewerKey, { controller, canWrite: false });
-  return true;
-}
-
-/**
- * Remove a viewer from the session.
- */
-export function removeViewer(sessionId: string, viewerKey: string): void {
-  const session = sessions.get(sessionId);
-  if (!session) return;
-
-  const viewer = session.viewers.get(viewerKey);
-  if (viewer) {
-    try { viewer.controller.close(); } catch { /* ignore */ }
-    session.viewers.delete(viewerKey);
   }
 }
 
@@ -437,16 +272,6 @@ export function closeSession(sessionId: string): void {
   session.closeReason = 'Client closed';
   try { session.controller?.close(); } catch { /* ignore */ }
   session.controller = null;
-  // Clean up viewers
-  for (const [, viewer] of session.viewers) {
-    try { viewer.controller.close(); } catch { /* ignore */ }
-  }
-  session.viewers.clear();
-  // Clean up share token
-  if (session.shareToken) {
-    shareTokenMap.delete(session.shareToken);
-    session.shareToken = null;
-  }
   try { session.stream.close(); } catch { /* ignore */ }
   try { session.ssh.end(); } catch { /* ignore */ }
   sessions.delete(sessionId);

@@ -3,11 +3,8 @@ import { NextRequest } from 'next/server';
 import proxy from './proxy';
 
 describe('dashboard authentication proxy', () => {
-  it('delegates only the exact internal drain POST to machine authentication', async () => {
-    expect((await proxy(new NextRequest('https://magnus.example/api/internal/resource-enrollment/drain', { method: 'POST' }))).status).toBe(200);
-    for (const path of ['/api/internal/resource-enrollment/drain/other', '/api/internal/resource-enrollment/other'])
-      expect((await proxy(new NextRequest('https://magnus.example' + path, { method: 'POST' }))).status).toBe(401);
-    expect((await proxy(new NextRequest('https://magnus.example/api/internal/resource-enrollment/drain'))).status).toBe(401);
+  it('no longer exempts the retired internal drain route from authentication', async () => {
+    expect((await proxy(new NextRequest('https://magnus.example/api/internal/resource-enrollment/drain', { method: 'POST' }))).status).toBe(401);
   });
   it('returns JSON 401 for unauthenticated API requests', async () => {
     const response = await proxy(new NextRequest('https://magnus.example/api/proxy/events/stream'));

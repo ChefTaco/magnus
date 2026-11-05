@@ -33,9 +33,6 @@ function unauthenticatedResponse(req: NextRequest, clearCookie = false): NextRes
 export default async function proxy(req: NextRequest): Promise<NextResponse> {
   const { pathname } = req.nextUrl;
 
-  // This exact internal endpoint authenticates its dedicated machine credential in the handler.
-  if (pathname === '/api/internal/resource-enrollment/drain' && req.method === 'POST') return NextResponse.next();
-
   // Allow public paths and static assets
   if (
     PUBLIC_PATHS.some((p) => pathname === p) ||
