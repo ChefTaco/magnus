@@ -48,6 +48,8 @@ vi.mock('../services/ai-assistant-service.js', () => ({
   createConversationShare: vi.fn(),
   forkConversation: vi.fn(),
   getSharedConversation: vi.fn(),
+  conversationOwners: vi.fn(() => ['test-user']),
+  getConversationAccess: vi.fn(async () => 'owner'),
 }));
 vi.mock('../services/ai-tools.js', () => ({ executeAiTool: vi.fn() }));
 vi.mock('../services/ai-insights-service.js', () => ({

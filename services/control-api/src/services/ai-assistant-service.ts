@@ -1844,18 +1844,46 @@ export async function chat(request: ChatRequest): Promise<ChatResponse> {
 
 // ── Conversation list / message queries ──
 
+/** The values of `createdBy` that mean this caller: conversations store the email, or the user ID without one. */
+export function conversationOwners(user: { email?: string; userId?: string } | undefined): string[] {
+  return [...new Set([user?.email, user?.userId].filter((value): value is string => Boolean(value)))];
+}
+
+/**
+ * The fleet heartbeat conversation is the server's own and describes the fleet, not
+ * anyone's work, and the anomaly page checks for it, so every role can read it.
+ */
+const SHARED_CONVERSATION = { createdBy: 'system', type: 'heartbeat' } as const;
+
+/** What a caller may read: their own conversations and the shared heartbeat. */
+function readableConversations(owners: string[]) {
+  return { OR: [{ createdBy: { in: owners } }, SHARED_CONVERSATION] };
+}
+
+/** 'owner' may change a conversation, 'shared' may only read it, and null may not know it exists. */
+export async function getConversationAccess(conversationId: string, owners: string[]): Promise<'owner' | 'shared' | null> {
+  const conversation = await getDb().aiConversation.findUnique({
+    where: { id: conversationId },
+    select: { createdBy: true, type: true },
+  });
+  if (!conversation) return null;
+  if (owners.includes(conversation.createdBy)) return 'owner';
+  return conversation.createdBy === SHARED_CONVERSATION.createdBy && conversation.type === SHARED_CONVERSATION.type ? 'shared' : null;
+}
+
 export async function listConversations(params: {
   type?: string;
   status?: string;
   page?: number;
   pageSize?: number;
+  owners: string[];
 }): Promise<{ conversations: unknown[]; total: number }> {
   const db = getDb();
   const page = params.page ?? 1;
   const pageSize = Math.min(params.pageSize ?? 20, 50);
   const skip = (page - 1) * pageSize;
 
-  const where: Record<string, unknown> = {};
+  const where: Record<string, unknown> = readableConversations(params.owners);
   if (params.type) where['type'] = params.type;
   // 'all' is a sentinel meaning no status filter
   if (params.status && params.status !== 'all') where['status'] = params.status;
@@ -1921,17 +1949,17 @@ export async function getConversationMessages(
   };
 }
 
-export async function getUnreadAiMessageCount(): Promise<number> {
+export async function getUnreadAiMessageCount(owners: string[]): Promise<number> {
   const db = getDb();
   return db.aiMessage.count({
-    where: { role: 'assistant', isRead: false },
+    where: { role: 'assistant', isRead: false, conversation: readableConversations(owners) },
   });
 }
 
-export async function markAiMessagesRead(messageIds: string[]): Promise<number> {
+export async function markAiMessagesRead(messageIds: string[], owners: string[]): Promise<number> {
   const db = getDb();
   const result = await db.aiMessage.updateMany({
-    where: { id: { in: messageIds }, isRead: false },
+    where: { id: { in: messageIds }, isRead: false, conversation: readableConversations(owners) },
     data: { isRead: true, readAt: new Date() },
   });
   return result.count;

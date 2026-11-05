@@ -21,7 +21,7 @@
  * PATCH /assistant/model-profiles       — Update model routing profiles
  */
 
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import type { AppVariables } from '../types/index.js';
 import { authMiddleware, requireRole } from '../middleware/auth.js';
@@ -51,6 +51,8 @@ import {
   createConversationShare,
   forkConversation,
   getSharedConversation,
+  conversationOwners,
+  getConversationAccess,
 } from '../services/ai-assistant-service.js';
 import { executeAiTool } from '../services/ai-tools.js';
 import { generateInsights, listPinnedInsights, pinInsight, unpinInsight } from '../services/ai-insights-service.js';
@@ -60,6 +62,18 @@ import { clearScratchpad, listScratchpadEntries } from '../services/ai-scratchpa
 export const assistantRouter = new Hono<AppVariables>();
 
 assistantRouter.use('*', authMiddleware);
+
+const ownersOf = (c: Context<AppVariables>): string[] => conversationOwners(c.get('user'));
+
+/**
+ * A conversation belongs to whoever started it. ADMIN gets no exception, because no
+ * console feature reads other people's conversations. Someone else's answers 404,
+ * so a caller cannot tell it exists.
+ */
+async function requireConversation(c: Context<AppVariables>, id: string, level: 'read' | 'own' = 'own'): Promise<void> {
+  const access = await getConversationAccess(id, ownersOf(c));
+  if (!access || (level === 'own' && access !== 'owner')) throw new HttpError(404, 'NOT_FOUND', 'Conversation not found');
+}
 
 // ── Send a chat message ──
 assistantRouter.post('/chat', requireRole('ADMIN', 'OPERATOR'), async (c) => {
@@ -87,6 +101,8 @@ assistantRouter.post('/chat', requireRole('ADMIN', 'OPERATOR'), async (c) => {
     controllerContext = ctxParts.join('\n');
   }
 
+  if (body.conversationId) await requireConversation(c, body.conversationId);
+
   const user = c.get('user');
   const result = await chat({
     message: body.message,
@@ -112,6 +128,7 @@ assistantRouter.get('/conversations', async (c) => {
     status: c.req.query('status') ?? 'active',
     page: parseInt(c.req.query('page') ?? '1', 10),
     pageSize: parseInt(c.req.query('pageSize') ?? '20', 10),
+    owners: ownersOf(c),
   });
   return c.json({ success: true, data: result });
 });
@@ -119,25 +136,19 @@ assistantRouter.get('/conversations', async (c) => {
 // ── Get conversation messages ──
 assistantRouter.get('/conversations/:id', async (c) => {
   const id = c.req.param('id')!;
+  await requireConversation(c, id, 'read');
 
   const result = await getConversationMessages(id, {
     page: parseInt(c.req.query('page') ?? '1', 10),
     pageSize: parseInt(c.req.query('pageSize') ?? '50', 10),
   });
 
-  if (result.total === 0) {
-    // Check if conversation exists
-    const { getDb } = await import('../db/index.js');
-    const db = getDb();
-    const conv = await db.aiConversation.findUnique({ where: { id } });
-    if (!conv) throw new HttpError(404, 'NOT_FOUND', 'Conversation not found');
-  }
-
   return c.json({ success: true, data: result });
 });
 
 assistantRouter.post('/conversations/:id/fork', requireRole('ADMIN', 'OPERATOR'), async (c) => {
   const id = c.req.param('id')!;
+  await requireConversation(c, id, 'read');
   const body = (await c.req.json().catch(() => ({}))) as { fromMessageId?: string };
   const user = c.get('user');
 
@@ -157,6 +168,7 @@ assistantRouter.post('/conversations/:id/fork', requireRole('ADMIN', 'OPERATOR')
 
 assistantRouter.post('/conversations/:id/share', requireRole('ADMIN', 'OPERATOR'), async (c) => {
   const id = c.req.param('id')!;
+  await requireConversation(c, id);
   const body = (await c.req.json().catch(() => ({}))) as { ttlHours?: number };
   const user = c.get('user');
 
@@ -174,6 +186,7 @@ assistantRouter.post('/conversations/:id/share', requireRole('ADMIN', 'OPERATOR'
 });
 
 assistantRouter.get('/conversations/:id/scratchpad', async (c) => {
+  await requireConversation(c, c.req.param('id'), 'read');
   const entries = listScratchpadEntries(c.req.param('id')).map((entry) => ({
     name: entry.name,
     source: entry.source,
@@ -186,6 +199,7 @@ assistantRouter.get('/conversations/:id/scratchpad', async (c) => {
 });
 
 assistantRouter.delete('/conversations/:id/scratchpad', requireRole('ADMIN', 'OPERATOR'), async (c) => {
+  await requireConversation(c, c.req.param('id')!);
   clearScratchpad(c.req.param('id')!);
   return c.json({ success: true });
 });
@@ -201,6 +215,7 @@ assistantRouter.get('/shares/:token', async (c) => {
 // ── Mark conversation as read ──
 assistantRouter.post('/conversations/:id/read', async (c) => {
   const id = c.req.param('id')!;
+  await requireConversation(c, id, 'read');
   const count = await markConversationRead(id);
   return c.json({ success: true, data: { marked: count } });
 });
@@ -208,6 +223,7 @@ assistantRouter.post('/conversations/:id/read', async (c) => {
 // ── Archive a conversation ──
 assistantRouter.post('/conversations/:id/archive', requireRole('ADMIN', 'OPERATOR'), async (c) => {
   const id = c.req.param('id')!;
+  await requireConversation(c, id);
   try {
     await archiveConversation(id);
     return c.json({ success: true });
@@ -218,7 +234,7 @@ assistantRouter.post('/conversations/:id/archive', requireRole('ADMIN', 'OPERATO
 
 // ── Get unread message count ──
 assistantRouter.get('/unread', async (c) => {
-  const count = await getUnreadAiMessageCount();
+  const count = await getUnreadAiMessageCount(ownersOf(c));
   return c.json({ success: true, data: { unread: count } });
 });
 
@@ -228,13 +244,14 @@ assistantRouter.post('/messages/read', async (c) => {
   if (!body.messageIds?.length) {
     throw new HttpError(400, 'VALIDATION_ERROR', 'messageIds array is required');
   }
-  const count = await markAiMessagesRead(body.messageIds);
+  const count = await markAiMessagesRead(body.messageIds, ownersOf(c));
   return c.json({ success: true, data: { marked: count } });
 });
 
 // ── Delete a conversation permanently ──
 assistantRouter.delete('/conversations/:id', requireRole('ADMIN', 'OPERATOR'), async (c) => {
   const id = c.req.param('id')!;
+  await requireConversation(c, id);
   try {
     await deleteConversation(id);
     return c.json({ success: true });
@@ -325,6 +342,8 @@ assistantRouter.post('/chat/stream', requireRole('ADMIN', 'OPERATOR'), async (c)
     ctxParts.push(`You are the AI assistant for the "${body.controlNodeName}" Control Node (ID: ${body.controlNodeId ?? 'unknown'}).`);
     controllerContext = ctxParts.join('\n');
   }
+
+  if (body.conversationId) await requireConversation(c, body.conversationId);
 
   const user = c.get('user');
 
@@ -461,6 +480,7 @@ assistantRouter.post('/messages/:id/confirm', requireRole('ADMIN', 'OPERATOR'), 
 
 assistantRouter.get('/conversations/:id/export', async (c) => {
   const id = c.req.param('id');
+  await requireConversation(c, id, 'read');
   const format = (c.req.query('format') ?? 'markdown') as 'markdown' | 'json' | 'csv';
 
   if (!['markdown', 'json', 'csv'].includes(format)) {
