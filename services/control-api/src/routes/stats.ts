@@ -4,8 +4,12 @@ import { getDb } from '../db/index.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { queryAuditEvents } from '../services/audit-service.js';
 import { getCodexFleetPosture } from '../services/codex-service.js';
+import { SENTINEL_NODE_IDS } from '../utils/sentinel-nodes.js';
 
 export const statsRouter = new Hono<AppVariables>();
+
+// Sentinel records exist only to satisfy log foreign keys; they are not fleet members.
+const realNode = { id: { notIn: SENTINEL_NODE_IDS } };
 
 statsRouter.use('*', authMiddleware);
 
@@ -30,11 +34,11 @@ statsRouter.get('/overview', async (c) => {
     recentCommands,
     auditResult,
   ] = await Promise.all([
-    db.node.count(),
-    db.node.findMany({ where: { status: 'ONLINE' }, select: { id: true } }),
-    db.node.count({ where: { status: 'OFFLINE' } }),
-    db.node.count({ where: { status: 'DEGRADED' } }),
-    db.node.count({ where: { status: 'PROVISIONING' } }),
+    db.node.count({ where: realNode }),
+    db.node.findMany({ where: { ...realNode, status: 'ONLINE' }, select: { id: true } }),
+    db.node.count({ where: { ...realNode, status: 'OFFLINE' } }),
+    db.node.count({ where: { ...realNode, status: 'DEGRADED' } }),
+    db.node.count({ where: { ...realNode, status: 'PROVISIONING' } }),
     db.remoteCommand.count(),
     db.remoteCommand.count({ where: { status: 'RUNNING' } }),
     db.remoteCommand.count({ where: { status: 'PENDING' } }),
