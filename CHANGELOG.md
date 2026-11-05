@@ -84,7 +84,7 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Migration impact
 
-- `20261105010000_base_initialization` adds the `product_initializations` completion receipt table. It is fast and leaves existing application rows unchanged. Upgrade to 2.0.0 first from earlier versions.
+- `20261105010000_base_initialization` adds the `product_initializations` completion receipt table. It is fast and leaves existing application rows unchanged.
 
 ## [2.0.0] - 2026-11-03
 

@@ -1,7 +1,7 @@
 {
   "summary": "Add the separate fleet gateway service, which holds the restricted SSH key and carries the browser web terminal, and direct Oathweave authentication for a static browser console. Resource enrollment now sends console drain challenges to the gateway at FLEET_GATEWAY_URL and fails closed without it, unless RESOURCE_ENROLLMENT_DASHBOARD_PARTICIPANT=absent. Assistant conversations, role and cron environment values and secret fingerprints are narrowed by ownership and role, and database error text no longer reaches clients. Base-data initialization and its completion receipt are committed atomically, verified before activation after an interrupted fresh install.",
   "breaking": true,
-  "minUpgradeFrom": "2.0.0",
+  "minUpgradeFrom": "1.0.0",
   "newRequiredEnv": [],
   "newOptionalEnv": [
     {

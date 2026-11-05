@@ -67,7 +67,7 @@
       "@hivemagnus/magnus-agent": "2.1.0"
     },
     "breaking": true,
-    "minUpgradeFrom": "2.0.0",
+    "minUpgradeFrom": "1.0.0",
     "engineProtocol": 2,
     "newRequiredEnv": [],
     "newOptionalEnv": [
