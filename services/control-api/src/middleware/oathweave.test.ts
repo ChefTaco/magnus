@@ -484,9 +484,48 @@ describe('GET /console/session', () => {
       .toMatchObject({ hermes: true, securityConsoleUrl: 'https://security.example.com' });
   });
 
-  it('offers no terminal capability', async () => {
-    const body = await (await get(await mint(), '/console/session')).json() as { data: { capabilities: Record<string, unknown> } };
-    expect(Object.keys(body.data.capabilities).filter((name) => /terminal/i.test(name))).toEqual([]);
+  describe('terminal capability', () => {
+    const terminal = async (permissions: string[], subject = SUBJECT) => {
+      const response = await get(await mint({ subject, claims: { permissions } }), '/console/session');
+      return consoleSessionResponseSchema.parse(await response.json()).data.capabilities.terminal;
+    };
+    const deploy = () => {
+      vi.stubEnv('FLEET_GATEWAY_URL', 'https://fleet-gateway.example.com:4310');
+      vi.stubEnv('FLEET_GATEWAY_TOKEN_SHA256', 'a'.repeat(64));
+    };
+
+    it('is false without a deployed gateway, whoever asks', async () => {
+      expect(await terminal(['magnus:admin', 'magnus:terminal'])).toBe(false);
+      vi.stubEnv('FLEET_GATEWAY_URL', 'https://fleet-gateway.example.com:4310');
+      expect(await terminal(['magnus:admin', 'magnus:terminal'])).toBe(false);
+    });
+
+    it('is true for an ADMIN link holding magnus:terminal', async () => {
+      deploy();
+      expect(await terminal(['magnus:admin', 'magnus:terminal'])).toBe(true);
+    });
+
+    it('is false without magnus:terminal', async () => {
+      deploy();
+      expect(await terminal(['magnus:admin', 'magnus:operate', 'magnus:view'])).toBe(false);
+    });
+
+    it('is false for a link below ADMIN, even holding the permission', async () => {
+      deploy();
+      vi.stubEnv('MAGNUS_OATHWEAVE_IDENTITIES_JSON', JSON.stringify([{ ...LINK, role: 'OPERATOR' }]));
+      expect(await terminal(['magnus:operate', 'magnus:terminal'])).toBe(false);
+    });
+
+    it('magnus:terminal grants no other access', async () => {
+      deploy();
+      expect((await get(await mint({ claims: { permissions: ['magnus:terminal'] } }), '/console/session')).status).toBe(403);
+    });
+
+    it('is false for a local service credential', async () => {
+      deploy();
+      const response = await app().request('/console/session', { headers: { 'x-api-secret': 'fixture-api-secret-for-unit-tests-at-least-32' } });
+      expect(consoleSessionResponseSchema.parse(await response.json()).data.capabilities.terminal).toBe(false);
+    });
   });
 
   it('requires authentication', async () => {

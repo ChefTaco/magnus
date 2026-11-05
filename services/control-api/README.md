@@ -110,6 +110,7 @@ without any of them. `magnus-server check` prints which are on.
 | Integration | What it adds | Environment |
 | --- | --- | --- |
 | Hive IAM | RS256 access tokens issued by Hive IAM replace locally issued JWTs | `IAM_CORE_URL`, `IAM_TOKEN_ISSUER`, `IAM_TOKEN_AUDIENCE` |
+| Fleet gateway | The browser web terminal, through a [separate service](../fleet-gateway/README.md) that holds the SSH key; also answers console drain challenges | `FLEET_GATEWAY_URL`, `FLEET_GATEWAY_TOKEN_SHA256`, `RESOURCE_ENROLLMENT_DASHBOARD_PARTICIPANT` |
 | Hive Router | OpenAI-compatible model routing for managed Hermes Agents | `MAGNUS_ROUTER_URL` (alias `HIVE_ROUTER_URL`), `MAGNUS_ROUTER_MODEL`, `MAGNUS_ROUTER_API_KEY`, `HIVE_ROUTER_HEALTH_URL` |
 | HiveMem | Shared agent memory for Hermes Agents and operational lessons | `HIVEMEM_URL`, `HIVEMEM_TOKEN`, `MAGNUS_LESSONS_HIVEMEM_URL`, `MAGNUS_LESSONS_HIVEMEM_TOKEN` |
 | Security Fusion (local) | Security cases, evidence and signed receipts in this server | `SECURITY_FUSION_MODE=local`, `SECURITY_FUSION_RECEIPT_SIGNING_KEY`, optional `SECURITY_FUSION_EVIDENCE_DIR`, `SECURITY_FUSION_CONTAINMENT_COMMAND`, `SECURITY_FUSION_MATTERMOST_*` |

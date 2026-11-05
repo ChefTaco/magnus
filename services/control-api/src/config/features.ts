@@ -28,6 +28,8 @@ export interface FeatureFlags {
   resourceLeases: boolean;
   /** Agent self-registration through the discovery endpoint. */
   agentDiscovery: boolean;
+  /** A fleet gateway carries the web terminal (`FLEET_GATEWAY_URL`, `FLEET_GATEWAY_TOKEN_SHA256`). */
+  fleetGateway: boolean;
 }
 
 const truthy = (value: string | undefined) => (value ?? '').trim().toLowerCase() === 'true';
@@ -46,6 +48,7 @@ export function featureFlags(env: NodeJS.ProcessEnv = process.env): FeatureFlags
     hermesRegistry: truthy(env['MAGNUS_HERMES_REGISTRY_ENABLED']),
     resourceLeases: truthy(env['MAGNUS_RESOURCE_LEASES_ENABLED']),
     agentDiscovery: truthy(env['ENABLE_AGENT_DISCOVERY']),
+    fleetGateway: Boolean(env['FLEET_GATEWAY_URL'] && env['FLEET_GATEWAY_TOKEN_SHA256']),
   };
 }
 

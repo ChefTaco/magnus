@@ -5,7 +5,7 @@ import type { Prisma } from '../db/generated/prisma/client.js';
 import { getDb } from '../db/index.js';
 import { HttpError } from '../middleware/error-handler.js';
 import { apiDrainAttestationSchema, apiDrainAttestationSigningPayload, canonical,
-  dashboardEnrollmentSecret, drainReceiptSchema, enrollmentSigningPayload } from './resource-enrollment.js';
+  assertDashboardStillAbsent, dashboardReceiptKey, drainReceiptSchema, enrollmentSigningPayload } from './resource-enrollment.js';
 import { lockResourceNode, resourceNodeIdentity } from './resource-node-lock.js';
 import { reconciliationSecret } from './resource-participant-work.js';
 import { RESULT_SIGNING_SECRET } from '../utils/env.js';
@@ -52,8 +52,9 @@ async function receiptHashes(tx: Tx, nodeId: string, nodeFqdn: string, epoch: nu
     try { receipt = participant === 'api' ? apiDrainAttestationSchema.parse(JSON.parse(ack.receiptJson))
       : drainReceiptSchema.parse(JSON.parse(ack.receiptJson)); } catch { fail(); }
     const { signature, ...unsigned } = receipt;
+    if (participant === 'dashboard') await assertDashboardStillAbsent(tx, nodeId);
     const key = participant === 'api' ? reconciliationSecret()
-      : participant === 'dashboard' ? dashboardEnrollmentSecret() : RESULT_SIGNING_SECRET;
+      : participant === 'dashboard' ? dashboardReceiptKey() : RESULT_SIGNING_SECRET;
     const payload = participant === 'api'
       ? apiDrainAttestationSigningPayload(unsigned as Omit<z.infer<typeof apiDrainAttestationSchema>, 'signature'>)
       : enrollmentSigningPayload(unsigned);

@@ -11,7 +11,7 @@ afterEach(() => vi.unstubAllEnvs());
 describe('optional integrations default to off', () => {
   it('reports nothing enabled for an empty environment', () => {
     expect(featureFlags({})).toEqual({ iam: false, oathweave: false, hermes: false, router: false, hivemem: false, securityFusion: 'off',
-      securityConsoleUrl: null, pluginApi: false, hermesRegistry: false, resourceLeases: false, agentDiscovery: false });
+      securityConsoleUrl: null, pluginApi: false, hermesRegistry: false, resourceLeases: false, agentDiscovery: false, fleetGateway: false });
   });
 
   it('turns each integration on from its own variables', () => {

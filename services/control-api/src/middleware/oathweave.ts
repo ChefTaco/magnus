@@ -3,10 +3,14 @@ import { decodeProtectedHeader } from 'jose';
 import { parseOathweaveLinks, type OathweaveIdentityLink } from '../config/oathweave.js';
 import {
   configuredOathweaveVerifier,
+  OATHWEAVE_STREAM_RECHECK_MS,
   oathweaveConfigured,
   type OathweaveIdentity,
 } from './oathweave-verifier.js';
 import type { AuthTokenPayload, UserRole } from '../types/index.js';
+
+/** Grants the web terminal, only to a person whose account link is ADMIN. No other route reads it. */
+export const OATHWEAVE_TERMINAL_PERMISSION = 'magnus:terminal';
 
 /** The token proved who the caller is, but that person has no access to Magnus. */
 export class OathweaveAccessDenied extends Error {}
@@ -45,7 +49,11 @@ export function linkedMagnusIdentity(
 
   // `email` is an audit actor label across this server (often read as
   // `user.email ?? user.userId`, and `??` keeps a blank), so it must not be empty.
-  return { userId: link.localUserId, email: link.localUserId, role, iat: identity.issuedAt, exp: identity.expiresAt };
+  return {
+    userId: link.localUserId, email: link.localUserId, role, iat: identity.issuedAt, exp: identity.expiresAt,
+    // The fleet gateway applies the same rule, and also requires recent identity verification.
+    terminal: link.role === 'ADMIN' && identity.permissions.includes(OATHWEAVE_TERMINAL_PERMISSION),
+  };
 }
 
 function isOathweaveToken(token: string): boolean {
@@ -84,7 +92,7 @@ export async function oathweaveRateLimitSubject(token: string): Promise<string |
 }
 
 /** How often an open stream re-checks its token. See OATHWEAVE_SESSION_CACHE_TTL_MS. */
-export const OATHWEAVE_STREAM_RECHECK_MS = 5_000;
+export { OATHWEAVE_STREAM_RECHECK_MS };
 
 /**
  * Authentication runs once when a stream opens, so a long-lived stream would

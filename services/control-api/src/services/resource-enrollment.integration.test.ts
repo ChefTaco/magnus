@@ -49,7 +49,7 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('durable enrollment and parti
     temporary = await mkdtemp(join(tmpdir(), 'magnus-enrollment-test-'));
     vi.stubEnv('CREDENTIAL_ROTATION_STATE_PATH', join(temporary, 'rotation.json'));
     vi.stubEnv('CREDENTIAL_ROTATION_KEY', 'enrollment-rotation-fixture-at-least-32-characters');
-    vi.stubEnv('RESOURCE_ENROLLMENT_DASHBOARD_SECRET', dashboardKey); vi.stubEnv('DASHBOARD_PUBLIC_ORIGIN', 'https://dashboard.invalid');
+    vi.stubEnv('RESOURCE_ENROLLMENT_DASHBOARD_SECRET', dashboardKey); vi.stubEnv('FLEET_GATEWAY_URL', 'https://fleet-gateway.invalid');
     service = await import('./resource-enrollment.js'); leases = await import('./command-resource-leases.js');
     db = (await import('../db/index.js')).getDb();
     app = new Hono().onError(errorHandler).route('/resource-leases', (await import('../routes/resource-leases.js')).resourceLeasesRouter);
@@ -172,13 +172,59 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('durable enrollment and parti
   it('dashboard receipt binds independently queried authoritative counts and canonical signing', async () => {
     await service.beginEnrollmentDrain(nodeId, 'fixture');
     vi.stubGlobal('fetch', vi.fn(async (url, init) => {
-      expect(url).toBe('https://dashboard.invalid/api/internal/resource-enrollment/drain');
+      expect(url).toBe('https://fleet-gateway.invalid/internal/resource-enrollment/drain');
       const descriptor = JSON.parse(init.body); const snapshot = await service.enrollmentStatus(nodeId, randomUUID(), 'dashboard');
       const value = { ...descriptor, status: 'drained', activeCount: 0, unknownCount: 0, evidenceSha256: snapshot.evidenceSha256 };
       return new Response(JSON.stringify(sign(value, dashboardKey)));
     }));
     expect(await service.refreshEnrollmentParticipant(nodeId, 'dashboard')).toMatchObject({ status: 'verified' });
     await expect(service.completeEnrollment(nodeId)).rejects.toMatchObject({ code: 'RESOURCE_DRAIN_INCOMPLETE' });
+  });
+  it('fails closed with no gateway origin, never trying the retired console route', async () => {
+    await service.beginEnrollmentDrain(nodeId, 'fixture');
+    const request = vi.fn(); vi.stubGlobal('fetch', request);
+    for (const origin of ['', 'http://fleet-gateway.invalid', 'https://fleet-gateway.invalid/path', 'https://user:pw@fleet-gateway.invalid']) {
+      vi.stubEnv('FLEET_GATEWAY_URL', origin);
+      expect(await service.refreshEnrollmentParticipant(nodeId, 'dashboard')).toMatchObject({ status: 'pending', cause: 'gateway-origin-unavailable' });
+    }
+    vi.stubEnv('FLEET_GATEWAY_URL', 'https://fleet-gateway.invalid');
+    expect(request).not.toHaveBeenCalled();
+  });
+  describe('absent console participant', () => {
+    beforeEach(() => { vi.stubEnv('RESOURCE_ENROLLMENT_DASHBOARD_PARTICIPANT', 'absent'); vi.stubEnv('RESOURCE_ENROLLMENT_DASHBOARD_SECRET', ''); });
+    afterEach(() => { vi.stubEnv('RESOURCE_ENROLLMENT_DASHBOARD_PARTICIPANT', ''); vi.stubEnv('RESOURCE_ENROLLMENT_DASHBOARD_SECRET', dashboardKey); });
+    const addWork = async (state: string) => {
+      vi.stubEnv('RESOURCE_ENROLLMENT_DASHBOARD_SECRET', dashboardKey);
+      await db.resourceParticipantWork.create({ data: { workId: randomUUID(), ownerId: randomUUID(), nodeId, nodeFqdn, participant: 'dashboard', kind: 'terminal-http', epoch: 0, state } });
+      vi.stubEnv('RESOURCE_ENROLLMENT_DASHBOARD_SECRET', '');
+    };
+    it('records verified evidence with no network call while the node has no console work', async () => {
+      await service.beginEnrollmentDrain(nodeId, 'fixture');
+      const request = vi.fn(); vi.stubGlobal('fetch', request);
+      expect(await service.refreshEnrollmentParticipant(nodeId, 'dashboard')).toMatchObject({ status: 'verified', reason: 'declared-absent-no-work' });
+      expect(request).not.toHaveBeenCalled();
+      expect(await db.resourceDrainParticipant.findUnique({ where: { nodeId_participant: { nodeId, participant: 'dashboard' } } })).toMatchObject({ status: 'verified' });
+    });
+    it.each(['reserved', 'running', 'unknown', 'released'])('fails closed when a %s console work row exists', async state => {
+      await addWork(state);
+      await service.beginEnrollmentDrain(nodeId, 'fixture').catch(() => undefined);
+      await db.resourceEnrollment.upsert({ where: { nodeId }, create: { nodeId, nodeFqdn, state: 'draining', epoch: 1, barrierId: randomUUID() }, update: {} });
+      expect(await service.refreshEnrollmentParticipant(nodeId, 'dashboard')).toMatchObject({ status: 'pending', reason: 'dashboard-work-exists' });
+      expect(service.lastParticipantFailures(nodeId)).toEqual([expect.objectContaining({ participant: 'dashboard', cause: 'dashboard-work-exists' })]);
+    });
+    it('stored absent evidence stops counting if a work row appears later', async () => {
+      await expect(service.assertDashboardStillAbsent(db as never, nodeId)).resolves.toBeUndefined();
+      await addWork('released');
+      await expect(service.assertDashboardStillAbsent(db as never, nodeId)).rejects.toMatchObject({ code: 'RESOURCE_DRAIN_INCOMPLETE' });
+    });
+    it('absent evidence does not verify once the mode changes to a real gateway', async () => {
+      await service.beginEnrollmentDrain(nodeId, 'fixture');
+      expect(await service.refreshEnrollmentParticipant(nodeId, 'dashboard')).toMatchObject({ status: 'verified' });
+      const ack = await db.resourceDrainParticipant.findUniqueOrThrow({ where: { nodeId_participant: { nodeId, participant: 'dashboard' } } });
+      const { signature, ...unsigned } = JSON.parse(ack.receiptJson!);
+      expect(signature).toBe(createHmac('sha256', resultKey).update(service.enrollmentSigningPayload(unsigned)).digest('hex'));
+      expect(signature).not.toBe(createHmac('sha256', dashboardKey).update(service.enrollmentSigningPayload(unsigned)).digest('hex'));
+    });
   });
   it('rejects zero-count dashboard claims contradicted by central durable work', async () => {
     const input = work(); await service.reserveDashboardWork(input); await service.beginEnrollmentDrain(nodeId, 'fixture');
@@ -261,7 +307,8 @@ try { const value = process.argv[2] === 'start' ? await startDashboardWork(proce
     await expect(service.completeEnrollment(nodeId)).rejects.toMatchObject({ code: 'RESOURCE_DRAIN_INCOMPLETE' });
     expect((await service.inspectEnrollment(nodeId)).state).toBe('draining');
   });
-  it('requires independent API and scheduler boundary reviews before one-way enrollment', async () => {
+  it.each(['gateway', 'absent'])('requires independent API and scheduler boundary reviews before one-way enrollment (console participant: %s)', async mode => {
+    vi.stubEnv('RESOURCE_ENROLLMENT_DASHBOARD_PARTICIPANT', mode === 'absent' ? 'absent' : '');
     const drain = await service.beginEnrollmentDrain(nodeId, 'fixture');
     const prepared = await service.refreshEnrollmentParticipant(nodeId, 'api');
     expect(prepared).toMatchObject({ participant: 'api', status: 'pending', reason: 'signed-reviewed-evidence-required' });
@@ -280,7 +327,7 @@ try { const value = process.argv[2] === 'start' ? await startDashboardWork(proce
     vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
       const current = JSON.parse(String(init.body));
       const participant = current.participant as 'agent' | 'dashboard' | 'scheduler';
-      expect(url).toContain(participant === 'dashboard' ? '/api/internal/resource-enrollment/drain'
+      expect(url).toContain(participant === 'dashboard' ? '/internal/resource-enrollment/drain'
         : participant === 'agent' ? '/api/v1/commands/enrollment-drain' : '/api/v1/cron/enrollment-drain');
       const snapshot = participant === 'dashboard' ? await service.enrollmentStatus(nodeId, randomUUID(), 'dashboard') : null;
       const receipt = participant === 'scheduler'
@@ -308,6 +355,7 @@ try { const value = process.argv[2] === 'start' ? await startDashboardWork(proce
       .rejects.toMatchObject({ status: 403 });
     expect(await service.acceptSchedulerBoundaryAttestation(nodeId, signedBoundary)).toMatchObject({ status: 'verified' });
     expect(await service.completeEnrollment(nodeId)).toMatchObject({ state: 'enrolled', epoch: drain.epoch });
+    vi.stubEnv('RESOURCE_ENROLLMENT_DASHBOARD_PARTICIPANT', '');
     expect((await service.inspectEnrollment(nodeId)).apiBlockers).toEqual([]);
   });
   it('rejects a reviewed boundary that relabels an unrecognized source', async () => {
@@ -380,16 +428,15 @@ try { const value = process.argv[2] === 'start' ? await startDashboardWork(proce
       requestSha256: commandRequestDigest(admitted!.payload), coordination: admitted!.payload.coordination };
     expect((await post('/claim', claim, nodeKey, 'x-node-token')).status).toBe(200);
   });
-  it.each([false, true])('verifies actual dashboard runtime signatures and durable work contract (unsettled=%s)', async unsettled => {
-    const { createResourceParticipant } = await import('../../../../apps/dashboard/runtime-resource-participant.mjs');
-    const participant = createResourceParticipant({ env: { RESOURCE_ENROLLMENT_DASHBOARD_SECRET: dashboardKey },
-      request: async (path, body) => {
-        const response = await post('/enrollment/dashboard' + path, body);
-        if (response.status !== 200) throw new Error('Fixture participant authority denied');
-        return (await response.json()).data;
-      } });
+  it.each([false, true])('verifies the actual fleet gateway signatures and durable work contract (unsettled=%s)', async unsettled => {
+    const { createResourceParticipant } = await import('../../../fleet-gateway/src/participant.js');
+    const participant = createResourceParticipant(dashboardKey, async (path, body) => {
+      const response = await post('/enrollment/dashboard' + path, body);
+      if (response.status !== 200) throw new Error('Fixture participant authority denied');
+      return (await response.json()).data;
+    });
     if (unsettled) {
-      const handle = await participant.begin(nodeFqdn, 'hermes-ws');
+      const handle = await participant.begin(nodeFqdn, nodeId, 600_000);
       await handle.finish('remote-ended');
       expect(await db.resourceParticipantWork.findUnique({ where: { workId: handle.workId } })).toMatchObject({ state: 'unknown' });
     }

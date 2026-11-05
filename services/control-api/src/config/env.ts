@@ -53,6 +53,9 @@ export const envSchema = z.object({
 
   MAGNUS_RESOURCE_LEASES_ENABLED: booleanEnvSchema,
   RESOURCE_ENROLLMENT_DASHBOARD_SECRET: z.string().min(32).optional(),
+  RESOURCE_ENROLLMENT_DASHBOARD_PARTICIPANT: z.enum(['gateway', 'absent']).optional(),
+  FLEET_GATEWAY_URL: z.string().url().optional(),
+  FLEET_GATEWAY_TOKEN_SHA256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   // Optional signed team-approval relay (Ed25519 public key + actor bindings).
   APPROVAL_SIGNER_PUBLIC_KEY_PEM: z.string().optional(),
   APPROVAL_SIGNER_PUBLIC_KEY_B64: z.string().min(32).optional(),
@@ -200,6 +203,15 @@ export const envSchema = z.object({
       'must list legacy=format pairs, where format is generic, slack, discord or mattermost')
     .optional(),
 }).superRefine((env, ctx) => {
+  if (env.FLEET_GATEWAY_URL) {
+    const url = new URL(env.FLEET_GATEWAY_URL);
+    if (url.protocol !== 'https:' || url.username || url.password || url.pathname !== '/' || url.search || url.hash)
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['FLEET_GATEWAY_URL'], message: 'FLEET_GATEWAY_URL must be a bare HTTPS origin' });
+    if (env.RESOURCE_ENROLLMENT_DASHBOARD_PARTICIPANT === 'absent')
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['RESOURCE_ENROLLMENT_DASHBOARD_PARTICIPANT'], message: 'A deployed fleet gateway cannot be declared absent; unset FLEET_GATEWAY_URL or RESOURCE_ENROLLMENT_DASHBOARD_PARTICIPANT' });
+  }
+  if (Boolean(env.FLEET_GATEWAY_URL) !== Boolean(env.FLEET_GATEWAY_TOKEN_SHA256))
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['FLEET_GATEWAY_TOKEN_SHA256'], message: 'FLEET_GATEWAY_URL and FLEET_GATEWAY_TOKEN_SHA256 must be configured together' });
   try { webhookTypeAliases(env.MAGNUS_WEBHOOK_TYPE_ALIASES); } catch (error: unknown) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['MAGNUS_WEBHOOK_TYPE_ALIASES'],
       message: error instanceof Error ? error.message : 'MAGNUS_WEBHOOK_TYPE_ALIASES is invalid' });
@@ -365,6 +377,7 @@ export const envSchema = z.object({
     env.MAGNUS_PLUGIN_OPERATOR_TOKEN_SHA256,
     env.MAGNUS_FLEET_CHECK_TOKEN_SHA256,
     env.MAGNUS_COLLECTOR_TOKEN_SHA256,
+    env.FLEET_GATEWAY_TOKEN_SHA256,
     ...configuredDigestValues(env.MAGNUS_PLUGIN_READ_TOKEN_DIGESTS_JSON),
   ].filter((value): value is string => Boolean(value)));
   if (env.MAGNUS_SHARED_RESOURCE_TOKEN_SHA256 && otherScopedDigests.has(env.MAGNUS_SHARED_RESOURCE_TOKEN_SHA256)) {

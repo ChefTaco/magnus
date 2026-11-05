@@ -47,6 +47,24 @@ export function dashboardEnrollmentSecret(): string {
     throw new HttpError(503, 'RESOURCE_PARTICIPANT_UNCONFIGURED', 'Dedicated dashboard participant credential is required');
   return key;
 }
+/** Who answers console drain challenges. Anything but an explicit `absent` needs a real gateway. */
+export function dashboardParticipantAbsent(): boolean {
+  return process.env['RESOURCE_ENROLLMENT_DASHBOARD_PARTICIPANT'] === 'absent';
+}
+/**
+ * The key that signs stored console evidence. In absent mode no participant exists to hold a shared
+ * key, so this server signs its own finding. Changing mode invalidates evidence from the other mode.
+ */
+export function dashboardReceiptKey(): string {
+  if (!dashboardParticipantAbsent()) return dashboardEnrollmentSecret();
+  if (RESULT_SIGNING_SECRET.length < 32) throw new HttpError(503, 'RESOURCE_PARTICIPANT_UNCONFIGURED', 'Result signing credential is required');
+  return RESULT_SIGNING_SECRET;
+}
+/** Absent mode holds only while no console work was ever recorded on this node, in any state. */
+export async function assertDashboardStillAbsent(tx: Tx, nodeId: string): Promise<void> {
+  if (dashboardParticipantAbsent() && await tx.resourceParticipantWork.count({ where: { nodeId, participant: 'dashboard' } }))
+    fail('RESOURCE_DRAIN_INCOMPLETE', 'Console work exists on this node, so the console participant cannot be declared absent');
+}
 export function verifyDashboardCredential(token: string): void {
   const expected = dashboardEnrollmentSecret();
   const received = Buffer.from(token); const required = Buffer.from(expected);
@@ -211,6 +229,7 @@ export async function refreshEnrollmentParticipant(nodeId: string, participant: 
   });
   if (participant === 'api') return { participant, status: 'pending', reason: 'signed-reviewed-evidence-required',
     descriptor: prepared.descriptor };
+  if (participant === 'dashboard' && dashboardParticipantAbsent()) return recordAbsentDashboard(nodeId, prepared.descriptor);
   let receipt: z.infer<typeof drainReceiptSchema> | z.infer<typeof schedulerBoundaryReceiptSchema>;
   try {
     let url: string; let headers: Record<string, string>; let key: string;
@@ -222,10 +241,13 @@ export async function refreshEnrollmentParticipant(nodeId: string, participant: 
         ? '/api/v1/cron/enrollment-drain' : '/api/v1/commands/enrollment-drain');
       headers = { 'x-node-token': getNodeManagerSecret() };
     } else {
-      key = dashboardEnrollmentSecret(); const origin = new URL(process.env['DASHBOARD_PUBLIC_ORIGIN'] ?? '');
+      key = dashboardEnrollmentSecret();
+      let origin: URL;
+      try { origin = new URL(process.env['FLEET_GATEWAY_URL'] ?? ''); }
+      catch { throw new ParticipantEvidenceError('gateway-origin-unavailable'); }
       if (origin.protocol !== 'https:' || origin.username || origin.password || origin.pathname !== '/' || origin.search || origin.hash)
-        throw new ParticipantEvidenceError('dashboard-origin-unavailable');
-      url = origin.origin + '/api/internal/resource-enrollment/drain'; headers = { 'x-resource-drain-key': key };
+        throw new ParticipantEvidenceError('gateway-origin-unavailable');
+      url = origin.origin + '/internal/resource-enrollment/drain'; headers = { 'x-resource-drain-key': key };
     }
     const response = await fetch(url, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(participant !== 'dashboard' ? 25_000 : 5_000),
       headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify(prepared.descriptor) })
@@ -273,6 +295,28 @@ export async function refreshEnrollmentParticipant(nodeId: string, participant: 
     return { participant, status: verified ? 'verified' : 'pending', reason: verified ? 'signed-current-drain'
       : participant === 'scheduler' && receipt.status === 'managed-drained' && !receipt.activeCount && !receipt.unknownCount
         && !schedulerUnsettled && !central.activeCount && !central.unknownCount ? 'reviewed-boundary-required' : 'unsettled-work' };
+  });
+}
+/** No participant exists to ask, so this server records what its own ledger shows, or refuses. */
+async function recordAbsentDashboard(nodeId: string, descriptor: { nodeId: string; nodeFqdn: string; epoch: number; barrierId: string; challengeId: string; expiresAt: number; version: 1; participant: Participant }) {
+  const key = dashboardReceiptKey();
+  return getDb().$transaction(async tx => {
+    await lockResourceNode(tx, nodeId);
+    const { row } = await identity(tx, nodeId);
+    const ack = await tx.resourceDrainParticipant.findUnique({ where: { nodeId_participant: { nodeId, participant: 'dashboard' } } });
+    if (row?.state !== 'draining' || row.epoch !== descriptor.epoch || row.barrierId !== descriptor.barrierId || ack?.challengeId !== descriptor.challengeId)
+      fail('RESOURCE_DRAIN_STALE', 'Participant evidence no longer matches the current drain');
+    if (await tx.resourceParticipantWork.count({ where: { nodeId, participant: 'dashboard' } })) {
+      failures.set(`${nodeId}\ndashboard`, { participant: 'dashboard', cause: 'dashboard-work-exists', agentCode: null, agentReason: null, at: new Date().toISOString() });
+      return { participant: 'dashboard' as const, status: 'pending', reason: 'dashboard-work-exists' };
+    }
+    failures.delete(`${nodeId}\ndashboard`);
+    const { evidenceSha256 } = await participantSnapshot(tx, nodeId, 'dashboard');
+    const unsigned = { ...descriptor, status: 'drained' as const, activeCount: 0, unknownCount: 0, evidenceSha256 };
+    const receipt = { ...unsigned, signature: createHmac('sha256', key).update(enrollmentSigningPayload(unsigned)).digest('hex') };
+    await tx.resourceDrainParticipant.update({ where: { nodeId_participant: { nodeId, participant: 'dashboard' } }, data: {
+      status: 'verified', evidenceSha256, receiptJson: JSON.stringify(receipt), verifiedAt: new Date() } });
+    return { participant: 'dashboard' as const, status: 'verified', reason: 'declared-absent-no-work' };
   });
 }
 export async function acceptSchedulerBoundaryAttestation(nodeId: string, raw: unknown) {
@@ -389,7 +433,8 @@ export async function completeEnrollment(nodeId: string) {
         : drainReceiptSchema.parse(JSON.parse(ack.receiptJson ?? 'null')); }
       catch (error) { warnEvidence(`${participant} receipt`, nodeId, error); fail('RESOURCE_DRAIN_INCOMPLETE', 'Stored participant receipt is unavailable'); }
       const { signature, ...unsigned } = receipt;
-      const key = participant === 'dashboard' ? dashboardEnrollmentSecret()
+      if (participant === 'dashboard') await assertDashboardStillAbsent(tx, nodeId);
+      const key = participant === 'dashboard' ? dashboardReceiptKey()
         : participant === 'api' ? reconciliationSecret() : RESULT_SIGNING_SECRET;
       const payload = participant === 'api'
         ? apiDrainAttestationSigningPayload(unsigned as Omit<z.infer<typeof apiDrainAttestationSchema>, 'signature'>)

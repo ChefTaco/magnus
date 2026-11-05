@@ -25,6 +25,8 @@ consoleRouter.get('/session', (c) => {
       role: user.role,
       capabilities: {
         hermes: featureFlags().hermes,
+        // Whether to offer the terminal. The gateway still verifies everything, including step-up.
+        terminal: featureFlags().fleetGateway && user.terminal === true,
         agentVersion: AGENT_VERSION,
         magnusVersion: CONTROL_API_VERSION,
         securityConsoleUrl: securityConsoleUrl() ?? null,

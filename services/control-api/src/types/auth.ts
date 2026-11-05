@@ -1,6 +1,11 @@
 // ─── Auth and Audit ───
 
 export type AuditAction =
+  | 'terminal.session.open'
+  | 'terminal.session.close'
+  | 'terminal.session.refuse'
+  | 'terminal.host-key.approve'
+  | 'terminal.host-key.remove'
   | 'cindertrace.response_claimed'
   | 'node.register'
   | 'node.update'
@@ -227,6 +232,8 @@ export interface AuthTokenPayload {
   role: UserRole;
   iat: number;
   exp: number;
+  /** Oathweave only: an ADMIN link and magnus:terminal. Says what the console may offer; the fleet gateway decides. */
+  terminal?: boolean;
 }
 
 /** Hono env type providing typed Variables across all routes and middleware. */

@@ -87,6 +87,11 @@ export const ENV_CATALOG: readonly EnvVariable[] = [
   { name: 'OATHWEAVE_USERINFO_URL', group: 'iam', requiredWhen: 'OATHWEAVE_ISSUER set', description: 'HTTPS userinfo URL used for online session revocation (logout takes effect within 15 seconds, including on open streams).' },
   { name: 'MAGNUS_OATHWEAVE_IDENTITIES_JSON', group: 'iam', requiredWhen: 'OATHWEAVE_ISSUER set', description: 'JSON array of {issuer,subject,localUserId,role}. Exact issuer and subject match, never by email; a missing or duplicate link is refused. `role` caps what the token permissions magnus:admin, magnus:operate and magnus:view can grant.' },
 
+  // ── Fleet gateway (web terminal) ──
+  { name: 'FLEET_GATEWAY_URL', group: 'iam', description: 'HTTPS origin of the fleet gateway, the separate service holding the restricted SSH key. Enables the console terminal capability with FLEET_GATEWAY_TOKEN_SHA256, and receives console drain challenges.' },
+  { name: 'FLEET_GATEWAY_TOKEN_SHA256', group: 'iam', requiredWhen: 'FLEET_GATEWAY_URL set', description: 'SHA-256 digest of the credential the fleet gateway presents to resolve nodes and record terminal audit events.' },
+  { name: 'RESOURCE_ENROLLMENT_DASHBOARD_PARTICIPANT', group: 'iam', description: '`gateway` (default) sends console drain challenges to FLEET_GATEWAY_URL. `absent` declares no console participant exists: drain evidence is accepted only while the node has no console work rows, in any state.' },
+
   // ── Hive Router ──
   { name: 'MAGNUS_ROUTER_URL', group: 'router', description: 'OpenAI-compatible model router (for example Hive Router) for managed Hermes Agents. HIVE_ROUTER_URL is accepted as an alias.' },
   { name: 'MAGNUS_ROUTER_MODEL', group: 'router', description: 'Default model served by the router. HIVE_ROUTER_MODEL is accepted as an alias.' },

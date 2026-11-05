@@ -39,6 +39,13 @@ test('resolves concrete paths, preferring an exact path over a parameter', () =>
   assert.throws(() => magnusBrowserResponseSchema('/logs/stream'), /stream/);
 });
 
+test('the terminal capability defaults to off, because older servers omit it', () => {
+  const capabilities = { hermes: false, agentVersion: '1.0.0', magnusVersion: '1.0.0', securityConsoleUrl: null };
+  const parse = (value) => consoleSessionResponseSchema.parse({ success: true, data: { userId: 'alice', role: 'ADMIN', capabilities: value } }).data.capabilities.terminal;
+  assert.equal(parse(capabilities), false);
+  assert.equal(parse({ ...capabilities, terminal: true }), true);
+});
+
 test('parses a session and rejects an unknown role', () => {
   const session = { success: true, data: { userId: 'alice', role: 'VIEWER', capabilities: { hermes: false, agentVersion: '1.0.0', magnusVersion: '1.0.0', securityConsoleUrl: null } } };
   assert.equal(consoleSessionResponseSchema.parse(session).data.role, 'VIEWER');

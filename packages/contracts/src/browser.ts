@@ -36,6 +36,8 @@ const SENSITIVE_ENV_KEYS = new Set([
 export const consoleRoleSchema = z.enum(['ADMIN', 'OPERATOR', 'VIEWER']);
 export const consoleCapabilitiesSchema = z.object({
   hermes: z.boolean(),
+  /** The fleet gateway is deployed and this person holds an ADMIN link and magnus:terminal. Older servers omit it. */
+  terminal: z.boolean().default(false),
   agentVersion: z.string(),
   magnusVersion: z.string(),
   securityConsoleUrl: z.string().nullable(),

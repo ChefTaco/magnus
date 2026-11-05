@@ -2219,9 +2219,10 @@ const paths: Record<string, Record<string, unknown>> = {
             role: { type: 'string', enum: ['ADMIN', 'OPERATOR', 'VIEWER'] },
             capabilities: {
               type: 'object',
-              required: ['hermes', 'agentVersion', 'magnusVersion', 'securityConsoleUrl'],
+              required: ['hermes', 'terminal', 'agentVersion', 'magnusVersion', 'securityConsoleUrl'],
               properties: {
                 hermes: { type: 'boolean' },
+                terminal: { type: 'boolean', description: 'The fleet gateway is deployed and this person may use it.' },
                 agentVersion: { type: 'string' },
                 magnusVersion: { type: 'string' },
                 securityConsoleUrl: { type: ['string', 'null'] },

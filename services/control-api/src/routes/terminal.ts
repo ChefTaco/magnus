@@ -4,8 +4,8 @@ import type { Duplex } from 'node:stream';
 
 /**
  * The former Control API terminal used retired reusable SSH passwords. Keep a
- * deterministic upgrade rejection so old clients fail closed while the
- * dashboard's separately scoped, host-key-pinned terminal remains available.
+ * deterministic upgrade rejection so old clients fail closed. The web terminal
+ * lives in the fleet gateway, so this process never holds the restricted SSH key.
  */
 export function setupTerminalWebSocket(server: {
   on(event: 'upgrade', listener: (req: IncomingMessage, socket: Duplex, head: Buffer) => void): unknown;
