@@ -51,14 +51,15 @@ test('strips secret-like fields from parsed responses', () => {
 
   const now = '2026-01-01T00:00:00.000Z';
   const node = { id: 'node-1', name: 'node-1', hostname: 'node-1.example.com', ipAddress: '192.0.2.10', port: 4100, status: 'ONLINE', os: 'linux', arch: 'x64', tags: '[]', metadata: '{}', roleId: null, lastHeartbeatAt: now, createdAt: now, updatedAt: now };
-  const cron = { id: 'cron-1', nodeId: 'node-1', name: 'backup', description: '', schedule: '0 * * * *', command: '/usr/bin/true', args: '[]', workingDirectory: null, environment: '{"KEY":"value"}', timeoutSeconds: 60, status: 'ACTIVE', lastRunAt: null, lastRunExitCode: null, nextRunAt: null, createdBy: 'alice', createdAt: now, updatedAt: now };
+  const cron = { id: 'cron-1', nodeId: 'node-1', name: 'backup', description: '', schedule: '0 * * * *', command: '/usr/bin/true', args: '[]', workingDirectory: null, environmentKeys: ['KEY'], timeoutSeconds: 60, status: 'ACTIVE', lastRunAt: null, lastRunExitCode: null, nextRunAt: null, createdBy: 'alice', createdAt: now, updatedAt: now };
   const updated = cronUpdateResponseSchema.parse({ success: true, data: { ...cron, node: { ...node, token: 'node-fake-token' } } });
   assert.equal('token' in updated.data.node, false);
   assert.equal('environment' in updated.data, false);
+  assert.deepEqual(updated.data.environmentKeys, ['KEY']);
 
-  const role = roleSchema.parse({ id: 'role-1', name: 'web', description: '', libraryFileIds: [], skillNames: [], aptPackages: [], npmPackages: [], dockerEnabled: false, dockerNonRoot: false, dockerImage: null, dockerVolumes: [], firewallEnabled: false, firewallMode: 'allow', firewallAllowRules: [], status: 'active', createdAt: now, updatedAt: now, _count: { nodes: 0 }, envConfig: { KEY: 'value' } });
-  assert.equal('envConfig' in role, false);
+  const role = roleSchema.parse({ envConfigKeys: ['KEY'], id: 'role-1', name: 'web', description: '', libraryFileIds: [], skillNames: [], aptPackages: [], npmPackages: [], dockerEnabled: false, dockerNonRoot: false, dockerImage: null, dockerVolumes: [], firewallEnabled: false, firewallMode: 'allow', firewallAllowRules: [], status: 'active', createdAt: now, updatedAt: now, _count: { nodes: 0 } });
+  assert.deepEqual(role.envConfigKeys, ['KEY']);
 
-  const readiness = fleetReadinessResponseSchema.parse({ success: true, data: { generatedAt: now, thresholds: { staleNodeMs: 1 }, expectedFingerprints: { apiSecret: 'fake', nodeManagerSecret: 'fake' }, nodes: [] } });
+  const readiness = fleetReadinessResponseSchema.parse({ success: true, data: { generatedAt: now, thresholds: { staleNodeMs: 1 }, nodes: [] } });
   assert.equal('expectedFingerprints' in readiness.data, false);
 });

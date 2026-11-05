@@ -145,7 +145,7 @@ export const statsOverviewSchema = z.object({
 export const statsOverviewResponseSchema = ok(statsOverviewSchema);
 
 // ── Nodes ──
-// services/control-api/prisma/schema.prisma (token removed at services/control-api/src/routes/nodes.ts; tags and metadata are JSON strings)
+// services/control-api/prisma/schema.prisma (token never returned; tags and metadata are JSON strings, and metadata carries secret fingerprints for ADMIN only)
 export const nodeSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -234,7 +234,7 @@ export const registerNodeRequestSchema = z.object({
   agentVersion: z.string().optional(),
 });
 
-// services/control-api/src/routes/nodes.ts (the handler also returns the node token; it is not modelled here)
+// services/control-api/src/routes/nodes.ts (the raw body also carries the node token, once, with Cache-Control: no-store)
 export const registerNodeResponseSchema = ok(z.object({
   nodeId: z.string(),
   controlApiUrl: z.string(),
@@ -289,6 +289,8 @@ export const nodeMetadataSchema = z.object({
   deployError: z.string().optional(),
   upgradeError: z.string().optional(),
   nodeVersion: z.json().optional(),
+  nodeManagerSecretState: z.enum(['active', 'previous', 'unknown']).optional(),
+  nodeManagerSecretObservedAt: z.string().optional(),
 });
 
 // Decodes elements of health.disks: services/control-api/src/types/shared-contracts.ts
@@ -530,7 +532,7 @@ export const readinessHermesSchema = z.object({
   lastDetectedAt: isoDate.nullable(),
 });
 
-// services/control-api/src/services/ops-service.ts (includes sentinel nodes __control-api__ and __dashboard__, which the page filters out; fingerprint hashes omitted)
+// services/control-api/src/services/ops-service.ts (includes sentinel nodes __control-api__ and __dashboard__, which the page filters out)
 export const fleetReadinessNodeSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -551,13 +553,22 @@ export const fleetReadinessNodeSchema = z.object({
   destructiveActionsBlocked: z.boolean(),
   health: readinessHealthSchema.nullable(),
   hermes: readinessHermesSchema.nullable(),
-  secretFingerprint: z.object({ match: z.enum(['unknown', 'match', 'mismatch']) }),
+  secretFingerprint: z.object({
+    match: z.enum(['unknown', 'match', 'mismatch']),
+    state: z.enum(['active', 'previous', 'unknown']),
+    /** Present for ADMIN only. */
+    expectedNodeManagerSecret: z.string().nullable().optional(),
+    /** Present for ADMIN only. */
+    observedNodeManagerSecret: z.string().nullable().optional(),
+  }),
 });
 
-// services/control-api/src/routes/ops.ts (expectedFingerprints omitted)
+// services/control-api/src/routes/ops.ts
 export const fleetReadinessResponseSchema = ok(z.object({
   generatedAt: isoDate,
   thresholds: z.object({ staleNodeMs: z.number() }),
+  /** Present for ADMIN only. */
+  expectedFingerprints: z.object({ nodeManagerSecret: z.string().nullable(), apiSecret: z.string().nullable() }).optional(),
   nodes: z.array(fleetReadinessNodeSchema),
 }));
 
@@ -588,7 +599,7 @@ export const hermesRuntimeConfigurationSchema = z.object({
   }).optional(),
 });
 
-// services/control-api/src/services/hermes-service.ts (apiServerKeyFingerprint omitted; installation is present only on the profile list)
+// services/control-api/src/services/hermes-service.ts (installation is present only on the profile list)
 export const hermesProfileSchema = z.object({
   id: z.string(),
   installationId: z.string(),
@@ -603,6 +614,9 @@ export const hermesProfileSchema = z.object({
   apiServerEnabled: z.boolean(),
   apiServerHost: z.string(),
   apiServerPort: z.number().int().nullable(),
+  apiServerKeyConfigured: z.boolean(),
+  /** Present for ADMIN only. */
+  apiServerKeyFingerprint: z.string().nullable().optional(),
   capabilities: jsonRecord,
   envStatus: jsonRecord,
   metadata: jsonRecord,
@@ -701,7 +715,7 @@ export const pinInsightResponseSchema = ok(pinnedInsightSchema);
 export const unpinInsightResponseSchema = z.object({ success: z.literal(true) });
 
 // ── Roles ──
-// services/control-api/src/routes/roles.ts (envConfig omitted: it is returned unredacted to every role)
+// services/control-api/src/routes/roles.ts
 export const roleSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -721,6 +735,9 @@ export const roleSchema = z.object({
   createdAt: isoDate,
   updatedAt: isoDate,
   _count: z.object({ nodes: z.number() }),
+  envConfigKeys: z.array(z.string()),
+  /** Present for ADMIN only. A PATCH below ADMIN merges: a key left out or left blank keeps its value. */
+  envConfig: z.record(z.string(), z.string()).optional(),
 });
 
 // services/control-api/src/routes/roles.ts
@@ -1258,7 +1275,7 @@ export const cronListQuerySchema = z.object({
   nodeId: z.string().optional(),
 });
 
-// services/control-api/prisma/schema.prisma (args is a JSON-encoded string; `environment` is deliberately not modelled)
+// services/control-api/prisma/schema.prisma (args is a JSON-encoded string)
 export const cronJobSchema = z.object({
   id: z.string(),
   nodeId: z.string(),
@@ -1276,6 +1293,9 @@ export const cronJobSchema = z.object({
   createdBy: z.string(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
+  environmentKeys: z.array(z.string()),
+  /** A JSON-encoded string, present for ADMIN only. A PATCH below ADMIN merges: a key left out or left blank keeps its value. */
+  environment: z.string().optional(),
 });
 
 // services/control-api/prisma/schema.prisma
@@ -2135,7 +2155,7 @@ export const magnusBrowserRoutes: readonly MagnusBrowserRoute[] = [
   // Nodes list
   { method: 'GET', path: '/nodes', query: nodeListQuerySchema, response: nodeListResponseSchema, roles: ANY_ROLE, note: 'tags, metadata and agent.capabilities are JSON-encoded strings. An unknown status fails with 500.' },
   { method: 'GET', path: '/nodes/system-updates/summary', response: systemUpdatesSummaryResponseSchema, roles: ANY_ROLE },
-  { method: 'POST', path: '/nodes/register', request: registerNodeRequestSchema, response: registerNodeResponseSchema, roles: WRITE_ROLES, successStatus: 201, note: 'The raw body also carries the per-node token; this schema strips it.' },
+  { method: 'POST', path: '/nodes/register', request: registerNodeRequestSchema, response: registerNodeResponseSchema, roles: WRITE_ROLES, successStatus: 201, note: 'The raw body also carries the per-node token. It is shown once, with Cache-Control: no-store, and this schema strips it.' },
   { method: 'GET', path: '/health', response: publicHealthResponseSchema, roles: [] },
   { method: 'GET', path: '/self-update/version', response: selfUpdateVersionResponseSchema, roles: ANY_ROLE },
   { method: 'GET', path: '/self-update/status', response: selfUpdateStatusResponseSchema, roles: ANY_ROLE },
