@@ -4,7 +4,7 @@ FROM ${NODE_IMAGE} AS dependencies
 WORKDIR /opt/codex
 COPY tooling/native-codex/package.json tooling/native-codex/package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund && npm cache clean --force
-COPY tooling/native-codex/launcher.mjs ./launcher.mjs
+COPY tooling/native-codex/launcher.mjs tooling/native-codex/acceptance.mjs tooling/native-codex/verification-relay.mjs ./
 FROM ${NODE_IMAGE} AS runtime
 LABEL org.opencontainers.image.title="Magnus native Codex export" \
       org.opencontainers.image.licenses="Apache-2.0" \

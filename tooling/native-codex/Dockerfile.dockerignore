@@ -2,3 +2,6 @@
 !tooling/native-codex/package.json
 !tooling/native-codex/package-lock.json
 !tooling/native-codex/launcher.mjs
+
+!tooling/native-codex/acceptance.mjs
+!tooling/native-codex/verification-relay.mjs

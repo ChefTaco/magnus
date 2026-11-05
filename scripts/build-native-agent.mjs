@@ -113,6 +113,7 @@ export function buildNativeAgent(
     codex: { root: '/opt/codex', name: '@openai/codex', bin: 'codex', launcher: 'launcher.mjs',
       arguments: ['--env-file', '@ENV_FILE@', '--profile-path', '@PROFILE@', 'app-server', '--listen', 'stdio://'],
       versionPrefix: 'codex-cli ',
+      acceptanceArguments: ['--env-file', '@ENV_FILE@', '--profile-path', '@PROFILE@', '--native-acceptance'],
       preflightArguments: ['--env-file', '@ENV_FILE@', '--profile-path', '@PROFILE@', '--version'] },
   };
   const layout = layouts[selected];

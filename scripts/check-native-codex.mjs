@@ -54,6 +54,8 @@ try {
       const body = JSON.parse(raw.toString());
       assert.equal(body.model, 'synthetic-external-model');
       assert.equal(body.stream, true);
+      assert.deepEqual(body.tools, []); assert.equal(body.tool_choice, 'none'); assert.equal(body.parallel_tool_calls, false);
+      diagnostics.toolNames = [];
       calls++;
       const message = { id: 'msg_synthetic_' + calls, type: 'message', status: 'completed', role: 'assistant', content: [{ type: 'output_text', text: 'READY', annotations: [] }] };
       const response = { id: 'resp_synthetic_' + calls, object: 'response', created_at: Math.floor(Date.now() / 1000), status: 'completed', model: body.model,
@@ -82,12 +84,10 @@ try {
   const executable = join(runtime, descriptor.executable), args = ['--env-file', file, '--profile-path', profile];
   const version = await execute(executable, [...args, '--version'], { env, timeout: 20_000 });
   assert.equal(version.stdout.trim(), 'codex-cli ' + descriptor.version);
-  const result = await execute(executable, [...args, 'exec', '--json', '--ephemeral', '--skip-git-repo-check', '--cd', scratch,
-    '--disable', 'shell_tool', '--disable', 'unified_exec', '--disable', 'apps', '--disable', 'multi_agent', 'Reply with READY. Do not call tools.'],
-    { env, timeout: 90_000, maxBuffer: 1024 * 1024 });
-  const events = result.stdout.trim().split('\n').map(line => JSON.parse(line));
-  assert(events.some(event => event.type === 'item.completed' && event.item?.type === 'agent_message' && event.item.text === 'READY'));
-  assert(events.some(event => event.type === 'turn.completed'));
+  assert.deepEqual(descriptor.acceptanceArguments, ['--env-file', '@ENV_FILE@', '--profile-path', '@PROFILE@', '--native-acceptance']);
+  const result = await execute(executable, [...args, '--native-acceptance'], { env, timeout: 90_000, maxBuffer: 1024 * 1024 });
+  assert.deepEqual(JSON.parse(result.stdout), { ok: true, product: '@openai/codex', version: descriptor.version, generation: true, streaming: true, externalInference: true });
+  assert(!result.stdout.includes('obviously-fake-fixture-key') && !result.stderr.includes('obviously-fake-fixture-key'));
   assert.equal(calls, 1, 'A harmless acceptance turn must not replay');
   assert.deepEqual(await readFile(file), original);
   assert.equal(await readFile(join(profile, 'config.toml'), 'utf8'), config);
