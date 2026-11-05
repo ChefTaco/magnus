@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file. The format is b
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
+## [2.1.1] - 2026-11-05
+
+### Security
+
+- The `magnus-server`, `magnus-fleet-gateway`, `magnus-ui` and `magnus-agent` images no longer contain npm, npx, corepack, yarn or apt. Nothing in them runs a package manager at runtime: dependencies are installed while the image is built, the server migrates with the Prisma CLI and engines it bundles, and a container agent never upgrades itself. This removes the fixable findings in npm's bundled `undici` 6.28.0 (CVE-2026-19534, CVE-2026-109383, CVE-2026-109869, CVE-2026-87018) and `brace-expansion` 5.0.9 (CVE-2026-102276, CVE-2026-102278), and in `apt` / `libapt-pkg6.0` 2.6.1 (CVE-2026-109518). `dpkg` and its database stay, so scanners still see the OS packages.
+- The images build on `node:24.22.1-bookworm-slim`, pinned by digest, instead of the floating `node:24.22.1-slim` tag. Node.js is unchanged.
+- Remaining HIGH and CRITICAL findings are in Debian 12 packages that have no fixed version yet: `zlib1g` (CVE-2023-45853, CVE-2026-76844), util-linux libraries (CVE-2026-53613, CVE-2026-53615, CVE-2026-78410), `ncurses` (CVE-2025-69720), `perl` (CVE-2026-9538), `libsystemd0` / `libudev1` (CVE-2026-16742), `gzip` (CVE-2026-41992), `libacl1` (CVE-2026-54369) and, in the server image only, `libldap-2.5-0` (CVE-2023-2953).
+
+### Changed
+
+- Running `npm` inside these containers is no longer possible. Upgrade by pulling a newer image, as before.
+
 ## [2.1.0] - 2026-11-05
 
 ### Added

@@ -1,0 +1,9 @@
+{
+  "summary": "Harden the container images: the server, fleet gateway, console and agent images no longer carry npm, npx, corepack, yarn or apt, and build on a refreshed Node 24.22.1 bookworm base pinned by digest. No package, setting or schema changes.",
+  "breaking": false,
+  "minUpgradeFrom": "1.0.0",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}
