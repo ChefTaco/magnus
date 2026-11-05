@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parse } from 'yaml';
-import { PACKAGE_DIRECTORIES, assertBootstrapMode, publishedVersionExists, publishPackages } from './publish-packages.mjs';
+import { PACKAGE_DIRECTORIES, UNPUBLISHED_DIRECTORIES, assertBootstrapMode, publishedVersionExists, publishPackages } from './publish-packages.mjs';
 
 function releaseFixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'magnus-release-'));
@@ -17,6 +17,10 @@ function releaseFixture(t) {
       ...(index ? { dependencies: { '@example/package-0': '1.0.1' } } : {}),
       ...(directory === 'packages/magnus' ? { magnusRelease: { version: '1.0.1', components: { '@example/package-0': '1.0.1' } } } : {}),
     }));
+  }
+  for (const [index, directory] of UNPUBLISHED_DIRECTORIES.entries()) {
+    mkdirSync(join(root, directory), { recursive: true });
+    writeFileSync(join(root, directory, 'package.json'), JSON.stringify({ name: `@example/unpublished-${index}`, version: '1.0.1', private: true }));
   }
   writeFileSync(join(root, 'services/control-api/agent-version.json'), '{"version":"1.0.1"}');
   return root;
@@ -116,6 +120,26 @@ test('release metadata mismatches stop before calling npm', async t => {
   }));
   await assert.rejects(publishPackages(options), /same valid version/);
   await assert.rejects(publishPackages({ ...options, dryRun: undefined }), /explicit boolean/);
+});
+
+test('a workspace outside npm stays private and on the release version, and is bundled by whatever needs it', async t => {
+  const options = (root) => ({ root, dryRun: true, run: () => assert.fail('npm must not run') });
+  const stray = releaseFixture(t);
+  writeFileSync(join(stray, UNPUBLISHED_DIRECTORIES[0], 'package.json'), JSON.stringify({ name: '@example/unpublished-0', version: '1.0.1' }));
+  await assert.rejects(publishPackages(options(stray)), /must be private/);
+  const behind = releaseFixture(t);
+  writeFileSync(join(behind, UNPUBLISHED_DIRECTORIES[0], 'package.json'), JSON.stringify({ name: '@example/unpublished-0', version: '1.0.0', private: true }));
+  await assert.rejects(publishPackages(options(behind)), /must be private/);
+
+  const needs = (bundleDependencies) => JSON.stringify({ name: '@example/package-4', version: '1.0.1', publishConfig: { access: 'public' },
+    dependencies: { '@example/unpublished-0': '1.0.1' }, ...(bundleDependencies ? { bundleDependencies } : {}) });
+  const root = releaseFixture(t);
+  writeFileSync(join(root, 'services/control-api/package.json'), needs());
+  await assert.rejects(publishPackages(options(root)), /must bundle @example\/unpublished-0/);
+  writeFileSync(join(root, 'services/control-api/package.json'), needs(['@example/unpublished-0']));
+  let publications = 0;
+  await publishPackages({ root, dryRun: true, run: () => { publications++; } });
+  assert.equal(publications, PACKAGE_DIRECTORIES.length);
 });
 
 test('real publication skips existing versions and stops on the first publish failure', async t => {

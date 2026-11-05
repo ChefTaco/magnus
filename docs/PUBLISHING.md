@@ -118,11 +118,28 @@ procedure above: one bootstrap run publishes every package of that version
 with the temporary token. Afterwards, configure the trusted publisher for the
 new name as well. Later releases use OIDC again.
 
+## Workspaces that are not published
+
+Two workspaces never reach npm, so a release needs no new package name and no
+bootstrap for them. `scripts/publish-packages.mjs` lists them, and requires them
+to be private and on the release version.
+
+- **`@hivemagnus/magnus-oathweave`** travels inside the tarballs of the packages
+  that use it, through `bundleDependencies`. `npm pack` in a workspace omits a
+  dependency hoisted to the repository root without saying so, so each consumer's
+  build links the package into its own `node_modules`. `npm run check:packs` fails
+  if a tarball lacks it. It declares `jose` and `zod` as peers, which its consumers
+  depend on directly, because npm would pack regular dependencies of a linked
+  package at paths outside the tarball.
+- **`@hivemagnus/magnus-fleet-gateway`** ships as the image
+  `ghcr.io/cheftaco/magnus-fleet-gateway`.
+
 ## Container images
 
 After the npm packages are published, the `images` job builds
-`ghcr.io/cheftaco/magnus-server`, `magnus-ui` and `magnus-agent` from
-`npm pack` tarballs of the same commit (the bytes that were published), for `linux/amd64` and `linux/arm64`, with provenance and
+`ghcr.io/cheftaco/magnus-server`, `magnus-fleet-gateway`, `magnus-ui` and `magnus-agent` from
+`npm pack` tarballs of the same commit (the bytes that were published; the gateway is
+packed but never published), for `linux/amd64` and `linux/arm64`, with provenance and
 an SBOM. It tags them `X.Y.Z`, `X.Y` and `X`, never `latest`, and skips
 prereleases. It uses the workflow's `GITHUB_TOKEN` (`packages: write`), with
 no extra secret.

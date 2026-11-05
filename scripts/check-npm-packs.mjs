@@ -2,10 +2,12 @@
 // Dry-runs `npm pack` for every publishable package and checks the file list:
 // each bin, main, types and exports target, README.md and LICENSE must be in
 // the tarball, and nothing that looks like a secret, local state or private
-// notes. Build first (`npm run build`); scripts are skipped so this never
-// rebuilds. Usage: node scripts/check-npm-packs.mjs
+// notes. A workspace that is not published must be inside the tarball, because
+// npm silently omits a bundled dependency it cannot see. Build first
+// (`npm run build`); scripts are skipped so this never rebuilds.
+// Usage: node scripts/check-npm-packs.mjs
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { lstatSync, readFileSync } from 'node:fs';
 import { dirname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { forbiddenPath, privateInfrastructureFindings, secretFindings } from './privacy-policy.mjs';
@@ -14,12 +16,10 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 export const PUBLISHABLE = [
   'packages/contracts',
-  'packages/oathweave',
   'packages/skills',
   'packages/ardent',
   'packages/agent',
   'services/control-api',
-  'services/fleet-gateway',
   'apps/dashboard',
   'packages/magnus',
 ];
@@ -45,6 +45,27 @@ function requiredFiles(manifest) {
   return [...new Set(['package.json', 'README.md', 'LICENSE', ...targets.map((entry) => normalize(entry).replace(/^\.\//u, ''))])];
 }
 
+/** What a bundled dependency must bring into the tarball, or null when npm cannot see it. */
+function bundledFiles(cwd, name) {
+  try {
+    const manifest = JSON.parse(readFileSync(join(cwd, 'node_modules', name, 'package.json'), 'utf8'));
+    return requiredFiles(manifest).map((file) => `node_modules/${name}/${file}`);
+  } catch {
+    return null;
+  }
+}
+
+const publishedNames = new Set(PUBLISHABLE.map((directory) => JSON.parse(readFileSync(join(root, directory, 'package.json'), 'utf8')).name));
+
+/** npm links workspaces into the root node_modules; anything else there came from the registry. */
+function isWorkspace(name) {
+  try {
+    return lstatSync(join(root, 'node_modules', name)).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
 let failures = 0;
 for (const directory of PUBLISHABLE) {
   const cwd = join(root, directory);
@@ -54,6 +75,10 @@ for (const directory of PUBLISHABLE) {
   if (!String(manifest.name).startsWith('@hivemagnus/')) problems.push(`name ${manifest.name} is not in the @hivemagnus scope`);
   if (manifest.publishConfig?.access !== 'public') problems.push('publishConfig.access is not "public"');
   if (manifest.license !== 'Apache-2.0') problems.push(`license is ${manifest.license}, expected Apache-2.0`);
+  const bundled = manifest.bundleDependencies ?? [];
+  for (const name of Object.keys(manifest.dependencies ?? {})) {
+    if (isWorkspace(name) && !publishedNames.has(name) && !bundled.includes(name)) problems.push(`depends on ${name}, which is not published: bundle it`);
+  }
   const result = spawnSync('npm', ['pack', '--dry-run', '--json', '--ignore-scripts'], { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   let files = [];
   if (result.status !== 0) {
@@ -68,9 +93,11 @@ for (const directory of PUBLISHABLE) {
   }
   const listed = new Set(files);
   if (files.length > 0) {
-    for (const file of [...requiredFiles(manifest), ...(EXTRA_REQUIRED[directory] ?? [])]) if (!listed.has(file)) problems.push(`missing ${file} (run npm run build first)`);
+    const bundledRequired = bundled.flatMap((name) => bundledFiles(cwd, name) ?? [`node_modules/${name}/package.json`]);
+    for (const file of [...requiredFiles(manifest), ...(EXTRA_REQUIRED[directory] ?? []), ...bundledRequired]) if (!listed.has(file)) problems.push(`missing ${file} (run npm run build first)`);
+    const isBundled = (file) => bundled.some((name) => file.startsWith(`node_modules/${name}/`));
     for (const file of files) {
-      if (forbiddenPath(file) || UNEXPECTED_MODULES.test(file)) problems.push(`must not publish ${file}`);
+      if (forbiddenPath(file) || (UNEXPECTED_MODULES.test(file) && !isBundled(file))) problems.push(`must not publish ${file}`);
       // Generated JavaScript, prerendered HTML and traced dependencies can carry secrets too.
       const content = readFileSync(join(cwd, file));
       for (const finding of [...secretFindings(content.toString()), ...privateInfrastructureFindings(content.toString())]) {

@@ -1,5 +1,7 @@
 # @hivemagnus/magnus-oathweave
 
+Private workspace package, not on npm: the server and gateway bundle it into their tarballs.
+
 Verifies Oathweave resource tokens for the Magnus server and the Magnus fleet gateway, so both
 apply one implementation: issuer, JWKS signature (RS256 only), audience, lifetime, actor type and
 online session revocation through userinfo. Failure is closed.

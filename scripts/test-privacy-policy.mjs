@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { forbiddenPath, privateInfrastructureFindings, secretFindings } from './privacy-policy.mjs';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -94,7 +94,7 @@ test('npm package checking scans generated file contents as well as names', () =
     for (const file of ['check-npm-packs.mjs', 'privacy-policy.mjs']) {
       cpSync(resolve(import.meta.dirname, file), join(root, 'scripts', file));
     }
-    const directories = ['packages/contracts', 'packages/oathweave', 'packages/skills', 'packages/ardent', 'packages/agent', 'services/control-api', 'services/fleet-gateway', 'apps/dashboard', 'packages/magnus'];
+    const directories = ['packages/contracts', 'packages/skills', 'packages/ardent', 'packages/agent', 'services/control-api', 'apps/dashboard', 'packages/magnus'];
     const files = ['package.json', 'README.md', 'LICENSE', 'dist/index.js',
       'dist/app/apps/dashboard/server-tls.mjs', 'dist/app/apps/dashboard/server.js', 'launcher/launcher.mjs', 'NOTICE', 'dist/ardent-context-bundle.json'];
     for (const directory of directories) {
@@ -124,6 +124,21 @@ test('npm package checking scans generated file contents as well as names', () =
     assert.equal(encoded.status, 1);
     assert.match(encoded.stdout, /payload-0:1: GitHub token \[redacted\]/);
     assert.ok(!`${encoded.stdout}${encoded.stderr}`.includes(token));
+    writeFileSync(join(root, 'packages/agent/dist/ardent-context-bundle.json'), JSON.stringify({ files: [{ content: Buffer.from('synthetic context code').toString('base64') }] }));
+    assert.equal(run().status, 0);
+    // A workspace that is not on npm must be declared bundled, and must really be in the tarball.
+    mkdirSync(join(root, 'node_modules/@hivemagnus'), { recursive: true });
+    symlinkSync(join(root, 'packages/contracts'), join(root, 'node_modules/@hivemagnus/unpublished'));
+    const server = { name: '@hivemagnus/fixture', version: '1.0.0', license: 'Apache-2.0', publishConfig: { access: 'public' }, main: 'dist/index.js',
+      dependencies: { '@hivemagnus/unpublished': '1.0.0' } };
+    writeFileSync(join(root, 'services/control-api/package.json'), JSON.stringify(server));
+    const undeclared = run();
+    assert.equal(undeclared.status, 1);
+    assert.match(undeclared.stdout, /depends on @hivemagnus\/unpublished, which is not published/);
+    writeFileSync(join(root, 'services/control-api/package.json'), JSON.stringify({ ...server, bundleDependencies: ['@hivemagnus/unpublished'] }));
+    const absent = run();
+    assert.equal(absent.status, 1);
+    assert.match(absent.stdout, /missing node_modules\/@hivemagnus\/unpublished\/package\.json/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

@@ -5,11 +5,15 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const PACKAGE_DIRECTORIES = [
-  'packages/contracts', 'packages/oathweave', 'packages/skills', 'packages/ardent', 'packages/agent',
-  'services/control-api', 'services/fleet-gateway', 'apps/dashboard',
+  'packages/contracts', 'packages/skills', 'packages/ardent', 'packages/agent',
+  'services/control-api', 'apps/dashboard',
   // Last: the installer pins every component above at this exact version.
   'packages/magnus',
 ];
+
+// Workspaces that never reach npm, but keep the release version. The Oathweave verifier travels inside
+// the tarballs of the packages that bundle it; the fleet gateway ships as a container image.
+export const UNPUBLISHED_DIRECTORIES = ['packages/oathweave', 'services/fleet-gateway'];
 
 export function assertBootstrapMode(dryRun, bootstrap, credential) {
   if (bootstrap && dryRun) throw new Error('Bootstrap requires a real publication from the release tag; disable dry_run explicitly');
@@ -26,12 +30,22 @@ export function readReleasePackages(root) {
     || rootVersion !== version || packages.some(pkg => pkg.version !== version || pkg.private || pkg.publishConfig?.access !== 'public')) {
     throw new Error('Every release package must have the same valid version and public publication settings');
   }
-  const names = new Set(packages.map(pkg => pkg.name));
-  for (const pkg of packages) {
+  const unpublished = UNPUBLISHED_DIRECTORIES.map(directory => JSON.parse(readFileSync(join(root, directory, 'package.json'), 'utf8')));
+  for (const pkg of unpublished) {
+    if (!pkg.private || pkg.version !== version) throw new Error(`${pkg.name} must be private, at the release version ${version}`);
+  }
+  const names = new Set([...packages, ...unpublished].map(pkg => pkg.name));
+  for (const pkg of [...packages, ...unpublished]) {
     for (const category of ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies']) {
       for (const [name, dependencyVersion] of Object.entries(pkg[category] ?? {})) {
         if (names.has(name) && dependencyVersion !== version) throw new Error(`${pkg.name} must depend on ${name}@${version}`);
       }
+    }
+  }
+  // A published package that needs an unpublished one would fail to install with a 404.
+  for (const pkg of packages) {
+    for (const { name } of unpublished) {
+      if (pkg.dependencies?.[name] && !pkg.bundleDependencies?.includes(name)) throw new Error(`${pkg.name} must bundle ${name}, which is not published`);
     }
   }
   const agentVersion = JSON.parse(readFileSync(join(root, 'services/control-api/agent-version.json'), 'utf8')).version;

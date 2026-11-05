@@ -1,6 +1,6 @@
 # Build context filter for services/fleet-gateway/Dockerfile (context: repo root).
 # Only the root manifests, every workspace manifest (so `npm ci` can validate the lockfile) and the
-# two workspaces this image bundles are sent.
+# two workspaces this image builds are sent.
 **
 !package.json
 !package-lock.json

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { buildManifest, changelogSection, checkRelease } from './check-release-manifest.mjs';
 import { bumpVersion } from './bump-version.mjs';
-import { PACKAGE_DIRECTORIES } from './publish-packages.mjs';
+import { PACKAGE_DIRECTORIES, UNPUBLISHED_DIRECTORIES } from './publish-packages.mjs';
 
 const repo = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
@@ -16,7 +16,7 @@ function fixture(t) {
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const file of ['package.json', 'CHANGELOG.md', 'services/control-api/agent-version.json', 'packages/ardent/openapi/ardent.json',
     'services/control-api/src/cli/env-catalog.ts', 'packages/agent/src/env-catalog.ts', 'apps/dashboard/runtime-environment.mjs', 'packages/magnus/src/templates.ts',
-    ...PACKAGE_DIRECTORIES.map((directory) => `${directory}/package.json`)]) {
+    ...[...PACKAGE_DIRECTORIES, ...UNPUBLISHED_DIRECTORIES].map((directory) => `${directory}/package.json`)]) {
     mkdirSync(join(root, file, '..'), { recursive: true });
     cpSync(join(repo, file), join(root, file));
   }
@@ -33,11 +33,12 @@ test('the committed release manifest is current', async () => {
 
 test('bumping sets every version and pin, and the manifest follows', async (t) => {
   const root = fixture(t);
-  const originals = new Map(PACKAGE_DIRECTORIES.map(directory => [directory,
+  const workspaces = [...PACKAGE_DIRECTORIES, ...UNPUBLISHED_DIRECTORIES];
+  const originals = new Map(workspaces.map(directory => [directory,
     JSON.parse(readFileSync(join(root, directory, 'package.json'), 'utf8'))]));
   const workspaceNames = new Set([...originals.values()].map(pkg => pkg.name));
   bumpVersion(root, '9.8.7', { today: '2026-11-01' });
-  for (const directory of PACKAGE_DIRECTORIES) {
+  for (const directory of workspaces) {
     const pkg = JSON.parse(readFileSync(join(root, directory, 'package.json'), 'utf8'));
     assert.equal(pkg.version, '9.8.7', directory);
     for (const category of ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies']) {

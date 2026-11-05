@@ -4,7 +4,8 @@ Read the repository root `AGENTS.md` first. Its privacy and secret rules apply h
 
 `services/fleet-gateway` (`@hivemagnus/magnus-fleet-gateway`) carries the browser web terminal. An
 authenticated browser user obtains a shell on a fleet node through this service, so treat every
-change as security-sensitive. The README states the security model; keep it true.
+change as security-sensitive. The README states the security model; keep it true. It ships as a
+container image (`Dockerfile`) and is never published to npm.
 
 ## Rules
 

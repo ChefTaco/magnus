@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Sets one release version everywhere it is recorded: the root and every
-// published package.json, exact internal dependency pins, the server's
+// workspace package.json, exact internal dependency pins, the server's
 // bundled agent version, the Ardent OpenAPI document, the release manifest
 // and package-lock.json. Adds a CHANGELOG.md stub when the version has none.
 //
@@ -9,7 +9,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PACKAGE_DIRECTORIES } from './publish-packages.mjs';
+import { PACKAGE_DIRECTORIES, UNPUBLISHED_DIRECTORIES } from './publish-packages.mjs';
 import { buildManifest } from './check-release-manifest.mjs';
 
 const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
@@ -25,7 +25,7 @@ export function bumpVersion(root, version, { today = new Date().toISOString().sl
   writeJson(rootPath, rootPackage);
   changed.push('package.json');
 
-  const manifests = PACKAGE_DIRECTORIES.map((directory) => ({ directory, path: join(root, directory, 'package.json') }));
+  const manifests = [...PACKAGE_DIRECTORIES, ...UNPUBLISHED_DIRECTORIES].map((directory) => ({ directory, path: join(root, directory, 'package.json') }));
   const names = new Set(manifests.map(({ path }) => readJson(path).name));
   for (const { directory, path } of manifests) {
     const pkg = readJson(path);

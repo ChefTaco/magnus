@@ -33,7 +33,10 @@ for (const file of readdirSync(values.from).filter((name) => name.endsWith('.tgz
   pkg.version = version;
   for (const category of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
     // Siblings outside --only keep their original pins (they are not re-versioned).
-    for (const name of Object.keys(pkg[category] ?? {})) if (name.startsWith('@hivemagnus/') && (!only || only.has(name))) pkg[category][name] = version;
+    // A bundled sibling stays at the version in the tarball.
+    for (const name of Object.keys(pkg[category] ?? {})) {
+      if (name.startsWith('@hivemagnus/') && (!only || only.has(name)) && !pkg.bundleDependencies?.includes(name)) pkg[category][name] = version;
+    }
   }
   if (pkg.magnusRelease) {
     pkg.magnusRelease.version = version;

@@ -1,7 +1,8 @@
 name: Publish to npm
 
-# Publishes every @hivemagnus package in this repository whose version is not on npm yet, with
-# provenance.
+# Publishes every @hivemagnus package in scripts/publish-packages.mjs whose version is not on npm
+# yet, with provenance. The fleet gateway ships only as an image, and the Oathweave package only
+# inside the tarballs that bundle it.
 # - Push a tag vX.Y.Z (matching every package version) to publish.
 # - Run it by hand (Actions > Publish to npm > Run workflow) for a dry run.
 # Publishing waits for approval on the `npm-publish` environment, then authenticates to npm
@@ -86,7 +87,7 @@ jobs:
         run: node scripts/publish-packages.mjs
 
   images:
-    # Container images of the same commit, after the npm packages: server, console and agent.
+    # Container images of the same commit, after the npm packages: server, gateway, console and agent.
     # Tags X.Y.Z, X.Y and X (never `latest`, and only X.Y.Z for prereleases). Dry runs build without pushing.
     name: Image ${{ matrix.image.name }}
     needs: publish

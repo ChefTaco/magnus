@@ -10,13 +10,13 @@ All notable changes to this project are documented in this file. The format is b
 
 ## Unreleased
 
-- Add `services/fleet-gateway` (`@hivemagnus/magnus-fleet-gateway`), a separate service holding the restricted SSH key that carries the browser web terminal over HTTP streaming. It requires an `ADMIN` identity link, `magnus:terminal` and identity verified within five minutes, strict host-key pinning with explicit operator approval, per-subject session ownership, re-checks revocation every five seconds, and audits metadata only. See `services/fleet-gateway/README.md`.
+- Add `services/fleet-gateway` (`@hivemagnus/magnus-fleet-gateway`, shipped as the container image `ghcr.io/cheftaco/magnus-fleet-gateway` and not on npm), a separate service holding the restricted SSH key that carries the browser web terminal over HTTP streaming. It requires an `ADMIN` identity link, `magnus:terminal` and identity verified within five minutes, strict host-key pinning with explicit operator approval, per-subject session ownership, re-checks revocation every five seconds, and audits metadata only. See `services/fleet-gateway/README.md`.
 
 - Add `capabilities.terminal` to `GET /api/v1/console/session`, true when a fleet gateway is deployed and the caller holds an `ADMIN` link and `magnus:terminal`.
 
 - Add the machine routes `POST /api/v1/fleet-gateway/target` and `POST /api/v1/fleet-gateway/audit`. New environment variables: `FLEET_GATEWAY_URL`, `FLEET_GATEWAY_TOKEN_SHA256`.
 
-- Add `@hivemagnus/magnus-oathweave`, moving the Oathweave verifier and identity link parser out of the server so the gateway shares them.
+- Add the private workspace package `@hivemagnus/magnus-oathweave`, moving the Oathweave verifier and identity link parser out of the server so the gateway shares them. It is not on npm: `@hivemagnus/magnus-server` carries it in its tarball, and needs no new registry package.
 
 - **Behavior change.** Resource enrollment now sends console drain challenges to the fleet gateway at `FLEET_GATEWAY_URL` rather than to the dashboard at `DASHBOARD_PUBLIC_ORIGIN`, and fails closed without it. `RESOURCE_ENROLLMENT_DASHBOARD_PARTICIPANT=absent` declares that no console participant exists, and is honoured only for a node with no console work rows in any state. The dashboard's internal drain route is removed.
 

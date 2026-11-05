@@ -106,6 +106,9 @@
     "@hivemagnus/magnus-skills": "2.0.0",
     "prisma": "^7.10.1"
   },
+  "bundleDependencies": [
+    "@hivemagnus/magnus-oathweave"
+  ],
   "devDependencies": {
     "@types/node": "^24.19.2",
     "@types/pg": "^8.23.1",

@@ -31,8 +31,8 @@ for registry setup and release verification.
 |---|---|---|
 | `apps/dashboard` | [`@hivemagnus/magnus-ui`](https://www.npmjs.com/package/@hivemagnus/magnus-ui) | The web console (`magnus-ui start`), shipped as a prebuilt Next.js standalone server |
 | `services/control-api` | [`@hivemagnus/magnus-server`](https://www.npmjs.com/package/@hivemagnus/magnus-server) | The API server (`magnus-server migrate`, `magnus-server start`) with its Prisma schema and migrations |
-| `services/fleet-gateway` | [`@hivemagnus/magnus-fleet-gateway`](https://www.npmjs.com/package/@hivemagnus/magnus-fleet-gateway) | The web terminal gateway (`magnus-fleet-gateway start`, `magnus-fleet-gateway trust`) |
-| `packages/oathweave` | [`@hivemagnus/magnus-oathweave`](https://www.npmjs.com/package/@hivemagnus/magnus-oathweave) | Oathweave resource token verification shared by the server and fleet gateway |
+| `services/fleet-gateway` | `@hivemagnus/magnus-fleet-gateway` (container image `ghcr.io/cheftaco/magnus-fleet-gateway`, not on npm) | The web terminal gateway (`magnus-fleet-gateway start`, `magnus-fleet-gateway trust`) |
+| `packages/oathweave` | `@hivemagnus/magnus-oathweave` (private, bundled into the server and gateway, not on npm) | Oathweave resource token verification shared by the server and fleet gateway |
 | `packages/agent` | [`@hivemagnus/magnus-agent`](https://www.npmjs.com/package/@hivemagnus/magnus-agent) | The node agent (`magnus-agent`) with example systemd units |
 | `packages/ardent` | [`@hivemagnus/ardent`](https://www.npmjs.com/package/@hivemagnus/ardent) | The Ardent agent runtime (`ardent init`, `ardent chat`, `ardent gateway run`) |
 | `packages/contracts` | [`@hivemagnus/magnus-contracts`](https://www.npmjs.com/package/@hivemagnus/magnus-contracts) | Zod schemas and types shared by the server, the console and the agent |

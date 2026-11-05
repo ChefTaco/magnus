@@ -1,6 +1,7 @@
 {
   "name": "@hivemagnus/magnus-fleet-gateway",
   "version": "2.0.0",
+  "private": true,
   "description": "Magnus fleet gateway: the separate service that holds the restricted SSH key and carries the browser web terminal over HTTP streaming.",
   "keywords": [
     "magnus",
@@ -37,11 +38,8 @@
   "engines": {
     "node": "^24.22.1 || ^26.13.0"
   },
-  "publishConfig": {
-    "access": "public"
-  },
   "scripts": {
-    "build": "node -e \"const fs=require('node:fs');fs.rmSync('dist',{recursive:true,force:true});fs.rmSync('tsconfig.tsbuildinfo',{force:true})\" && tsc --build",
+    "build": "node -e \"const fs=require('node:fs');fs.rmSync('dist',{recursive:true,force:true});fs.rmSync('tsconfig.tsbuildinfo',{force:true})\" && tsc --build && node ../../packages/oathweave/scripts/link-into-consumer.mjs",
     "start": "node dist/cli.js start",
     "typecheck": "tsc --noEmit",
     "test": "npm run build && vitest run",
@@ -51,13 +49,16 @@
     "@hivemagnus/magnus-oathweave": "2.0.0",
     "@hono/node-server": "^2.1.5",
     "hono": "4.13.16",
+    "jose": "^6.2.13",
     "ssh2": "^1.17.0",
     "zod": "^4.6.7"
   },
+  "bundleDependencies": [
+    "@hivemagnus/magnus-oathweave"
+  ],
   "devDependencies": {
     "@types/node": "^24.19.2",
     "@types/ssh2": "^1.15.6",
-    "jose": "^6.2.13",
     "typescript": "^6.0.3",
     "vitest": "^5.0.5"
   }

@@ -6,8 +6,9 @@
 #
 #   docker build -f services/fleet-gateway/Dockerfile -t magnus-fleet-gateway:local .
 #
-# Stage 1 builds and packs the workspace packages. Stage 2 installs those tarballs exactly as
-# `npm install @hivemagnus/magnus-fleet-gateway` would, so the image runs the published artifact.
+# This image is how the gateway ships: it is not published to npm. Stage 1 builds the workspace
+# packages and packs the gateway, whose tarball carries the Oathweave package. Stage 2 installs that
+# tarball the way a registry install would, so third-party dependencies come from npm.
 #
 # Runs as a non-root user and works with a read-only root filesystem:
 #
@@ -18,7 +19,7 @@
 
 ARG NODE_IMAGE=node:24.22.1-slim
 
-# ─── Stage 1: build and pack the workspace packages ──────────────────────────
+# ─── Stage 1: build the workspace packages and pack the gateway ──────────────
 FROM --platform=$BUILDPLATFORM ${NODE_IMAGE} AS builder
 WORKDIR /opt/magnus-build
 COPY . .
@@ -28,9 +29,7 @@ RUN npm ci --no-audit --no-fund --ignore-scripts \
 RUN npm --workspace @hivemagnus/magnus-oathweave run build \
   && npm --workspace @hivemagnus/magnus-fleet-gateway run build
 RUN mkdir -p /packages \
-  && for workspace in packages/oathweave services/fleet-gateway; do \
-       (cd "$workspace" && npm pack --ignore-scripts --pack-destination /packages); \
-     done \
+  && (cd services/fleet-gateway && npm pack --ignore-scripts --pack-destination /packages) \
   && ls -l /packages
 
 # ─── Stage 2: runtime ────────────────────────────────────────────────────────
@@ -49,11 +48,9 @@ RUN node -e ' \
       const fs = require("node:fs"); \
       const files = fs.readdirSync("/tmp/packages"); \
       const find = (prefix) => "file:/tmp/packages/" + files.find((file) => file.startsWith(prefix)); \
-      const local = { "@hivemagnus/magnus-oathweave": find("hivemagnus-magnus-oathweave-") }; \
       fs.writeFileSync("package.json", JSON.stringify({ \
         name: "magnus-fleet-gateway-runtime", private: true, \
-        dependencies: { "@hivemagnus/magnus-fleet-gateway": find("hivemagnus-magnus-fleet-gateway-"), ...local }, \
-        overrides: local, \
+        dependencies: { "@hivemagnus/magnus-fleet-gateway": find("hivemagnus-magnus-fleet-gateway-") }, \
       }, null, 2)); ' \
   && npm install --omit=dev --no-audit --no-fund --ignore-scripts \
   && npm cache clean --force \

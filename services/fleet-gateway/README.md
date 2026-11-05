@@ -129,6 +129,9 @@ yet. The gateway reports this as `RESOURCE_ADMISSION_REFUSED`.
 
 ## Running it
 
+The gateway ships as the container image `ghcr.io/cheftaco/magnus-fleet-gateway`, tagged `X.Y.Z`, `X.Y`
+and `X`. It is not published to npm.
+
 ```bash
 magnus-fleet-gateway check        # configuration, key, trust store and API, without opening a port
 magnus-fleet-gateway start
