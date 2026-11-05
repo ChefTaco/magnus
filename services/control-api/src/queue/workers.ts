@@ -1,6 +1,7 @@
 import { ResourceLeaseConflict } from '../services/command-resource-leases.js';
 import { recordMonitorPulse } from '../services/monitor-pulse.js';
 import { Queue, Worker, type Job } from 'bullmq';
+import { bullQueueIdentity } from './names.js';
 import { addDurableJob } from './requeue.js';
 import { validateRemediationCommandForDispatch } from '../services/remediation-service.js';
 import { reconcileCommands } from '../services/command-lifecycle.js';
@@ -21,7 +22,7 @@ import { verifyCommandResultSignature } from '../security/command-result-signatu
 // ─── Command execution queue ───
 
 const REDIS_PREFIX = process.env['REDIS_PREFIX'] ?? 'magnus-';
-const COMMAND_QUEUE = `${REDIS_PREFIX}commands`;
+const COMMAND_QUEUE = bullQueueIdentity(REDIS_PREFIX, 'commands');
 
 const REDIS_URL = process.env['REDIS_URL'] ?? 'redis://127.0.0.1:6379';
 
@@ -39,7 +40,8 @@ const NODE_HEARTBEAT_FRESHNESS_MS = Number(
 /** Get the singleton command queue instance. */
 export function getCommandQueue(): Queue<CommandJobPayload> {
   if (!_commandQueue) {
-    _commandQueue = new Queue<CommandJobPayload>(COMMAND_QUEUE, {
+    _commandQueue = new Queue<CommandJobPayload>(COMMAND_QUEUE.name, {
+      prefix: COMMAND_QUEUE.prefix,
       connection: { url: REDIS_URL },
       defaultJobOptions: {
         attempts: 1,
@@ -90,7 +92,7 @@ export async function enqueueCommand(commandId: string): Promise<void> {
 export function startCommandWorker(): Worker<CommandJobPayload> {
   if (_commandWorker) return _commandWorker;
   const worker = new Worker<CommandJobPayload>(
-    COMMAND_QUEUE,
+    COMMAND_QUEUE.name,
     async (job: Job<CommandJobPayload>) => {
       const db = getDb();
       const { commandId } = job.data;
@@ -288,6 +290,7 @@ export function startCommandWorker(): Worker<CommandJobPayload> {
     {
       connection: { url: REDIS_URL },
       concurrency: 10,
+      prefix: COMMAND_QUEUE.prefix,
     },
   );
 

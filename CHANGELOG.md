@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file. The format is b
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+- Retain existing Redis job keys while supporting colon-separated queue namespaces
+  with the current queue library.
+
 ## [2.0.0] - 2026-11-03
 
 ### Changed

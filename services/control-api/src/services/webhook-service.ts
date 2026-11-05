@@ -1,3 +1,4 @@
+import { bullQueueIdentity } from '../queue/names.js';
 import { recordMonitorPulse } from './monitor-pulse.js';
 import { WEBHOOK_FORMATS, webhookFormat } from './webhook-types.js';
 import { redactUnknown } from '../utils/redact.js';
@@ -18,7 +19,7 @@ import {
 
 const REDIS_URL = process.env['REDIS_URL'] ?? 'redis://127.0.0.1:6379';
 const REDIS_PREFIX = process.env['REDIS_PREFIX'] ?? 'magnus-';
-const WEBHOOK_QUEUE = `${REDIS_PREFIX}webhooks`;
+const WEBHOOK_QUEUE = bullQueueIdentity(REDIS_PREFIX, 'webhooks');
 const PROTECTED_HEADERS = new Set([
   'connection', 'content-length', 'host', 'transfer-encoding', 'user-agent',
   'x-magnus-delivery', 'x-magnus-encrypted', 'x-magnus-event', 'x-magnus-signature',
@@ -33,7 +34,7 @@ let _webhookWorker: Worker<WebhookJobPayload> | null = null;
 /** Get the singleton webhook queue instance. */
 export function getWebhookQueue(): Queue {
   if (!_webhookQueue) {
-    _webhookQueue = new Queue(WEBHOOK_QUEUE, { connection: { url: REDIS_URL } });
+    _webhookQueue = new Queue(WEBHOOK_QUEUE.name, { prefix: WEBHOOK_QUEUE.prefix, connection: { url: REDIS_URL } });
   }
   return _webhookQueue;
 }
@@ -264,7 +265,7 @@ export function startWebhookWorker(): Worker<WebhookJobPayload> {
   // Force the dedicated at-rest key to be present before accepting queued work.
   encryptWebhookCredential('', 'startup-check', 'secret');
   const worker = new Worker<WebhookJobPayload>(
-    WEBHOOK_QUEUE,
+    WEBHOOK_QUEUE.name,
     async (job: Job<WebhookJobPayload>) => {
       const db = getDb();
       const deliveryId = job.id;
@@ -336,6 +337,7 @@ export function startWebhookWorker(): Worker<WebhookJobPayload> {
     {
       connection: { url: REDIS_URL },
       concurrency: 5,
+      prefix: WEBHOOK_QUEUE.prefix,
     },
   );
 
