@@ -15,6 +15,9 @@ README is the reference for its installation, configuration and environment vari
 - [Codex CLI management](APP_ARCHITECTURE_CODEX.md): version checks, updates and ChatGPT sign-in for
   the Codex CLI on managed hosts.
 
+- [Console API route inventory](console-api.md): browser-facing and machine-only routes, the ingress
+  allowlist, Oathweave authentication and the browser contract export.
+
 ## Commands and coordination
 
 - [Command receipts and recovery](COMMAND_RECEIPTS.md): durable per-node receipts, uncertain

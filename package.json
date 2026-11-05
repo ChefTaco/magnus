@@ -57,6 +57,7 @@
     "dashboard:build": "npm --workspace @hivemagnus/magnus-ui run build",
     "dashboard:test": "npm --workspace @hivemagnus/magnus-ui test",
     "contracts:build": "npm --workspace @hivemagnus/magnus-contracts run build",
+    "contracts:browser": "node scripts/export-browser-contracts.mjs",
     "control-api:build": "npm --workspace @hivemagnus/magnus-server run build",
     "control-api:test": "npm --workspace @hivemagnus/magnus-server test",
     "agent:build": "npm --workspace @hivemagnus/magnus-agent run build",

@@ -20,6 +20,8 @@ All notable changes to this project are documented in this file. The format is b
 
 - Stop returning the node token from `PATCH /api/v1/cron/:cronId`.
 
+- Add the `@hivemagnus/magnus-contracts/browser` export, `npm run contracts:browser` to export it with SHA-256 provenance, and `docs/console-api.md`, the route inventory an ingress can use as its allowlist.
+
 - Add opt-in native Hermes messaging artifacts from the unchanged frozen public lock, with explicit provenance and exact dependency preflight; retain headless default and disabled runtime installs.
 
 - Verify exact native Skills target mappings and immutable client digests through read-only authenticated posture APIs; reject infrastructure credentials in dedicated native client environments.

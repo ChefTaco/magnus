@@ -15,6 +15,10 @@ The exports cover:
 - Ardent node and profile state, and a typed Ardent HTTP client generated from
   the Ardent OpenAPI document
 
+The `@hivemagnus/magnus-contracts/browser` export holds the browser console's request and response
+schemas and imports only `zod`. It is listed by route in
+[the console API inventory](https://github.com/ChefTaco/magnus/blob/main/docs/console-api.md).
+
 ## Install
 
 ```bash
