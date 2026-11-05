@@ -21,6 +21,10 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('browser contract against rea
   const commandId = `${prefix}-command`;
   const cronId = `${prefix}-cron`;
   const runId = `${prefix}-run`;
+  const anomalyId = `${prefix}-anomaly`;
+  const ruleId = `${prefix}-rule`;
+  const conversationId = `${prefix}-conversation`;
+  const webhookId = `${prefix}-webhook`;
   let home: string;
   let db: ReturnType<typeof import('../db/index.js')['getDb']>;
   let app: typeof import('../server.js')['app'];
@@ -37,6 +41,9 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('browser contract against rea
     vi.stubEnv('CREDENTIAL_ROTATION_KEY', 'fixture-console-contract-rotation-at-least-32');
     vi.stubEnv('NODE_MANAGER_SECRET', 'fixture-console-contract-node-manager-at-least-32');
     vi.stubEnv('MAGNUS_HERMES_ENABLED', 'true');
+    vi.stubEnv('WEBHOOK_ENCRYPTION_KEY', 'fixture-console-contract-webhook-key-at-least-32');
+    // No outbound delivery: the only webhook target in this suite is not on this list.
+    vi.stubEnv('WEBHOOK_ALLOWED_ORIGINS', 'https://allowed.example.com');
     db = (await import('../db/index.js')).getDb();
     app = (await import('../server.js')).app;
     contract = await import('@hivemagnus/magnus-contracts/browser');
@@ -70,11 +77,30 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('browser contract against rea
     await db.hermesProfile.create({ data: { installationId: installation.id, name: 'default', profileHome: '/opt/hermes', capabilities: '{}', envStatus: '{}', metadata: '{}' } });
     await db.role.create({ data: { id: prefix, name: prefix, description: 'Fixture role', envConfig: '{"FIXTURE_VALUE":"visible-to-any-role"}' } });
     await (await import('../services/audit-service.js')).logAuditEvent({ action: 'cron.update', actorId: 'alice', targetType: 'cron', targetId: cronId, details: { fixture: true } });
+
+    await db.anomalyEvent.create({ data: { id: anomalyId, nodeId, metric: 'disk', value: 91, zScore: 3.2, mean: 40, stdDev: 5, severity: 'warning' } });
+    await db.remediationRule.create({ data: { id: ruleId, name: ruleId, agentDefinitionId: 'diagnostics.v1', createdBy: 'alice' } });
+    await db.remediationExecution.create({ data: { ruleId, anomalyEventId: anomalyId, nodeId, status: 'skipped', input: '{}', output: null } });
+    await db.notification.create({ data: { type: 'node.offline', severity: 'warning', title: prefix, message: 'fixture', nodeId, nodeName: prefix, metadata: '{"fixture":true}' } });
+    await db.aiConversation.create({ data: { id: conversationId, title: prefix, type: 'chat', createdBy: 'system', messages: { create: [{ role: 'assistant', content: 'fixture' }] } } });
+    const { encryptWebhookCredential } = await import('../services/webhook-security.js');
+    await db.webhookEndpoint.create({ data: {
+      id: webhookId, name: prefix, url: encryptWebhookCredential('https://hooks.example.com/fixture?token=fixture-value', webhookId, 'url'),
+      secret: encryptWebhookCredential('fixture-signing-value', webhookId, 'secret'), headers: encryptWebhookCredential('{}', webhookId, 'headers'), events: '[]', createdBy: 'alice',
+      deliveries: { create: [{ id: `${webhookId}-delivery`, event: 'node.offline', payload: '{}', status: 'failed', httpStatus: 500, attempts: 1 }] },
+    } });
+    // A short probe primes the five-minute topology cache, so reading it waits for nothing.
+    await call('POST', '/topology/scan', { probeTimeoutMs: 50 });
   }, 60_000);
 
   afterAll(async () => {
     if (db) {
       await db.executionRun.deleteMany({ where: { id: runId } });
+      await db.remediationRule.deleteMany({ where: { name: { startsWith: prefix } } });
+      await db.notification.deleteMany({ where: { nodeName: prefix } });
+      await db.aiConversation.deleteMany({ where: { id: conversationId } });
+      await db.webhookEndpoint.deleteMany({ where: { name: { startsWith: prefix } } });
+      await db.notificationPreference.deleteMany({ where: { category: prefix } });
       await db.hermesInstallation.deleteMany({ where: { nodeId } });
       await db.role.deleteMany({ where: { id: prefix } });
       await db.maintenanceWindow.deleteMany({ where: { reason: { startsWith: prefix } } });
@@ -145,6 +171,20 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('browser contract against rea
     '/ops/capacity-advice': '/ops/capacity-advice',
     '/dependencies': '/dependencies',
     '/skills': '/skills',
+    '/anomalies': `/anomalies?nodeId=${nodeId}`,
+    '/anomalies/summary': '/anomalies/summary',
+    '/anomalies/event/{id}/correlation': `/anomalies/event/${anomalyId}/correlation`,
+    '/remediation/rules': '/remediation/rules',
+    '/remediation/executions': `/remediation/executions?nodeId=${nodeId}`,
+    '/notifications': `/notifications?nodeId=${nodeId}`,
+    '/notifications/unread-count': '/notifications/unread-count',
+    '/notifications/preferences': '/notifications/preferences',
+    '/ops/retention': '/ops/retention',
+    '/assistant/conversations': '/assistant/conversations',
+    '/webhooks': '/webhooks',
+    '/webhooks/{id}': `/webhooks/${webhookId}`,
+    '/webhooks/{id}/deliveries': `/webhooks/${webhookId}/deliveries`,
+    '/topology': '/topology',
   };
   const NOT_RUN_HERE = new Set([
     '/assistant/insights', // model provider
@@ -168,6 +208,55 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('browser contract against rea
       try { expectParses(`GET ${routePath}`, route.response, json); } catch (error) { failures.push((error as Error).message); }
     }
     expect(failures).toEqual([]);
+  }, 60_000);
+
+  it('carries real values through the new reads', async () => {
+    const list = expectParses('GET /anomalies', contract.anomalyListResponseSchema, (await call('GET', `/anomalies?nodeId=${nodeId}`)).json) as { data: { anomalies: Array<{ id: string; node: { name: string } }> } };
+    expect(list.data.anomalies).toMatchObject([{ id: anomalyId, node: { name: prefix } }]);
+    const nodes = expectParses('GET /nodes', contract.nodeListResponseSchema, (await call('GET', '/nodes?pageSize=100')).json) as { data: Array<{ id: string; health: { memoryTotalBytes: number; timestamp: string } | null }> };
+    expect(nodes.data.find((node) => node.id === nodeId)?.health).toMatchObject({ memoryTotalBytes: 8_000_000_000 });
+    const topology = expectParses('GET /topology', contract.topologyResponseSchema, (await call('GET', '/topology')).json) as { data: { nodes: Array<{ id: string }> } };
+    expect(topology.data.nodes.map((node) => node.id)).toContain(nodeId);
+    const webhooks = await call('GET', '/webhooks');
+    expect(JSON.stringify(webhooks.json)).not.toMatch(/fixture-signing-value|fixture-value/);
+    const parsed = expectParses('GET /webhooks', contract.webhookListResponseSchema, webhooks.json) as { data: { endpoints: Array<{ id: string; url: string; secretConfigured: boolean }> } };
+    expect(parsed.data.endpoints.find((endpoint) => endpoint.id === webhookId)).toMatchObject({ url: 'https://hooks.example.com', secretConfigured: true });
+  });
+
+  it('parses the remediation, notification, webhook and topology writes', async () => {
+    const created = await call('POST', '/remediation/rules', contract.createRemediationRuleRequestSchema.parse({ name: `${prefix}-created`, agentDefinitionId: 'diagnostics.v1' }));
+    expect(created.status).toBe(201);
+    const rule = expectParses('POST /remediation/rules', contract.remediationRuleResponseSchema, created.json) as { data: { id: string } };
+    expectParses('PATCH /remediation/rules/{id}', contract.remediationRuleResponseSchema, (await call('PATCH', `/remediation/rules/${rule.data.id}`, contract.updateRemediationRuleRequestSchema.parse({ nodeFilter: null }))).json);
+    const triggered = await call('POST', '/remediation/trigger', contract.triggerRemediationRequestSchema.parse({ anomalyEventId: anomalyId, ruleId: rule.data.id }));
+    expect(triggered.status, JSON.stringify(triggered.json)).toBe(201);
+    expectParses('POST /remediation/trigger', contract.triggerRemediationResponseSchema, triggered.json);
+    expectParses('DELETE /remediation/rules/{id}', contract.remediationRuleDeleteResponseSchema, (await call('DELETE', `/remediation/rules/${rule.data.id}`)).json);
+    const approval = await call('POST', '/remediation/executions/any/approve');
+    expect(approval.status).toBe(403);
+    expectParses('POST /remediation/executions/{id}/approve', contract.apiErrorSchema, approval.json);
+
+    const preferences = await call('PUT', '/notifications/preferences', contract.updateNotificationPreferencesRequestSchema.parse({ preferences: [{ category: prefix, enabled: false }] }));
+    expect(preferences.status).toBe(200);
+    expectParses('PUT /notifications/preferences', contract.notificationPreferencesResponseSchema, preferences.json);
+    const notifications = (await call('GET', `/notifications?nodeId=${nodeId}`)).json as { data: { notifications: Array<{ id: string }> } };
+    expectParses('POST /notifications/read', contract.notificationsMarkedResponseSchema, (await call('POST', '/notifications/read', contract.markNotificationsReadRequestSchema.parse({ ids: [notifications.data.notifications[0]!.id] }))).json);
+    expectParses('POST /notifications/read-all', contract.notificationsMarkedResponseSchema, (await call('POST', '/notifications/read-all')).json);
+
+    // Refused by the allowlist before any connection, and still the published body with a 502.
+    const test = await call('POST', `/webhooks/${webhookId}/test`);
+    expect(test.status).toBe(502);
+    expectParses('POST /webhooks/{id}/test', contract.webhookTestResponseSchema, test.json);
+    const redelivered = await call('POST', `/webhooks/${webhookId}/deliveries/${webhookId}-delivery/redeliver`);
+    expectParses('POST /webhooks/{id}/deliveries/{deliveryId}/redeliver', contract.webhookRedeliverResponseSchema, redelivered.json);
+    expectParses('PATCH /webhooks/{id}', contract.webhookResponseSchema, (await call('PATCH', `/webhooks/${webhookId}`, contract.updateWebhookRequestSchema.parse({ active: false }))).json);
+    const removable = `${prefix}-webhook-removable`;
+    const { encryptWebhookCredential } = await import('../services/webhook-security.js');
+    await db.webhookEndpoint.create({ data: { id: removable, name: removable, url: encryptWebhookCredential('https://hooks.example.com/x', removable, 'url'), headers: encryptWebhookCredential('{}', removable, 'headers'), events: '[]' } });
+    expectParses('DELETE /webhooks/{id}', contract.webhookDeleteResponseSchema, (await call('DELETE', `/webhooks/${removable}`)).json);
+
+    const scan = await call('POST', '/topology/scan', contract.topologyScanRequestSchema.parse({ probeTimeoutMs: 50 }));
+    expectParses('POST /topology/scan', contract.topologyResponseSchema, scan.json);
   }, 60_000);
 
   it('never carries the node token through a cron update', async () => {

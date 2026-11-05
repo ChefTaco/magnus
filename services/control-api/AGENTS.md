@@ -88,6 +88,7 @@ integrations table together.
   disabled on this node" error (`isAgentNotPrivileged`). Do not retry it.
 - Upgrade problem codes live in `packages/contracts/src/upgrade-remedies.ts`. A new code gets its class,
   cause and remedy there; `node scripts/check-upgrade-remedies.mjs --write` updates `UPGRADING.md`.
+  The browser contract carries a copy (`packages/contracts/src/browser.ts`), and its test fails until both match.
 - `commandResourceFence.generation` only ever moves up. `services/command-fence-repair.ts` is the only code
   that adopts a value reported by an agent, and it accepts only that node's own keys, under a cap.
 - Schema changes need a new migration. Applied migrations are immutable;

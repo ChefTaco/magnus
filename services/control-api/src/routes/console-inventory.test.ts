@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { magnusBrowserRoutes } from '@hivemagnus/magnus-contracts/browser';
 import { app } from '../server.js';
 
@@ -93,5 +93,34 @@ describe('console API route inventory', () => {
 
   it('keeps private details out of the inventory', () => {
     expect(markdown).not.toMatch(/\/home\/|\.ts\.net/u);
+  });
+
+  it('classifies the OpenAPI document as browser-facing, and only that part of the docs', () => {
+    expect(rows.find((row) => key(row.method, row.path) === 'GET /api/docs/openapi.json')).toMatchObject({ class: 'browser', auth: 'public' });
+    expect(rows.find((row) => key(row.method, row.path) === 'GET /api/docs')).toMatchObject({ class: 'exclude' });
+    expect(markdown).toContain('`GET /api/magnus/docs/openapi.json` to\n`GET /api/docs/openapi.json`');
+  });
+
+  it('counts the rows of each class in its table', () => {
+    for (const name of CLASSES) {
+      const stated = new RegExp(`^\\| \`${name}\` \\|.*\\| (\\d+) \\|.*\\|$`, 'mu').exec(markdown);
+      expect(Number(stated?.[1]), name).toBe(rows.filter((row) => row.class === name).length);
+    }
+  });
+
+  it('publishes an OpenAPI document with no secret value or private detail', async () => {
+    const secret = 'fixture-openapi-canary-secret-value';
+    for (const name of ['API_SECRET', 'NODE_MANAGER_SECRET', 'JWT_SECRET', 'WEBHOOK_ENCRYPTION_KEY', 'METRICS_TOKEN']) vi.stubEnv(name, secret);
+    const response = await app.request('/api/docs/openapi.json');
+    vi.unstubAllEnvs();
+    expect(response.status).toBe(200);
+    const document = await response.text();
+    expect(document).not.toContain(secret);
+    expect(document).not.toMatch(/\/home\/|\/root\/|\.ts\.net|\.internal\b|-----BEGIN|\bsk-[A-Za-z0-9]{8}/u);
+    // The only literal addresses a public document may carry are the documentation ranges.
+    const addresses = document.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/gu) ?? [];
+    expect(addresses.filter((address) => !/^(?:192\.0\.2|198\.51\.100|203\.0\.113)\./u.test(address))).toEqual([]);
+    const { servers } = JSON.parse(document) as { servers: Array<{ url: string }> };
+    expect(servers.every((server) => server.url.startsWith('/') || new URL(server.url).hostname === 'localhost')).toBe(true);
   });
 });

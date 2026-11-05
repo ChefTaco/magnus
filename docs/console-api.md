@@ -10,9 +10,9 @@ moved without updating it.
 
 | Class | Meaning | Rows | At the ingress |
 |---|---|---|---|
-| `browser` | A person's console drives it with a user token | 137 | Allow the exact method and path |
+| `browser` | A person's console drives it with a user token | 138 | Allow the exact method and path |
 | `machine` | Agents, services and integrations, with their own credentials | 73 | Deny |
-| `exclude` | Reachable with a user token, but no console needs it, or it was written for a server-side caller | 143 | Deny until a feature needs it and it is reviewed |
+| `exclude` | Reachable with a user token, but no console needs it, or it was written for a server-side caller | 142 | Deny until a feature needs it and it is reviewed |
 | `retired` | Always answers 404 or 410 | 64 | Deny |
 
 The `Wave 1` column marks routes whose request and response shapes are published in
@@ -22,6 +22,11 @@ dashboard also uses, and have no published contract yet.
 `Auth` is what the route itself enforces: `user:<roles>` means `authMiddleware` plus a role check,
 and `user:any` means any authenticated role. Path patterns use Hono syntax: `:name` is exactly one
 path segment and a trailing `*` is the remainder. Paths are complete, including `/api/v1`.
+
+`GET /api/docs/openapi.json` is the one browser route outside `/api/v1`. It is public, carries no secret
+or host detail, and the console's API docs page reads it. A console that prefixes its API paths needs
+this exact mapping, with no prefix rule: `GET /api/magnus/docs/openapi.json` to
+`GET /api/docs/openapi.json`. Its response has no contract schema, so its `Wave 1` cell stays empty.
 
 ## Ingress requirements
 
@@ -109,7 +114,8 @@ npm run contracts:browser -- --output ./output/magnus-browser-contracts
 
 This writes the committed `browser.ts` and a `provenance.json` with the revision and each file's
 SHA-256. It refuses an existing directory and exports committed bytes, not the working tree. The
-contract imports only `zod`.
+contract imports only `zod`, so it stays one file: it also carries a checked copy of the upgrade remedies
+from `packages/contracts/src/upgrade-remedies.ts`.
 
 ## Secrets and roles
 
@@ -142,9 +148,15 @@ These remain, and are not closed by the rules above:
   therefore reachable to an `OPERATOR` through those routes, even though the API hides its values.
 - Command lines, log messages and rollout metadata are free text, returned to any role.
 - `GET /api/v1/library/files/:fileId` returns file content to any role.
-- `GET /api/v1/assistant/conversations` lists every user's conversations to any role.
 - `GET /api/v1/self-update/status` returns the server's `repoRoot` path to any role.
 - `Node.token` is stored in plaintext in the database.
+
+Assistant conversations belong to whoever started them. The list and every `/assistant/conversations/:id`
+route, the unread count and marking messages read answer only for the caller's own, for every role, and
+someone else's conversation answers 404. No console feature reads other people's, so `ADMIN` has no
+exception. The exception is the server's heartbeat conversation, which any role can read because it
+describes the fleet and the anomaly page checks for it. The tool approval routes under
+`/assistant/messages/:id` remain `ADMIN` or `OPERATOR` and are not limited to the owner.
 
 `GET /api/v1/ops/timeline` returns each `href` relative to the dashboard's routes, without
 `MAGNUS_CONSOLE_BASE_PATH`. A console at another path must map them.
@@ -166,21 +178,22 @@ unless these rows change. `POST /api/v1/hermes/deploy` is retired and always ans
 
 | Method | Path pattern | Class | Auth | Wave 1 |
 |---|---|---|---|---|
+| GET | `/api/docs/openapi.json` | browser | `public` |  |
 | POST | `/api/v1/agents/upgrade` | browser | `user:ADMIN` | yes |
 | GET | `/api/v1/agents/upgrade/eligibility` | browser | `user:any` | yes |
 | GET | `/api/v1/agents/upgrade/runs/:id` | browser | `user:any` | yes |
 | POST | `/api/v1/agents/upgrade/runs/:id/retry` | browser | `user:ADMIN` | yes |
 | POST | `/api/v1/agents/upgrade/runs/:id/stop` | browser | `user:ADMIN` | yes |
-| GET | `/api/v1/anomalies` | browser | `user:any` |  |
-| GET | `/api/v1/anomalies/event/:id/correlation` | browser | `user:any` |  |
-| GET | `/api/v1/anomalies/summary` | browser | `user:any` |  |
+| GET | `/api/v1/anomalies` | browser | `user:any` | yes |
+| GET | `/api/v1/anomalies/event/:id/correlation` | browser | `user:any` | yes |
+| GET | `/api/v1/anomalies/summary` | browser | `user:any` | yes |
 | GET | `/api/v1/ardent/installations` | browser | `user:ADMIN` |  |
 | GET | `/api/v1/ardent/installations/:nodeId` | browser | `user:ADMIN` |  |
 | GET | `/api/v1/ardent/installations/:nodeId/profiles/:name/*` | browser | `user:ADMIN` |  |
 | POST | `/api/v1/ardent/installations/:nodeId/profiles/:name/action` | browser | `user:ADMIN` |  |
 | GET | `/api/v1/ardent/installations/:nodeId/profiles/:name/artifacts/:artifactId` | browser | `user:ADMIN` |  |
 | GET | `/api/v1/ardent/profiles` | browser | `user:ADMIN` |  |
-| GET | `/api/v1/assistant/conversations` | browser | `user:any` |  |
+| GET | `/api/v1/assistant/conversations` | browser | `user:any` | yes |
 | GET | `/api/v1/assistant/insights` | browser | `user:any` | yes |
 | GET | `/api/v1/assistant/insights/pins` | browser | `user:any` | yes |
 | POST | `/api/v1/assistant/insights/pins` | browser | `user:ADMIN\|OPERATOR` | yes |
@@ -240,12 +253,12 @@ unless these rows change. `POST /api/v1/hermes/deploy` is retired and always ans
 | POST | `/api/v1/nodes/register` | browser | `user:ADMIN\|OPERATOR` | yes |
 | GET | `/api/v1/nodes/system-updates/summary` | browser | `user:any` | yes |
 | GET | `/api/v1/nodes/tailscale/summary` | browser | `user:any` | yes |
-| GET | `/api/v1/notifications` | browser | `user:any` |  |
-| GET | `/api/v1/notifications/preferences` | browser | `user:any` |  |
-| PUT | `/api/v1/notifications/preferences` | browser | `user:any` |  |
-| POST | `/api/v1/notifications/read` | browser | `user:any` |  |
-| POST | `/api/v1/notifications/read-all` | browser | `user:any` |  |
-| GET | `/api/v1/notifications/unread-count` | browser | `user:any` |  |
+| GET | `/api/v1/notifications` | browser | `user:any` | yes |
+| GET | `/api/v1/notifications/preferences` | browser | `user:any` | yes |
+| PUT | `/api/v1/notifications/preferences` | browser | `user:any` | yes |
+| POST | `/api/v1/notifications/read` | browser | `user:any` | yes |
+| POST | `/api/v1/notifications/read-all` | browser | `user:any` | yes |
+| GET | `/api/v1/notifications/unread-count` | browser | `user:any` | yes |
 | GET | `/api/v1/ops/applications` | browser | `user:any` | yes |
 | POST | `/api/v1/ops/applications/:id/canary` | browser | `user:ADMIN\|OPERATOR` | yes |
 | GET | `/api/v1/ops/capacity-advice` | browser | `user:any` | yes |
@@ -259,19 +272,19 @@ unless these rows change. `POST /api/v1/hermes/deploy` is retired and always ans
 | POST | `/api/v1/ops/maintenance` | browser | `user:ADMIN\|OPERATOR` | yes |
 | POST | `/api/v1/ops/maintenance/:id/cancel` | browser | `user:ADMIN\|OPERATOR` | yes |
 | GET | `/api/v1/ops/readiness` | browser | `user:any` | yes |
-| GET | `/api/v1/ops/retention` | browser | `user:any` |  |
+| GET | `/api/v1/ops/retention` | browser | `user:any` | yes |
 | GET | `/api/v1/ops/storage-evidence/:nodeId` | browser | `user:ADMIN\|OPERATOR` | yes |
 | GET | `/api/v1/ops/timeline` | browser | `user:any` | yes |
 | GET | `/api/v1/orchestra/installations` | browser | `user:any` | yes |
 | GET | `/api/v1/orchestra/profiles` | browser | `user:any` | yes |
 | POST | `/api/v1/quick-command/:nodeId/exec` | browser | `user:ADMIN\|OPERATOR` | yes |
-| GET | `/api/v1/remediation/executions` | browser | `user:any` |  |
-| POST | `/api/v1/remediation/executions/:id/approve` | browser | `user:ADMIN\|OPERATOR` |  |
-| GET | `/api/v1/remediation/rules` | browser | `user:any` |  |
-| POST | `/api/v1/remediation/rules` | browser | `user:ADMIN\|OPERATOR` |  |
-| DELETE | `/api/v1/remediation/rules/:id` | browser | `user:ADMIN` |  |
-| PATCH | `/api/v1/remediation/rules/:id` | browser | `user:ADMIN\|OPERATOR` |  |
-| POST | `/api/v1/remediation/trigger` | browser | `user:ADMIN\|OPERATOR` |  |
+| GET | `/api/v1/remediation/executions` | browser | `user:any` | yes |
+| POST | `/api/v1/remediation/executions/:id/approve` | browser | `user:ADMIN\|OPERATOR` | yes |
+| GET | `/api/v1/remediation/rules` | browser | `user:any` | yes |
+| POST | `/api/v1/remediation/rules` | browser | `user:ADMIN\|OPERATOR` | yes |
+| DELETE | `/api/v1/remediation/rules/:id` | browser | `user:ADMIN` | yes |
+| PATCH | `/api/v1/remediation/rules/:id` | browser | `user:ADMIN\|OPERATOR` | yes |
+| POST | `/api/v1/remediation/trigger` | browser | `user:ADMIN\|OPERATOR` | yes |
 | GET | `/api/v1/roles` | browser | `user:any` | yes |
 | POST | `/api/v1/roles` | browser | `user:ADMIN\|OPERATOR` |  |
 | DELETE | `/api/v1/roles/:roleId` | browser | `user:ADMIN` |  |
@@ -293,16 +306,16 @@ unless these rows change. `POST /api/v1/hermes/deploy` is retired and always ans
 | GET | `/api/v1/skills` | browser | `user:any` | yes |
 | GET | `/api/v1/stats/overview` | browser | `user:any` | yes |
 | GET | `/api/v1/system/updates` | browser | `user:any` |  |
-| GET | `/api/v1/topology` | browser | `user:any` |  |
-| POST | `/api/v1/topology/scan` | browser | `user:ADMIN\|OPERATOR` |  |
-| GET | `/api/v1/webhooks` | browser | `user:ADMIN` |  |
-| POST | `/api/v1/webhooks` | browser | `user:ADMIN` |  |
-| DELETE | `/api/v1/webhooks/:id` | browser | `user:ADMIN` |  |
-| GET | `/api/v1/webhooks/:id` | browser | `user:ADMIN` |  |
-| PATCH | `/api/v1/webhooks/:id` | browser | `user:ADMIN` |  |
-| GET | `/api/v1/webhooks/:id/deliveries` | browser | `user:ADMIN` |  |
-| POST | `/api/v1/webhooks/:id/deliveries/:deliveryId/redeliver` | browser | `user:ADMIN` |  |
-| POST | `/api/v1/webhooks/:id/test` | browser | `user:ADMIN` |  |
+| GET | `/api/v1/topology` | browser | `user:any` | yes |
+| POST | `/api/v1/topology/scan` | browser | `user:ADMIN\|OPERATOR` | yes |
+| GET | `/api/v1/webhooks` | browser | `user:ADMIN` | yes |
+| POST | `/api/v1/webhooks` | browser | `user:ADMIN` | yes |
+| DELETE | `/api/v1/webhooks/:id` | browser | `user:ADMIN` | yes |
+| GET | `/api/v1/webhooks/:id` | browser | `user:ADMIN` | yes |
+| PATCH | `/api/v1/webhooks/:id` | browser | `user:ADMIN` | yes |
+| GET | `/api/v1/webhooks/:id/deliveries` | browser | `user:ADMIN` | yes |
+| POST | `/api/v1/webhooks/:id/deliveries/:deliveryId/redeliver` | browser | `user:ADMIN` | yes |
+| POST | `/api/v1/webhooks/:id/test` | browser | `user:ADMIN` | yes |
 
 ## Explicit denies
 
@@ -400,7 +413,6 @@ Each row is a non-browser route that a broader `browser` pattern also matches. D
 | Method | Path pattern | Class | Auth | Why |
 |---|---|---|---|---|
 | GET | `/api/docs` | exclude | `public` | API documentation UI; not part of the console. |
-| GET | `/api/docs/openapi.json` | exclude | `public` | API documentation; public and not needed by the console. |
 | GET | `/api/v1/agents/upgrade/runs/latest` | exclude | `user:any` | No dashboard call site. Add when a console feature needs it. |
 | GET | `/api/v1/ai-schedules` | exclude | `user:any` | No dashboard call site. Add when a console feature needs it. |
 | POST | `/api/v1/ai-schedules` | exclude | `user:ADMIN\|OPERATOR` | No dashboard call site. Add when a console feature needs it. |

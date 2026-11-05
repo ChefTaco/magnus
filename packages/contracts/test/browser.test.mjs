@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   consoleSessionResponseSchema, cronUpdateResponseSchema, fleetReadinessResponseSchema, magnusBrowserContractVersion,
-  magnusBrowserResponseSchema, magnusBrowserRoute, magnusBrowserRoutes, registerNodeResponseSchema, roleSchema,
+  magnusBrowserResponseSchema, magnusBrowserRoute, magnusBrowserRoutes, nodeListItemSchema, registerNodeResponseSchema, roleSchema,
+  UPGRADE_REMEDIES, upgradeFailureClass, upgradeRemedy,
 } from '../dist/browser.js';
+import * as remedySource from '../dist/upgrade-remedies.js';
 
 test('imports only zod', () => {
   const source = readFileSync(new URL('../src/browser.ts', import.meta.url), 'utf8');
@@ -69,4 +71,33 @@ test('strips secret-like fields from parsed responses', () => {
 
   const readiness = fleetReadinessResponseSchema.parse({ success: true, data: { generatedAt: now, thresholds: { staleNodeMs: 1 }, nodes: [] } });
   assert.equal('expectedFingerprints' in readiness.data, false);
+});
+
+test('carries an exact copy of the upgrade remedies', () => {
+  assert.deepEqual(UPGRADE_REMEDIES, remedySource.UPGRADE_REMEDIES);
+  assert.deepEqual(upgradeRemedy('NOT_A_CODE'), remedySource.upgradeRemedy('NOT_A_CODE'));
+  assert.equal(upgradeFailureClass('SELF_UPGRADE_INTEGRITY'), remedySource.upgradeFailureClass('SELF_UPGRADE_INTEGRITY'));
+});
+
+test('a listed node with no snapshot has null health, not an error', () => {
+  const now = '2026-01-01T00:00:00.000Z';
+  const node = { id: 'node-1', name: 'node-1', hostname: 'node-1.example.com', ipAddress: '192.0.2.10', port: 4100, status: 'PROVISIONING', os: 'linux', arch: 'x64', tags: '[]', metadata: '{}', roleId: null, lastHeartbeatAt: null, createdAt: now, updatedAt: now, agent: null, role: null, upgradeReadiness: null };
+  assert.equal(nodeListItemSchema.parse({ ...node, health: null }).health, null);
+  assert.throws(() => nodeListItemSchema.parse(node));
+});
+
+test('publishes the console pages that had no contract', () => {
+  for (const [method, path] of [
+    ['GET', '/anomalies'], ['GET', '/anomalies/summary'], ['GET', '/anomalies/event/{id}/correlation'], ['GET', '/remediation/rules'],
+    ['POST', '/remediation/trigger'], ['GET', '/notifications'], ['PUT', '/notifications/preferences'], ['GET', '/ops/retention'],
+    ['GET', '/assistant/conversations'], ['GET', '/webhooks'], ['POST', '/webhooks/{id}/test'], ['GET', '/topology'], ['POST', '/topology/scan'],
+  ]) assert.ok(magnusBrowserRoutes.some((route) => route.method === method && route.path === path), `${method} ${path}`);
+});
+
+test('webhook responses cannot carry a stored credential', () => {
+  const now = '2026-01-01T00:00:00.000Z';
+  const endpoint = { id: 'hook-1', name: 'pager', url: 'https://hooks.example.com', urlConfigured: true, type: 'generic', secretConfigured: true, headersConfigured: true, events: '[]', active: true, retries: 3, timeoutMs: 10000, createdBy: 'alice', createdAt: now, updatedAt: now };
+  const parsed = magnusBrowserResponseSchema('/webhooks/hook-1').parse({ success: true, data: { endpoint: { ...endpoint, secret: 'fake-secret', headers: 'fake-headers' } } });
+  assert.equal('secret' in parsed.data.endpoint, false);
+  assert.equal('headers' in parsed.data.endpoint, false);
 });

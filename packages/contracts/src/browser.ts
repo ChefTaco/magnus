@@ -199,7 +199,7 @@ export const nodeWithRelationsSchema = nodeSchema.extend({
   upgradeReadiness: upgradeReadinessSchema.nullable(),
 });
 
-// services/control-api/src/routes/nodes.ts (pageSize clamped to 100; status upper-cased server-side, an unknown value fails with 500).
+// services/control-api/src/routes/nodes.ts (pageSize clamped to 100; status upper-cased server-side, an unknown value answers 400).
 export const nodeListQuerySchema = z.object({
   page: z.coerce.number().int().min(1).optional(),
   pageSize: z.coerce.number().int().min(1).max(100).optional(),
@@ -208,10 +208,28 @@ export const nodeListQuerySchema = z.object({
   query: z.string().optional(),
 });
 
+// services/control-api/src/routes/nodes.ts (the newest snapshot's headline figures; disks is a JSON string of diskInfoSchema)
+export const nodeHealthSummarySchema = z.object({
+  timestamp: isoDate,
+  cpuUsagePercent: z.number(),
+  cpuCores: z.number().int(),
+  memoryTotalBytes: z.number(),
+  memoryUsedBytes: z.number(),
+  memoryPercent: z.number(),
+  swapTotalBytes: z.number(),
+  swapUsedBytes: z.number(),
+  disks: z.string(),
+});
+
+// services/control-api/src/routes/nodes.ts (health is null until the node reports a snapshot)
+export const nodeListItemSchema = nodeWithRelationsSchema.extend({
+  health: nodeHealthSummarySchema.nullable(),
+});
+
 // services/control-api/src/routes/nodes.ts
 export const nodeListResponseSchema = z.object({
   success: z.literal(true),
-  data: z.array(nodeWithRelationsSchema),
+  data: z.array(nodeListItemSchema),
   meta: z.object({
     total: z.number(),
     page: z.number(),
@@ -242,7 +260,7 @@ export const registerNodeResponseSchema = ok(z.object({
   controlApiUrl: z.string(),
 }));
 
-// services/control-api/src/schemas/nodes.ts (the server uppercases status; a non-enum value fails in Prisma)
+// services/control-api/src/schemas/nodes.ts (the server uppercases status; a non-enum value answers 400)
 export const updateNodeRequestSchema = z.object({
   name: z.string().min(1).optional(),
   tags: z.array(z.string()).optional(),
@@ -534,7 +552,7 @@ export const readinessHermesSchema = z.object({
   lastDetectedAt: isoDate.nullable(),
 });
 
-// services/control-api/src/services/ops-service.ts (includes sentinel nodes __control-api__ and __dashboard__, which the page filters out)
+// services/control-api/src/services/ops-service.ts
 export const fleetReadinessNodeSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -2113,8 +2131,592 @@ export const quickCommandResponseSchema = z.object({
   data: quickCommandResultSchema,
 });
 
-// ── Route table ──
+// ── Anomalies ──
+// services/control-api/src/routes/anomalies.ts (query; pageSize is clamped to 100)
+export const anomalyListQuerySchema = z.object({
+  nodeId: z.string().optional(),
+  metric: z.string().optional(),
+  severity: z.string().optional(),
+  resolved: z.enum(['true', 'false']).optional(),
+  page: z.coerce.number().int().min(1).optional(),
+  pageSize: z.coerce.number().int().min(1).max(100).optional(),
+});
 
+// services/control-api/prisma/schema.prisma (metric and severity are free strings in the database)
+export const anomalyEventSchema = z.object({
+  id: z.string(),
+  nodeId: z.string(),
+  healthSnapshotId: z.string().nullable(),
+  metric: z.string(),
+  value: z.number(),
+  zScore: z.number(),
+  mean: z.number(),
+  stdDev: z.number(),
+  severity: z.string(),
+  resolved: z.boolean(),
+  resolvedAt: isoDate.nullable(),
+  firstSeenAt: isoDate,
+  lastSeenAt: isoDate,
+  occurrenceCount: z.number().int(),
+  createdAt: isoDate,
+  node: z.object({ name: z.string(), hostname: z.string() }),
+});
+
+// services/control-api/src/services/anomaly-detector.ts
+export const anomalyListResponseSchema = ok(z.object({
+  anomalies: z.array(anomalyEventSchema),
+  total: z.number().int(),
+}));
+
+// services/control-api/src/services/anomaly-detector.ts
+export const anomalySummaryResponseSchema = ok(z.object({
+  totalActive: z.number().int(),
+  byNode: z.array(z.object({
+    nodeId: z.string(),
+    nodeName: z.string(),
+    count: z.number().int(),
+    metrics: z.array(z.string()),
+  })),
+  bySeverity: z.record(z.string(), z.number().int()),
+}));
+
+// services/control-api/src/services/ai-correlation-service.ts
+export const correlatedAnomalySchema = z.object({
+  id: z.string(),
+  nodeId: z.string(),
+  metric: z.string(),
+  value: z.number(),
+  severity: z.string(),
+  zScore: z.number(),
+  createdAt: isoDate,
+});
+
+// services/control-api/src/services/ai-correlation-service.ts
+export const correlatedAnomalyGroupSchema = z.object({
+  id: z.string(),
+  timeWindow: z.object({ start: isoDate, end: isoDate }),
+  anomalies: z.array(correlatedAnomalySchema),
+  affectedNodes: z.array(z.string()),
+  metrics: z.array(z.string()),
+  pattern: z.string(),
+  relatedCommands: z.array(z.object({
+    id: z.string(),
+    nodeId: z.string(),
+    command: z.string(),
+    status: z.string(),
+    createdAt: isoDate,
+  })),
+});
+
+// services/control-api/src/services/ai-correlation-service.ts (404 NOT_FOUND for an unknown anomaly)
+export const anomalyCorrelationResponseSchema = ok(z.object({
+  anomaly: correlatedAnomalySchema.extend({ resolved: z.boolean() }),
+  group: correlatedAnomalyGroupSchema,
+  analysis: z.object({
+    blastRadius: z.enum(['single-node', 'multi-node']),
+    suspectedTriggers: z.array(z.string()),
+    recommendedActions: z.array(z.string()),
+    summary: z.string(),
+  }),
+}));
+
+// ── Remediation: these routes answer { data }, with no success key ──
+const remediationMetricSchema = z.enum(['cpu', 'memory', 'disk', 'swap', '*']);
+const remediationSeveritySchema = z.enum(['warning', 'critical']);
+const remediationRunbookSchema = z.enum(['diagnostics.v1', 'restart-service.v1']);
+
+// services/control-api/prisma/schema.prisma (agentDefinitionId stays a free string: legacy rules keep retired values and are record-only)
+export const remediationRuleSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  description: z.string(),
+  metric: z.string(),
+  severityThreshold: z.string(),
+  agentDefinitionId: z.string(),
+  input: z.string(),
+  cooldownMinutes: z.number().int(),
+  maxConcurrentRuns: z.number().int(),
+  nodeFilter: z.string().nullable(),
+  enabled: z.boolean(),
+  createdBy: z.string(),
+  createdAt: isoDate,
+  updatedAt: isoDate,
+});
+
+// services/control-api/src/services/remediation-service.ts
+export const remediationRuleListResponseSchema = z.object({
+  data: z.array(remediationRuleSchema.extend({
+    runbookVersion: z.string(),
+    disposition: z.enum(['approval_required', 'legacy_record_only']),
+    _count: z.object({ executions: z.number().int() }),
+  })),
+});
+
+// services/control-api/src/routes/remediation.ts (a single rule carries no runbookVersion, disposition or _count)
+export const remediationRuleResponseSchema = z.object({ data: remediationRuleSchema });
+
+// services/control-api/src/routes/remediation.ts (409 CONFLICT when the name is taken)
+export const createRemediationRuleRequestSchema = z.object({
+  name: z.string().min(1).max(200),
+  description: z.string().max(1000).optional(),
+  metric: remediationMetricSchema.optional(),
+  severityThreshold: remediationSeveritySchema.optional(),
+  agentDefinitionId: remediationRunbookSchema,
+  input: z.string().max(2000).optional(),
+  cooldownMinutes: z.number().int().min(1).max(10080).optional(),
+  maxConcurrentRuns: z.number().int().min(1).max(10).optional(),
+  nodeFilter: z.string().max(200).optional(),
+  enabled: z.boolean().optional(),
+});
+
+// services/control-api/src/routes/remediation.ts
+export const updateRemediationRuleRequestSchema = createRemediationRuleRequestSchema.partial().extend({
+  nodeFilter: z.string().max(200).nullable().optional(),
+});
+
+// services/control-api/src/routes/remediation.ts (no data key)
+export const remediationRuleDeleteResponseSchema = z.object({ success: z.literal(true) });
+
+// services/control-api/src/routes/remediation.ts (query; pageSize is clamped to 200)
+export const remediationExecutionListQuerySchema = z.object({
+  ruleId: z.string().optional(),
+  nodeId: z.string().optional(),
+  status: z.string().optional(),
+  page: z.coerce.number().int().min(1).optional(),
+  pageSize: z.coerce.number().int().min(1).max(200).optional(),
+});
+
+// services/control-api/prisma/schema.prisma (status is a free string; input is a JSON-encoded remediationPlanSchema, and output a free string)
+export const remediationExecutionSchema = z.object({
+  id: z.string(),
+  ruleId: z.string(),
+  anomalyEventId: z.string(),
+  nodeId: z.string(),
+  orchestraRunId: z.string().nullable(),
+  status: z.string(),
+  input: z.string(),
+  output: z.string().nullable(),
+  triggeredAt: isoDate,
+  completedAt: isoDate.nullable(),
+  rule: z.object({ name: z.string(), metric: z.string(), agentDefinitionId: z.string() }),
+});
+
+// services/control-api/src/services/remediation-service.ts
+export const remediationExecutionListResponseSchema = z.object({
+  data: z.object({
+    executions: z.array(remediationExecutionSchema),
+    total: z.number().int(),
+    page: z.number().int(),
+    pageSize: z.number().int(),
+  }),
+});
+
+// services/control-api/src/services/remediation-service.ts (decodes execution input)
+export const remediationPlanSchema = z.object({
+  runbookVersion: z.string(),
+  nodeId: z.string(),
+  applicationId: z.string().optional(),
+  command: z.string(),
+  args: z.array(z.string()),
+  expiresAt: isoDate,
+  timeoutSeconds: z.number().int(),
+  catalogRunbookId: z.string().optional(),
+  catalogRunbookVersion: z.string().optional(),
+  catalogPlanSha256: z.string().optional(),
+});
+
+// services/control-api/src/routes/remediation.ts
+export const triggerRemediationRequestSchema = z.object({
+  anomalyEventId: z.string().min(1),
+  ruleId: z.string().min(1),
+});
+
+// services/control-api/src/services/remediation-service.ts
+export const triggerRemediationResponseSchema = z.object({
+  data: z.object({
+    executionId: z.string(),
+    orchestraRunId: z.string().nullable(),
+    status: z.string(),
+    plan: remediationPlanSchema.nullable(),
+  }),
+});
+
+// ── Notifications ──
+// services/control-api/src/routes/notifications.ts (query; pageSize is clamped to 100)
+export const notificationListQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).optional(),
+  pageSize: z.coerce.number().int().min(1).max(100).optional(),
+  isRead: z.enum(['true', 'false']).optional(),
+  severity: z.string().optional(),
+  type: z.string().optional(),
+  nodeId: z.string().optional(),
+});
+
+// services/control-api/src/services/notification-service.ts (metadata is parsed, unlike most JSON columns)
+export const notificationSchema = z.object({
+  id: z.string(),
+  type: z.string(),
+  severity: z.string(),
+  title: z.string(),
+  message: z.string(),
+  nodeId: z.string().nullable(),
+  nodeName: z.string().nullable(),
+  sourceRef: z.string().nullable(),
+  metadata: z.record(z.string(), z.unknown()),
+  isRead: z.boolean(),
+  readAt: isoDate.nullable(),
+  createdAt: isoDate,
+  suppressedBy: z.string().nullable(),
+});
+
+// services/control-api/src/services/notification-service.ts
+export const notificationListResponseSchema = ok(z.object({
+  notifications: z.array(notificationSchema),
+  total: z.number().int(),
+  page: z.number().int(),
+  pageSize: z.number().int(),
+}));
+
+// services/control-api/src/routes/notifications.ts
+export const notificationUnreadCountResponseSchema = ok(z.object({ count: z.number().int() }));
+
+// services/control-api/src/schemas/logs.ts
+export const markNotificationsReadRequestSchema = z.object({ ids: z.array(z.string().min(1)).min(1) });
+
+// services/control-api/src/routes/notifications.ts
+export const notificationsMarkedResponseSchema = ok(z.object({ marked: z.number().int() }));
+
+// services/control-api/prisma/schema.prisma
+export const notificationPreferenceSchema = z.object({
+  id: z.string(),
+  userId: z.string(),
+  channel: z.string(),
+  category: z.string(),
+  enabled: z.boolean(),
+  minSeverity: z.string(),
+  createdAt: isoDate,
+  updatedAt: isoDate,
+});
+
+// services/control-api/src/routes/notifications.ts
+export const notificationPreferencesResponseSchema = ok(z.array(notificationPreferenceSchema));
+
+// services/control-api/src/routes/notifications.ts
+export const updateNotificationPreferencesRequestSchema = z.object({
+  preferences: z.array(z.object({
+    channel: z.enum(['in_app', 'email', 'webhook']).optional(),
+    category: z.string().min(1),
+    enabled: z.boolean(),
+    minSeverity: z.enum(['info', 'warning', 'critical']).optional(),
+  })).min(1).max(100),
+});
+
+// ── Data retention ──
+// services/control-api/src/services/ops-service.ts (cutoffs names differ by table, and some tables have none)
+export const retentionTableSchema = z.object({
+  name: z.string(),
+  count: z.number().int(),
+  oldestAt: isoDate.nullable(),
+  policy: z.string(),
+  cutoffs: z.record(z.string(), isoDate).optional(),
+});
+
+// services/control-api/src/services/ops-service.ts
+export const retentionSummaryResponseSchema = ok(z.object({
+  generatedAt: isoDate,
+  policyStatus: z.object({ status: z.enum(['pass', 'fail']), message: z.string() }),
+  tables: z.array(retentionTableSchema),
+}));
+
+// ── Assistant conversations ──
+// services/control-api/src/routes/assistant.ts (query; status defaults to active and all removes the filter; pageSize is clamped to 50)
+export const conversationListQuerySchema = z.object({
+  type: z.string().optional(),
+  status: z.string().optional(),
+  page: z.coerce.number().int().min(1).optional(),
+  pageSize: z.coerce.number().int().min(1).max(50).optional(),
+});
+
+// services/control-api/src/services/ai-assistant-service.ts
+export const conversationSummarySchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  type: z.string(),
+  nodeId: z.string().nullable(),
+  parentId: z.string().nullable(),
+  forkedFromMessageId: z.string().nullable(),
+  status: z.string(),
+  summary: z.string().nullable(),
+  createdBy: z.string(),
+  createdAt: isoDate,
+  updatedAt: isoDate,
+  lastMessage: z.object({ content: z.string(), role: z.string(), createdAt: isoDate }).nullable(),
+  messageCount: z.number().int(),
+  childCount: z.number().int(),
+});
+
+// services/control-api/src/services/ai-assistant-service.ts
+export const conversationListResponseSchema = ok(z.object({
+  conversations: z.array(conversationSummarySchema),
+  total: z.number().int(),
+}));
+
+// ── Webhooks ──
+// services/control-api/src/services/webhook-service.ts (url is only the target's origin, because paths and queries often embed tokens; secret and headers are never returned)
+export const webhookEndpointSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  url: z.string(),
+  urlConfigured: z.boolean(),
+  type: z.string(),
+  secretConfigured: z.boolean(),
+  headersConfigured: z.boolean(),
+  /** A JSON-encoded string array. Empty means every event. */
+  events: z.string(),
+  active: z.boolean(),
+  retries: z.number().int(),
+  timeoutMs: z.number().int(),
+  createdBy: z.string().nullable(),
+  createdAt: isoDate,
+  updatedAt: isoDate,
+});
+
+// services/control-api/src/services/webhook-service.ts
+export const webhookListResponseSchema = ok(z.object({
+  endpoints: z.array(webhookEndpointSchema.extend({ _count: z.object({ deliveries: z.number().int() }) })),
+}));
+
+// services/control-api/src/routes/webhooks.ts
+export const webhookResponseSchema = ok(z.object({ endpoint: webhookEndpointSchema }));
+
+// services/control-api/src/routes/webhooks.ts (write-only credentials: secret and headers are accepted here and never returned)
+export const createWebhookRequestSchema = z.object({
+  name: z.string().min(1),
+  url: z.string().min(1),
+  type: z.string().optional(),
+  secret: z.string().optional(),
+  events: z.array(z.string()).optional(),
+  headers: z.record(z.string(), z.string()).optional(),
+  retries: z.number().int().min(0).max(10).optional(),
+  timeoutMs: z.number().int().min(1000).max(60000).optional(),
+});
+
+// services/control-api/src/routes/webhooks.ts (a null secret removes it)
+export const updateWebhookRequestSchema = createWebhookRequestSchema.partial().extend({
+  secret: z.string().nullable().optional(),
+  active: z.boolean().optional(),
+});
+
+// services/control-api/src/routes/webhooks.ts
+export const webhookDeleteResponseSchema = ok(z.object({ success: z.literal(true) }));
+
+// services/control-api/src/routes/webhooks.ts (query)
+export const webhookDeliveriesQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).optional(),
+  pageSize: z.coerce.number().int().min(1).optional(),
+});
+
+// services/control-api/prisma/schema.prisma (payload is a JSON string; status is pending, sending, success or failed)
+export const webhookDeliverySchema = z.object({
+  id: z.string(),
+  endpointId: z.string(),
+  event: z.string(),
+  payload: z.string(),
+  status: z.string(),
+  httpStatus: z.number().int().nullable(),
+  response: z.string().nullable(),
+  error: z.string().nullable(),
+  attempts: z.number().int(),
+  deliveredAt: isoDate.nullable(),
+  createdAt: isoDate,
+});
+
+// services/control-api/src/services/webhook-service.ts
+export const webhookDeliveriesResponseSchema = ok(z.object({
+  deliveries: z.array(webhookDeliverySchema),
+  total: z.number().int(),
+}));
+
+// services/control-api/src/services/webhook-service.ts (200 when delivered, 502 with this same body when not)
+export const webhookTestResponseSchema = ok(z.object({ success: z.boolean(), error: z.string().optional() }));
+
+// services/control-api/src/routes/webhooks.ts
+export const webhookRedeliverResponseSchema = ok(z.object({ deliveryId: z.string() }));
+
+// ── Topology ──
+// services/control-api/src/services/topology-service.ts
+export const topologyNodeSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  hostname: z.string(),
+  ip: z.string(),
+  port: z.number().int(),
+  status: nodeStatusSchema,
+  subnet: z.string(),
+  reachable: z.boolean(),
+  latencyMs: z.number().nullable(),
+  lastHeartbeatAt: isoDate.nullable(),
+});
+
+// services/control-api/src/services/topology-service.ts
+export const topologySubnetSchema = z.object({
+  cidr: z.string(),
+  nodeCount: z.number().int(),
+  /** Node IDs. */
+  nodes: z.array(z.string()),
+  isGateway: z.boolean(),
+});
+
+// services/control-api/src/services/topology-service.ts
+export const topologyEdgeSchema = z.object({
+  from: z.string(),
+  to: z.string(),
+  latencyMs: z.number().nullable(),
+  type: z.enum(['same-subnet', 'cross-subnet']),
+});
+
+// services/control-api/src/routes/topology.ts (GET is cached for five minutes; a scan replaces the cache)
+export const topologyResponseSchema = ok(z.object({
+  nodes: z.array(topologyNodeSchema),
+  subnets: z.array(topologySubnetSchema),
+  edges: z.array(topologyEdgeSchema),
+  scannedAt: isoDate,
+}));
+
+// services/control-api/src/routes/topology.ts
+export const topologyScanRequestSchema = z.object({ probeTimeoutMs: z.number().int().min(1).optional() });
+
+// ── Agent upgrade remedies ──
+// A copy of packages/contracts/src/upgrade-remedies.ts, which is the source and stays free of dependencies so
+// browser bundles can import it alone. This file is exported as one file, so the copy travels with it, and
+// packages/contracts/test/browser.test.mjs fails if the two differ.
+/** `release`: evidence about the release itself. `node`: this node's own state. */
+export type UpgradeFailureClass = 'release' | 'node';
+
+export interface UpgradeRemedy {
+  class: UpgradeFailureClass;
+  /** Same artifact everywhere: a single occurrence stops the whole run. */
+  stopsRun?: boolean;
+  /** Clears by itself: the run tries the node again at the end of the wave. Never set for ambiguous outcomes. */
+  transient?: boolean;
+  /** The request may have reached the agent: watched by request id, never retried automatically. */
+  ambiguous?: boolean;
+  /** An expected state that does not make a run `partial`, such as a node already on the target. */
+  informational?: boolean;
+  /**
+   * Nodes that all refuse with this, with nothing confirmed, point at what they have in common: the release.
+   * Off for any code that names a node-level cause of its own, which says nothing about the release however many nodes share it.
+   */
+  suspectable?: boolean;
+  /** Not in the catalogue, for example from a newer agent: treated as node-level, and shown as unrecognised. */
+  unknown?: boolean;
+  cause: string;
+  remedy: string;
+}
+
+export const UPGRADE_REMEDIES = {
+  // Release evidence.
+  SELF_UPGRADE_INTEGRITY: { class: 'release', stopsRun: true, cause: 'The downloaded tarball does not match the pinned npm integrity.', remedy: 'Do not retry. Check the registry or MAGNUS_AGENT_UPGRADE_SOURCE_DIR, and the integrity passed to the run.' },
+  SELF_UPGRADE_SOURCE: { class: 'release', stopsRun: true, cause: 'The tarball is missing from MAGNUS_AGENT_UPGRADE_SOURCE_DIR.', remedy: 'Copy the exact tarball to that directory on the nodes, then retry.' },
+  SELF_UPGRADE_FAILED: { class: 'release', cause: 'The package itself failed on the node: a bad tarball, an install error, missing provenance or a smoke test that failed or hung. An agent older than 1.1.8 also reports environment causes this way.', remedy: 'Read the detail and the agent log. If several nodes fail the same way, the release is at fault.' },
+  SELF_UPGRADE_REVERTED: { class: 'release', cause: 'The new version crashed or stayed silent during its trial, and the launcher switched back.', remedy: 'Read the reason on the node and in the agent log. To try again, retry with allowRetryReverted (--retry-reverted).' },
+  CONFIRM_TIMEOUT: { class: 'release', cause: 'The agent accepted the request, but the new version was not confirmed within its trial window.', remedy: 'Read the agent log on the node. A later report for this request is still recorded in the run.' },
+  AGENT_SILENT: { class: 'release', cause: 'The agent accepted the request and then stopped sending heartbeats.', remedy: 'Check the service on the node. The launcher switches back by itself if it is running.' },
+
+  // Ambiguous: the request may have run.
+  MUTATION_OUTCOME_UNKNOWN: { class: 'node', ambiguous: true, cause: 'The request was sent and no usable answer came back.', remedy: 'The run keeps watching the node by request id. If it never reports, check the node, then reconcile the lease of the request (agent-upgrade-<requestId>).' },
+  MANAGED_MUTATION_UNCERTAIN: { class: 'node', ambiguous: true, cause: 'The agent cannot say whether a managed request ran. Any version answers this when a handler failed after it may have started; an agent older than 1.1.8 also answers it for every refusal, whatever the real cause. The command lease stays unknown and blocks later managed requests on this node.', remedy: 'Read the agent log for the real cause. If the agent holds a receipt for the command (agent-upgrade-<requestId>), settle it with signed evidence: POST /api/v1/commands/<id>/reconcile-resource. If it holds none, an agent older than 1.1.8 offers no way out: upgrade that agent by hand on the node, after which the readiness monitor or `magnus-server agents doctor --heal` can settle the lease. If the cause was a stale fence, first run `magnus-server agents fence NODE VALUE`, or the next request fails the same way.' },
+  OUTCOME_UNKNOWN: { class: 'node', ambiguous: true, cause: 'The agent ledger holds an unresolved receipt for this command.', remedy: 'Inspect the receipt and reconcile it with signed evidence (docs/COMMAND_RESOURCE_LEASES.md).' },
+  RUN_INTERRUPTED: { class: 'node', ambiguous: true, cause: 'The server stopped watching this node when the run was interrupted.', remedy: 'A later report is recorded in the run. If the node does not report, retry it.' },
+
+  // Node-level and transient: tried again at the end of the wave.
+  SELF_UPGRADE_ENV_NETWORK: { class: 'node', transient: true, cause: 'The node could not reach the registry while fetching the new version.', remedy: 'Check the path from the node to the registry, or use MAGNUS_AGENT_UPGRADE_SOURCE_DIR, then retry it.' },
+  AGENT_UNREACHABLE: { class: 'node', transient: true, cause: 'The server could not open a connection to the agent.', remedy: 'Check that the agent is running and that its address and port in the inventory are correct.' },
+  SELF_UPGRADE_BUSY: { class: 'node', transient: true, cause: 'The agent is already staging an upgrade or another process holds its upgrade lock.', remedy: 'Wait for it to finish, then retry the node.' },
+  RESOURCE_BUSY: { class: 'node', transient: true, cause: 'Another command owns the single execution slot on the node.', remedy: 'Wait for the command to finish, then retry the node.' },
+  RESOURCE_LEASE_CONFLICT: { class: 'node', transient: true, cause: 'The server holds another unsettled command lease for the node.', remedy: 'Wait for it to settle. If it stays `unknown`, run `magnus-server agents doctor --heal` or reconcile it.' },
+  ENROLLMENT_AUTHORITY_UNAVAILABLE: { class: 'node', transient: true, cause: 'The agent could not reach the server to confirm its enrollment.', remedy: 'Check the path from the node to the server (CONTROL_API_URL, TLS trust).' },
+  STALE_FENCE: { class: 'node', transient: true, cause: 'The agent holds a resource fence at least as high as the one the server sent, and refused without running anything.', remedy: 'The server repairs this by itself by moving its generation up, and tries the node again. Nothing to do unless the problem persists.' },
+  LEASE_EXPIRED: { class: 'node', transient: true, cause: 'The command lease expired before the agent could start it; nothing ran.', remedy: 'Retry the node. If this repeats, compare the clocks of the node and the server.' },
+  NOT_DISPATCHED: { class: 'node', transient: true, cause: 'The server did not send the request.', remedy: 'Read the detail, then retry the node.' },
+  CHECK_FAILED: { class: 'node', transient: true, cause: 'The server could not check this node right before asking it, so it did not ask.', remedy: 'Read the detail, usually a database or Redis problem on the server, then retry the node.' },
+
+  // Node-level: needs someone.
+  AGENT_SILENT_AFTER_LOST_REPLY: { class: 'node', ambiguous: true, cause: 'The request may or may not have arrived, and the agent has stopped sending heartbeats.', remedy: 'Check the service on the node. A later report for this request is still recorded in the run.' },
+  FENCE_UNREPORTED: { class: 'node', cause: 'This agent is older than 1.1.8, has handled managed requests before, and cannot say what fence it holds. If that fence is ahead of the server, its request fails as MANAGED_MUTATION_UNCERTAIN and strands a lease.', remedy: 'Before the wave, read .magnus/command-receipts/fence-*.json on the node and run `magnus-server agents fence NODE VALUE`. Nothing to do if the fence is not ahead.' },
+  LEDGER_MISSING: { class: 'node', cause: 'The agent has no command ledger, so its "no receipt" proves nothing about a lease held for it. The ledger may have moved, or the install may have been rebuilt.', remedy: 'Check AGENT_INSTALL_DIR and restore .magnus/command-receipts if it moved; the lease then settles by itself. If it is gone, Magnus has no way to settle the lease: establish by hand what the command did, then change the lease row in the database yourself.' },
+  LEDGER_NO_FENCE: { class: 'node', cause: 'The agent ledger holds neither a fence nor this node\'s enrollment marker, so nothing shows it is the ledger this command would have used.', remedy: 'Check whether .magnus/command-receipts was replaced, and restore it if so; the lease then settles by itself. If it cannot be restored, Magnus has no way to settle the lease: establish by hand what the command did, then change the lease row in the database yourself.' },
+  LEDGER_EVIDENCE_INCONSISTENT: { class: 'node', cause: 'The agent ledger accepted this lease\'s fence, but holds no receipt, no claim and no record of a failed admission for it. Either a receipt was removed, or an admission failed on an agent build that kept no such record.', remedy: 'Inspect .magnus/command-receipts on the node and the agent log around the lease\'s time. Magnus has no way to settle the lease: establish by hand what the command did, then change the lease row in the database yourself.' },
+  ENROLLMENT_MARKER_UNKNOWN: { class: 'node', cause: 'The agent could not read its managed-enrollment marker, so a mismatch cannot be ruled out.', remedy: 'Check .magnus/command-receipts/managed-enrollment.json on the node: its mode, owner and content.' },
+  SELF_UPGRADE_ENV_TLS: { class: 'node', cause: 'npm would not trust the registry\'s certificate on this node: a wrong clock, an expired certificate or an intercepting proxy.', remedy: 'Check the clock on the node and its CA trust for the registry, then retry it.' },
+  SELF_UPGRADE_ENV_AUTH: { class: 'node', cause: 'The registry refused this node\'s request (401 or 403).', remedy: 'Check the npm credentials and registry settings on the node, or use MAGNUS_AGENT_UPGRADE_SOURCE_DIR, then retry it.' },
+  SELF_UPGRADE_ENV_RESOURCE: { class: 'node', cause: 'The node ran out of memory or file handles, npm was killed, or a file was busy. A killed npm is told apart by how the process ended; a lifecycle script killed inside npm still reads as a package fault.', remedy: 'Check the memory on the node and its kernel log, then retry it.' },
+  RETRY_HELD_SUSPECTED: { class: 'node', cause: 'The run this one retries stopped because older agents answered ambiguously with nothing confirmed. Each further attempt on an older agent can strand another lease, so this retry leaves them alone.', remedy: 'Read the agent log of the nodes that answered, and run `magnus-server agents fence NODE VALUE` where a fence is ahead. Then retry with acknowledgeSuspicion (--acknowledge-suspicion).' },
+  SELF_UPGRADE_ENV_DISK: { class: 'node', cause: 'The node ran out of disk space or quota, or hit an I/O error, while installing the new version.', remedy: 'Free disk space on the node, then retry it.' },
+  SELF_UPGRADE_ENV_ACCESS: { class: 'node', cause: 'The node refused a write while installing the new version.', remedy: 'Run `sudo magnus-agent install-service` again on the node, which repairs ownership, then retry it.' },
+  RESOURCE_ENROLLMENT_REQUIRED: { class: 'node', cause: 'Admission refused the request because the node\'s resource enrollment is not complete.', remedy: 'Complete the node\'s resource enrollment (docs/COMMAND_RESOURCE_LEASES.md).' },
+  FENCE_OVERFLOW: { class: 'node', cause: 'The agent reports a resource fence above the highest value the server will adopt.', remedy: 'Stop the agent, inspect .magnus/command-receipts/fence-*.json on the node, and repair that file by hand. The server does not change its generation.' },
+  FENCE_INVALID: { class: 'node', cause: 'The agent reports a resource fence that is not a decimal value for its own node.', remedy: 'Inspect .magnus/command-receipts/fence-*.json on the node.' },
+  FENCE_AHEAD: { class: 'node', cause: 'The agent holds a resource fence above the server generation, so managed requests would be refused.', remedy: 'Nothing to do for an upgrade run: it repairs this at its start. `magnus-server agents doctor --heal` repairs it now.' },
+  IDEMPOTENCY_CONFLICT: { class: 'node', cause: 'The agent already has a receipt for this command identifier with different input.', remedy: 'Retry the node, which uses a new identifier, and report the conflict if it repeats.' },
+  LEDGER_UNAVAILABLE: { class: 'node', cause: 'The agent could not read or write its command ledger.', remedy: 'Check ownership, mode 0700 and free space of .magnus/command-receipts on the node.' },
+  LEDGER_UNRESOLVED: { class: 'node', cause: 'The agent ledger holds a command with an unresolved outcome, which blocks every later managed request.', remedy: 'Reconcile that command with signed evidence (docs/COMMAND_RESOURCE_LEASES.md).' },
+  LEASE_HELD: { class: 'node', cause: 'A command lease on the node is reserved, running or unknown.', remedy: 'Wait for it to finish. On a 1.1.8 agent, a lease stuck `unknown` with no receipt is settled by the readiness monitor, a run, or `magnus-server agents doctor --heal`; one with a receipt needs signed reconciliation. On an older agent, see MANAGED_MUTATION_UNCERTAIN.' },
+  WORK_HELD: { class: 'node', cause: 'Participant work, such as a console terminal or SSH session, is still held on the node.', remedy: 'Finish or reconcile that work, then retry the node.' },
+  UNMANAGED_MUTATION: { class: 'node', suspectable: true, cause: 'The agent is enrolled for managed requests and refused a request without a valid claim.', remedy: 'Complete the node\'s resource enrollment on the server (docs/COMMAND_RESOURCE_LEASES.md), or upgrade the agent by hand.' },
+  RESOURCE_CLAIM_INVALID: { class: 'node', cause: 'The server would not confirm the agent\'s claim for this request.', remedy: 'Check the enrollment and inventory host name of the node, then retry.' },
+  RESOURCE_TARGET_INVALID: { class: 'node', cause: 'Admission refused the node: its inventory address changed or its health is not fresh.', remedy: 'Wait for a fresh heartbeat, or repair the inventory address.' },
+  ADMISSION_FENCE_CLOSED: { class: 'node', cause: 'A server release closed admission to this node.', remedy: 'Release the admission fence (POST /api/v1/resource-leases/admission/<nodeId>/release).' },
+  ENROLLMENT_MISSING: { class: 'node', cause: 'Resource leases apply to this node but it is not enrolled.', remedy: 'Enroll the node (docs/COMMAND_RESOURCE_LEASES.md).' },
+  ENROLLMENT_DRAINING: { class: 'node', cause: 'The node\'s resource enrollment is stuck in draining.', remedy: 'Finish the drain: POST /api/v1/resource-leases/enrollment/<nodeId>/complete.' },
+  ENROLLMENT_HOST_MISMATCH: { class: 'node', cause: 'The enrollment names another host than the inventory.', remedy: 'Correct the host name of the node in the inventory.' },
+  ENROLLMENT_INCOMPLETE: { class: 'node', cause: 'The node\'s resource enrollment is not complete.', remedy: 'Enroll the node (docs/COMMAND_RESOURCE_LEASES.md).' },
+  ENROLLMENT_MARKER_MISMATCH: { class: 'node', cause: 'The agent holds a local managed-enrollment marker the server does not share.', remedy: 'Complete the node\'s resource enrollment on the server (docs/COMMAND_RESOURCE_LEASES.md), or upgrade the agent by hand.' },
+  NODE_OFFLINE: { class: 'node', transient: true, cause: 'The node is offline or has no recent heartbeat.', remedy: 'Bring the agent back, then retry the node.' },
+  NODE_NOT_FOUND: { class: 'node', cause: 'The node is no longer in the inventory.', remedy: 'Register the node again if it should be managed.' },
+  VERSION_UNKNOWN: { class: 'node', cause: 'The agent has not reported a usable version.', remedy: 'Wait for a heartbeat, or upgrade the agent by hand.' },
+  SELF_UPGRADE_TIMEOUT: { class: 'node', cause: 'An npm step of the upgrade did not finish in its time budget on the node. A new version that hangs when it is run reports SELF_UPGRADE_FAILED instead. A lifecycle script that hangs inside npm also ends up here: it cannot be told apart.', remedy: 'Check the network and disk speed of the node, then retry it. If every node hangs the same way, suspect the release.' },
+  SELF_UPGRADE_UNAVAILABLE: { class: 'node', cause: 'The agent cannot upgrade itself now: its layout, launcher, directories or npm are not usable.', remedy: 'Read the detail. Running `sudo magnus-agent install-service` once on the node usually repairs it.' },
+  SELF_UPGRADE_LAUNCHER: { class: 'node', suspectable: true, cause: 'The new version needs a newer launcher than the node has.', remedy: 'Run `sudo magnus-agent install-service` once on the node.' },
+  SELF_UPGRADE_ENGINE: { class: 'node', suspectable: true, cause: 'The new version does not support the Node.js on this node.', remedy: 'Upgrade Node.js on the node.' },
+  SELF_UPGRADE_PACKAGE: { class: 'node', suspectable: true, cause: 'The agent refused to install a package other than magnus-agent.', remedy: 'Report this: the server sent an unexpected package name.' },
+  SELF_UPGRADE_REFUSED: { class: 'node', suspectable: true, cause: 'The agent refused the version change.', remedy: 'Read the detail. Crossing a major version is done by hand.' },
+  PREFLIGHT_NOT_WRITABLE: { class: 'node', cause: 'The agent cannot write to its install directory.', remedy: 'Run `sudo magnus-agent install-service` again on the node, which repairs ownership.' },
+  PREFLIGHT_DISK_LOW: { class: 'node', cause: 'The install directory has less free space than an upgrade needs.', remedy: 'Free disk space on the node.' },
+  PREFLIGHT_NPM: { class: 'node', cause: 'npm is missing on the node or too old.', remedy: 'Install npm beside the agent\'s Node.js, or set MAGNUS_AGENT_NPM.' },
+  PREFLIGHT_FROM_INCOMPLETE: { class: 'node', cause: 'The running version is not complete under versions/, so a failed upgrade could not switch back.', remedy: 'Run `sudo magnus-agent install-service` again on the node.' },
+  PREFLIGHT_ENGINE: { class: 'node', cause: 'The target version does not support the Node.js on this node.', remedy: 'Upgrade Node.js on the node.' },
+
+  NOT_REACHED: { class: 'node', cause: 'The run ended before it reached this node.', remedy: 'Retry the run, once what ended it is dealt with. This node was not asked and did not change.' },
+  RUN_STOPPED: { class: 'node', cause: 'Someone stopped the run before it reached this node.', remedy: 'Retry the run when you want this node upgraded. This node was not asked and did not change.' },
+  NOT_ELIGIBLE: { class: 'node', cause: 'This node became ineligible at its turn, for a reason without a code of its own.', remedy: 'Read the detail, then retry the node.' },
+
+  // Expected states: reported, but not a problem with the run.
+  ALREADY_CURRENT: { class: 'node', informational: true, cause: 'The node already runs the target version.', remedy: 'Nothing to do.' },
+  SELF_UPGRADE_CURRENT: { class: 'node', informational: true, cause: 'The agent already runs the target version.', remedy: 'Nothing to do.' },
+  DOWNGRADE: { class: 'node', informational: true, cause: 'The node runs a newer version than the target.', remedy: 'Nothing to do, or choose a newer target.' },
+  MAJOR_VERSION: { class: 'node', informational: true, cause: 'The change crosses a major version.', remedy: 'Upgrade this node by hand.' },
+  NOT_SELF_UPGRADABLE: { class: 'node', informational: true, cause: 'This agent cannot upgrade itself: it is too old, or not set up with the launcher.', remedy: 'Run `sudo magnus-agent install-service` once on the node.' },
+  PROTOCOL_TOO_OLD: { class: 'node', informational: true, cause: 'The agent speaks an older self-upgrade protocol.', remedy: 'Upgrade this agent by hand.' },
+  SELF_UPGRADE_DISABLED: { class: 'node', informational: true, cause: 'An operator switched self-upgrade off on this node, or it runs in a container or the legacy layout.', remedy: 'Nothing to do if that is intended. Otherwise set MAGNUS_AGENT_SELF_UPGRADE=true, pull a newer image, or run `sudo magnus-agent install-service` once.' },
+  UPGRADE_IN_PROGRESS: { class: 'node', cause: 'An upgrade is staged or on trial on this node, and it can still switch back.', remedy: 'Wait for its trial to end, then retry the node if it did not confirm.' },
+  ALREADY_REVERTED: { class: 'node', cause: 'This node already switched back from this exact version.', remedy: 'Read the reason. To try again, use allowRetryReverted (--retry-reverted).' },
+  PREFLIGHT_UNAVAILABLE: { class: 'node', informational: true, cause: 'An agent older than 1.1.8 has no preflight check; heartbeat data is used instead.', remedy: 'Nothing to do: the agent gains the check when it is upgraded.' },
+  PREFLIGHT_UNREACHABLE: { class: 'node', informational: true, cause: 'The preflight check got no answer. The node stays in the run, and dispatch decides.', remedy: 'Nothing to do unless the node then fails with AGENT_UNREACHABLE.' },
+} as const satisfies Record<string, UpgradeRemedy>;
+
+export type UpgradeProblemCode = keyof typeof UPGRADE_REMEDIES;
+
+const FALLBACK: UpgradeRemedy = { class: 'node', unknown: true, suspectable: true, cause: 'Unrecognised code: the agent or the server refused this node for a reason the catalogue does not list.', remedy: 'Read the detail and the agent log, then retry the node. An agent newer than the server can cause this.' };
+
+/** Cause and remedy for a code; an unknown code (a newer agent, an unexpected 4xx) is a node-level problem. */
+export function upgradeRemedy(code: string | null | undefined): UpgradeRemedy {
+  return (code ? (UPGRADE_REMEDIES as Record<string, UpgradeRemedy>)[code] : undefined) ?? FALLBACK;
+}
+
+export const upgradeFailureClass = (code: string | null | undefined): UpgradeFailureClass => upgradeRemedy(code).class;
+
+// ── Route table ──
 export interface MagnusBrowserRoute {
   method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
   /** Relative to /api/v1, with `{name}` for each path parameter. */
@@ -2152,10 +2754,10 @@ export const magnusBrowserRoutes: readonly MagnusBrowserRoute[] = [
   { method: 'GET', path: '/orchestra/profiles', response: hermesProfilesResponseSchema, roles: ANY_ROLE },
 
   // Fleet readiness
-  { method: 'GET', path: '/ops/readiness', response: fleetReadinessResponseSchema, roles: ANY_ROLE, note: 'Includes the sentinel nodes __control-api__ and __dashboard__.' },
+  { method: 'GET', path: '/ops/readiness', response: fleetReadinessResponseSchema, roles: ANY_ROLE },
 
   // Nodes list
-  { method: 'GET', path: '/nodes', query: nodeListQuerySchema, response: nodeListResponseSchema, roles: ANY_ROLE, note: 'tags, metadata and agent.capabilities are JSON-encoded strings. An unknown status fails with 500.' },
+  { method: 'GET', path: '/nodes', query: nodeListQuerySchema, response: nodeListResponseSchema, roles: ANY_ROLE, note: 'tags, metadata, agent.capabilities and health.disks are JSON-encoded strings. health is null for a node with no snapshot, so a list needs no request per row. An unknown status answers 400.' },
   { method: 'GET', path: '/nodes/system-updates/summary', response: systemUpdatesSummaryResponseSchema, roles: ANY_ROLE },
   { method: 'POST', path: '/nodes/register', request: registerNodeRequestSchema, response: registerNodeResponseSchema, roles: WRITE_ROLES, successStatus: 201, note: 'The raw body also carries the per-node token. It is shown once, with Cache-Control: no-store, and this schema strips it.' },
   { method: 'GET', path: '/health', response: publicHealthResponseSchema, roles: [] },
@@ -2173,7 +2775,7 @@ export const magnusBrowserRoutes: readonly MagnusBrowserRoute[] = [
   { method: 'DELETE', path: '/nodes/{nodeId}', response: deleteNodeResponseSchema, roles: ADMIN_ONLY },
   { method: 'POST', path: '/nodes/{nodeId}/system-updates/enable', response: enableSystemUpdatesResponseSchema, roles: WRITE_ROLES, note: 'The node must be ONLINE, otherwise 409 INVALID_STATE.' },
   { method: 'GET', path: '/nodes/{nodeId}/gpu', query: nodeGpuQuerySchema, response: nodeGpuResponseSchema, roles: ANY_ROLE },
-  { method: 'GET', path: '/nodes/{nodeId}/health', response: nodeHealthResponseSchema, roles: ANY_ROLE, note: '404 when the node has no snapshot.' },
+  { method: 'GET', path: '/nodes/{nodeId}/health', response: nodeHealthResponseSchema, roles: ANY_ROLE, note: '404 when the node has no snapshot. For a list, read health from GET /nodes.' },
   { method: 'GET', path: '/nodes/{nodeId}/health/history', query: nodeHealthHistoryQuerySchema, response: nodeHealthHistoryResponseSchema, roles: ANY_ROLE },
   { method: 'GET', path: '/nodes/{nodeId}/health/timeseries', query: nodeHealthTimeseriesQuerySchema, response: nodeHealthTimeseriesResponseSchema, roles: ANY_ROLE },
   { method: 'GET', path: '/health/{nodeId}/forecast', query: nodeForecastQuerySchema, response: nodeForecastResponseSchema, roles: ANY_ROLE },
@@ -2237,10 +2839,52 @@ export const magnusBrowserRoutes: readonly MagnusBrowserRoute[] = [
   { method: 'POST', path: '/ops/maintenance/{id}/cancel', response: maintenanceWindowResponseSchema, roles: WRITE_ROLES },
   { method: 'GET', path: '/ops/capacity-advice', response: capacityAdviceResponseSchema, roles: ANY_ROLE },
   { method: 'GET', path: '/dependencies', response: dependencyGraphResponseSchema, roles: ANY_ROLE },
-  { method: 'GET', path: '/ops/storage-evidence/{nodeId}', query: storageEvidenceQuerySchema, response: storageEvidenceResponseSchema, roles: WRITE_ROLES, note: 'On agent failure, 502 with storageEvidenceAgentErrorSchema, whose error is a bare string.' },
+  { method: 'GET', path: '/ops/storage-evidence/{nodeId}', query: storageEvidenceQuerySchema, response: storageEvidenceResponseSchema, roles: WRITE_ROLES, note: 'When the agent refuses, 502 with storageEvidenceAgentErrorSchema, whose error is a bare string. When it cannot be reached or answers unreadably, 502 with apiErrorSchema and code NODE_UNREACHABLE or NODE_BAD_RESPONSE.' },
 
   // Governor operations
   { method: 'GET', path: '/skills', response: skillListResponseSchema, roles: ANY_ROLE },
+
+  // Anomalies
+  { method: 'GET', path: '/anomalies', query: anomalyListQuerySchema, response: anomalyListResponseSchema, roles: ANY_ROLE },
+  { method: 'GET', path: '/anomalies/summary', response: anomalySummaryResponseSchema, roles: ANY_ROLE },
+  { method: 'GET', path: '/anomalies/event/{id}/correlation', response: anomalyCorrelationResponseSchema, roles: ANY_ROLE, note: '404 for an unknown anomaly.' },
+
+  // Remediation
+  { method: 'GET', path: '/remediation/rules', response: remediationRuleListResponseSchema, roles: ANY_ROLE },
+  { method: 'POST', path: '/remediation/rules', request: createRemediationRuleRequestSchema, response: remediationRuleResponseSchema, roles: WRITE_ROLES, successStatus: 201, note: '409 CONFLICT when the name is taken.' },
+  { method: 'PATCH', path: '/remediation/rules/{id}', request: updateRemediationRuleRequestSchema, response: remediationRuleResponseSchema, roles: WRITE_ROLES, note: '404 for an unknown rule. 409 CONFLICT when the new name is taken.' },
+  { method: 'DELETE', path: '/remediation/rules/{id}', response: remediationRuleDeleteResponseSchema, roles: ADMIN_ONLY, note: '404 for an unknown rule.' },
+  { method: 'GET', path: '/remediation/executions', query: remediationExecutionListQuerySchema, response: remediationExecutionListResponseSchema, roles: ANY_ROLE },
+  { method: 'POST', path: '/remediation/trigger', request: triggerRemediationRequestSchema, response: triggerRemediationResponseSchema, roles: WRITE_ROLES, successStatus: 201 },
+  { method: 'POST', path: '/remediation/executions/{id}/approve', response: apiErrorSchema, roles: WRITE_ROLES, note: 'Always refused: 403 TELEGRAM_APPROVAL_REQUIRED, because approval happens through the signed approval bridge.' },
+
+  // Notifications
+  { method: 'GET', path: '/notifications', query: notificationListQuerySchema, response: notificationListResponseSchema, roles: ANY_ROLE },
+  { method: 'GET', path: '/notifications/unread-count', response: notificationUnreadCountResponseSchema, roles: ANY_ROLE },
+  { method: 'POST', path: '/notifications/read', request: markNotificationsReadRequestSchema, response: notificationsMarkedResponseSchema, roles: ANY_ROLE },
+  { method: 'POST', path: '/notifications/read-all', response: notificationsMarkedResponseSchema, roles: ANY_ROLE },
+  { method: 'GET', path: '/notifications/preferences', response: notificationPreferencesResponseSchema, roles: ANY_ROLE, note: "The caller's own preferences." },
+  { method: 'PUT', path: '/notifications/preferences', request: updateNotificationPreferencesRequestSchema, response: notificationPreferencesResponseSchema, roles: ANY_ROLE, note: 'An upsert: categories not sent keep their values.' },
+
+  // Data retention
+  { method: 'GET', path: '/ops/retention', response: retentionSummaryResponseSchema, roles: ANY_ROLE },
+
+  // Assistant conversations
+  { method: 'GET', path: '/assistant/conversations', query: conversationListQuerySchema, response: conversationListResponseSchema, roles: ANY_ROLE, note: "The caller's own conversations, for every role, plus the server's shared heartbeat conversation." },
+
+  // Webhooks
+  { method: 'GET', path: '/webhooks', response: webhookListResponseSchema, roles: ADMIN_ONLY },
+  { method: 'POST', path: '/webhooks', request: createWebhookRequestSchema, response: webhookResponseSchema, roles: ADMIN_ONLY, successStatus: 201, note: 'Refused with a message naming WEBHOOK_ALLOWED_ORIGINS unless the target origin is on that server allowlist.' },
+  { method: 'GET', path: '/webhooks/{id}', response: webhookResponseSchema, roles: ADMIN_ONLY },
+  { method: 'PATCH', path: '/webhooks/{id}', request: updateWebhookRequestSchema, response: webhookResponseSchema, roles: ADMIN_ONLY },
+  { method: 'DELETE', path: '/webhooks/{id}', response: webhookDeleteResponseSchema, roles: ADMIN_ONLY },
+  { method: 'GET', path: '/webhooks/{id}/deliveries', query: webhookDeliveriesQuerySchema, response: webhookDeliveriesResponseSchema, roles: ADMIN_ONLY },
+  { method: 'POST', path: '/webhooks/{id}/deliveries/{deliveryId}/redeliver', response: webhookRedeliverResponseSchema, roles: ADMIN_ONLY },
+  { method: 'POST', path: '/webhooks/{id}/test', response: webhookTestResponseSchema, roles: ADMIN_ONLY, note: 'Sends one real delivery. 200 when delivered, 502 with this same body when not.' },
+
+  // Topology
+  { method: 'GET', path: '/topology', response: topologyResponseSchema, roles: ANY_ROLE, note: 'Cached for five minutes. A cache miss probes every node, which can take seconds.' },
+  { method: 'POST', path: '/topology/scan', request: topologyScanRequestSchema, response: topologyResponseSchema, roles: WRITE_ROLES },
 ];
 
 /** The released route for a concrete /api/v1-relative path. Throws when there is none. */

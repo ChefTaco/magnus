@@ -24,6 +24,22 @@ All notable changes to this project are documented in this file. The format is b
 
 - Remove the dashboard's unused `/api/terminal/ws`, `join`, `share` and `promote` routes and its WebSocket terminal.
 
+- **Behavior change.** Assistant conversations belong to whoever started them. The list, each `/assistant/conversations/:id` route, chat continuation, the unread count and marking messages read answer only for the caller's own, for every role including `ADMIN`, and someone else's conversation answers 404. The server's heartbeat conversation stays readable by every role.
+
+- **Behavior change.** The global error handler no longer sends Prisma text. A duplicate answers 409 `CONFLICT` naming the record and field, a missing record 404, an invalid value 400, and an unreachable database 503 `DATABASE_UNAVAILABLE`. Routes and dependency checks that pass an error's message through to a client no longer carry database text or a peer's address.
+
+- Exclude sentinel records from `GET /topology` and the topology scan, fleet readiness, predictions, the at-risk forecast, profiling, Prometheus node counts and the assistant's fleet tools.
+
+- Stop `GET /health/:nodeId/forecast` failing with 500 on a flat disk, whose rounding residue overflowed the fill date. A burst of heartbeats no longer draws a growth trend, and a fill date more than 100 years out is not published.
+
+- Add `health` to each row of `GET /nodes`: the headline figures of the node's newest snapshot, or null when it has none, so a list needs no request per row.
+
+- `GET /ops/storage-evidence/:nodeId` now reaches agents over the same scheme as other agent calls, instead of always HTTPS. A failure answers 502 `NODE_UNREACHABLE` or `NODE_BAD_RESPONSE` with the reason and what to check, and names no address.
+
+- Name `WEBHOOK_ALLOWED_ORIGINS` when a webhook target is refused for not being allowlisted, and document the setting. The refusal itself is unchanged.
+
+- Publish browser contracts for anomalies, remediation, notifications, retention, conversations, webhooks and topology, with a checked copy of the upgrade remedies. `GET /api/docs/openapi.json` is now a `browser` row in `docs/console-api.md`.
+
 - **Behavior change.** Below `ADMIN`, role `envConfig` and cron `environment` now return key names only (`envConfigKeys`, `environmentKeys`), and a `PATCH` merges so a redacted response cannot wipe a value. Removing a key now takes an `ADMIN`.
 
 - **Behavior change.** Secret fingerprints are `ADMIN` only: readiness fingerprints, `nodeManagerSecretFingerprint` in node metadata, and Hermes API-server key fingerprints. Other roles see `state` or a `Configured` boolean. Assistant tools and MCP no longer receive readiness fingerprints.
