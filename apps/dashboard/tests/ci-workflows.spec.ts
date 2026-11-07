@@ -186,10 +186,65 @@ test('agent upgrade dialog greys out agents that cannot upgrade themselves', asy
   await expect(candidates.getByLabel('Upgrade Browser CI node', { exact: true })).toBeDisabled();
   await expect(candidates).toContainText('agent version unknown');
   await expect(page.getByTestId('agent-upgrade-start')).toBeEnabled();
+  await candidates.getByLabel('Upgrade Browser CI upgradable').uncheck();
+  await expect(page.getByTestId('agent-upgrade-start')).toHaveText('Upgrade 0 agents');
+  await expect(page.getByTestId('agent-upgrade-start')).toBeDisabled();
+  await candidates.getByLabel('Upgrade Browser CI upgradable').check();
   // Check reports on every selected node and starts nothing. The fixture agent answers no preflight, and stays selectable.
   await page.getByTestId('agent-upgrade-check-button').click();
   const report = page.getByTestId('agent-upgrade-check');
   await expect(report).toContainText('Browser CI upgradable', { timeout: 30_000 });
   await expect(report).toContainText(/preflight (unreachable|unavailable)/);
   await expect(page.getByTestId('agent-upgrade-run')).toHaveCount(0);
+});
+
+test('major agent upgrades explain the manual path and keep controls reachable', async ({ page }) => {
+  const nodes = Array.from({ length: 18 }, (_, index) => ({
+    nodeId: `major-node-${index}`, name: `Major fixture ${index}`, version: '1.1.12',
+    eligible: false, code: 'MAJOR_VERSION', layout: 'versioned', upgrade: null,
+    reason: '1.1.12 -> 2.1.2 crosses a major version; upgrade this node by hand',
+  }));
+  await page.route('**/api/proxy/agents/upgrade/eligibility', route => route.fulfill({ json: {
+    success: true, data: { version: '2.1.2', serverVersion: '2.1.2', upgradesEnabled: true, disabledReason: null, nodes,
+      latestRun: { id: 'major-fixture-run', version: '1.1.12', status: 'succeeded', startedAt: '', finishedAt: '', concurrency: 1,
+        message: 'Upgraded to 1.1.12', nodes: nodes.map(node => ({ ...node, from: '1.1.7', state: 'confirmed', detail: null })) } },
+  } }));
+  await page.route('**/api/proxy/system/updates', async route => {
+    const response = await route.fetch();
+    const body = await response.json();
+    body.data.agents.behind = nodes.map(({ nodeId, name, version }) => ({ nodeId, name, version }));
+    body.data.agents.expected = '2.1.2';
+    body.data.agents.fixCommand = 'magnus-server agents upgrade';
+    await route.fulfill({ json: body });
+  });
+  await page.goto('/login');
+  await page.getByLabel('Username').fill('ci-admin');
+  await page.getByLabel('Password', { exact: true }).fill('ci-only-browser-password');
+  await page.getByRole('button', { name: 'Sign In', exact: true }).click();
+  await expect(page).toHaveURL('/');
+  const banner = page.getByTestId('update-banner');
+  await expect(banner).toContainText('18 agents require a manual major-version upgrade');
+  await expect(banner).not.toContainText('magnus-server agents upgrade');
+  await banner.getByRole('link', { name: 'Review agent upgrades' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Upgrade agents' });
+  await expect(dialog.getByTestId('agent-upgrade-major-notice')).toContainText('18 agents require a manual major-version upgrade to 2.1.2');
+  await expect(dialog.getByTestId('agent-upgrade-empty')).toBeVisible();
+  await expect(dialog.getByLabel('Upgrade Major fixture 0', { exact: true })).toBeDisabled();
+  await expect(dialog.getByTestId('agent-upgrade-start')).toBeDisabled();
+  await expect(dialog.locator('details')).not.toHaveAttribute('open');
+  await expect(dialog.locator('summary')).toContainText('Previous rollout to 1.1.12');
+  for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }, { width: 320, height: 568 }]) {
+    await page.setViewportSize(viewport);
+    const bounds = await dialog.boundingBox();
+    expect(bounds!.y).toBeGreaterThanOrEqual(0);
+    expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(viewport.height);
+    expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+    await dialog.getByTestId('agent-upgrade-check-button').scrollIntoViewIfNeeded();
+    await expect(dialog.getByTestId('agent-upgrade-check-button')).toBeInViewport();
+    await expect(dialog.getByRole('button', { name: 'Close', exact: true })).toBeInViewport();
+  }
+  await dialog.locator('summary').click();
+  await expect(dialog.locator('details')).toHaveAttribute('open', '');
+  await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(dialog).not.toBeVisible();
 });

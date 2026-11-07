@@ -6,6 +6,10 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep the agent upgrade dialog within the viewport, wrap blocking reasons and footer controls, and collapse completed rollout details so previous successes are clearly separate from current eligibility. Explain manual major-version upgrades in the dialog and update banner; show the actual selected count on the upgrade button.
+
 ## [2.1.2] - 2026-11-07
 
 ### Security

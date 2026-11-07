@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { isNotFound, nodeDetail, readinessTitle, remedyText, retryCount, retryable, runHeadline, targetDescription, upgradeErrorMessage } from './agent-upgrade-view';
-import type { AgentUpgradeEligibility, AgentUpgradeRun } from '@/types/upgrades';
+import { isNotFound, manualMajorUpgradeCount, nodeDetail, readinessTitle, remedyText, retryCount, retryable, runHeadline, targetDescription, upgradeErrorMessage } from './agent-upgrade-view';
+import type { AgentUpgradeEligibility, AgentUpgradeRun, SystemUpdates } from '@/types/upgrades';
 
 const eligibility = (extra: Partial<AgentUpgradeEligibility> = {}): AgentUpgradeEligibility => ({
   version: '1.1.3', serverVersion: '1.1.3', upgradesEnabled: true, disabledReason: null, nodes: [], latestRun: null, ...extra });
@@ -59,5 +59,23 @@ describe('agent upgrade dialog text', () => {
   it('prefixes the code to the node detail once', () => {
     expect(nodeDetail({ ...run(['refused']).nodes[0]!, code: 'RESOURCE_BUSY', detail: 'busy' })).toBe('RESOURCE_BUSY: busy');
     expect(nodeDetail({ ...run(['refused']).nodes[0]!, code: 'X', detail: 'X: already' })).toBe('X: already');
+  });
+});
+
+describe('agent major-version notice', () => {
+  const agents = (versions: string[], expected = '2.1.2'): SystemUpdates['agents'] => ({
+    expected, current: 0, ahead: [], unknown: [], upgradesEnabled: true, fixCommand: null,
+    behind: versions.map((version, index) => ({ nodeId: `node-${index}`, name: `Node ${index}`, version })),
+  });
+
+  it('counts manual major upgrades separately from same-major updates', () => {
+    expect(manualMajorUpgradeCount(agents(['1.1.12', '1.1.4', '2.1.1', '2.1.2-rc.1']))).toBe(2);
+    expect(manualMajorUpgradeCount(agents(['2.1.1']))).toBe(0);
+    expect(manualMajorUpgradeCount(agents([]))).toBe(0);
+  });
+
+  it('does not treat missing or unknown versions as major upgrades', () => {
+    expect(manualMajorUpgradeCount(agents(['unknown', '', '1.1.12']))).toBe(1);
+    expect(manualMajorUpgradeCount(agents(['1.1.12'], 'unknown'))).toBe(0);
   });
 });

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { ArrowUpCircle, ServerCog, X } from 'lucide-react';
 import { api } from '@/lib/api-client';
+import { manualMajorUpgradeCount } from '@/lib/agent-upgrade-view';
 import type { SystemUpdates } from '@/types/upgrades';
 
 const REFRESH_MS = 30 * 60_000;
@@ -43,6 +44,7 @@ export function UpdateBanner(): React.ReactElement | null {
   if (!updates) return null;
   const { server, agents } = updates;
   const behind = agents.behind.length;
+  const manual = manualMajorUpgradeCount(agents);
   if (!server.updateAvailable && !server.latestMajor && behind === 0) return null;
   const key = bannerKey(updates);
   if (dismissed === key) return null;
@@ -104,9 +106,10 @@ export function UpdateBanner(): React.ReactElement | null {
                 {agents.behind.slice(0, 5).map((node) => `${node.name} ${node.version}`).join(', ')}{behind > 5 ? ', …' : ''}.
               </span>{' '}
               {agents.upgradesEnabled
-                ? <Link href="/nodes?upgrade=agents" className="text-primary underline">Upgrade agents</Link>
+                ? <Link href="/nodes?upgrade=agents" className="text-primary underline">{manual > 0 ? 'Review agent upgrades' : 'Upgrade agents'}</Link>
                 : <span className="text-text-muted">Agent upgrades are off on this server (MAGNUS_AGENT_UPGRADES=false).</span>}
-              {agents.fixCommand && <span className="ml-2 text-text-muted">or run <code className="rounded bg-surface px-1 text-text">{agents.fixCommand}</code></span>}
+              {manual > 0 && <span className="ml-2 text-text-muted">{manual} agent{manual === 1 ? ' requires' : 's require'} a manual major-version upgrade; the dialog only upgrades within the same major.</span>}
+              {agents.fixCommand && manual === 0 && <span className="ml-2 text-text-muted">or run <code className="rounded bg-surface px-1 text-text">{agents.fixCommand}</code></span>}
             </p>
           </div>
         )}

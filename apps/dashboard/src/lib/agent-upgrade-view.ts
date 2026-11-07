@@ -1,7 +1,7 @@
 /** Text helpers for the "Upgrade agents" dialog. */
 import { apiErrorMessage, httpErrorBody } from './http-error-body';
 import { upgradeRemedy } from '@hivemagnus/magnus-contracts/upgrade-remedies';
-import type { AgentUpgradeEligibility, AgentUpgradeRun, UpgradeReadiness } from '@/types/upgrades';
+import type { AgentUpgradeEligibility, AgentUpgradeRun, SystemUpdates, UpgradeReadiness } from '@/types/upgrades';
 
 /** The server's `{ error: { code, message } }` instead of "Request failed with status code 409". */
 export async function upgradeErrorMessage(cause: unknown): Promise<string> {
@@ -59,4 +59,14 @@ export function readinessTitle(readiness: UpgradeReadiness): string {
 export function nodeDetail(node: AgentUpgradeRun['nodes'][number]): string | null {
   if (!node.detail) return node.code ?? null;
   return node.code && !node.detail.includes(node.code) ? `${node.code}: ${node.detail}` : node.detail;
+}
+
+/** Version skew across majors needs a manual install even when upgrades are enabled. */
+export function manualMajorUpgradeCount(agents: SystemUpdates['agents']): number {
+  const major = (version: string) => /^(\d+)\.\d+\.\d+(?:[-+]|$)/.exec(version)?.[1];
+  const target = major(agents.expected);
+  return target === undefined ? 0 : agents.behind.filter((node) => {
+    const current = major(node.version);
+    return current !== undefined && current !== target;
+  }).length;
 }
