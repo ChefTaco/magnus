@@ -15,7 +15,7 @@ A clear, concise description of the problem.
 - [ ] Magnus UI (`@hivemagnus/magnus-ui`)
 - [ ] Magnus Server (`@hivemagnus/magnus-server`)
 - [ ] Magnus Agent (`@hivemagnus/magnus-agent`)
-- [ ] Ardent (`@hivemagnus/ardent`)
+- [ ] Ardent management in Magnus (for Ardent itself, open an issue at https://github.com/ChefTaco/Ardent/issues)
 - [ ] Skills catalogue or contracts (`@hivemagnus/magnus-skills`, `@hivemagnus/magnus-contracts`)
 - [ ] Other:
 

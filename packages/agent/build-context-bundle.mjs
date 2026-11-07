@@ -2,10 +2,15 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
-import ts from 'typescript';
 
-const root = resolve(import.meta.dirname, '..');
-const ardent = join(root, 'ardent');
+// The context adapter comes from the pinned, published @hivemagnus/ardent (a devDependency;
+// source: https://github.com/ChefTaco/Ardent), together with the Emberfold engine it depends on.
+const ardentEntry = createRequire(join(import.meta.dirname, 'package.json')).resolve('@hivemagnus/ardent');
+const ardent = resolve(dirname(ardentEntry), '..');
+const ardentManifest = JSON.parse(await readFile(join(ardent, 'package.json'), 'utf8'));
+const pinned = JSON.parse(await readFile(join(import.meta.dirname, 'package.json'), 'utf8')).devDependencies['@hivemagnus/ardent'];
+if (ardentManifest.name !== '@hivemagnus/ardent' || ardentManifest.version !== pinned)
+  throw new Error(`Installed Ardent ${ardentManifest.version} differs from the pinned ${pinned}`);
 const require = createRequire(join(ardent, 'package.json'));
 const engine = resolve(dirname(require.resolve('@hivemagnus/emberfold')), '..');
 const zod = dirname(createRequire(join(engine, 'package.json')).resolve('zod/package.json'));
@@ -14,15 +19,7 @@ const add = async (source, path) => {
   const bytes = await readFile(source);
   files.push({ path, sha256: createHash('sha256').update(bytes).digest('hex'), content: bytes.toString('base64') });
 };
-for (const name of ['context', 'context-checkpoints', 'context-maintenance']) {
-  const source = await readFile(join(ardent, 'src', name + '.ts'), 'utf8');
-  const result = ts.transpileModule(source, { fileName: name + '.ts', reportDiagnostics: true,
-    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022, verbatimModuleSyntax: true } });
-  if (result.diagnostics?.some(diagnostic => diagnostic.category === ts.DiagnosticCategory.Error))
-    throw new Error('Context adapter transpilation failed: ' + name);
-  const bytes = Buffer.from(result.outputText);
-  files.push({ path: 'ardent/' + name + '.js', sha256: createHash('sha256').update(bytes).digest('hex'), content: bytes.toString('base64') });
-}
+for (const name of ['context', 'context-checkpoints', 'context-maintenance']) await add(join(ardent, 'dist', name + '.js'), 'ardent/' + name + '.js');
 const walk = async (directory, prefix, filter) => {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     const relative = prefix + entry.name;

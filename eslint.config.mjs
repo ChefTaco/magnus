@@ -27,16 +27,4 @@ export default defineConfig([
     languageOptions: { parser: tseslint.parser },
     plugins: { '@typescript-eslint': tseslint.plugin },
   },
-  {
-    files: ['packages/ardent/src/**/*.ts'],
-    languageOptions: { parserOptions: { project: './packages/ardent/tsconfig.json', tsconfigRootDir: import.meta.dirname } },
-    rules: {
-      '@typescript-eslint/no-unsafe-assignment': 'error',
-      '@typescript-eslint/no-unsafe-call': 'error',
-      '@typescript-eslint/no-unsafe-member-access': 'error',
-      '@typescript-eslint/no-unsafe-type-assertion': 'error',
-      '@typescript-eslint/no-floating-promises': 'error',
-      '@typescript-eslint/no-explicit-any': 'error',
-    },
-  },
 ]);

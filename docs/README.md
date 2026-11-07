@@ -46,7 +46,7 @@ README is the reference for its installation, configuration and environment vari
 | `@hivemagnus/magnus-server` | [services/control-api/README.md](../services/control-api/README.md) |
 | `@hivemagnus/magnus-fleet-gateway` | [services/fleet-gateway/README.md](../services/fleet-gateway/README.md) |
 | `@hivemagnus/magnus-agent` | [packages/agent/README.md](../packages/agent/README.md) |
-| `@hivemagnus/ardent` | [packages/ardent/README.md](../packages/ardent/README.md) |
+| `@hivemagnus/ardent` | [Ardent README](https://github.com/ChefTaco/Ardent#readme) (separate repository) |
 | `@hivemagnus/magnus-contracts` | [packages/contracts/README.md](../packages/contracts/README.md) |
 | `@hivemagnus/magnus-skills` | [packages/skills/README.md](../packages/skills/README.md) |
 

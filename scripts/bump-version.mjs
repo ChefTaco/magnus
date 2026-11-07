@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Sets one release version everywhere it is recorded: the root and every
 // workspace package.json, exact internal dependency pins, the server's
-// bundled agent version, the Ardent OpenAPI document, the release manifest
-// and package-lock.json. Adds a CHANGELOG.md stub when the version has none.
+// bundled agent version, the release manifest and package-lock.json. Adds a
+// CHANGELOG.md stub when the version has none. Ardent is versioned separately
+// (https://github.com/ChefTaco/Ardent); its pins here change only by hand.
 //
 //   node scripts/bump-version.mjs 1.1.0 [--no-lockfile]
 import { execFileSync } from 'node:child_process';
@@ -39,11 +40,6 @@ export function bumpVersion(root, version, { today = new Date().toISOString().sl
 
   writeJson(join(root, 'services/control-api/agent-version.json'), { version });
   changed.push('services/control-api/agent-version.json');
-  const openapiPath = join(root, 'packages/ardent/openapi/ardent.json');
-  const openapi = readJson(openapiPath);
-  openapi.info.version = version;
-  writeJson(openapiPath, openapi);
-  changed.push('packages/ardent/openapi/ardent.json');
 
   const metaPath = join(root, 'packages/magnus/package.json');
   const meta = readJson(metaPath);

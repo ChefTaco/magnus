@@ -17,7 +17,6 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const PUBLISHABLE = [
   'packages/contracts',
   'packages/skills',
-  'packages/ardent',
   'packages/agent',
   'services/control-api',
   'apps/dashboard',

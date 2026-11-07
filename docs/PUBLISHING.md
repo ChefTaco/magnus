@@ -38,7 +38,7 @@ An unauthenticated dry run cannot prove npm ownership or OIDC configuration.
 
 1. Run `npm run release:bump X.Y.Z`. It sets the root and every workspace
    version, the exact internal dependency pins, the server's
-   `agent-version.json`, the Ardent OpenAPI version, `package-lock.json` and
+   `agent-version.json`, `package-lock.json` and
    the release manifest, and adds a CHANGELOG stub. Then write
    `release/X.Y.Z.json`: the summary, `breaking`, `minUpgradeFrom`, new
    required and optional settings, removed settings, and the migrations this

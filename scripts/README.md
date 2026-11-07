@@ -5,7 +5,7 @@ catalogue; each package README lists its own build and test commands.
 
 | Task | Command | Script |
 | --- | --- | --- |
-| Everything CI runs | `npm run verify` | Secret and private-data scans, build, typecheck, tests, skills catalogue, OpenAPI, Ardent package, npm packs, documentation and cleanup tests |
+| Everything CI runs | `npm run verify` | Secret and private-data scans, build, typecheck, tests, skills catalogue, OpenAPI, Ardent client types, npm packs, documentation and cleanup tests |
 | Secret scan | `npm run scan:secrets` | `scan-secrets.sh`: provider tokens, literal credentials and private infrastructure in working files and the Git index; findings redact values |
 | Publication safety tests | `npm run privacy:test` | Scanner, staged-content, npm-content, clean-build, publication-environment, release-tag and registry-failure regressions |
 | Private-data scan | `npm run check:private` | `check-private-data.sh`: forbidden files plus the patterns in the optional, gitignored `.private-terms` file. `--staged` checks only staged files (used by the pre-commit hook). |

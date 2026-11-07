@@ -18,7 +18,7 @@ try {
     env: { PATH: process.env.PATH, HOME: temporary, npm_config_cache: join(temporary, 'cache') }, timeout: 300000, stdio: 'pipe' });
   const source = join(temporary, 'source');
   await mkdir(join(source, 'node_modules'), { recursive: true });
-  for (const workspace of ['agent', 'contracts', 'ardent']) {
+  for (const workspace of ['agent', 'contracts']) {
     const destination = join(source, 'packages', workspace);
     await mkdir(destination, { recursive: true });
     await cp(join(root, 'packages', workspace, 'dist'), join(destination, 'dist'), { recursive: true });

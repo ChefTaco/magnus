@@ -2,8 +2,9 @@
 
 ## Supported versions
 
-Security fixes are released for the latest `1.x` version of each `@hivemagnus/magnus-*` package and
-`@hivemagnus/ardent`.
+Security fixes are released for the latest `1.x` version of each `@hivemagnus/magnus-*` package.
+Ardent (`@hivemagnus/ardent`) has its own repository and
+[security policy](https://github.com/ChefTaco/Ardent/security/policy); report Ardent vulnerabilities there.
 
 ## Reporting a vulnerability
 
@@ -13,7 +14,7 @@ Report them privately through
 [GitHub private vulnerability reporting](https://github.com/ChefTaco/magnus/security/advisories/new).
 Please include:
 
-- the affected package (UI, Server, Agent, Ardent, Skills or Contracts) and version or commit
+- the affected package (UI, Server, Agent, Skills or Contracts) and version or commit
 - steps to reproduce, or a proof of concept
 - the impact you expect
 

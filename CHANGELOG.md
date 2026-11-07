@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file. The format is b
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- Ardent (`@hivemagnus/ardent`) moved to its own repository, [ChefTaco/Ardent](https://github.com/ChefTaco/Ardent), and is no
+  longer a workspace here or part of the Magnus release. Magnus pins the published
+  `@hivemagnus/ardent@2.1.1` as a development dependency: the agent builds its context-adoption
+  bundle from the package's compiled context adapter (byte-identical to the previous build), and
+  `npm run ardent:openapi:check` / `ardent:openapi:write` check and regenerate the typed Ardent client
+  in `@hivemagnus/magnus-contracts` from the package's OpenAPI document. Report Ardent issues and
+  vulnerabilities in the Ardent repository. Agent-side Ardent management is unchanged.
+
 ## [2.1.1] - 2026-11-05
 
 ### Security
@@ -274,7 +286,7 @@ fixes shipped in 1.1.7.
 - The Ardent A2A surface now has rate limits: by client address before authentication, by peer after it (also for gRPC),
   and a cap on each peer's queued and running tasks, answered with `429` and `Retry-After`. `X-Forwarded-For` is ignored
   unless `a2a.rate_limit.trusted_proxies` names the connecting address. **Behind a reverse proxy, list the proxy there**, or
-  all clients share one address limit. See `a2a.rate_limit` in the [Ardent README](packages/ardent/README.md#a2a).
+  all clients share one address limit. See `a2a.rate_limit` in the [Ardent README](https://github.com/ChefTaco/Ardent#a2a).
 - `POST /a2a/push/:peerId` checks `X-A2A-Notification-Token` before parsing up to 2 MB of JSON.
 - `magnus` health probes verify the certificate in the component's `TLS_CERT_PATH` instead of turning verification off.
   Verification stays off only for an address on this machine when no certificate is known or the known one does not verify,

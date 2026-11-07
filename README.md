@@ -8,7 +8,7 @@
 host reports to a central API server, and a browser console lets you see and operate the whole fleet:
 inventory and health, commands, cron jobs, files, logs, skills, rollouts, incidents and an
 append-only audit log. Magnus can also manage the AI agents that run on those hosts (Hermes Agent,
-the Codex CLI and its own Ardent runtime) and ships a catalogue of Ubuntu operations skills for
+the Codex CLI and the [Ardent](https://github.com/ChefTaco/Ardent) runtime) and ships a catalogue of Ubuntu operations skills for
 them.
 
 ## Browser console
@@ -35,7 +35,7 @@ tagged release; until then, build it from `services/fleet-gateway/Dockerfile`.
 | [**Magnus server**](services/control-api) | Hono API server backed by PostgreSQL and Redis. It keeps the inventory and desired state, ingests heartbeats and logs, dispatches signed commands through a durable queue, and records every change in the audit log. |
 | [**Fleet gateway**](services/fleet-gateway) | Separate, optional service that holds the restricted SSH key and carries the HiveXUI web terminal, with fresh identity verification, strict host-key pinning and metadata-only audit. |
 | [**Magnus agent**](packages/agent) | Daemon for each managed Linux host. It sends heartbeats, runs commands, manages cron, files and skills, and manages Hermes Agent, Codex and Ardent when they are installed. |
-| [**Ardent**](packages/ardent) | Headless TypeScript agent runtime with durable tasks, A2A 1.0, scheduled jobs, skills, and optional Telegram and Mattermost channels. It runs standalone or under Magnus management. |
+| [**Ardent**](https://github.com/ChefTaco/Ardent) | Headless TypeScript agent runtime with durable tasks, A2A 1.0, scheduled jobs, skills, and optional Telegram and Mattermost channels. It runs standalone or under Magnus management. Developed in its own repository, [ChefTaco/Ardent](https://github.com/ChefTaco/Ardent); Magnus installs and manages the published `@hivemagnus/ardent` package. |
 | [**Skills**](packages/skills) | Ubuntu operations skills (shell script plus `SKILL.md`) in the Hermes Agent skill format. |
 
 Everything is strict TypeScript on Node.js 24 or 26.
@@ -52,7 +52,6 @@ for registry setup and release verification.
 | `services/fleet-gateway` | `@hivemagnus/magnus-fleet-gateway` (container image `ghcr.io/cheftaco/magnus-fleet-gateway`, not on npm) | The web terminal gateway (`magnus-fleet-gateway start`, `magnus-fleet-gateway trust`) |
 | `packages/oathweave` | `@hivemagnus/magnus-oathweave` (private, bundled into the server and gateway, not on npm) | Oathweave resource token verification shared by the server and fleet gateway |
 | `packages/agent` | [`@hivemagnus/magnus-agent`](https://www.npmjs.com/package/@hivemagnus/magnus-agent) | The node agent (`magnus-agent`) with example systemd units |
-| `packages/ardent` | [`@hivemagnus/ardent`](https://www.npmjs.com/package/@hivemagnus/ardent) | The Ardent agent runtime (`ardent init`, `ardent chat`, `ardent gateway run`) |
 | `packages/contracts` | [`@hivemagnus/magnus-contracts`](https://www.npmjs.com/package/@hivemagnus/magnus-contracts) | Zod schemas and types shared by the server, the standalone console and the agent |
 | `packages/skills` | [`@hivemagnus/magnus-skills`](https://www.npmjs.com/package/@hivemagnus/magnus-skills) | The skills catalogue, with a small API to list and locate the bundled skills |
 | `packages/magnus` | [`@hivemagnus/magnus`](https://www.npmjs.com/package/@hivemagnus/magnus) | The installer and upgrade tool (`magnus init`, `magnus upgrade`, `magnus rollback`), which pins tested versions of every component |
@@ -202,13 +201,13 @@ them, and `magnus-server check` and `magnus-ui check` print which ones are on.
 git clone https://github.com/ChefTaco/magnus.git && cd magnus
 npm ci                   # install every workspace
 npm run hooks:install    # privacy and secret checks on commit and push
-npm run build            # contracts, skills, Ardent, agent, server, console
+npm run build            # contracts, skills, agent, server, console
 npm test
 npm run verify           # everything CI runs: scans, build, typecheck, tests, contract and doc checks
 ```
 
 Each workspace has its own scripts, for example `npm run control-api:test` or
-`npm --workspace @hivemagnus/ardent test`. The server's integration tests need a disposable
+`npm --workspace @hivemagnus/magnus-agent test`. The server's integration tests need a disposable
 PostgreSQL database; see the [server README](services/control-api).
 
 ## Documentation

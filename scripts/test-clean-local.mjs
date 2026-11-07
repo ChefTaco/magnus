@@ -10,14 +10,14 @@ test('cleanup preserves retained evidence, tracked files, dependencies, builds, 
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const disposable = ['.pytest_cache', 'scripts/__pycache__', 'apps/dashboard/test-results'];
   const protectedPaths = ['artifacts/release/__pycache__', 'output/ardent/__pycache__',
-    'packages/ardent/state/__pycache__', 'apps/dashboard/.next/__pycache__',
-    'scripts/node_modules/__pycache__', 'packages/ardent/test/fixtures/__pycache__',
+    'packages/agent/state/__pycache__', 'apps/dashboard/.next/__pycache__',
+    'scripts/node_modules/__pycache__', 'packages/agent/test/fixtures/__pycache__',
     'apps/dashboard/tests/.auth', 'services/control-api/state', '.magnus', 'certs'];
   for (const path of [...disposable, ...protectedPaths]) {
     mkdirSync(join(root, path), { recursive: true });
     writeFileSync(join(root, path, 'retained'), 'keep');
   }
-  const tracked = ['packages/ardent/test/fixtures/__pycache__/retained'];
+  const tracked = ['packages/agent/test/fixtures/__pycache__/retained'];
   const candidates = cleanupCandidates(root, tracked);
   assert.deepEqual(new Set(candidates), new Set(disposable.map(path => join(root, path))));
   removeCandidates(root, candidates, tracked);

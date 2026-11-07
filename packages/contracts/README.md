@@ -52,9 +52,11 @@ npm --workspace @hivemagnus/magnus-contracts test
 npm --workspace @hivemagnus/magnus-contracts run build
 ```
 
-`src/ardent-openapi.ts` is generated from the Ardent OpenAPI document. Do not
-edit it by hand. Regenerate it from `packages/ardent`, which also checks that
-the file is current.
+`src/ardent-openapi.ts` is generated from the OpenAPI document of the pinned,
+published `@hivemagnus/ardent` package ([source](https://github.com/ChefTaco/Ardent)). Do not edit it by
+hand. After upgrading the pinned Ardent version, regenerate it from the repository
+root with `npm run ardent:openapi:write`; `npm run ardent:openapi:check` checks that
+it is current.
 
 ## License
 
