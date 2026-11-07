@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Security fixes are released for the latest `1.x` version of each `@hivemagnus/magnus-*` package.
+Security fixes are released for the latest major version (currently `2.x`) of each `@hivemagnus/magnus-*` package.
 Ardent (`@hivemagnus/ardent`) has its own repository and
 [security policy](https://github.com/ChefTaco/Ardent/security/policy); report Ardent vulnerabilities there.
 
