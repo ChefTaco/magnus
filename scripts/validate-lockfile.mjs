@@ -25,6 +25,21 @@ for (const [path, entry] of Object.entries(lock.packages ?? {})) {
   if (!entry.resolved.startsWith('https://registry.npmjs.org/')) failures.push(`${path}: resolved from ${new URL(entry.resolved).origin}, expected the public npm registry`);
 }
 
+// This lock travels inside the integrity-pinned agent tarball and is used by Hive's
+// privileged npm ci. Reject workspace links and missing integrity, including in nested deps.
+const agentManifest = JSON.parse(readFileSync(`${root}/packages/agent/package.json`, 'utf8'));
+const agentLock = JSON.parse(readFileSync(`${root}/packages/agent/npm-shrinkwrap.json`, 'utf8'));
+if (agentLock.lockfileVersion !== 3 || agentLock.name !== agentManifest.name || agentLock.version !== agentManifest.version || agentLock.packages?.['']?.name !== agentManifest.name || agentLock.packages?.['']?.version !== agentManifest.version ||
+    JSON.stringify(agentLock.packages?.['']?.dependencies) !== JSON.stringify(agentManifest.dependencies)) {
+  failures.push('agent shrinkwrap differs from its manifest; regenerate and review the standalone dependency graph before release');
+}
+for (const [path, entry] of Object.entries(agentLock.packages ?? {})) {
+  if (!path) continue;
+  if (entry.link || !entry.version || !entry.resolved?.startsWith('https://registry.npmjs.org/') || !/^sha512-[A-Za-z0-9+/]{86}==$/.test(entry.integrity ?? '')) {
+    failures.push(`agent shrinkwrap ${path}: registry artifact must have an exact version, public URL and sha512 integrity`);
+  }
+}
+
 if (failures.length > 0) {
   console.error(failures.join('\n'));
   process.exit(1);

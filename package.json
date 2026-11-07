@@ -15,7 +15,7 @@
     "packages/*"
   ],
   "overrides": {
-    "@hono/node-server": "2.1.5",
+    "@hono/node-server": "2.1.6",
     "@prisma/config": {
       "deepmerge-ts": "8.0.1"
     },
@@ -82,7 +82,7 @@
     "hooks:install": "git config core.hooksPath .githooks",
     "verify": "npm run privacy:test && npm run reasons:test && npm run check:reasons && npm run check:remedies && npm run scan:secrets && npm run check:private && npm run build && npm run typecheck && npm run test && npm run skills:check && npm run openapi:check && npm run ardent:openapi:check && npm run check:packs && npm run release:manifest:check && npm run release:test && npm run docs:check && npm run docs:test && npm run clean:local:test",
     "build:native-agent": "node scripts/build-native-agent.mjs",
-    "test:native-artifact": "node --test scripts/build-native-agent.test.mjs scripts/native-hermes.test.mjs scripts/native-codex.test.mjs scripts/entrypoint-health.test.mjs",
+    "test:native-artifact": "node --test scripts/build-native-agent.test.mjs scripts/native-hermes.test.mjs scripts/native-codex.test.mjs scripts/entrypoint-health.test.mjs scripts/test-agent-lock.mjs",
     "test:native-codex": "node scripts/check-native-codex.mjs",
     "test:rehearsal-runtime": "node scripts/check-rehearsal-runtime.mjs",
     "build:native-hermes": "node scripts/build-native-hermes-image.mjs",

@@ -46,7 +46,9 @@ An unauthenticated dry run cannot prove npm ownership or OIDC configuration.
    `prisma/migrations/<name>/magnus-impact.json`. Fill in the changelog,
    including **New environment variables** and **Migration impact**, and run
    `npm run release:manifest`. See [UPGRADING.md](../UPGRADING.md#release-notes-for-maintainers).
-2. Run `npm run lockfile:check`, `npm run audit:production` and `npm run verify`.
+2. Build the versioned contracts and agent with `npm run contracts:build && npm run agent:build`
+   to refresh the agent shrinkwrap's contracts tarball pin. Then run `npm run lockfile:check`,
+   `npm run audit:production` and `npm run verify`.
    Commit and push, and wait for CI to pass on that exact commit.
 3. Run **Publish to npm** manually with `dry_run` enabled on that commit's ref.
    Inspect the result before proceeding.
@@ -70,14 +72,10 @@ with the root `allowScripts` when a dependency gains or loses an install script:
 an older engine that installs the new release uses the release's list, not its
 own.
 
-The packages do not ship an `npm-shrinkwrap.json`. A shrinkwrap has to be
-generated from an isolated install of the published package, but the internal
-`@hivemagnus` dependencies of a release are not on the registry until that
-release is published, and the workspace lockfile cannot be reused (it describes
-the whole monorepo, including development dependencies and workspace links).
-Third-party dependencies therefore resolve within their semver ranges at install
-time. `npm run audit:production` and the registry smoke install cover that
-window.
+The privileged agent ships a reviewed standalone `npm-shrinkwrap.json`, so Hive can install
+its complete dependency graph without lifecycle scripts or semver resolution. See
+[the agent lock procedure](#privileged-agent-dependency-lock). Other packages retain their
+existing runtime installation and dependency policy.
 
 ## First publication
 
@@ -148,3 +146,19 @@ no extra secret.
   under the repository's **Packages** and link it to the repository. The
   `org.opencontainers.image.source` label links it on push.
 - **Dry run:** a `dry_run` dispatch builds the images without pushing them.
+
+### Privileged agent dependency lock
+
+The agent tarball carries `packages/agent/npm-shrinkwrap.json`; it must match the package's
+name, version and dependency declarations, and pin the complete graph with public registry URLs
+and SHA-512 integrities. Regenerate and review this standalone lock for each agent release,
+including the exact contracts package it consumes, then run `npm run lockfile:check`.
+For a version-only release bump, the agent build refreshes the contracts entry from the locally
+built contracts tarball, whose bytes the workflow publishes before the agent. This works before
+the new contracts version exists on npm; commit the refreshed lock with the release. External
+dependency changes require a deliberate lock regeneration and review.
+A workspace lock with symlinks is not a substitute. Do not reuse a previous version's shrinkwrap
+when bumping the release. Build and pack the agent, extract the archive into a disposable directory,
+and verify `npm ci --omit=dev --ignore-scripts --registry=https://registry.npmjs.org/` there.
+Hive's controller refuses older unlocked tarballs; publish a new agent version and pin its tarball
+integrity in a newly signed suite manifest. Existing published packages and images are immutable.

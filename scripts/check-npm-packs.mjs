@@ -27,7 +27,7 @@ export const PUBLISHABLE = [
 // Runtime files a package needs beyond its bin, main, types and exports.
 const EXTRA_REQUIRED = {
   'apps/dashboard': ['dist/app/apps/dashboard/server-tls.mjs', 'dist/app/apps/dashboard/server.js'],
-  'packages/agent': ['launcher/launcher.mjs', 'NOTICE', 'dist/ardent-context-bundle.json'],
+  'packages/agent': ['launcher/launcher.mjs', 'NOTICE', 'dist/ardent-context-bundle.json', 'npm-shrinkwrap.json'],
 };
 
 const UNEXPECTED_MODULES = /^(?!dist\/app\/)(.*\/)?node_modules\//u;

@@ -47,7 +47,7 @@
   },
   "dependencies": {
     "@hivemagnus/magnus-oathweave": "2.1.1",
-    "@hono/node-server": "^2.1.5",
+    "@hono/node-server": "^2.1.6",
     "hono": "4.13.16",
     "jose": "^6.2.13",
     "ssh2": "^1.17.0",

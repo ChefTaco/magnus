@@ -6,6 +6,11 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Security
+
+- Upgrade the dashboard's bundled Next.js runtime to 16.4.5 and the HTTP adapter to `@hono/node-server` 2.1.6. Next.js remains a build dependency because the UI ships its traced standalone runtime; inspect that packaged runtime as well as the source lock.
+- Include a standalone `npm-shrinkwrap.json` in the agent tarball, freezing all runtime dependency versions and integrities for privileged suite installation with lifecycle scripts disabled. This changes future artifacts; it does not replace already published packages or images.
+
 ### Changed
 
 - Ardent (`@hivemagnus/ardent`) moved to its own repository, [ChefTaco/Ardent](https://github.com/ChefTaco/Ardent), and is no
