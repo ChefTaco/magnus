@@ -1,0 +1,9 @@
+{
+  "summary": "Update the bundled dashboard to Next.js 16.4.5 and the HTTP adapter to 2.1.6. Ship an integrity-bearing standalone agent dependency lock for scripts-disabled privileged installation. Consume Ardent independently from its own repository.",
+  "breaking": false,
+  "minUpgradeFrom": "1.0.0",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}

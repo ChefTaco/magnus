@@ -6,6 +6,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [2.1.2] - 2026-11-07
+
 ### Security
 
 - Upgrade the dashboard's bundled Next.js runtime to 16.4.5 and the HTTP adapter to `@hono/node-server` 2.1.6. Next.js remains a build dependency because the UI ships its traced standalone runtime; inspect that packaged runtime as well as the source lock.
@@ -20,6 +22,14 @@ All notable changes to this project are documented in this file. The format is b
   `npm run ardent:openapi:check` / `ardent:openapi:write` check and regenerate the typed Ardent client
   in `@hivemagnus/magnus-contracts` from the package's OpenAPI document. Report Ardent issues and
   vulnerabilities in the Ardent repository. Agent-side Ardent management is unchanged.
+
+### New environment variables
+
+- None.
+
+### Migration impact
+
+- No new database migrations. The agent dependency lock affects new package installs.
 
 ## [2.1.1] - 2026-11-05
 

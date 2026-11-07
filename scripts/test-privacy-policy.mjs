@@ -96,7 +96,7 @@ test('npm package checking scans generated file contents as well as names', () =
     }
     const directories = ['packages/contracts', 'packages/skills', 'packages/agent', 'services/control-api', 'apps/dashboard', 'packages/magnus'];
     const files = ['package.json', 'README.md', 'LICENSE', 'dist/index.js',
-      'dist/app/apps/dashboard/server-tls.mjs', 'dist/app/apps/dashboard/server.js', 'launcher/launcher.mjs', 'NOTICE', 'dist/ardent-context-bundle.json'];
+      'dist/app/apps/dashboard/server-tls.mjs', 'dist/app/apps/dashboard/server.js', 'launcher/launcher.mjs', 'NOTICE', 'dist/ardent-context-bundle.json', 'npm-shrinkwrap.json'];
     for (const directory of directories) {
       for (const file of files) {
         const target = join(root, directory, file);
@@ -145,6 +145,10 @@ test('npm package checking scans generated file contents as well as names', () =
 test('package builds remove outputs for deleted source files', { timeout: 60_000 }, () => {
   const root = mkdtempSync(join(tmpdir(), 'magnus-clean-build-'));
   try {
+    // This fixture exercises compiler output cleanup; dependency-lock validation
+    // has its own complete package fixtures in test-agent-lock.mjs.
+    mkdirSync(join(root, 'scripts'));
+    writeFileSync(join(root, 'scripts/refresh-agent-lock.mjs'), '');
     for (const directory of ['packages/agent', 'packages/contracts', 'packages/skills', 'services/control-api']) {
       const manifest = JSON.parse(readFileSync(resolve(import.meta.dirname, '..', directory, 'package.json'), 'utf8'));
       const cwd = join(root, directory);
