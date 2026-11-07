@@ -19,7 +19,6 @@ The repository is an npm workspaces monorepo:
 | `apps/dashboard` | `@hivemagnus/magnus-ui` |
 | `services/control-api` | `@hivemagnus/magnus-server` |
 | `packages/agent` | `@hivemagnus/magnus-agent` |
-| `packages/ardent` | `@hivemagnus/ardent` |
 | `packages/contracts` | `@hivemagnus/magnus-contracts` |
 | `packages/skills` | `@hivemagnus/magnus-skills` |
 

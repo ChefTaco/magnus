@@ -66,7 +66,6 @@ change.
 | `services/fleet-gateway` | `@hivemagnus/magnus-fleet-gateway` | Separate service that holds the restricted SSH key and carries the browser web terminal. Ships as a container image, not on npm |
 | `packages/oathweave` | `@hivemagnus/magnus-oathweave` | Oathweave token verifier and identity links shared by the server and fleet gateway. Private: bundled into their tarballs, not on npm |
 | `packages/agent` | `@hivemagnus/magnus-agent` | Node agent that runs on each managed host and reports to the server |
-| `packages/ardent` | `@hivemagnus/ardent` | Headless TypeScript agent runtime with A2A, jobs, skills and channel adapters |
 | `packages/contracts` | `@hivemagnus/magnus-contracts` | Zod schemas shared by the server, UI and agent |
 | `packages/skills` | `@hivemagnus/magnus-skills` | Ubuntu operations skill catalogue (Hermes Agent compatible) |
 | `packages/magnus` | `@hivemagnus/magnus` | Installer and upgrade tool (`magnus init`, `magnus upgrade`, `magnus rollback`) |

@@ -35,7 +35,6 @@ module passes acceptance; published versions stay available.
 | `services/fleet-gateway` | `@hivemagnus/magnus-fleet-gateway`: holds the restricted SSH key and carries the browser web terminal, default port `4310` |
 | `packages/oathweave` | `@hivemagnus/magnus-oathweave`: Oathweave token verifier and identity links shared by the server and fleet gateway |
 | `packages/agent` | `@hivemagnus/magnus-agent`: node agent on each managed host, default port `4100` |
-| `packages/ardent` | `@hivemagnus/ardent`: headless agent runtime, management API on `127.0.0.1:9910` by default |
 | `packages/contracts` | `@hivemagnus/magnus-contracts`: Zod schemas shared by the server, the console and the agent |
 | `packages/skills` | `@hivemagnus/magnus-skills`: Ubuntu operations skills in the Hermes Agent skill format |
 | `packages/magnus` | `@hivemagnus/magnus`: installer and upgrade tool for managed server and console projects; see [UPGRADING.md](../UPGRADING.md) |
@@ -158,7 +157,9 @@ Ardent is an independent agent runtime. One process serves one profile (config, 
 and SQLite state). It can run on its own, but when `ARDENT_OWNER_USER` is set on a host's agent,
 Magnus inventories its profiles and the console shows them under `/ardent`. With
 `integrations.magnus_control` enabled, an Ardent profile also gets read-only tools for the Magnus
-API. See the [Ardent README](../packages/ardent/README.md).
+API. Ardent is developed in its own repository; see the [Ardent README](https://github.com/ChefTaco/Ardent#readme).
+Magnus pins the published `@hivemagnus/ardent` package as a development dependency for the agent's
+context-adoption bundle and the generated Ardent client in `@hivemagnus/magnus-contracts`.
 
 ## Integrations
 

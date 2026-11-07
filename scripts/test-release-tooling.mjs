@@ -14,7 +14,7 @@ const repo = resolve(fileURLToPath(new URL('..', import.meta.url)));
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'magnus-release-tooling-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  for (const file of ['package.json', 'CHANGELOG.md', 'services/control-api/agent-version.json', 'packages/ardent/openapi/ardent.json',
+  for (const file of ['package.json', 'CHANGELOG.md', 'services/control-api/agent-version.json',
     'services/control-api/src/cli/env-catalog.ts', 'packages/agent/src/env-catalog.ts', 'apps/dashboard/runtime-environment.mjs', 'packages/magnus/src/templates.ts',
     ...[...PACKAGE_DIRECTORIES, ...UNPUBLISHED_DIRECTORIES].map((directory) => `${directory}/package.json`)]) {
     mkdirSync(join(root, file, '..'), { recursive: true });
