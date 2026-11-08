@@ -1,3 +1,4 @@
+import { setTimeout as sleep } from 'node:timers/promises';
 import { incMetric } from '../routes/metrics.js';
 
 const TRANSIENT_DATABASE_PATTERNS = [
@@ -11,10 +12,6 @@ const TRANSIENT_DATABASE_PATTERNS = [
 function isTransientReadError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
   return TRANSIENT_DATABASE_PATTERNS.some((pattern) => message.includes(pattern));
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export async function withReadRetry<T>(

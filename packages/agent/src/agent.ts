@@ -7,6 +7,7 @@ import { controlApiFetch } from './tls.js';
 import { startSpan, formatTraceparent } from './collectors/otel-collector.js';
 import { collectHermesState } from './executors/hermes-manager.js';
 import { existsSync } from 'node:fs';
+import { setTimeout as delay } from 'node:timers/promises';
 import { parseHeartbeatAcknowledgement } from './heartbeat-ack.js';
 import { heartbeatDrift } from './upgrade/preflight.js';
 import { confirmTrial, controlApiUnreachable, recordTrialAlive, selfUpgradeStatus, trialOf } from './upgrade/self-upgrade.js';
@@ -63,10 +64,6 @@ const HEALTH_COLLECTION_DEADLINE_MS = 60_000;
 const HERMES_HEARTBEAT_WAIT_MS = 15_000;
 let healthInFlight: ReturnType<typeof collectSystemHealth> | null = null;
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms).unref());
-}
-
 /**
  * Collect health without letting one wedged probe stop the heartbeat loop.
  * A slow collection is shared by later heartbeats instead of stacking new ones.
@@ -120,7 +117,7 @@ export function startHeartbeatLoop(): void {
       // A cached Hermes snapshot is sent while a stale one refreshes in the
       // background; without one, wait briefly so the first heartbeat can carry it.
       const refresh = refreshHermesSnapshot(!hermesSnapshot);
-      if (!hermesSnapshot) await Promise.race([refresh, delay(HERMES_HEARTBEAT_WAIT_MS)]);
+      if (!hermesSnapshot) await Promise.race([refresh, delay(HERMES_HEARTBEAT_WAIT_MS, undefined, { ref: false })]);
       const hermes = hermesSnapshot;
 
       const selfUpgrade = await heartbeatSelfUpgrade();
