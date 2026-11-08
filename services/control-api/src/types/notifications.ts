@@ -16,7 +16,8 @@ export type NotificationType =
   | 'prediction.disk'
   | 'hermes.deploy.failed'
   | 'hermes.installation.degraded'
-  | 'hermes.migration.failed';
+  | 'hermes.migration.failed'
+  | 'ardent.hivemem.renewal_failed';
 
 export type NotificationSeverity = 'info' | 'warning' | 'critical';
 

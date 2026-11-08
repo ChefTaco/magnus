@@ -72,8 +72,7 @@ export function rateLimitMiddleware(
       const count = (results?.[2]?.[1] as number) ?? 0;
 
       if (count > max) {
-        const retryAfter = Math.ceil(windowMs / 1000);
-        c.header('Retry-After', String(retryAfter));
+        c.header('Retry-After', String(await retryAfterSeconds(redis, key, count, max, now, windowMs)));
         return c.json(
           { error: 'RATE_LIMITED', message: 'Too many requests. Please try again later.' },
           429,
@@ -97,6 +96,43 @@ export function rateLimitMiddleware(
 
     return next();
   };
+}
+
+/**
+ * Seconds until a client that stops now may send again. Refused requests count too, so that is when
+ * every entry but the newest max - 1 has left the window: entry (count - max) in age order. Falls
+ * back to the whole window when the entry cannot be read.
+ */
+async function retryAfterSeconds(redis: Redis, key: string, count: number, max: number, now: number, windowMs: number): Promise<number> {
+  try {
+    const entry = await redis.zrange(key, String(count - max), String(count - max), 'WITHSCORES');
+    const score = Number(entry[1]);
+    if (Number.isFinite(score)) return Math.min(Math.ceil(windowMs / 1000), Math.max(1, Math.ceil((score + windowMs - now) / 1000)));
+  } catch {
+    // The window is the safe answer.
+  }
+  return Math.ceil(windowMs / 1000);
+}
+
+/** Per-minute budgets for one subject on the Ardent bridge. */
+export const ARDENT_RATE_LIMITS = {
+  /**
+   * GET and HEAD: profile reads, polls, task and operation streams and artifact downloads. A Studio or
+   * profile page reads several resources at once and polls tasks, so reads get a wide budget.
+   */
+  read: { max: 600, serviceMax: 3000 },
+  /** Every other method: actions, New Agent, resume and Enable HiveMem change agents and stay tight. */
+  action: { max: 60, serviceMax: 1200 },
+} as const;
+
+/**
+ * The Ardent bridge limiter: reads and actions have separate budgets and buckets, so reading pages
+ * quickly never uses up the budget for changing an agent, and the reverse.
+ */
+export function ardentRateLimitMiddleware(windowMs = 60_000): MiddlewareHandler {
+  const read = rateLimitMiddleware({ windowMs, ...ARDENT_RATE_LIMITS.read, keyPrefix: 'rl:ardent-read' });
+  const action = rateLimitMiddleware({ windowMs, ...ARDENT_RATE_LIMITS.action, keyPrefix: 'rl:ardent' });
+  return (c, next) => (c.req.method === 'GET' || c.req.method === 'HEAD' ? read : action)(c, next);
 }
 
 export function getRateLimitHealth(): { status: 'pass' | 'warn'; message: string; lastErrorAt: string | null } {

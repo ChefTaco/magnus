@@ -185,6 +185,7 @@ export * from './magnus-observations.js';
 export * from './ardent-client.js';
 export * from './ardent.js';
 export * from './ardent-service.js';
+export * from './skill-archive.js';
 
 /** Minimal read-only target export; fleet registration remains on Magnus. */
 export const securityInventoryTargetSchema = z.object({

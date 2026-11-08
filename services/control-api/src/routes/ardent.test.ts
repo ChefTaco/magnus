@@ -2,11 +2,12 @@ import { Hono } from 'hono';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppVariables, AuthTokenPayload } from '../types/index.js';
 
-const mocks = vi.hoisted(() => ({ stream: vi.fn(), studio: vi.fn(), action: vi.fn(), audit: vi.fn() }));
+const mocks = vi.hoisted(() => ({ stream: vi.fn(), studio: vi.fn(), action: vi.fn(), audit: vi.fn(), read: vi.fn(), block: vi.fn(), reconcile: vi.fn() }));
+vi.mock('../services/ardent-command-owner.js', () => ({ ardentOwnerBlock: mocks.block, reconcileArdentCommandOwner: mocks.reconcile }));
 vi.mock('../services/ardent-service.js', () => ({
   streamArdentProfileResource: mocks.stream, requireArdentStudioAgent: mocks.studio, performArdentAction: mocks.action,
   getArdentContextAdoption: vi.fn(), getArdentContextRelease: vi.fn(), getArdentInstallation: vi.fn(),
-  getArdentProfileResource: vi.fn(), listArdentInstallations: vi.fn(),
+  getArdentProfileResource: mocks.read, listArdentInstallations: vi.fn(),
 }));
 vi.mock('../services/audit-service.js', () => ({ logAuditEvent: mocks.audit }));
 vi.mock('../middleware/auth.js', async (original) => ({
@@ -32,6 +33,7 @@ const encoder = new TextEncoder();
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.studio.mockResolvedValue(undefined);
+  mocks.block.mockResolvedValue(undefined);
 });
 
 describe('Ardent task stream relay', () => {
@@ -120,5 +122,127 @@ describe('Ardent bridge access', () => {
     expect(mocks.studio).toHaveBeenCalledWith('node-1');
     expect(mocks.action).toHaveBeenCalledWith('node-1', 'example', 'session-open', undefined, { key: 'k' });
     expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ action: 'ardent.session-open', actorId: 'alice' }));
+  });
+});
+
+describe('Ardent missions, pause, previews and development', () => {
+  const actionPath = '/ardent/installations/node-1/profiles/example/action';
+  const post = (body: unknown) => app.request(actionPath, { method: 'POST', headers: { 'x-test-role': 'ADMIN', 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const mission = { id: 'p1:brief', revision: 1, parent_task: null, constraints: [], allowed_actions: ['analyze'], resources: ['project:p1'],
+    deadline: 4_102_444_800, acceptance_criteria: ['A brief'], expected_artifacts: ['brief.md'] };
+  const missionBody = { objective: 'Write the brief', mission, idempotency_key: 'p1:brief:1' };
+
+  it('needs a level 2 agent for the new actions and for session contexts', async () => {
+    mocks.action.mockResolvedValue({ task_id: taskId, state: 'queued' });
+    expect((await post({ action: 'mission-submit', body: missionBody })).status).toBe(200);
+    expect(mocks.studio).toHaveBeenLastCalledWith('node-1', 2);
+    expect(mocks.action).toHaveBeenLastCalledWith('node-1', 'example', 'mission-submit', undefined, missionBody);
+    for (const body of [{ action: 'task-pause', target: taskId }, { action: 'task-resume', target: taskId },
+      { action: 'preview-submit', body: { prompt: 'Hi' } }, { action: 'development-note', body: { kind: 'note', title: 'T', body: 'B' } },
+      { action: 'session-open', body: { key: 'k', context: 'mission' } }]) {
+      mocks.studio.mockClear();
+      expect((await post(body)).status, body.action).toBe(200);
+      expect(mocks.studio, body.action).toHaveBeenCalledWith('node-1', 2);
+    }
+    // A plain session still needs only the first bridge level.
+    mocks.studio.mockClear();
+    await post({ action: 'session-open', body: { key: 'k' } });
+    expect(mocks.studio).toHaveBeenCalledWith('node-1');
+    const { HttpError } = await import('../middleware/error-handler.js');
+    mocks.studio.mockRejectedValue(new HttpError(409, 'AGENT_UPGRADE_REQUIRED', 'Upgrade the Magnus agent on node-1'));
+    const old = await post({ action: 'mission-submit', body: missionBody });
+    expect(old.status).toBe(409);
+    expect((await old.json()).error.code).toBe('AGENT_UPGRADE_REQUIRED');
+  });
+
+  it('checks bodies before anything reaches the node', async () => {
+    for (const body of [{ action: 'mission-submit', body: { ...missionBody, mission: { ...mission, resources: [] } } },
+      { action: 'mission-submit', body: { objective: 'x', mission } }, { action: 'preview-submit', body: { prompt: 'Hi', overrides: { tools: [] } } },
+      { action: 'development-note', body: { kind: 'note', title: 'T', body: 'B', author: 'runtime' } }, { action: 'session-open', body: { key: 'k', context: 'peer' } },
+      { action: 'task-pause' }, { action: 'task-resume', target: 'not-a-task' }, { action: 'task-pause', target: taskId, body: { force: true } }])
+      expect((await post(body)).status, JSON.stringify(body)).toBe(400);
+    expect(mocks.action).not.toHaveBeenCalled();
+    expect(mocks.studio).not.toHaveBeenCalled();
+  });
+
+  it('passes on Ardent\'s refusals: a finished task cannot pause', async () => {
+    const { AgentResponseError } = await import('../sdk/node-api-client.js');
+    mocks.action.mockRejectedValue(new AgentResponseError(409, { code: 'CONFLICT', message: 'Task already finished' }));
+    const finished = await post({ action: 'task-pause', target: taskId });
+    expect(finished.status).toBe(409);
+    expect((await finished.json()).error.code).toBe('CONFLICT');
+    mocks.action.mockRejectedValue(new AgentResponseError(404, null));
+    expect((await post({ action: 'task-resume', target: taskId })).status).toBe(404);
+    mocks.action.mockRejectedValue(new AgentResponseError(400, null));
+    expect((await post({ action: 'mission-submit', body: { ...missionBody, session_id: taskId } })).status).toBe(400);
+    mocks.action.mockRejectedValue(new Error('connect ECONNREFUSED'));
+    expect((await post({ action: 'task-pause', target: taskId })).status).toBe(503);
+    // Each failure is audited with its outcome; none is recorded as done.
+    expect(mocks.audit.mock.calls.map(([event]) => [event.action, event.details.outcome, event.details.code])).toEqual([
+      ['ardent.task-pause', 'failed', 'CONFLICT'], ['ardent.task-resume', 'failed', 'NOT_FOUND'],
+      ['ardent.mission-submit', 'failed', 'VALIDATION_ERROR'], ['ardent.task-pause', 'failed', 'DEPENDENCY_UNAVAILABLE']]);
+  });
+
+  it('reads artifact manifests and development history from a level 2 agent', async () => {
+    mocks.read.mockResolvedValue({ records: [], next: null });
+    const get = (resource: string) => app.request(`/ardent/installations/node-1/profiles/example/${resource}`, { headers: { 'x-test-role': 'ADMIN' } });
+    expect((await get('development?after=eyJhIjoxfQ&limit=50&kind=skill_change')).status).toBe(200);
+    expect(mocks.read).toHaveBeenLastCalledWith('node-1', 'example', 'development', { after: 'eyJhIjoxfQ', limit: '50', kind: 'skill_change' });
+    expect(mocks.studio).toHaveBeenLastCalledWith('node-1', 2);
+    for (const resource of [`tasks/${taskId}/artifacts`, `artifacts/${'a'.repeat(64)}/manifest`, 'sessions?context=preview']) {
+      mocks.studio.mockClear();
+      expect((await get(resource)).status, resource).toBe(200);
+      expect(mocks.studio).toHaveBeenCalledWith('node-1', 2);
+    }
+    mocks.studio.mockClear();
+    expect((await get('sessions')).status).toBe(200);
+    expect(mocks.studio).not.toHaveBeenCalled();
+    expect((await get('development?kind=Bad')).status).toBe(400);
+    expect((await get('sessions?context=peer')).status).toBe(400);
+    const { HTTPError } = await import('ky');
+    mocks.read.mockRejectedValue(new HTTPError(new Response('{}', { status: 404 }), new Request('http://192.0.2.1/'), {} as never));
+    expect((await get(`artifacts/${'b'.repeat(64)}/manifest`)).status).toBe(404);
+  });
+});
+
+describe('Ardent command owners', () => {
+  const actionPath = '/ardent/installations/node-1/profiles/example/action';
+  const post = (body: unknown, role = 'ADMIN') => app.request(actionPath, { method: 'POST', headers: { 'x-test-role': role, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const decision = { disposition: 'no_effect_verified', reason: 'The unit never started; journal shows no start job.' };
+
+  it('passes an ADMIN decision about an unknown outcome to the reconciliation, never to the node', async () => {
+    mocks.reconcile.mockResolvedValue({ commandId: 'native-1', outcome: 'settled', receipt: 'unknown', settlement: 'signed-reconciliation:no_effect_verified', evidenceSha256: 'e'.repeat(64), decisionId: 'd-1' });
+    const response = await post({ action: 'command-reconcile', target: 'native-1', body: decision });
+    expect(response.status).toBe(200);
+    expect((await response.json()).data).toMatchObject({ outcome: 'settled', decisionId: 'd-1' });
+    expect(mocks.reconcile).toHaveBeenCalledWith('node-1', 'native-1', decision, { actorId: 'alice', details: {} });
+    expect(mocks.action).not.toHaveBeenCalled();
+  });
+
+  it('refuses a reconciliation without a command, a reason or an ADMIN', async () => {
+    expect((await post({ action: 'command-reconcile', body: decision })).status).toBe(400);
+    expect((await post({ action: 'command-reconcile', target: '../x', body: decision })).status).toBe(400);
+    expect((await post({ action: 'command-reconcile', target: 'native-1', body: { disposition: 'no_effect_verified', reason: 'short' } })).status).toBe(400);
+    expect((await post({ action: 'command-reconcile', target: 'native-1', body: { ...decision, disposition: 'released' } })).status).toBe(400);
+    expect((await post({ action: 'command-reconcile', target: 'native-1', body: decision }, 'OPERATOR')).status).toBe(403);
+    expect(mocks.reconcile).not.toHaveBeenCalled();
+  });
+
+  it('answers an action whose outcome the node could not confirm with what to do, and audits it as unknown', async () => {
+    const { HttpError } = await import('../middleware/error-handler.js');
+    mocks.action.mockRejectedValue(new Error('Request failed with status code 409 Conflict'));
+    mocks.block.mockResolvedValue(new HttpError(409, 'ARDENT_OUTCOME_UNKNOWN', 'The node could not confirm the outcome of service-start on example (command native-1).'));
+    const response = await post({ action: 'service-start' });
+    expect(response.status).toBe(409);
+    expect((await response.json()).error).toEqual({ code: 'ARDENT_OUTCOME_UNKNOWN', message: 'The node could not confirm the outcome of service-start on example (command native-1).' });
+    expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ action: 'ardent.service-start', details: expect.objectContaining({ outcome: 'unknown', code: 'ARDENT_OUTCOME_UNKNOWN' }) }));
+  });
+
+  it('reports a settled failure with the node agent\'s reason', async () => {
+    const { AgentResponseError } = await import('../sdk/node-api-client.js');
+    mocks.action.mockRejectedValue(new AgentResponseError(422, { code: 'ARDENT_ACTION_FAILED', message: 'Ardent profile did not reach running state' }));
+    const response = await post({ action: 'service-start' });
+    expect(response.status).toBe(503);
+    expect((await response.json()).error).toEqual({ code: 'DEPENDENCY_UNAVAILABLE', message: 'Ardent action failed: Ardent profile did not reach running state' });
   });
 });

@@ -2,6 +2,7 @@ import { readFile, readdir, lstat, realpath, writeFile, chown, rename, rm } from
 import { userInfo } from 'node:os';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
+import { gunzipSync } from 'node:zlib';
 import { execFile } from 'node:child_process';
 import { Hono } from 'hono';
 import { parse as parseEnv } from 'dotenv';
@@ -11,14 +12,16 @@ import { ardentPackageNames } from './ardent-packages.js';
 import { contextAdoptionInput, contextRelease, inspectContextAdoption, manageContextAdoption } from './ardent-context-adoption.js';
 import { childEnvironment } from '../utils/child-env.js';
 import { managedExecution } from '../security/managed-context.js';
-
+import { logger } from '../utils/logger.js';
+import {
+  ARDENT_SKILL_ARCHIVE_LIMITS, ARDENT_SKILL_RECEIPT_FILE, ardentDevelopmentNoteSchema, ardentMissionSubmitSchema, ardentPreviewSubmitSchema,
+  ardentSessionOpenSchema, ardentSkillInstallNodeSchema, ardentSkillReceiptSchema, checkArdentSkillArchive, type ArdentSkillInstallResult,
+} from '@hivemagnus/magnus-contracts';
+import { ARDENT_AGENT_CAPABILITIES } from '../ardent-capabilities.js';
 export { ardentPackageNames, DEFAULT_ARDENT_PACKAGE } from './ardent-packages.js';
 
-/**
- * What this agent's Ardent bridge supports. `studio: 1` means session-open,
- * session-bound task submission, unbuffered task streams and streamed artifacts.
- */
-export const ARDENT_AGENT_CAPABILITIES = { studio: 1 } as const;
+// What this agent's Ardent bridge supports; the ping route reports the same level.
+export { ARDENT_AGENT_CAPABILITIES };
 
 const profileName = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
 const configSummary = z.object({
@@ -111,7 +114,9 @@ async function probe(port: number, dir: string, tokenEnv: string, profile: strin
     const response = await fetch(`http://127.0.0.1:${port}/api/v1/profile`, { headers: { Authorization: `Bearer ${token}` }, redirect: 'error', signal: AbortSignal.timeout(1500) });
     if (!response.ok) return false;
     const identity: unknown = await response.json();
-    const parsed = z.object({ profile: z.string(), product: z.literal('Magnus Ardent') }).safeParse(identity);
+    // `ardent init` profiles report the product name Ardent; profiles from before the standalone
+    // runtime report Magnus Ardent. Anything else on the port is not this profile.
+    const parsed = z.object({ profile: z.string(), product: z.enum(['Ardent', 'Magnus Ardent']) }).safeParse(identity);
     return parsed.success && parsed.data.profile === profile;
   } catch { return false; }
 }
@@ -216,7 +221,13 @@ async function managementToken(dir: string, envName: string): Promise<string> {
   return token;
 }
 
-const allowedRead = /^(?:openapi|status|profile|config|config\/schema|providers|channels|peers|peers\/config|memory\/status|skills|sessions|tasks|tasks\/[0-9a-f-]{36}(?:\/events)?|jobs\/definitions\/status|sessions\/[0-9a-f-]{36}\/messages|identity\/(?:soul|identity)(?:\/history)?|artifacts\/[a-f0-9]{64}|tasks\/[0-9a-f-]{36}\/stream)$/;
+const allowedRead = /^(?:openapi|status|profile|config|config\/schema|providers|channels|peers|peers\/config|memory\/status|skills|sessions|tasks|tasks\/[0-9a-f-]{36}(?:\/events)?|jobs\/definitions\/status|sessions\/[0-9a-f-]{36}\/messages|identity\/(?:soul|identity)(?:\/history)?|artifacts\/[a-f0-9]{64}(?:\/manifest)?|tasks\/[0-9a-f-]{36}\/(?:stream|artifacts)|development)$/;
+/** Streamed rather than buffered: a task's events and an artifact's bytes. */
+const streamedRead = /^(?:artifacts\/[a-f0-9]{64}|tasks\/[0-9a-f-]{36}\/stream)$/;
+/** Query parameters passed to the profile API, each with the values it may hold. */
+const readQuery: Record<string, RegExp> = {
+  after: /^[A-Za-z0-9_-]{1,400}$/, limit: /^\d{1,3}$/, kind: /^[a-z][a-z0-9_]{0,63}$/, context: /^(?:direct|mission|preview)$/,
+};
 /** Ardent closes a task stream after 60 seconds; a relay with no bytes for as long ends too. */
 export const ARDENT_STREAM_IDLE_MS = 60_000;
 const DEFAULT_ARTIFACT_MAX_BYTES = 64 * 1024 * 1024;
@@ -335,7 +346,7 @@ async function relayArdentStream(port: number, token: string, suffix: string, re
 }
 const actionInput = z.object({
   profile: profileName,
-  action: z.enum(['profile-create', 'session-open', 'hivemem-credential-set', 'config-validate', 'config-save', 'peer-validate', 'peer-save', 'identity-save', 'identity-restore', 'provider-test', 'channel-test', 'peer-test', 'memory-search', 'task-submit', 'task-cancel', 'skill-set', 'service-start', 'service-stop', 'service-restart', 'package-install', 'context-stage', 'context-adopt', 'context-rollback']),
+  action: z.enum(['profile-create', 'session-open', 'hivemem-credential-set', 'hivemem-credential-reload', 'config-validate', 'config-save', 'peer-validate', 'peer-save', 'identity-save', 'identity-restore', 'provider-test', 'channel-test', 'peer-test', 'memory-search', 'task-submit', 'task-cancel', 'mission-submit', 'task-pause', 'task-resume', 'preview-submit', 'development-note', 'skill-set', 'service-start', 'service-stop', 'service-restart', 'package-install', 'context-stage', 'context-adopt', 'context-rollback', 'skill-install']),
   target: z.string().max(128).optional(),
   body: z.unknown().optional(),
 }).strict();
@@ -343,6 +354,8 @@ const actionRoutes: Record<z.infer<typeof actionInput>['action'], { method: 'POS
   'profile-create': { method: 'POST', path: () => '' },
   'session-open': { method: 'POST', path: () => 'sessions' },
   'hivemem-credential-set': { method: 'POST', path: () => '' },
+  // Ardent re-reads only memory.token_env from the profile's .env. Older Ardent answers 404; Magnus then restarts the service.
+  'hivemem-credential-reload': { method: 'POST', path: () => 'memory/credential/reload' },
   'config-validate': { method: 'POST', path: () => 'config/validate' },
   'config-save': { method: 'PUT', path: () => 'config' },
   'peer-validate': { method: 'POST', path: () => 'peers/validate' },
@@ -355,6 +368,11 @@ const actionRoutes: Record<z.infer<typeof actionInput>['action'], { method: 'POS
   'memory-search': { method: 'POST', path: () => 'memory/search' },
   'task-submit': { method: 'POST', path: () => 'tasks' },
   'task-cancel': { method: 'POST', path: target => `tasks/${target}/cancel`, target: /^[0-9a-f-]{36}$/ },
+  'mission-submit': { method: 'POST', path: () => 'missions' },
+  'task-pause': { method: 'POST', path: target => `tasks/${target}/pause`, target: /^[0-9a-f-]{36}$/ },
+  'task-resume': { method: 'POST', path: target => `tasks/${target}/resume`, target: /^[0-9a-f-]{36}$/ },
+  'preview-submit': { method: 'POST', path: () => 'preview/tasks' },
+  'development-note': { method: 'POST', path: () => 'development' },
   'skill-set': { method: 'PUT', path: target => `skills/${target}`, target: /^[A-Za-z0-9_-]{1,100}$/ },
   'service-start': { method: 'POST', path: () => '' },
   'service-stop': { method: 'POST', path: () => '' },
@@ -363,17 +381,46 @@ const actionRoutes: Record<z.infer<typeof actionInput>['action'], { method: 'POS
   'context-stage': { method: 'POST', path: () => '' },
   'context-adopt': { method: 'POST', path: () => '' },
   'context-rollback': { method: 'POST', path: () => '' },
+  'skill-install': { method: 'POST', path: () => '' },
 };
 
-async function runAsOwner(root: ArdentRoot, args: string[], timeout = 100_000): Promise<string> {
+/**
+ * The command that runs `args` as the Ardent owner. It runs in the owner's home: the agent's own
+ * working directory is root-only (mode 0700 on suite installs), and Node resolves `node -e`
+ * scripts and npm resolves project config from the working directory, which the owner must read.
+ */
+export function ownerCommand(root: ArdentRoot, uid: number, args: string[], timeout = 100_000): { file: string; args: string[]; options: { cwd: string; timeout: number; maxBuffer: number; env: NodeJS.ProcessEnv } } {
+  const bus = `/run/user/${uid}/bus`;
+  return { file: '/usr/sbin/runuser', args: ['-u', root.owner, '--', '/usr/bin/env',
+    `XDG_RUNTIME_DIR=/run/user/${uid}`, `DBUS_SESSION_BUS_ADDRESS=unix:path=${bus}`, ...args],
+  options: { cwd: root.home, timeout, maxBuffer: 32 * 1024, env: childEnvironment() } };
+}
+
+/**
+ * An action failure whose effect is not known: a request that may have reached
+ * Ardent without a complete answer, or an owner command the agent had to stop.
+ * The action route answers it with 503, which keeps the managed command owner
+ * uncertain; every other failure finished, and is answered as settled.
+ */
+export class ArdentOutcomeUncertain extends Error {
+  constructor(message: string, options?: ErrorOptions) { super(message, options); this.name = 'ArdentOutcomeUncertain'; }
+}
+
+async function runAsOwner(root: ArdentRoot, args: string[], timeout = 100_000, input?: Buffer): Promise<string> {
   const accounts = await readFile('/etc/passwd', 'utf8');
   const fields = accounts.split('\n').map(line => line.split(':')).find(parts => parts[0] === root.owner);
   const uid = Number(fields?.[2]);
   if (!Number.isSafeInteger(uid) || uid <= 0) throw new Error('Ardent owner UID is unavailable');
-  const bus = `/run/user/${uid}/bus`;
-  return new Promise<string>((resolve, reject) => execFile('/usr/sbin/runuser', ['-u', root.owner, '--', '/usr/bin/env',
-    `XDG_RUNTIME_DIR=/run/user/${uid}`, `DBUS_SESSION_BUS_ADDRESS=unix:path=${bus}`, ...args],
-  { timeout, maxBuffer: 32 * 1024, env: childEnvironment() }, (error, stdout) => error ? reject(new Error(`Ardent owner command failed: ${error.code ?? 'unknown'}`)) : resolve(stdout)));
+  const command = ownerCommand(root, uid, args, timeout);
+  return new Promise<string>((resolve, reject) => {
+    const child = execFile(command.file, command.args, command.options, (error, stdout) => {
+      if (!error) { resolve(stdout); return; }
+      // A child stopped by its timeout or output cap may have handed work on (systemd keeps a started job).
+      if (error.killed || error.signal) reject(new ArdentOutcomeUncertain(`Ardent owner command was stopped (${error.signal ?? 'killed'}) before it finished`));
+      else reject(new Error(`Ardent owner command failed: ${error.code ?? 'unknown'}`));
+    });
+    if (input) child.stdin?.end(input);
+  });
 }
 
 export async function hermesTrafficConsumersDisabled(home: string): Promise<boolean> {
@@ -569,6 +616,143 @@ async function setHiveMemCredential(root: ArdentRoot, profile: string, body: unk
   return { profile, tokenEnv: ARDENT_HIVEMEM_TOKEN_ENV, configured: true, activationRequired: true };
 }
 
+function connectionRefused(error: unknown): boolean {
+  for (let current = error, depth = 0; current && typeof current === 'object' && depth < 4; current = (current as { cause?: unknown }).cause, depth++)
+    if ((current as { code?: unknown }).code === 'ECONNREFUSED') return true;
+  return false;
+}
+
+/** Ardent's own error text from a JSON error body, bounded, or nothing. */
+function upstreamMessage(body: ArrayBuffer): string {
+  try {
+    const value = JSON.parse(Buffer.from(body).toString('utf8')) as { error?: unknown };
+    const text = typeof value.error === 'string' ? value.error : (value.error as { message?: unknown } | undefined)?.message;
+    return typeof text === 'string' && text ? `: ${text.slice(0, 160)}` : '';
+  } catch { return ''; } // no-reason-needed: a non-JSON body adds no detail to the message
+}
+
+/** A skill installation refused before anything changed: 400 for an archive that fails its checks, 409 for a name a local skill holds. */
+export class SkillInstallRefused extends Error {
+  constructor(readonly status: 400 | 409, message: string) { super(message); this.name = 'SkillInstallRefused'; }
+}
+/** The owner command's exit status when the skill directory is not one Magnus installed. */
+const SKILL_CONFLICT_EXIT = 3;
+/**
+ * Runs as the Ardent owner, never as root, so nothing in the owner's tree can redirect a write: reads the
+ * checked archive from stdin, extracts it with tar into a hidden staging directory beside the skill,
+ * makes it private to the owner, writes the receipt and swaps the directory in, restoring the previous
+ * copy if the swap fails.
+ * Arguments: skills directory, skill name, receipt JSON. Ardent ignores names that start with a dot.
+ */
+export const SKILL_INSTALL_SCRIPT = [
+  "const fs=require('node:fs'),path=require('node:path'),cp=require('node:child_process'),crypto=require('node:crypto');",
+  'const [root,name,receipt]=process.argv.slice(1);',
+  'const archive=fs.readFileSync(0);',
+  'fs.mkdirSync(root,{recursive:true,mode:0o700});',
+  "const dest=path.join(root,name),stage=path.join(root,'.hiveskills-'+crypto.randomUUID()),old=path.join(root,'.hiveskills-old-'+crypto.randomUUID());",
+  "let existing=null;try{existing=fs.lstatSync(dest)}catch(error){if(error.code!=='ENOENT')throw error}",
+  `if(existing){let marker=null;try{marker=fs.lstatSync(path.join(dest,'${ARDENT_SKILL_RECEIPT_FILE}'))}catch{}if(!existing.isDirectory()||!marker||!marker.isFile())process.exit(${SKILL_CONFLICT_EXIT})}`,
+  'fs.mkdirSync(stage,{mode:0o700});',
+  'try{',
+  "cp.execFileSync('/usr/bin/tar',['-xzf','-','-C',stage,'--no-same-owner','--no-same-permissions'],{input:archive,stdio:['pipe','ignore','ignore'],timeout:60000});",
+  // Archive modes are not trusted: directories become 0700 and files 0600, like the HiveSkills Hermes bridge.
+  'const own=dir=>{for(const entry of fs.readdirSync(dir,{withFileTypes:true})){const item=path.join(dir,entry.name);if(entry.isDirectory()){fs.chmodSync(item,0o700);own(item)}else fs.chmodSync(item,0o600)}};own(stage);',
+  `fs.writeFileSync(path.join(stage,'${ARDENT_SKILL_RECEIPT_FILE}'),receipt,{flag:'wx',mode:0o600});`,
+  'if(existing)fs.renameSync(dest,old);',
+  'try{fs.renameSync(stage,dest)}catch(error){if(existing)fs.renameSync(old,dest);throw error}',
+  '}finally{fs.rmSync(stage,{recursive:true,force:true});fs.rmSync(old,{recursive:true,force:true})}',
+].join('\n');
+const skillSettings = z.object({ skills: z.object({
+  directories: z.array(z.string().regex(/^[A-Za-z0-9._/-]+$/)).min(1).max(16).optional(), enabled: z.array(z.string()).optional(),
+}).passthrough().optional() }).passthrough();
+
+/** Runs an owner command with the archive on stdin; tests substitute one that runs as the test user. */
+export type SkillOwnerRunner = (root: ArdentRoot, args: string[], timeout: number, input: Buffer) => Promise<string>;
+
+/**
+ * Install a HiveSkills release the control API fetched and checked: verify its digest and contents again,
+ * install it as the owner into the profile's first skill directory, and optionally enable it through
+ * Ardent's skills API with the caller's configuration revision. Replaces only a skill Magnus installed.
+ */
+export async function installSkill(root: ArdentRoot, profile: string, body: unknown, runOwner?: SkillOwnerRunner): Promise<ArdentSkillInstallResult> {
+  const input = ardentSkillInstallNodeSchema.parse(body);
+  const archive = Buffer.from(input.archive_base64, 'base64');
+  if (archive.length > ARDENT_SKILL_ARCHIVE_LIMITS.archiveBytes) throw new SkillInstallRefused(400, 'Skill archive exceeds the size limit');
+  if (createHash('sha256').update(archive).digest('hex') !== input.sha256) throw new SkillInstallRefused(400, 'Skill archive digest differs from the catalog release');
+  let files: number;
+  try {
+    const tar = gunzipSync(archive, { maxOutputLength: ARDENT_SKILL_ARCHIVE_LIMITS.unpackedBytes });
+    files = checkArdentSkillArchive(new Uint8Array(tar), input.name, source => YAML.parse(source) as unknown).files;
+  } catch (error: unknown) {
+    throw new SkillInstallRefused(400, `Skill archive is invalid: ${error instanceof Error ? error.message : 'unreadable'}`.slice(0, 200));
+  }
+  if (!runOwner && process.getuid?.() !== 0) throw new Error('Ardent skill installation requires a root node manager');
+  const { config, dir } = await profileConfig(root.root, profile);
+  const settings = skillSettings.parse(config).skills;
+  const directory = settings?.directories?.[0] ?? 'skills';
+  if (directory.startsWith('/') || directory.split('/').includes('..')) throw new Error('Ardent skill directory escapes the profile');
+  const skillsRoot = join(dir, directory);
+  const existingRoot = await realpath(skillsRoot).catch((error: unknown) => {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return undefined;
+    throw error;
+  });
+  if (existingRoot && !within(await realpath(dir), existingRoot)) throw new Error('Ardent skill directory escapes the profile');
+  const destination = join(skillsRoot, input.name);
+  const conflict = new SkillInstallRefused(409, `The profile has a skill named ${input.name} that Magnus did not install; rename or remove it first`);
+  let prior: string | undefined;
+  const info = await lstat(destination).catch((error: unknown) => {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return undefined;
+    throw error;
+  });
+  if (info) {
+    const receipt = join(destination, ARDENT_SKILL_RECEIPT_FILE);
+    const receiptInfo = await lstat(receipt).catch(() => undefined);
+    if (!info.isDirectory() || !receiptInfo?.isFile() || receiptInfo.size > 4096) throw conflict;
+    try { prior = ardentSkillReceiptSchema.parse(JSON.parse(await readFile(receipt, 'utf8')) as unknown).sha256; }
+    catch { prior = undefined; } // no-reason-needed: an unreadable receipt only means the release is installed again
+  }
+  const skillMdPresent = info ? await lstat(join(destination, 'SKILL.md')).then(entry => entry.isFile(), () => false) : false;
+  const changed = prior !== input.sha256 || !skillMdPresent;
+  if (changed) {
+    const receipt = JSON.stringify({ schema_version: 1, source: 'hiveskills', name: input.name, version: input.version, sha256: input.sha256, installed_at: new Date().toISOString() });
+    try { await (runOwner ?? runAsOwner)(root, ['/usr/bin/node', '-e', SKILL_INSTALL_SCRIPT, skillsRoot, input.name, receipt], 90_000, archive); }
+    catch (error: unknown) {
+      if (error instanceof Error && error.message.endsWith(`failed: ${SKILL_CONFLICT_EXIT}`)) throw conflict;
+      throw error;
+    }
+  }
+  let enabled = settings?.enabled?.includes(input.name) ?? false;
+  let revision: string | null = null;
+  let enableError: string | null = null;
+  if (input.enable && !enabled) {
+    if (!await probe(config.api.port, dir, config.api.token_env, profile)) enableError = 'The profile is not running; enable the skill once it is';
+    else {
+      const token = await managementToken(dir, config.api.token_env);
+      let response: Response;
+      let answer: ArrayBuffer;
+      try {
+        response = await fetch(`http://127.0.0.1:${config.api.port}/api/v1/skills/${input.name}`, {
+          method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: true, revision: input.revision }), redirect: 'error', signal: AbortSignal.timeout(15_000),
+        });
+        answer = await response.arrayBuffer();
+      } catch (error: unknown) {
+        if (!connectionRefused(error)) throw new ArdentOutcomeUncertain('Ardent did not answer the skill enable request completely', { cause: error });
+        response = new Response(null, { status: 503 });
+        answer = new ArrayBuffer(0);
+      }
+      let reply: unknown = null;
+      try { reply = JSON.parse(Buffer.from(answer).toString('utf8')) as unknown; } catch { reply = null; } // no-reason-needed: a body that is not JSON is not a saved revision
+      const saved = z.object({ revision: z.string().regex(/^[a-f0-9]{64}$/) }).safeParse(response.ok ? reply : null);
+      if (saved.success) { enabled = true; revision = saved.data.revision; }
+      else enableError = response.status === 409 ? 'The Ardent configuration changed since it was read; enable the skill from the list'
+        : `Ardent answered the skill enable request with HTTP ${response.status}${upstreamMessage(answer)}`.slice(0, 200);
+    }
+  }
+  return { source: 'hiveskills', name: input.name, version: input.version, sha256: input.sha256, files, changed, enabled, revision,
+    enable_error: enableError, activation_required: changed || revision !== null };
+}
+
 export function createArdentRoutes(resolveRoot: () => Promise<ArdentRoot> = ardentRoot): Hono {
   const routes = new Hono();
   routes.get('/state', async c => {
@@ -612,11 +796,13 @@ export function createArdentRoutes(resolveRoot: () => Promise<ArdentRoot> = arde
       const { config, dir } = await profileConfig(target.root, name);
       if (!await probe(config.api.port, dir, config.api.token_env, name)) throw new Error('Ardent management listener identity differs or is unavailable');
       const token = await managementToken(dir, config.api.token_env);
-      if (suffix.startsWith('artifacts/') || suffix.endsWith('/stream')) return await relayArdentStream(config.api.port, token, suffix, c.req.raw, c.req.raw.signal);
+      if (streamedRead.test(suffix)) return await relayArdentStream(config.api.port, token, suffix, c.req.raw, c.req.raw.signal);
       const url = new URL(`http://127.0.0.1:${config.api.port}/${suffix === 'openapi' ? 'openapi.json' : `api/v1/${suffix}`}`);
-      for (const key of ['after', 'limit']) {
+      for (const [key, pattern] of Object.entries(readQuery)) {
         const value = c.req.query(key);
-        if (value !== undefined) url.searchParams.set(key, value);
+        if (value === undefined) continue;
+        if (!pattern.test(value)) return c.json({ error: `Invalid ${key} query` }, 400);
+        url.searchParams.set(key, value);
       }
       const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, redirect: 'error', signal: AbortSignal.timeout(10_000) });
       const body = await response.arrayBuffer();
@@ -632,15 +818,30 @@ export function createArdentRoutes(resolveRoot: () => Promise<ArdentRoot> = arde
     const input = parsed.data;
     if (input.action === 'task-submit' && !z.object({ prompt: z.string().trim().min(1).max(16000), idempotency_key: z.string().guid(), session_id: z.string().guid().optional() }).strict().safeParse(input.body).success)
       return c.json({ error: 'Task submission requires a bounded prompt and idempotency key' }, 400);
-    if (input.action === 'session-open' && !z.object({ key: z.string().trim().min(1).max(256), reset: z.boolean().optional() }).strict().safeParse(input.body).success)
-      return c.json({ error: 'Session open requires a bounded key' }, 400);
+    if (input.action === 'session-open' && !ardentSessionOpenSchema.safeParse(input.body).success)
+      return c.json({ error: 'Session open requires a bounded key and a known context' }, 400);
+    if (input.action === 'mission-submit' && !ardentMissionSubmitSchema.safeParse(input.body).success)
+      return c.json({ error: 'Mission submission requires an objective, a team mission and an idempotency key within bounds' }, 400);
+    if (input.action === 'preview-submit' && !ardentPreviewSubmitSchema.safeParse(input.body).success)
+      return c.json({ error: 'Preview submission requires a bounded prompt and known overrides' }, 400);
+    if (input.action === 'development-note' && !ardentDevelopmentNoteSchema.safeParse(input.body).success)
+      return c.json({ error: 'Development note requires a kind, title and body within bounds' }, 400);
+    if ((input.action === 'task-pause' || input.action === 'task-resume') && input.body !== undefined
+      && !z.object({}).strict().safeParse(input.body).success) return c.json({ error: 'Task pause and resume take no body' }, 400);
+    if (input.action === 'hivemem-credential-reload' && input.body !== undefined && !z.object({}).strict().safeParse(input.body).success)
+      return c.json({ error: 'Credential reload takes no body; the token is read from the profile .env' }, 400);
     if (input.action === 'memory-search' && !z.object({ query: z.string().trim().min(1).max(1000) }).strict().safeParse(input.body).success)
       return c.json({ error: 'Memory search requires a bounded query' }, 400);
+    if (input.action === 'skill-install' && !ardentSkillInstallNodeSchema.safeParse(input.body).success)
+      return c.json({ error: 'Skill installation requires a HiveSkills release, its digest and its archive within bounds' }, 400);
     const route = actionRoutes[input.action];
     if (route.target ? !input.target || !route.target.test(input.target) : input.target !== undefined)
       return c.json({ error: 'Invalid Ardent action target' }, 400);
     const body = JSON.stringify(input.body ?? {});
-    if (Buffer.byteLength(body) > 200_000) return c.json({ error: 'Ardent action exceeds size limit' }, 413);
+    // A preview may carry a full soul and identity (128 KiB each) and a skill installation its archive (1 MiB, base64);
+    // everything else, missions included, stays under 200 KB.
+    const limit = input.action === 'preview-submit' ? 300_000 : input.action === 'skill-install' ? 1_500_000 : 200_000;
+    if (Buffer.byteLength(body) > limit) return c.json({ error: 'Ardent action exceeds size limit' }, 413);
     try {
       const root = await resolveRoot();
       if (input.action === 'context-stage' || input.action === 'context-adopt' || input.action === 'context-rollback') {
@@ -664,6 +865,7 @@ export function createArdentRoutes(resolveRoot: () => Promise<ArdentRoot> = arde
       if (input.action === 'package-install') return c.json(await installPackage(root));
       if (input.action === 'profile-create') return c.json(await createProfile(root, input.profile, input.body));
       if (input.action === 'hivemem-credential-set') return c.json(await setHiveMemCredential(root, input.profile, input.body));
+      if (input.action === 'skill-install') return c.json(await installSkill(root, input.profile, input.body));
       if (input.action === 'service-start' || input.action === 'service-stop' || input.action === 'service-restart') {
         return c.json(await serviceAction(root, input.profile, input.action));
       }
@@ -671,19 +873,40 @@ export function createArdentRoutes(resolveRoot: () => Promise<ArdentRoot> = arde
       if (!await probe(config.api.port, dir, config.api.token_env, input.profile)) throw new Error('Ardent management listener identity differs or is unavailable');
       const token = await managementToken(dir, config.api.token_env);
       const path = route.path(input.target);
-      const response = await fetch(`http://127.0.0.1:${config.api.port}/api/v1/${path}`, {
-        method: route.method, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body, redirect: 'error', signal: AbortSignal.timeout(input.action === 'provider-test' ? 30_000 : 15_000),
-      });
-      const result = await response.arrayBuffer();
+      let response: Response;
+      let result: ArrayBuffer;
+      try {
+        response = await fetch(`http://127.0.0.1:${config.api.port}/api/v1/${path}`, {
+          method: route.method, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body, redirect: 'error', signal: AbortSignal.timeout(input.action === 'provider-test' ? 30_000 : 15_000),
+        });
+        result = await response.arrayBuffer();
+      } catch (error: unknown) {
+        // A refused connection carried nothing. Anything later may have reached Ardent.
+        if (connectionRefused(error)) throw new Error('Ardent management listener refused the connection');
+        throw new ArdentOutcomeUncertain(`Ardent did not answer the ${input.action} request completely`, { cause: error });
+      }
       if (result.byteLength > 2 * 1024 * 1024) return c.json({ error: 'Ardent action response exceeds size limit' }, 502);
+      // Ardent answered in full, so its request is over even when it failed.
+      if (response.status >= 500) return c.json({ success: false, error: { code: 'ARDENT_ACTION_FAILED',
+        message: `Ardent answered ${input.action} with HTTP ${response.status}${upstreamMessage(result)}` } }, 424);
       // The signed managed HTTP receipt proves durable task admission, never
       // completion of the asynchronous model run. Return 200 for that bounded
       // admission so the node ledger can settle the synchronous operation.
-      const status = input.action === 'task-submit' && response.status === 202 ? 200 : response.status;
+      const status = ['task-submit', 'mission-submit', 'preview-submit'].includes(input.action) && response.status === 202 ? 200 : response.status;
       return new Response(new Uint8Array(result), { status, headers: { 'Content-Type': response.headers.get('content-type') ?? 'application/json', 'Cache-Control': 'no-store' } });
     } catch (error: unknown) {
-      return c.json({ error: error instanceof Error ? error.message.slice(0, 200) : 'Ardent action unavailable' }, 503);
+      const message = error instanceof Error ? error.message.slice(0, 200) : 'Ardent action unavailable';
+      // Nothing changed: answer the refusal with its own status, so the caller can tell the person why.
+      if (error instanceof SkillInstallRefused)
+        return c.json({ success: false, error: { code: error.status === 409 ? 'SKILL_CONFLICT' : 'SKILL_ARCHIVE_INVALID', message } }, error.status);
+      // Context adoption keeps its own journal and recovery, so its failures stay uncertain here.
+      if (error instanceof ArdentOutcomeUncertain || input.action.startsWith('context-')) {
+        logger.warn(`Ardent ${input.action} on ${input.profile} has an unknown outcome: ${message}`);
+        return c.json({ error: message }, 503);
+      }
+      // The handler finished: answer a settled failure, so the managed command owner is released.
+      return c.json({ success: false, error: { code: 'ARDENT_ACTION_FAILED', message } }, 422);
     }
   });
   return routes;

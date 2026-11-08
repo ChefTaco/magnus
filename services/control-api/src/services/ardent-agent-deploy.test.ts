@@ -42,19 +42,31 @@ const input = { nodeId: 'node-1', profile: 'lead', soul_md: '# Soul\n', identity
   model: { base_url: 'http://192.0.2.10:8080/v1', model: 'fixture-model' }, skills: ['grounded-answers', 'research'], hivemem: true };
 
 interface Node { profiles: Array<{ id: string; name: string; backend: 'llamacpp'; apiPort: number; running: boolean; a2aEnabled: boolean; channels: Record<string, boolean>; error: null }>;
-  config: string; identity: Record<string, string>; env: string[]; actions: string[]; failOnce: Set<string> }
+  config: string; identity: Record<string, string>; env: string[]; actions: string[]; failOnce: Set<string>; failMessage?: string }
 let node: Node;
+let ardentVersion = '2.1.2';
+let owners: Array<import('@hivemagnus/magnus-contracts').ArdentCommandOwner> = [];
 const credential = vi.fn();
+const prepare = vi.fn();
+const record = vi.fn();
+let renewalSupported = false;
 
 beforeEach(() => {
   store.rows.clear();
   store.audit.length = 0;
+  owners = [];
   credential.mockReset();
+  prepare.mockReset();
+  prepare.mockResolvedValue(undefined);
+  record.mockReset();
+  record.mockResolvedValue(undefined);
+  renewalSupported = false;
+  ardentVersion = '2.1.2';
   credential.mockImplementation(async (_settings: unknown, plan: { agentId: string; action: string }) => ({ token: TOKEN, agentId: plan.agentId, expiresAt: '2026-12-01T00:00:00.000Z', operationId: 'f'.repeat(64) }));
   node = { profiles: [{ id: 'existing', name: 'existing', backend: 'llamacpp', apiPort: 9910, running: true, a2aEnabled: false, channels: {}, error: null }],
     config: TEMPLATE, identity: { soul: 'template soul', identity: 'template identity' }, env: [], actions: [], failOnce: new Set() };
   deploy.setArdentDeployDeps({
-    installation: async nodeId => ({ nodeId, nodeName: 'node-1', hostname: 'node-1.example.com', reachable: true, installed: true, version: '2.1.2',
+    installation: async nodeId => ({ nodeId, nodeName: 'node-1', hostname: 'node-1.example.com', reachable: true, installed: true, version: ardentVersion,
       owner: 'operator', profiles: node.profiles, checkedAt: new Date().toISOString(), error: null }),
     read: async <T,>(_nodeId: string, profile: string, resource: string) => {
       if (!node.profiles.some(item => item.id === profile && item.running)) throw new Error('Ardent management listener identity differs or is unavailable');
@@ -66,7 +78,7 @@ beforeEach(() => {
     },
     action: async (_nodeId, profile, action, target, body) => {
       node.actions.push(target ? `${action}:${target}` : action);
-      if (node.failOnce.delete(action)) throw new Error(`${action} failed on the node`);
+      if (node.failOnce.delete(action)) throw new Error(node.failMessage ?? `${action} failed on the node`);
       const value = body as Record<string, unknown> | undefined;
       if (action === 'profile-create') node.profiles.push({ id: profile, name: profile, backend: 'llamacpp', apiPort: value!['api_port'] as number, running: false, a2aEnabled: false, channels: {}, error: null });
       if (action === 'service-start' || action === 'service-restart') node.profiles.find(item => item.id === profile)!.running = true;
@@ -77,9 +89,14 @@ beforeEach(() => {
       return { running: true };
     },
     studio: async () => undefined,
-    hivemem: () => ({ apiUrl: 'https://memory.example.com/', agentUrl: 'https://memory.example.com/', token: 'fixture-enrollment-token', workspaceId: 'agents', hours: 720 }),
+    hivemem: () => ({ apiUrl: 'https://memory.example.com/', agentUrl: 'https://memory.example.com/', auth: { kind: 'token', token: 'fixture-enrollment-token' }, workspaceId: 'agents', hours: 720 }),
+    prepare,
     credential,
+    supportsRenewal: async () => renewalSupported,
+    record,
     delay: async () => undefined,
+    owners: async () => owners,
+    explain: async (_nodeId, error) => (error instanceof Error && error.message === 'outcome unknown' ? new Error('The node could not confirm the outcome of service-start on lead (command native-1).') : undefined),
   });
 });
 afterEach(() => { deploy.setArdentDeployDeps({}); });
@@ -116,6 +133,28 @@ describe('New Agent operation', () => {
     expect(store.audit.map(event => event.action)).toContain('ardent.agent.complete');
   });
 
+  it('sets the artifact limit on Ardent 2.2.0 or later, 64 MiB unless asked otherwise', async () => {
+    ardentVersion = '2.2.0';
+    await run(() => deploy.startArdentAgentDeploy(input, actor));
+    expect((YAML.parse(node.config) as Record<string, any>)['artifacts']).toEqual({ max_bytes: 64 * 1024 * 1024 });
+    node.profiles = node.profiles.filter(item => item.id !== 'lead');
+    node.config = TEMPLATE;
+    await run(() => deploy.startArdentAgentDeploy({ ...input, artifacts_max_bytes: 8 * 1024 * 1024 }, actor));
+    expect((YAML.parse(node.config) as Record<string, any>)['artifacts']).toEqual({ max_bytes: 8 * 1024 * 1024 });
+    await expect(deploy.startArdentAgentDeploy({ ...input, profile: 'other', artifacts_max_bytes: 128 * 1024 * 1024 }, actor)).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('leaves the artifact limit alone on an older Ardent and says so', async () => {
+    const plain = await run(() => deploy.startArdentAgentDeploy(input, actor));
+    expect((YAML.parse(node.config) as Record<string, any>)['artifacts']).toBeUndefined();
+    expect(plain.steps.find(step => step.name === 'config-save')!.receipt!['notes']).toEqual([]);
+    node.profiles = node.profiles.filter(item => item.id !== 'lead');
+    node.config = TEMPLATE;
+    const asked = await run(() => deploy.startArdentAgentDeploy({ ...input, artifacts_max_bytes: 8 * 1024 * 1024 }, actor));
+    expect((YAML.parse(node.config) as Record<string, any>)['artifacts']).toBeUndefined();
+    expect(asked.steps.find(step => step.name === 'config-save')!.receipt!['notes']).toEqual([expect.stringMatching(/needs Ardent 2\.2\.0.*2\.1\.2/)]);
+  });
+
   it('stops at a failed step with its receipts, and resume reruns only what did not finish', async () => {
     node.failOnce.add('config-save');
     const failed = await run(() => deploy.startArdentAgentDeploy(input, actor));
@@ -132,11 +171,34 @@ describe('New Agent operation', () => {
     await expect(deploy.resumeArdentAgentOperation(failed.id, actor)).rejects.toMatchObject({ code: 'OPERATION_NOT_RESUMABLE' });
   });
 
+  it('names an unknown command outcome in the failed step, and resumes only once it is reconciled', async () => {
+    node.failOnce.add('service-start');
+    node.failMessage = 'outcome unknown';
+    const stopped = await run(() => deploy.startArdentAgentDeploy(input, actor));
+    expect(stopped.status).toBe('failed');
+    expect(stopped.steps.find(step => step.name === 'service-start')!.error).toBe('The node could not confirm the outcome of service-start on lead (command native-1).');
+    owners = [{ commandId: 'native-1', state: 'unknown', label: 'ardent:lead:service-start', profile: 'lead', action: 'service-start', ardent: true,
+      acquiredAt: '2026-11-08T00:00:00.000Z', dispatchedAt: '2026-11-08T00:00:01.000Z', deadline: '2026-11-08T00:02:05.000Z', reconcilableAfter: '2026-11-08T00:03:05.000Z' }];
+    await expect(deploy.resumeArdentAgentOperation(stopped.id, actor)).rejects.toMatchObject({ status: 409, code: 'COMMAND_OWNER_UNSETTLED',
+      message: expect.stringMatching(/could not confirm the outcome of service-start on lead \(command native-1\).*reconcile it on the Ardent installations page/) });
+    owners = [{ ...owners[0]!, state: 'running' }];
+    await expect(deploy.resumeArdentAgentOperation(stopped.id, actor)).rejects.toMatchObject({ message: expect.stringMatching(/still running on the node/) });
+    expect((await deploy.getArdentAgentOperation(stopped.id)).status).toBe('failed');
+    // Reconciled: nothing holds the node, and the operation finishes from service-start.
+    owners = [];
+    expect((await run(() => deploy.resumeArdentAgentOperation(stopped.id, actor))).status).toBe('succeeded');
+  });
+
   it('refuses an existing profile, a used port and a missing HiveMem setup before creating anything', async () => {
     await expect(deploy.startArdentAgentDeploy({ ...input, profile: 'existing' }, actor)).rejects.toMatchObject({ code: 'PROFILE_EXISTS' });
     await expect(deploy.startArdentAgentDeploy({ ...input, apiPort: 9910 }, actor)).rejects.toMatchObject({ code: 'PORT_IN_USE' });
     await expect(deploy.startArdentAgentDeploy({ ...input, hivemem: false }, actor)).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
     await expect(deploy.startArdentAgentDeploy({ ...input, model: { base_url: 'https://user:pw@models.example.com/v1', model: 'm' } }, actor)).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    // Magnus cannot reach HiveMem as itself: stop before the node is touched.
+    prepare.mockRejectedValue(Object.assign(new Error('Oathweave refused the client credentials (HTTP 401)'), { status: 503, code: 'HIVEMEM_IDENTITY_UNAVAILABLE' }));
+    await expect(deploy.startArdentAgentDeploy(input, actor)).rejects.toMatchObject({ code: 'HIVEMEM_IDENTITY_UNAVAILABLE' });
+    await expect(deploy.startArdentHiveMemEnable('node-1', 'existing', actor)).rejects.toMatchObject({ code: 'HIVEMEM_IDENTITY_UNAVAILABLE' });
+    expect(node.actions).toEqual([]);
     deploy.setArdentDeployDeps({ hivemem: () => { throw Object.assign(new Error('HiveMem enrollment is not configured'), { code: 'HIVEMEM_ENROLLMENT_UNAVAILABLE' }); } });
     await expect(deploy.startArdentAgentDeploy(input, actor)).rejects.toMatchObject({ code: 'HIVEMEM_ENROLLMENT_UNAVAILABLE' });
     expect(store.rows.size).toBe(0);
@@ -147,7 +209,7 @@ describe('New Agent operation', () => {
     deploy.setArdentDeployDeps({ studio: async () => undefined, installation: async nodeId => ({ nodeId, nodeName: 'node-1', hostname: 'node-1.example.com', reachable: true,
       installed: true, version: '2.1.2', owner: 'operator', profiles: [{ id: 'existing', name: 'existing', backend: 'llamacpp', apiPort: 9910, running: true, a2aEnabled: false, channels: {}, error: null }],
       checkedAt: new Date().toISOString(), error: null }),
-    hivemem: () => ({ apiUrl: 'https://memory.example.com/', agentUrl: 'https://memory.example.com/', token: 't', workspaceId: 'agents', hours: 720 }),
+    hivemem: () => ({ apiUrl: 'https://memory.example.com/', agentUrl: 'https://memory.example.com/', auth: { kind: 'token', token: 't' }, workspaceId: 'agents', hours: 720 }),
     credential: () => new Promise(resolve => { release = () => resolve({ token: TOKEN, agentId: 'a', expiresAt: null, operationId: 'f'.repeat(64) }); }),
     read: async <T,>() => ({ status: 'ready' }) as T, action: async () => ({}) });
     const first = await deploy.startArdentHiveMemEnable('node-1', 'existing', actor);
@@ -169,6 +231,37 @@ describe('Enable HiveMem', () => {
     expect(node.actions).toEqual(['hivemem-credential-set', 'config-save', 'service-restart']);
     // A backfill changes memory only: the model settings are untouched.
     expect((YAML.parse(node.config) as Record<string, any>)['providers']['llamacpp']['model']).toBe('${ARDENT_LLAMA_MODEL}');
+    // The delivered credential is recorded for the renewal job, never with its token.
+    expect(record).toHaveBeenCalledWith({ nodeId: 'node-1', profile: 'existing', agentId: expect.stringMatching(/^ardent-existing-/), workspaceId: 'agents',
+      expiresAt: '2026-12-01T00:00:00.000Z' });
+    expect(JSON.stringify(record.mock.calls)).not.toContain(TOKEN);
+  });
+
+  it('renews instead of rotating where HiveMem supports it, so a known agent gets a fresh deadline', async () => {
+    renewalSupported = true;
+    credential.mockImplementationOnce(async () => { throw new HiveMemEnrollmentError(409, 'HiveMem enroll answered HTTP 409'); });
+    const operation = await run(() => deploy.startArdentHiveMemEnable('node-1', 'existing', actor));
+    expect(operation.status).toBe('succeeded');
+    expect(credential.mock.calls.map(call => (call[1] as { action: string }).action)).toEqual(['enroll', 'renew']);
+    expect(credential.mock.calls[1]![1]).toMatchObject({ graceSeconds: 3600 });
+    expect(operation.steps[1]!.receipt).toMatchObject({ action: 'renew' });
+  });
+
+  it('falls back to rotation when HiveMem refuses the renewal, and stops after that', async () => {
+    renewalSupported = true;
+    credential.mockImplementationOnce(async () => { throw new HiveMemEnrollmentError(409, 'exists'); })
+      .mockImplementationOnce(async () => { throw new HiveMemEnrollmentError(403, 'not a member'); });
+    const operation = await run(() => deploy.startArdentHiveMemEnable('node-1', 'existing', actor));
+    expect(operation.status).toBe('succeeded');
+    expect(credential.mock.calls.map(call => (call[1] as { action: string }).action)).toEqual(['enroll', 'renew', 'rotate']);
+
+    credential.mockReset();
+    credential.mockImplementationOnce(async () => { throw new HiveMemEnrollmentError(409, 'exists'); })
+      .mockImplementation(async () => { throw new HiveMemEnrollmentError(400, 'deadline'); });
+    const failed = await run(() => deploy.startArdentHiveMemEnable('node-1', 'existing', actor));
+    expect(failed.status).toBe('failed');
+    expect(credential.mock.calls.map(call => (call[1] as { action: string }).action)).toEqual(['enroll', 'renew']);
+    expect(node.actions.filter(action => action === 'hivemem-credential-set')).toHaveLength(1);
   });
 
   it('refuses a stopped profile and leaves it unchanged', async () => {

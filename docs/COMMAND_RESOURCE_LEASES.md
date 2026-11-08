@@ -109,6 +109,13 @@ response produces a signed result; a validation error (4xx) settles a failed ope
 202, redirect, thrown handler, missing reply or response over 4 MiB leaves the lease uncertain.
 Replaying a completed request never runs the handler again.
 
+A handler answers 5xx only when it cannot say what happened. The Ardent action handler answers a
+failure it finished with 422, and Ardent's own complete server error with 424, so both settle; it
+keeps 503 for a request Ardent did not answer completely, an owner command it had to stop, and
+context adoption steps. An ADMIN settles an Ardent action left `unknown` with the `command-reconcile`
+action ([ARDENT.md](ARDENT.md#reconciling-an-unknown-outcome)): the server signs the decision only
+after the deadline, and only when the node agent's own receipt is `unknown`.
+
 Skill publication is atomic: the server builds a canonical bundle from the registry snapshot, and
 the node verifies every file, mode, manifest, bundle digest and tree digest before a single
 directory rename. Archives are limited to 32 MiB compressed, 64 MiB expanded and 2,048 entries, and
@@ -171,6 +178,9 @@ Administrator routes, all under `/api/v1/resource-leases`:
 | `POST /enrollment/:nodeId/api-attest` | Submit a signed API-server attestation for the current challenge |
 | `POST /enrollment/:nodeId/scheduler-boundary-attest` | Submit a signed review of the node's scheduler sources |
 | `POST /enrollment/:nodeId/complete` | Verify all four participants and enroll the node |
+| `GET /enrollment/:nodeId/ardent-scope` | The Ardent-only scope's state and the scheduler snapshot digest |
+| `GET /enrollment/:nodeId/ardent-scope/evidence` | What an Ardent-only activation signs: the drain barrier, the SHA-256 of each verified agent, API and console drain receipt, the scheduler snapshot, and `blockers` while activation would be refused. Receipts expire with their challenge, so read it just before signing |
+| `POST /enrollment/:nodeId/ardent-scope/activate` | Activate the one-way Ardent-only scope with a signed decision over that evidence, while the scheduler and the rest of the node stay draining |
 | `GET /enrollment/work/:workId/historical`, `POST /enrollment/work/:workId/historical-reconcile` | Inspect and reconcile console work recorded before tracking existed |
 
 Fleet gateway terminals and the Hermes dashboard proxy reserve durable work and consume a single-use

@@ -1,5 +1,5 @@
 {
-  "summary": "Ardent agents through Magnus: sessions, unbuffered task event streams and streamed artifacts; New Agent deployment as a durable, resumable, audited operation; per-agent HiveMem credentials for new and existing profiles; and linked Oathweave service identities confined to the Ardent bridge.",
+  "summary": "Ardent agents through Magnus: sessions, unbuffered task event streams and streamed artifacts; Ardent 2.2.0 missions, task pause and resume, previews and development history (node agent studio capability 2); New Agent deployment as a durable, resumable, audited operation; per-agent HiveMem credentials for new and existing profiles, renewed before every deadline; linked Oathweave service identities confined to the Ardent bridge; failed Ardent actions that settle their command owner, and an audited ADMIN reconciliation for an unknown outcome; HiveSkills catalog skills installed onto Ardent profiles, checked against the catalog digest (node agent studio capability 3).",
   "breaking": false,
   "minUpgradeFrom": "1.0.0",
   "newRequiredEnv": [],
@@ -14,6 +14,8 @@
   ],
   "removedEnv": [],
   "migrations": [
-    "20261108000000_ardent_agent_operations"
+    "20261108000000_ardent_agent_operations",
+    "20261108020000_command_lease_label",
+    "20261108040000_ardent_hivemem_credentials"
   ]
 }

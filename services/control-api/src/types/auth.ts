@@ -145,7 +145,9 @@ export type AuditAction =
   | 'ardent.agent.step'
   | 'ardent.agent.complete'
   | 'ardent.hivemem.enable'
-  | `ardent.${'profile-create' | 'session-open' | 'config-validate' | 'config-save' | 'peer-validate' | 'peer-save' | 'identity-save' | 'identity-restore' | 'provider-test' | 'channel-test' | 'peer-test' | 'memory-search' | 'task-submit' | 'task-cancel' | 'skill-set' | 'service-start' | 'service-stop' | 'service-restart' | 'package-install' | 'context-stage' | 'context-adopt' | 'context-rollback'}`
+  | 'ardent.hivemem.renew'
+  | 'ardent.hivemem.untrack'
+  | `ardent.${'command-reconcile' | 'profile-create' | 'session-open' | 'config-validate' | 'config-save' | 'peer-validate' | 'peer-save' | 'identity-save' | 'identity-restore' | 'provider-test' | 'channel-test' | 'peer-test' | 'memory-search' | 'task-submit' | 'task-cancel' | 'mission-submit' | 'task-pause' | 'task-resume' | 'preview-submit' | 'development-note' | 'skill-set' | 'service-start' | 'service-stop' | 'service-restart' | 'package-install' | 'context-stage' | 'context-adopt' | 'context-rollback' | 'skill-install'}`
   | 'codex.auth.logout'
   | 'codex.auth.expired_logout'
   | 'codex.auth.device_start'

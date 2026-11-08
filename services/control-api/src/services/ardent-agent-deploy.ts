@@ -10,15 +10,18 @@
  */
 import { randomUUID } from 'node:crypto';
 import YAML from 'yaml';
-import { ardentAgentDeployRequestSchema, type ArdentFleetInstallation } from '@hivemagnus/magnus-contracts';
+import { ardentAgentDeployRequestSchema, type ArdentCommandOwner, type ArdentFleetInstallation } from '@hivemagnus/magnus-contracts';
 import { getDb } from '../db/index.js';
 import { HttpError } from '../middleware/error-handler.js';
 import { logAuditEvent } from './audit-service.js';
+import { ardentCommandOwners, ardentOwnerBlock, describeOwner } from './ardent-command-owner.js';
 import { getArdentInstallation, getArdentProfileResource, performArdentAction, requireArdentStudioAgent } from './ardent-service.js';
 import {
-  ARDENT_HIVEMEM_TOKEN_ENV, ardentHiveMemAgentId, HiveMemEnrollmentError, planArdentHiveMemCredential, requestArdentHiveMemCredential,
-  requireArdentHiveMemSettings, type ArdentHiveMemPlan, type ArdentHiveMemSettings,
+  ARDENT_HIVEMEM_TOKEN_ENV, ardentHiveMemAgentId, ardentHiveMemSupportsRenewal, HiveMemEnrollmentError, planArdentHiveMemCredential,
+  prepareArdentHiveMem, requestArdentHiveMemCredential, requireArdentHiveMemSettings, type ArdentHiveMemAction, type ArdentHiveMemPlan,
+  type ArdentHiveMemSettings,
 } from './ardent-hivemem.js';
+import { recordArdentHiveMemCredential } from './ardent-hivemem-renewal.js';
 import type { z } from 'zod';
 
 export type ArdentAgentDeployInput = z.infer<typeof ardentAgentDeployRequestSchema>;
@@ -46,8 +49,18 @@ export interface ArdentDeployDeps {
   action(nodeId: string, profile: string, action: string, target?: string, body?: unknown): Promise<unknown>;
   studio(nodeId: string): Promise<void>;
   hivemem(): ArdentHiveMemSettings;
+  /** Before an operation starts: Magnus reaches HiveMem as itself and the agents' workspace exists. */
+  prepare(settings: ArdentHiveMemSettings): Promise<void>;
   credential(settings: ArdentHiveMemSettings, plan: ArdentHiveMemPlan): ReturnType<typeof requestArdentHiveMemCredential>;
+  /** Whether HiveMem can renew a credential with a new deadline, rather than only rotate it. */
+  supportsRenewal(settings: ArdentHiveMemSettings): Promise<boolean>;
+  /** Remember the credential delivered to a profile, so the renewal job keeps it ahead of its deadline. */
+  record(input: Parameters<typeof recordArdentHiveMemCredential>[0]): Promise<void>;
   delay(ms: number): Promise<void>;
+  /** Command owners holding the node, oldest first. */
+  owners(nodeId: string): Promise<ArdentCommandOwner[]>;
+  /** Why a step's failure blocks the node, when a command owner is the cause. */
+  explain(nodeId: string, error: unknown): Promise<Error | undefined>;
 }
 
 const defaultDeps: ArdentDeployDeps = {
@@ -56,8 +69,13 @@ const defaultDeps: ArdentDeployDeps = {
   action: performArdentAction,
   studio: requireArdentStudioAgent,
   hivemem: requireArdentHiveMemSettings,
+  prepare: settings => prepareArdentHiveMem(settings),
   credential: (settings, plan) => requestArdentHiveMemCredential(settings, plan),
+  supportsRenewal: settings => ardentHiveMemSupportsRenewal(settings),
+  record: recordArdentHiveMemCredential,
   delay: ms => new Promise(resolve => setTimeout(resolve, ms)),
+  owners: async nodeId => (await ardentCommandOwners([nodeId])).get(nodeId) ?? [],
+  explain: ardentOwnerBlock,
 };
 let deps = defaultDeps;
 /** Replace node, HiveMem and timer access in tests. Returns a restore function. */
@@ -82,6 +100,9 @@ function emberpathUrl(): string {
 function message(error: unknown): string {
   return (error instanceof Error ? error.message : String(error)).slice(0, 500);
 }
+
+/** artifacts.max_bytes a New Agent gets when the request does not set it: 64 MiB, the node agent's default relay cap. */
+export const ARDENT_NEW_AGENT_ARTIFACT_MAX_BYTES = 64 * 1024 * 1024;
 
 function newerOrEqual(version: string | null, wanted: [number, number, number]): boolean {
   const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version ?? '');
@@ -134,9 +155,10 @@ export async function startArdentAgentDeploy(raw: unknown, actor: ArdentOperatio
   const parsed = ardentAgentDeployRequestSchema.safeParse(raw);
   if (!parsed.success) throw new HttpError(400, 'VALIDATION_ERROR', parsed.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; ').slice(0, 500));
   const input = parsed.data;
-  deps.hivemem();
+  const hivemem = deps.hivemem();
   if ('emberpath_alias' in input.model) emberpathUrl();
   await deps.studio(input.nodeId);
+  await deps.prepare(hivemem);
   const installation = await deps.installation(input.nodeId);
   if (!installation.reachable) throw new HttpError(503, 'DEPENDENCY_UNAVAILABLE', installation.error ?? 'Ardent node unavailable');
   if (!installation.installed) throw new HttpError(409, 'ARDENT_NOT_INSTALLED', 'Install the Ardent package on this node first');
@@ -158,8 +180,9 @@ export async function startArdentAgentDeploy(raw: unknown, actor: ArdentOperatio
 
 /** Enable HiveMem on an existing, running profile (the backfill for agents created before New Agent). */
 export async function startArdentHiveMemEnable(nodeId: string, profile: string, actor: ArdentOperationActor): Promise<string> {
-  deps.hivemem();
+  const hivemem = deps.hivemem();
   await deps.studio(nodeId);
+  await deps.prepare(hivemem);
   const id = await createOperation('hivemem', { nodeId, profile, hivemem: true }, actor);
   await logAuditEvent({ action: 'ardent.hivemem.enable', actorId: actor.actorId, targetType: 'ardent-profile', targetId: `${nodeId}:${profile}`,
     details: { operationId: id, ...actor.details } });
@@ -174,6 +197,11 @@ export async function resumeArdentAgentOperation(id: string, actor: ArdentOperat
   if (!row) throw new HttpError(404, 'NOT_FOUND', 'Ardent agent operation not found');
   const interrupted = row.status === 'running' && !active.has(id) && Date.now() - row.updatedAt.getTime() > STALE_MS;
   if (row.status !== 'failed' && !interrupted) throw new HttpError(409, 'OPERATION_NOT_RESUMABLE', `The operation is ${row.status}; only a failed operation can be resumed`);
+  // Every step is a managed Ardent action, so a held command owner would stop it again at once.
+  const [owner] = await deps.owners(row.nodeId);
+  if (owner) throw new HttpError(409, 'COMMAND_OWNER_UNSETTLED', owner.state === 'unknown'
+    ? `The node could not confirm the outcome of ${describeOwner(owner)}, so no Ardent action can run there. An ADMIN must check what it did and reconcile it on the Ardent installations page, then resume this operation.`
+    : `${describeOwner(owner)} is still running on the node; resume this operation when it finishes.`);
   const steps = (JSON.parse(row.stepsJson) as Step[]).map(step => step.status === 'failed' || step.status === 'running'
     ? { ...step, status: 'pending' as const, error: null, finishedAt: null } : step);
   try {
@@ -227,7 +255,8 @@ async function runOperation(id: string): Promise<void> {
       result = await STEPS[step.name](context);
     } catch (error: unknown) {
       step.status = 'failed';
-      step.error = message(error);
+      // A command owner left unknown (by this step or an earlier action) is named, with what to do about it.
+      step.error = message(await deps.explain(row.nodeId, error).catch(() => undefined) ?? error);
       step.finishedAt = new Date().toISOString();
       await save({ status: 'failed', error: `${step.name}: ${step.error}`, completedAt: new Date() });
       await logAuditEvent({ action: 'ardent.agent.step', actorId: row.createdBy, targetType: 'ardent-profile', targetId: `${row.nodeId}:${row.profile}`,
@@ -298,27 +327,39 @@ const STEPS: Record<StepName, (context: Context) => Promise<Result>> = {
   'hivemem-enroll': async context => {
     const settings = deps.hivemem();
     const name = (await deps.installation(context.row.nodeId)).nodeName;
-    const plan = (action: 'enroll' | 'rotate') => planArdentHiveMemCredential(settings, { operationId: `${context.row.id}:${context.row.attempts}`,
+    const plan = (action: ArdentHiveMemAction) => planArdentHiveMemCredential(settings, { operationId: `${context.row.id}:${context.row.attempts}`,
       nodeId: context.row.nodeId, nodeName: name, profile: context.row.profile, action });
     // The plan is stored before the request, so a retry repeats it and HiveMem replays the same credential.
     let current = (context.step.receipt?.['plan'] as ArdentHiveMemPlan | undefined) ?? plan('enroll');
     const remember = async () => { context.step.receipt = { ...context.step.receipt, plan: current }; await context.save(); };
     await remember();
     let issued: Awaited<ReturnType<ArdentDeployDeps['credential']>> | undefined;
-    for (let tries = 0; !issued; tries++) {
+    let fallbacks: ArdentHiveMemAction[] | undefined;
+    while (!issued) {
       try {
         issued = await deps.credential(settings, current);
       } catch (error: unknown) {
-        const replacement = plan('rotate');
+        if (!(error instanceof HiveMemEnrollmentError)) throw error;
         // 409: the agent ID already exists (an earlier profile of this name). 410: an earlier
-        // attempt's receipt expired before its token reached the node. Both rotate, which
-        // also invalidates any credential that never arrived.
-        if (tries > 0 || !(error instanceof HiveMemEnrollmentError) || ![409, 410].includes(error.status) || replacement.key === current.key) throw error;
-        current = replacement;
+        // attempt's receipt expired before its token reached the node. Both issue a replacement,
+        // which also invalidates any credential that never arrived: a renewal with a fresh
+        // deadline where HiveMem supports it (a rotation keeps the first one), else a rotation.
+        // A renewal HiveMem refuses (403/404, say an agent outside the workspace) falls back to rotation.
+        // A plan stored by an earlier attempt of this operation is replaced the same way.
+        const stale = !current.key.startsWith(`${context.row.id}:${context.row.attempts}:`);
+        const recoverable = (current.action === 'enroll' || stale) && [409, 410].includes(error.status)
+          || current.action === 'renew' && [403, 404, 410].includes(error.status);
+        if (!recoverable) throw error;
+        fallbacks ??= (await deps.supportsRenewal(settings).catch(() => false)) ? ['renew', 'rotate'] : ['rotate'];
+        const next = fallbacks.shift();
+        if (!next) throw error;
+        current = plan(next);
         await remember();
       }
     }
     await deps.action(context.row.nodeId, context.row.profile, 'hivemem-credential-set', undefined, { token: issued.token });
+    await deps.record({ nodeId: context.row.nodeId, profile: context.row.profile, agentId: issued.agentId, workspaceId: current.workspaceId,
+      expiresAt: issued.expiresAt });
     return { receipt: { plan: current, agentId: issued.agentId, workspaceId: settings.workspaceId, expiresAt: issued.expiresAt,
       action: current.action, tokenEnv: ARDENT_HIVEMEM_TOKEN_ENV } };
   },
@@ -335,11 +376,10 @@ const STEPS: Record<StepName, (context: Context) => Promise<Result>> = {
       const model = 'emberpath_alias' in request.model ? { base_url: emberpathUrl(), model: request.model.emberpath_alias } : request.model;
       document.setIn(['providers', 'llamacpp', 'base_url'], model.base_url);
       document.setIn(['providers', 'llamacpp', 'model'], model.model);
-      if (request.artifacts_max_bytes !== undefined) {
-        const { installation } = await profileOf(context);
-        if (newerOrEqual(installation.version, [2, 2, 0])) document.setIn(['artifacts', 'max_bytes'], request.artifacts_max_bytes);
-        else notes.push(`artifacts.max_bytes needs Ardent 2.2.0 or later; this node runs ${installation.version ?? 'an unknown version'}`);
-      }
+      // Ardent 2.2.0 added artifacts.max_bytes (default 2 MiB). A new agent gets the node agent's relay cap unless told otherwise.
+      const { installation } = await profileOf(context);
+      if (newerOrEqual(installation.version, [2, 2, 0])) document.setIn(['artifacts', 'max_bytes'], request.artifacts_max_bytes ?? ARDENT_NEW_AGENT_ARTIFACT_MAX_BYTES);
+      else if (request.artifacts_max_bytes !== undefined) notes.push(`artifacts.max_bytes needs Ardent 2.2.0 or later; this node runs ${installation.version ?? 'an unknown version'}`);
     }
     document.setIn(['memory'], document.createNode({ provider: 'hivemem', base_url: settings.agentUrl, token_env: ARDENT_HIVEMEM_TOKEN_ENV,
       agent_id: agentId ?? ardentHiveMemAgentId(context.row.nodeId, context.row.profile), workspace_id: settings.workspaceId, default_scope: 'private' }));

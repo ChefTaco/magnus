@@ -103,7 +103,7 @@
   },
   "devDependencies": {
     "@apidevtools/swagger-parser": "13.1.0",
-    "@hivemagnus/ardent": "2.1.2",
+    "@hivemagnus/ardent": "2.2.1",
     "eslint": "10.14.0",
     "eslint-plugin-react-hooks": "7.1.1",
     "openapi-typescript": "7.13.0",

@@ -9,6 +9,7 @@ vi.mock('../queue/workers.js', () => ({ enqueueCommand: vi.fn(async () => undefi
 // A 429 would hide a leak: this suite reads every route once per role.
 vi.mock('../middleware/rate-limit.js', () => ({
   rateLimitMiddleware: () => async (_c: unknown, next: () => Promise<void>) => next(),
+  ardentRateLimitMiddleware: () => async (_c: unknown, next: () => Promise<void>) => next(),
   getRateLimitHealth: () => ({ status: 'pass', message: 'not limited in this suite', lastErrorAt: null }),
 }));
 

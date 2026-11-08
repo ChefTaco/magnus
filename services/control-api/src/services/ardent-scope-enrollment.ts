@@ -44,29 +44,32 @@ export async function assertArdentScope(tx: Tx, nodeId: string, nodeFqdn: string
 
 async function receiptHashes(tx: Tx, nodeId: string, nodeFqdn: string, epoch: number, barrierId: string) {
   const hashes: Record<(typeof PARTICIPANTS)[number], string> = { agent: '', api: '', dashboard: '' };
-  for (const participant of PARTICIPANTS) {
-    const ack = await tx.resourceDrainParticipant.findUnique({ where: { nodeId_participant: { nodeId, participant } } });
-    if (!ack || ack.status !== 'verified' || ack.epoch !== epoch || ack.barrierId !== barrierId
-      || ack.challengeExpiresAt.getTime() <= Date.now() || !ack.receiptJson) fail();
-    let receipt: z.infer<typeof drainReceiptSchema> | z.infer<typeof apiDrainAttestationSchema>;
-    try { receipt = participant === 'api' ? apiDrainAttestationSchema.parse(JSON.parse(ack.receiptJson))
-      : drainReceiptSchema.parse(JSON.parse(ack.receiptJson)); } catch { fail(); }
-    const { signature, ...unsigned } = receipt;
-    if (participant === 'dashboard') await assertDashboardStillAbsent(tx, nodeId);
-    const key = participant === 'api' ? reconciliationSecret()
-      : participant === 'dashboard' ? dashboardReceiptKey() : RESULT_SIGNING_SECRET;
-    const payload = participant === 'api'
-      ? apiDrainAttestationSigningPayload(unsigned as Omit<z.infer<typeof apiDrainAttestationSchema>, 'signature'>)
-      : enrollmentSigningPayload(unsigned);
-    const expected = createHmac('sha256', key).update(payload).digest();
-    if (receipt.participant !== participant || receipt.nodeId !== nodeId || receipt.nodeFqdn !== nodeFqdn
-      || receipt.epoch !== epoch || receipt.barrierId !== barrierId
-      || receipt.challengeId !== ack.challengeId || receipt.expiresAt !== ack.challengeExpiresAt.getTime()
-      || receipt.status !== 'drained' || receipt.activeCount !== 0 || receipt.unknownCount !== 0
-      || receipt.evidenceSha256 !== ack.evidenceSha256 || !timingSafeEqual(expected, Buffer.from(signature, 'hex'))) fail();
-    hashes[participant] = sha256(ack.receiptJson);
-  }
+  for (const participant of PARTICIPANTS) hashes[participant] = await receiptHash(tx, nodeId, nodeFqdn, epoch, barrierId, participant);
   return hashes;
+}
+
+/** The digest of one participant's drain receipt, once it verifies exactly as activation requires. */
+async function receiptHash(tx: Tx, nodeId: string, nodeFqdn: string, epoch: number, barrierId: string, participant: (typeof PARTICIPANTS)[number]): Promise<string> {
+  const ack = await tx.resourceDrainParticipant.findUnique({ where: { nodeId_participant: { nodeId, participant } } });
+  if (!ack || ack.status !== 'verified' || ack.epoch !== epoch || ack.barrierId !== barrierId
+    || ack.challengeExpiresAt.getTime() <= Date.now() || !ack.receiptJson) fail();
+  let receipt: z.infer<typeof drainReceiptSchema> | z.infer<typeof apiDrainAttestationSchema>;
+  try { receipt = participant === 'api' ? apiDrainAttestationSchema.parse(JSON.parse(ack.receiptJson))
+    : drainReceiptSchema.parse(JSON.parse(ack.receiptJson)); } catch { fail(); }
+  const { signature, ...unsigned } = receipt;
+  if (participant === 'dashboard') await assertDashboardStillAbsent(tx, nodeId);
+  const key = participant === 'api' ? reconciliationSecret()
+    : participant === 'dashboard' ? dashboardReceiptKey() : RESULT_SIGNING_SECRET;
+  const payload = participant === 'api'
+    ? apiDrainAttestationSigningPayload(unsigned as Omit<z.infer<typeof apiDrainAttestationSchema>, 'signature'>)
+    : enrollmentSigningPayload(unsigned);
+  const expected = createHmac('sha256', key).update(payload).digest();
+  if (receipt.participant !== participant || receipt.nodeId !== nodeId || receipt.nodeFqdn !== nodeFqdn
+    || receipt.epoch !== epoch || receipt.barrierId !== barrierId
+    || receipt.challengeId !== ack.challengeId || receipt.expiresAt !== ack.challengeExpiresAt.getTime()
+    || receipt.status !== 'drained' || receipt.activeCount !== 0 || receipt.unknownCount !== 0
+    || receipt.evidenceSha256 !== ack.evidenceSha256 || !timingSafeEqual(expected, Buffer.from(signature, 'hex'))) fail();
+  return sha256(ack.receiptJson);
 }
 
 async function schedulerSnapshot(tx: Tx, nodeId: string): Promise<string> {
@@ -88,6 +91,48 @@ export async function inspectArdentScope(nodeId: string) {
       epoch: row?.epoch ?? 0, barrierId: row?.barrierId ?? null, schedulerSnapshotSha256: await schedulerSnapshot(tx, nodeId),
       scope: scope ? { state: 'active' as const, decisionId: scope.decisionId, evidenceSha256: scope.evidenceSha256,
         activatedAt: scope.activatedAt } : { state: 'pending' as const } };
+  });
+}
+
+/**
+ * What an operator signs into an activation, from the server's own verified records: the
+ * drain barrier, the digest of each participant's drain receipt and the scheduler snapshot.
+ * Reading it changes nothing. A receipt is listed only when it verifies exactly as
+ * activation will check it; receipts expire with their drain challenge, so read this just
+ * before signing. `ready` is false, with each reason, while activation would be refused.
+ */
+export async function ardentScopeActivationEvidence(nodeId: string) {
+  return getDb().$transaction(async tx => {
+    await lockResourceNode(tx, nodeId);
+    const { node, row } = await resourceNodeIdentity(tx, nodeId);
+    const existing = await tx.ardentScopeEnrollment.findUnique({ where: { nodeId } });
+    const blockers: string[] = [];
+    if (existing) blockers.push('the Ardent-only scope is already active');
+    const draining = row?.state === 'draining' && row.barrierId ? { epoch: row.epoch, barrierId: row.barrierId } : null;
+    if (!draining) blockers.push('the node is not draining for enrollment; begin the drain first');
+    const receipts = {} as Record<(typeof PARTICIPANTS)[number], { sha256: string | null; status: string; expiresAt: string | null }>;
+    for (const participant of PARTICIPANTS) {
+      const ack = await tx.resourceDrainParticipant.findUnique({ where: { nodeId_participant: { nodeId, participant } },
+        select: { status: true, challengeExpiresAt: true } });
+      let digest: string | null = null;
+      if (draining) {
+        try { digest = await receiptHash(tx, nodeId, node.hostname, draining.epoch, draining.barrierId, participant); }
+        catch (error: unknown) { if (!(error instanceof HttpError)) throw error; }
+      }
+      if (draining && !digest) blockers.push(`the ${participant} drain receipt is missing, expired or does not verify; refresh that participant`);
+      receipts[participant] = { sha256: digest, status: ack?.status ?? 'missing', expiresAt: ack?.challengeExpiresAt.toISOString() ?? null };
+    }
+    const [leases, work] = await Promise.all([
+      tx.commandResourceLease.count({ where: { nodeId, state: { in: HELD } } }),
+      tx.resourceParticipantWork.count({ where: { nodeId, participant: { in: [...PARTICIPANTS] }, state: { in: HELD } } }),
+    ]);
+    if (leases) blockers.push(`${leases} command owner(s) on the node are unsettled`);
+    if (work) blockers.push(`${work} participant work item(s) on the node are unsettled`);
+    const complete = PARTICIPANTS.every(participant => receipts[participant].sha256);
+    return { nodeId, nodeFqdn: node.hostname, scope: existing ? 'active' as const : 'pending' as const,
+      epoch: draining?.epoch ?? null, barrierId: draining?.barrierId ?? null, schedulerSnapshotSha256: await schedulerSnapshot(tx, nodeId),
+      receiptSha256: complete ? { agent: receipts.agent.sha256!, api: receipts.api.sha256!, dashboard: receipts.dashboard.sha256! } : null,
+      receipts, ready: blockers.length === 0, blockers };
   });
 }
 

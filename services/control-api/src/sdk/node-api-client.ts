@@ -216,6 +216,17 @@ async function settleFailedDispatch(admission: ResourceAdmission, actorId: strin
   Object.assign(error as object, { certainRefusal: { code, message } satisfies CertainRefusal });
 }
 
+/** The managed command a failed mutation owned, so a caller can name it when its outcome stays unknown. */
+export function managedCommandOf(error: unknown): string | undefined {
+  const value = (error as { managedCommandId?: unknown } | null)?.managedCommandId;
+  return typeof value === 'string' ? value : undefined;
+}
+function withManagedCommand(error: unknown, commandId: string): unknown {
+  if (error && typeof error === 'object' && !Object.isFrozen(error))
+    Object.defineProperty(error, 'managedCommandId', { value: commandId, enumerable: false, configurable: true });
+  return error;
+}
+
 /** Sort an upgradeAgent failure by whether the request can have reached the agent. */
 export function classifyAgentRequestError(error: unknown, dispatched: boolean): Error {
   const refused = certainRefusalOf(error);
@@ -255,14 +266,14 @@ export class NodeApiClient {
   private async mutateWithEvidence<T>(method: 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown,
     timeout = this.defaultTimeout, commandId?: string, skillPublication?: {
       skillName: string; version: string; bundleSha256: string;
-    }, requireManaged = false, dispatch?: { pingFirst?: boolean; onDispatch: () => void }): Promise<{ response: T; evidence?: ManagedMutationEvidence }> {
+    }, requireManaged = false, dispatch?: { pingFirst?: boolean; onDispatch: () => void }, label?: string): Promise<{ response: T; evidence?: ManagedMutationEvidence }> {
     if (!this.resourceContext) throw new Error('Managed mutation requires canonical resource node identity');
     const serialized = body === undefined ? '' : JSON.stringify(body);
     const nativePath = '/' + path; const requestedTimeoutSeconds = Math.ceil(timeout / 1000);
     const timeoutSeconds = Math.min(3600, requestedTimeoutSeconds);
     const descriptor = nativeCompletionDescriptor(method, nativePath);
     const identity = httpIdentity(commandId ?? 'native-' + randomUUID(), method, nativePath, serialized, timeoutSeconds);
-    const admission = await admitResourceCommand(this.resourceContext, identity);
+    const admission = await admitResourceCommand(label ? { ...this.resourceContext, label } : this.resourceContext, identity);
     if (!admission && requireManaged) throw new Error('This operation requires enrolled managed admission; direct node mutation is forbidden');
     if (!admission) {
       if (dispatch?.pingFirst) await this.api.get('ping', { timeout: 10_000, retry: 0 });
@@ -307,7 +318,10 @@ export class NodeApiClient {
           payload: commandResultSigningPayload(receipt), signature: receipt.signature,
         })).digest('hex'),
         acknowledgedAt: new Date() } };
-    } catch (error) { await settleFailedDispatch(admission, this.resourceContext.actorId, error); throw error; }
+    } catch (error) {
+      await settleFailedDispatch(admission, this.resourceContext.actorId, error);
+      throw withManagedCommand(error, admission.commandId);
+    }
   }
 
   private async mutate<T>(method: 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown, timeout = this.defaultTimeout): Promise<T> {
@@ -774,17 +788,23 @@ export class NodeApiClient {
     });
   }
 
-  /** Whether the agent reports the Ardent Studio bridge (sessions, task streams, streamed artifacts). */
-  async ardentStudioCapable(): Promise<boolean> {
-    const reply = await this.api.get('ping', { timeout: 5000, retry: 0 }).json<ApiResponse<{ features?: { studio?: number } }>>();
-    return reply.success === true && reply.data?.features?.studio === 1;
+  /**
+   * The agent's Ardent Studio bridge level from its ping features: 0 without the
+   * bridge, 1 for sessions, task streams and streamed artifacts, 2 for missions,
+   * pause and resume, previews, development history and artifact manifests.
+   */
+  async ardentStudioLevel(): Promise<number> {
+    const reply = await this.api.get('ping', { timeout: 5000, retry: 0 }).json<ApiResponse<{ features?: { studio?: unknown } }>>();
+    const level = reply.success === true ? reply.data?.features?.studio : undefined;
+    return typeof level === 'number' && Number.isSafeInteger(level) && level > 0 ? level : 0;
   }
 
   async performArdentAction<T>(profile: string, action: string, target?: string, body?: unknown): Promise<T> {
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(profile) || !/^[a-z-]{1,32}$/.test(action)
       || (target !== undefined && !/^[A-Za-z0-9_-]{1,128}$/.test(target))) throw new Error('Invalid Ardent action target');
-    const timeout = action === 'package-install' ? 600_000 : action.startsWith('service-') ? 115_000 : 45_000;
-    return this.mutate('POST', 'ardent/action', { profile, action, ...(target ? { target } : {}), body: body ?? {} }, timeout);
+    const timeout = action === 'package-install' ? 600_000 : action.startsWith('service-') || action === 'skill-install' ? 115_000 : 45_000;
+    return (await this.mutateWithEvidence<T>('POST', 'ardent/action', { profile, action, ...(target ? { target } : {}), body: body ?? {} }, timeout,
+      undefined, undefined, false, undefined, `ardent:${profile}:${action}`)).response;
   }
 
   async getArdentContextRelease(profile: string): Promise<unknown> {
@@ -801,7 +821,7 @@ export class NodeApiClient {
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(profile) || !['context-stage', 'context-adopt', 'context-rollback'].includes(action))
       throw new Error('Invalid context adoption action');
     const input = ArdentContextAdoptionInputSchema.parse(body);
-    const result = await this.mutateWithEvidence<T>('POST', 'ardent/action', { profile, action, body: input }, 850000, undefined, undefined, true);
+    const result = await this.mutateWithEvidence<T>('POST', 'ardent/action', { profile, action, body: input }, 850000, undefined, undefined, true, undefined, `ardent:${profile}:${action}`);
     if (!result.evidence) throw new Error('Context adoption requires a signed managed mutation receipt');
     return { response: result.response, evidence: result.evidence };
   }

@@ -11,7 +11,7 @@ moved without updating it.
 | Class | Meaning | Rows | At the ingress |
 |---|---|---|---|
 | `browser` | A person's console drives it with a user token | 144 | Allow the exact method and path |
-| `machine` | Agents, services and integrations, with their own credentials | 73 | Deny |
+| `machine` | Agents, services and integrations, with their own credentials | 74 | Deny |
 | `exclude` | Reachable with a user token, but no console needs it, or it was written for a server-side caller | 142 | Deny until a feature needs it and it is reviewed |
 | `retired` | Always answers 404 or 410 | 64 | Deny |
 
@@ -51,7 +51,12 @@ this exact mapping, with no prefix rule: `GET /api/magnus/docs/openapi.json` to
 
 Rate limits key on the verified Oathweave subject, so browsers behind one ingress do not share a
 bucket. Each subject still has one budget per prefix: `/hermes/*` allows 20 requests a minute and
-`/orchestra/*` allows 30, so poll those installation reads sparingly.
+`/orchestra/*` allows 30, so poll those installation reads sparingly. `/ardent/*` has two budgets in
+separate buckets: reads (`GET` and `HEAD`, streams included) allow 600 a minute, and actions (every
+other method) allow 60. A linked Ardent service identity gets 3,000 reads and 1,200 actions.
+
+A `429` carries `Retry-After`: the seconds until a request would be accepted again. Refused requests
+count against the window, so wait that long before retrying instead of retrying sooner.
 
 ## Authentication
 
@@ -97,17 +102,47 @@ link, and a service token never matches a person's link. The audit actor is `ser
 
 A service may read `GET /api/v1/ardent/profiles`, `/installations`, `/installations/:nodeId`, the profile
 resources `status`, `profile`, `skills`, `memory/status`, `sessions`, `sessions/:id/messages`, `tasks`,
-`tasks/:id`, `tasks/:id/events`, `identity/soul` and `identity/identity`, task streams, artifacts and
-agent operations. Of the profile actions it may run `session-open`, `task-submit` and `task-cancel`.
-Everything else answers 403. `packages/contracts/src/ardent-service.ts` publishes these shapes.
+`tasks/:id`, `tasks/:id/events`, `tasks/:id/artifacts`, `artifacts/:sha256/manifest`, `development`,
+`identity/soul` and `identity/identity`, task streams, artifacts and agent operations, and, for an acting
+ADMIN, `config`. Of the profile actions it may run `session-open`, `task-submit`, `task-cancel`,
+`mission-submit`, `task-pause`, `task-resume`, `preview-submit` and `development-note`, and, for an
+acting ADMIN, `identity-save`, `skill-set`, `config-save` and `skill-install`. Everything else answers 403.
+`packages/contracts/src/ardent-service.ts` publishes these shapes.
 
 The service names the person it acts for in `x-acting-subject`, their Oathweave subject. That subject
 must have exactly one person link on the service's issuer; the audit then names that person and
 records the service, client and subject in its details. `POST /api/v1/ardent/agents`,
 `POST /api/v1/ardent/agents/operations/:id/resume` and `POST …/profiles/:name/hivemem` need it, and
-need that link's role to be `ADMIN`; otherwise they answer 403 `ACTING_ADMIN_REQUIRED`. An unlinked
-subject answers 403 `ACTING_SUBJECT_UNLINKED`. The ingress must forward `x-acting-subject` only from
+need that link's role to be `ADMIN`; otherwise they answer 403 `ACTING_ADMIN_REQUIRED`. The
+`preview-submit` and `development-note` actions need a linked subject of any role, or answer 403
+`ACTING_SUBJECT_REQUIRED`. An unlinked subject answers 403 `ACTING_SUBJECT_UNLINKED`. The ingress must forward `x-acting-subject` only from
 that service, never from a browser.
+
+Agent changes follow the rule New Agent uses: `identity-save`, `skill-set`, `config-save` and
+`skill-install` (install a HiveSkills catalog release, [Ardent](ARDENT.md#hiveskills-skill-install)) need
+`x-acting-subject` naming a linked `ADMIN`, or answer 403 `ACTING_ADMIN_REQUIRED` (403
+`ACTING_SUBJECT_UNLINKED` for an unlinked subject). Reading `config` needs the same, because a person
+reads it only as an ADMIN. It answers `{revision, text}`, exactly the text a person sees; Ardent keeps
+secrets out of `config.yaml`, which names them only as environment variables or `${NAME}` references.
+Identity reads need no acting person and carry their own `revision`.
+
+A service's `config-save` may change only these values; any other difference from the current
+configuration answers 403 `CONFIG_PATH_FORBIDDEN` and lists the paths:
+
+| Path | |
+|---|---|
+| `execution.backend` | `llamacpp` or `codex` |
+| `providers.llamacpp.model`, `request_timeout_seconds`, `context_window_tokens`, `max_output_tokens`, `reasoning_effort` | model settings |
+| `providers.codex.model` | Codex model |
+| `skills.enabled` | the whole list |
+| `artifacts.max_bytes` | artifact size limit |
+
+Provider URLs, credentials and their environment names, the Codex command and auth mode, memory,
+channels, peers, plugins and the API and A2A listeners stay with ADMIN people. Magnus compares parsed
+values, so comments and formatting do not count. The edit's `revision` must still be current, or it
+answers 409 `CONFLICT`; Ardent's own 409 for a stale identity or skill revision also comes back as 409
+`CONFLICT`. The audit names the acting person, the service and the changed paths, never the text.
+`ARDENT_SERVICE_CONFIG_PATHS` and `ARDENT_SERVICE_ADMIN_ACTIONS` publish these lists.
 
 `GET /api/v1/console/session` replaces the dashboard's environment checks and build-time values:
 
@@ -411,6 +446,7 @@ Each row is a non-browser route that a broader `browser` pattern also matches. D
 | POST | `/api/v1/resource-leases/enrollment/:nodeId/api-attest` | machine | `user:ADMIN` | Resource-lease enrollment, machine-only by instruction. |
 | GET | `/api/v1/resource-leases/enrollment/:nodeId/ardent-scope` | machine | `user:ADMIN\|OPERATOR` | Resource-lease enrollment, machine-only by instruction. |
 | POST | `/api/v1/resource-leases/enrollment/:nodeId/ardent-scope/activate` | machine | `user:ADMIN` | Resource-lease enrollment, machine-only by instruction. |
+| GET | `/api/v1/resource-leases/enrollment/:nodeId/ardent-scope/evidence` | machine | `user:ADMIN` | Resource-lease enrollment, machine-only by instruction. |
 | POST | `/api/v1/resource-leases/enrollment/:nodeId/begin` | machine | `user:ADMIN` | Resource-lease enrollment, machine-only by instruction. |
 | POST | `/api/v1/resource-leases/enrollment/:nodeId/complete` | machine | `user:ADMIN` | Resource-lease enrollment, machine-only by instruction. |
 | POST | `/api/v1/resource-leases/enrollment/:nodeId/refresh` | machine | `user:ADMIN` | Resource-lease enrollment, machine-only by instruction. |

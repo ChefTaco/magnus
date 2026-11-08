@@ -4,7 +4,9 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { ardentArtifactMaxBytes, ardentPackageNames, ardentUserUnit, createArdentRoutes, hermesTrafficConsumersDisabled, readArdentState, relayBody, verifiedInstalledArdentPackage, writeProfileCredential } from './ardent-manager.js';
+import { execFile } from 'node:child_process';
+import { gzipSync } from 'node:zlib';
+import { ardentArtifactMaxBytes, ardentPackageNames, ardentUserUnit, createArdentRoutes, hermesTrafficConsumersDisabled, installSkill, ownerCommand, readArdentState, relayBody, SkillInstallRefused, verifiedInstalledArdentPackage, writeProfileCredential } from './ardent-manager.js';
 
 const dirs: string[] = [];
 const servers: Server[] = [];
@@ -37,6 +39,14 @@ describe('node-local Ardent inventory and management boundary', () => {
     expect(await verifiedInstalledArdentPackage(install, { ...staged, sha256: digest('other-package') })).toBe(false);
     await writeFile(join(packageRoot, 'dist/cli.js'), 'export const release = 2;\n');
     expect(await verifiedInstalledArdentPackage(install, staged)).toBe(false);
+  });
+  it('runs owner commands in the owner home, not the root-only agent directory', () => {
+    const root = { owner: 'ardent', home: '/var/lib/ardent', root: '/var/lib/ardent/.ardent', install: '/var/lib/ardent/.local/share/ardent' };
+    const command = ownerCommand(root, 1001, ['/usr/bin/node', '-e', 'process.exit(0)'], 10_000);
+    expect(command.file).toBe('/usr/sbin/runuser');
+    expect(command.args.slice(0, 6)).toEqual(['-u', 'ardent', '--', '/usr/bin/env', 'XDG_RUNTIME_DIR=/run/user/1001', 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1001/bus']);
+    expect(command.args.slice(6)).toEqual(['/usr/bin/node', '-e', 'process.exit(0)']);
+    expect(command.options).toMatchObject({ cwd: '/var/lib/ardent', timeout: 10_000, maxBuffer: 32 * 1024 });
   });
   it('permits restart beside Hermes only when all Hermes traffic consumers are explicitly disabled', async () => {
     const home = await mkdtemp(join(tmpdir(), 'magnus-ardent-handover-'));
@@ -80,6 +90,31 @@ describe('node-local Ardent inventory and management boundary', () => {
     } finally {
       if (previous === undefined) delete process.env['ARDENT_STAGED_PACKAGE']; else process.env['ARDENT_STAGED_PACKAGE'] = previous;
     }
+  });
+  it('recognizes profiles that ardent init creates and refuses another product on the port', async () => {
+    let product = 'Ardent';
+    const server = createServer((request, response) => {
+      response.setHeader('Content-Type', 'application/json');
+      if (request.url === '/api/v1/profile' && request.headers.authorization === 'Bearer private-fixture-token') response.end(JSON.stringify({ profile: 'example', name: 'example', product }));
+      else response.writeHead(404).end('{}');
+    });
+    servers.push(server);
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Fixture listener absent');
+    const home = await mkdtemp(join(tmpdir(), 'magnus-ardent-product-'));
+    dirs.push(home);
+    const profile = join(home, '.ardent/profiles/example');
+    await mkdir(profile, { recursive: true });
+    await writeFile(join(profile, 'config.yaml'), `schema_version: 1\nprofile: example\nname: Example\nexecution:\n  backend: llamacpp\napi:\n  host: 127.0.0.1\n  port: ${address.port}\n  token_env: ARDENT_API_TOKEN\na2a:\n  enabled: false\n`);
+    await writeFile(join(profile, '.env'), 'ARDENT_API_TOKEN=private-fixture-token\n', { mode: 0o600 });
+    const target = { owner: 'fixture', home, root: join(home, '.ardent'), install: join(home, '.local/share/ardent') };
+    const running = async () => ((await readArdentState(target)) as { profiles: { running: boolean }[] }).profiles[0]?.running;
+    expect(await running()).toBe(true);
+    product = 'Magnus Ardent';
+    expect(await running()).toBe(true);
+    product = 'Another Service';
+    expect(await running()).toBe(false);
   });
   it('proves profile identity with its private token and proxies only bounded reads', async () => {
     const requests: string[] = [];
@@ -246,15 +281,42 @@ describe('Ardent Studio bridge', () => {
     await writeFile(join(profile, 'config.yaml'), `schema_version: 1\nprofile: example\nname: Example\nexecution:\n  backend: llamacpp\napi:\n  host: 127.0.0.1\n  port: ${address.port}\n  token_env: ARDENT_API_TOKEN\na2a:\n  enabled: false\n`);
     await writeFile(join(profile, '.env'), 'ARDENT_API_TOKEN=private-fixture-token\n', { mode: 0o600 });
     const target = { owner: 'fixture', home, root, install: join(home, '.local/share/ardent') };
-    return { routes: createArdentRoutes(async () => target), requests };
+    return { routes: createArdentRoutes(async () => target), requests, target, profile };
   }
   const action = (body: unknown) => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+
+  it('answers a finished action failure as settled and keeps an unanswered request uncertain', async () => {
+    const { routes } = await fixtureProfile((request, response) => {
+      if (request.url === '/api/v1/sessions') { response.writeHead(500, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: 'database is locked' })); return; }
+      // The request reached Ardent, which closed the connection without an answer.
+      if (request.url === '/api/v1/memory/search') { request.socket.destroy(); return; }
+      response.writeHead(404).end('{}');
+    });
+    const failed = await routes.request('/action', action({ profile: 'example', action: 'session-open', body: { key: 'studio:p1' } }));
+    // A 4xx is signed as a completed operation by the managed boundary, so the command owner settles.
+    expect(failed.status).toBe(424);
+    expect(await failed.json()).toEqual({ success: false, error: { code: 'ARDENT_ACTION_FAILED', message: 'Ardent answered session-open with HTTP 500: database is locked' } });
+    const lost = await routes.request('/action', action({ profile: 'example', action: 'memory-search', body: { query: 'notes' } }));
+    expect(lost.status).toBe(503);
+    expect(await lost.json()).toEqual({ error: 'Ardent did not answer the memory-search request completely' });
+    // A failure the handler finished with (here: not running as root) settles too.
+    const service = await routes.request('/action', action({ profile: 'example', action: 'service-start' }));
+    expect(service.status).toBe(process.getuid?.() === 0 ? service.status : 422);
+    if (process.getuid?.() !== 0) expect(await service.json()).toEqual({ success: false, error: { code: 'ARDENT_ACTION_FAILED', message: 'Ardent service management requires a root node manager' } });
+  });
+
+  it('keeps context adoption failures uncertain for its own journal', async () => {
+    const { routes } = await fixtureProfile((_request, response) => { response.writeHead(404).end('{}'); });
+    const body = { profile: 'example', action: 'context-stage', body: {} };
+    // Without a managed claim the step is refused before it starts, which is still answered as before.
+    expect((await routes.request('/action', action(body))).status).toBe(409);
+  });
 
   it('reports the studio capability with its inventory', async () => {
     const home = await mkdtemp(join(tmpdir(), 'magnus-ardent-capability-'));
     dirs.push(home);
     const state = await readArdentState({ owner: 'fixture', home, root: join(home, '.ardent'), install: join(home, 'install') }) as { capabilities?: { studio?: number } };
-    expect(state.capabilities).toEqual({ studio: 1 });
+    expect(state.capabilities).toEqual({ studio: 3 });
   });
 
   it('opens sessions and submits session-bound tasks with bounded input', async () => {
@@ -339,6 +401,223 @@ describe('Ardent Studio bridge', () => {
       if (previous === undefined) delete process.env['MAGNUS_AGENT_ARDENT_ARTIFACT_MAX_BYTES']; else process.env['MAGNUS_AGENT_ARDENT_ARTIFACT_MAX_BYTES'] = previous;
     }
   });
+
+  const mission = { id: 'project-1:brief', revision: 1, parent_task: null, constraints: [], allowed_actions: ['analyze', 'create_artifact'],
+    resources: ['tool:artifact_write', 'project:p1'], deadline: 4_102_444_800, acceptance_criteria: ['A brief exists'], expected_artifacts: ['brief.md'] };
+  const missionBody = { session_id: taskId, objective: 'Write the brief', mission, context_items: [{ title: 'Notes', text: 'Fixture context' }],
+    labels: { 'studio.project': 'p1' }, idempotency_key: 'mission:project-1:brief:1' };
+
+  it('asks Ardent to reload the HiveMem credential and passes an older Ardent\'s 404 through', async () => {
+    let supported = true;
+    const { routes, requests } = await fixtureProfile((request, response) => {
+      response.setHeader('Content-Type', 'application/json');
+      if (supported && request.method === 'POST' && request.url === '/api/v1/memory/credential/reload') response.end(JSON.stringify({ reloaded: true, token_env: 'ARDENT_HIVEMEM_TOKEN', changed: true }));
+      else response.writeHead(404).end(JSON.stringify({ error: 'Not found' }));
+    });
+    const reloaded = await routes.request('/action', action({ profile: 'example', action: 'hivemem-credential-reload' }));
+    expect(reloaded.status).toBe(200);
+    expect(await reloaded.json()).toEqual({ reloaded: true, token_env: 'ARDENT_HIVEMEM_TOKEN', changed: true });
+    expect(requests.find(item => item.url === '/api/v1/memory/credential/reload')?.body).toBe('{}');
+    // The token never travels with the request; a body is refused.
+    expect((await routes.request('/action', action({ profile: 'example', action: 'hivemem-credential-reload', body: { token: 'a.b.c' } }))).status).toBe(400);
+    supported = false;
+    expect((await routes.request('/action', action({ profile: 'example', action: 'hivemem-credential-reload' }))).status).toBe(404);
+  });
+
+  it('submits missions and previews, pauses and resumes tasks and records development notes', async () => {
+    const { routes, requests } = await fixtureProfile((request, response) => {
+      response.setHeader('Content-Type', 'application/json');
+      if (request.url === '/api/v1/sessions') response.end(JSON.stringify({ id: taskId, caller: 'management', context: 'mission', key: 'studio:p1', created_ms: 1, updated_ms: 1 }));
+      else if (request.url === '/api/v1/missions' || request.url === '/api/v1/preview/tasks') response.writeHead(202).end(JSON.stringify({ task_id: taskId, state: 'queued' }));
+      else if (request.url === `/api/v1/tasks/${taskId}/pause`) response.end(JSON.stringify({ task_id: taskId, state: 'running', admission: 'paused' }));
+      else if (request.url === `/api/v1/tasks/${taskId}/resume`) response.writeHead(409).end(JSON.stringify({ error: { code: 'CONFLICT', message: 'Task already finished' } }));
+      else if (request.url === '/api/v1/development') response.writeHead(201).end(JSON.stringify({ id: 'dev_1' }));
+      else response.writeHead(404).end('{}');
+    });
+    const run = async (body: unknown) => routes.request('/action', action({ profile: 'example', ...body as object }));
+    expect((await run({ action: 'session-open', body: { key: 'studio:p1', context: 'mission' } })).status).toBe(200);
+    expect((await run({ action: 'session-open', body: { key: 'studio:p1', context: 'peer' } })).status).toBe(400);
+    // Ardent answers 202; the agent settles the admission as 200 like task-submit.
+    const submitted = await run({ action: 'mission-submit', body: missionBody });
+    expect(submitted.status).toBe(200);
+    expect(await submitted.json()).toEqual({ task_id: taskId, state: 'queued' });
+    expect((await run({ action: 'preview-submit', body: { prompt: 'Say hello', overrides: { soul: '# Soul', model: 'fixture-model' } } })).status).toBe(200);
+    const paused = await run({ action: 'task-pause', target: taskId });
+    expect(paused.status).toBe(200);
+    expect(await paused.json()).toEqual({ task_id: taskId, state: 'running', admission: 'paused' });
+    // A finished task's 409 reaches the caller unchanged.
+    expect((await run({ action: 'task-resume', target: taskId })).status).toBe(409);
+    expect((await run({ action: 'development-note', body: { kind: 'operator_note', title: 'Tone', body: 'Shorter answers', author: 'operator' } })).status).toBe(201);
+    expect(requests.filter(item => item.url !== '/api/v1/profile').map(item => [item.method, item.url])).toEqual([
+      ['POST', '/api/v1/sessions'], ['POST', '/api/v1/missions'], ['POST', '/api/v1/preview/tasks'],
+      ['POST', `/api/v1/tasks/${taskId}/pause`], ['POST', `/api/v1/tasks/${taskId}/resume`], ['POST', '/api/v1/development'],
+    ]);
+    expect(JSON.parse(requests.find(item => item.url === '/api/v1/missions')!.body)).toEqual(missionBody);
+    expect(JSON.parse(requests.find(item => item.url === '/api/v1/sessions')!.body)).toEqual({ key: 'studio:p1', context: 'mission' });
+  });
+
+  it('refuses malformed or oversized mission, preview, pause and note requests before Ardent sees them', async () => {
+    const { routes, requests } = await fixtureProfile((_request, response) => { response.writeHead(500).end('{}'); });
+    const run = async (body: unknown) => (await routes.request('/action', action({ profile: 'example', ...body as object }))).status;
+    expect(await run({ action: 'mission-submit', body: { ...missionBody, extra: true } })).toBe(400);
+    expect(await run({ action: 'mission-submit', body: { ...missionBody, mission: { ...mission, allowed_actions: [] } } })).toBe(400);
+    expect(await run({ action: 'mission-submit', body: { ...missionBody, objective: 'x'.repeat(16_001) } })).toBe(400);
+    expect(await run({ action: 'mission-submit', body: { ...missionBody, context_items: [{ title: 'Big', text: 'x'.repeat(64 * 1024) }] } })).toBe(400);
+    expect(await run({ action: 'mission-submit', body: { ...missionBody, idempotency_key: undefined } })).toBe(400);
+    expect(await run({ action: 'preview-submit', body: { prompt: 'Hi', overrides: { temperature: 1 } } })).toBe(400);
+    expect(await run({ action: 'task-pause' })).toBe(400);
+    expect(await run({ action: 'task-pause', target: taskId, body: { now: true } })).toBe(400);
+    expect(await run({ action: 'task-resume', target: '../config' })).toBe(400);
+    expect(await run({ action: 'development-note', body: { kind: 'Bad Kind', title: 'x', body: 'y' } })).toBe(400);
+    expect(await run({ action: 'development-note', body: { kind: 'note', title: 'x', body: 'y', author: 'runtime' } })).toBe(400);
+    // A preview may carry a full soul and identity, which is more than the 200 KB other actions get.
+    const soul = 'x'.repeat(131_072);
+    // It reaches Ardent, whose server error comes back as a settled failure.
+    expect(await run({ action: 'preview-submit', body: { prompt: 'Hi', overrides: { soul, identity: soul } } })).toBe(424);
+    expect(requests.filter(item => item.url !== '/api/v1/profile').map(item => item.url)).toEqual(['/api/v1/preview/tasks']);
+  });
+
+  it('reads artifact manifests and development history with checked query parameters', async () => {
+    const sha = 'd'.repeat(64);
+    const { routes, requests } = await fixtureProfile((request, response) => {
+      response.setHeader('Content-Type', 'application/json');
+      if (request.url === `/api/v1/tasks/${taskId}/artifacts`) response.end(JSON.stringify({ artifacts: [] }));
+      else if (request.url === `/api/v1/artifacts/${sha}/manifest`) response.end(JSON.stringify({ task_id: taskId, superseded_by_sha256: null, manifest: { sha256: sha } }));
+      else if (request.url?.startsWith('/api/v1/development')) response.end(JSON.stringify({ records: [], next: null }));
+      else if (request.url?.startsWith('/api/v1/sessions')) response.end(JSON.stringify({ sessions: [] }));
+      else response.writeHead(404).end('{}');
+    });
+    expect(await (await routes.request(`/profiles/example/api/tasks/${taskId}/artifacts`)).json()).toEqual({ artifacts: [] });
+    const manifest = await routes.request(`/profiles/example/api/artifacts/${sha}/manifest`);
+    // A manifest is JSON, read like any resource, not relayed as artifact bytes.
+    expect(manifest.headers.get('content-type')).toContain('application/json');
+    expect(await manifest.json()).toMatchObject({ manifest: { sha256: sha } });
+    expect((await routes.request('/profiles/example/api/development?after=eyJhIjoxfQ&limit=20&kind=skill_change&ignored=1')).status).toBe(200);
+    expect((await routes.request('/profiles/example/api/sessions?context=mission')).status).toBe(200);
+    expect((await routes.request('/profiles/example/api/development?kind=Bad')).status).toBe(400);
+    expect((await routes.request('/profiles/example/api/sessions?context=peer')).status).toBe(400);
+    expect((await routes.request(`/profiles/example/api/artifacts/${sha}/raw`)).status).toBe(404);
+    expect(requests.filter(item => item.url !== '/api/v1/profile').map(item => item.url)).toEqual([
+      `/api/v1/tasks/${taskId}/artifacts`, `/api/v1/artifacts/${sha}/manifest`,
+      '/api/v1/development?after=eyJhIjoxfQ&limit=20&kind=skill_change', '/api/v1/sessions?context=mission',
+    ]);
+  });
+});
+
+describe('HiveSkills skill installation', () => {
+  const revision = 'b'.repeat(64);
+  const saved = 'c'.repeat(64);
+  /** A ustar archive of [name, contents | null for a directory] entries, gzip-compressed like a HiveSkills release. */
+  function archive(entries: Array<[string, string | null]>): Buffer {
+    const blocks: Buffer[] = [];
+    for (const [name, contents] of entries) {
+      const body = Buffer.from(contents ?? '');
+      const header = Buffer.alloc(512);
+      header.write(name, 0, 100);
+      header.write('0000644\0', 100); header.write('0000000\0', 108); header.write('0000000\0', 116);
+      header.write(body.length.toString(8).padStart(11, '0') + '\0', 124);
+      header.write('00000000000\0', 136);
+      header.write('        ', 148);
+      header.write(contents === null ? '5' : '0', 156);
+      header.write('ustar\0', 257); header.write('00', 263);
+      let sum = 0;
+      for (const byte of header) sum += byte;
+      header.write(sum.toString(8).padStart(6, '0') + '\0 ', 148);
+      blocks.push(header, body, Buffer.alloc((512 - (body.length % 512)) % 512));
+    }
+    blocks.push(Buffer.alloc(1024));
+    return gzipSync(Buffer.concat(blocks));
+  }
+  const skillMd = (version: string) => `---\nname: web-research\ndescription: Search the web carefully.\n---\n\n# Web research ${version}\n`;
+  const release = (bytes: Buffer, extra: Record<string, unknown> = {}) => ({ source: 'hiveskills', name: 'web-research', version: '1.0.0',
+    sha256: createHash('sha256').update(bytes).digest('hex'), archive_base64: bytes.toString('base64'), ...extra });
+  /** Runs the owner script as the test user, the way runuser runs it as the Ardent owner. */
+  const asTestUser = (_root: unknown, args: string[], timeout: number, input: Buffer) => new Promise<string>((resolve, reject) => {
+    const child = execFile(process.execPath, args.slice(1), { timeout }, (error, stdout) => error ? reject(new Error(`Ardent owner command failed: ${error.code ?? 'unknown'}`)) : resolve(stdout));
+    child.stdin?.end(input);
+  });
+  async function fixture(answer: (body: string) => [number, unknown]) {
+    const puts: Array<{ url: string; body: string }> = [];
+    const server = createServer((request, response) => {
+      let body = '';
+      request.on('data', chunk => { body += String(chunk); });
+      request.on('end', () => {
+        if (request.headers.authorization !== 'Bearer private-fixture-token') { response.writeHead(401).end('{}'); return; }
+        response.setHeader('Content-Type', 'application/json');
+        if (request.url === '/api/v1/profile') { response.end(JSON.stringify({ profile: 'example', product: 'Ardent' })); return; }
+        puts.push({ url: request.url ?? '', body });
+        const [status, reply] = answer(body);
+        response.writeHead(status).end(JSON.stringify(reply));
+      });
+    });
+    servers.push(server);
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Fixture listener absent');
+    const home = await mkdtemp(join(tmpdir(), 'magnus-ardent-skill-'));
+    dirs.push(home);
+    const root = join(home, '.ardent');
+    const profile = join(root, 'profiles/example');
+    await mkdir(profile, { recursive: true });
+    await writeFile(join(profile, 'config.yaml'), `schema_version: 1\nprofile: example\nname: Example\nexecution:\n  backend: llamacpp\napi:\n  host: 127.0.0.1\n  port: ${address.port}\n  token_env: ARDENT_API_TOKEN\na2a:\n  enabled: false\nskills:\n  directories: [skills]\n  enabled: []\n`);
+    await writeFile(join(profile, '.env'), 'ARDENT_API_TOKEN=private-fixture-token\n', { mode: 0o600 });
+    const target = { owner: 'fixture', home, root, install: join(home, 'install') };
+    return { target, profile, puts, routes: createArdentRoutes(async () => target) };
+  }
+
+  it('installs a verified release as the owner, writes its receipt and enables it with the revision', async () => {
+    const { readFile, readdir } = await import('node:fs/promises');
+    const { target, profile, puts } = await fixture(() => [200, { revision: saved, activation_required: true }]);
+    const bytes = archive([['SKILL.md', skillMd('1')], ['references', null], ['references/tools.md', '# Tools\n']]);
+    const result = await installSkill(target, 'example', release(bytes, { enable: true, revision }), asTestUser);
+    expect(result).toEqual({ source: 'hiveskills', name: 'web-research', version: '1.0.0', sha256: createHash('sha256').update(bytes).digest('hex'),
+      files: 2, changed: true, enabled: true, revision: saved, enable_error: null, activation_required: true });
+    expect(puts).toEqual([{ url: '/api/v1/skills/web-research', body: JSON.stringify({ enabled: true, revision }) }]);
+    const skill = join(profile, 'skills/web-research');
+    expect(await readFile(join(skill, 'SKILL.md'), 'utf8')).toBe(skillMd('1'));
+    expect(await readFile(join(skill, 'references/tools.md'), 'utf8')).toBe('# Tools\n');
+    expect(JSON.parse(await readFile(join(skill, '.hiveskills.json'), 'utf8'))).toMatchObject({ schema_version: 1, source: 'hiveskills', version: '1.0.0', sha256: result.sha256 });
+    // Staging and previous copies are hidden from Ardent and removed.
+    expect(await readdir(join(profile, 'skills'))).toEqual(['web-research']);
+    // The same release again changes nothing.
+    const again = await installSkill(target, 'example', release(bytes), asTestUser);
+    expect(again).toMatchObject({ changed: false, enabled: false, revision: null, activation_required: false });
+  });
+
+  it('replaces a skill Magnus installed with a newer release and keeps it installed when enabling fails', async () => {
+    const { readFile, access } = await import('node:fs/promises');
+    const { target, profile } = await fixture(() => [409, { error: 'Configuration revision conflict' }]);
+    await installSkill(target, 'example', release(archive([['SKILL.md', skillMd('1')], ['old.md', 'old']])), asTestUser);
+    const next = archive([['SKILL.md', skillMd('2')]]);
+    const result = await installSkill(target, 'example', release(next, { version: '2.0.0', enable: true, revision }), asTestUser);
+    expect(result).toMatchObject({ version: '2.0.0', changed: true, enabled: false, revision: null, activation_required: true,
+      enable_error: 'The Ardent configuration changed since it was read; enable the skill from the list' });
+    expect(await readFile(join(profile, 'skills/web-research/SKILL.md'), 'utf8')).toBe(skillMd('2'));
+    await expect(access(join(profile, 'skills/web-research/old.md'))).rejects.toThrow();
+  });
+
+  it('never replaces a local skill and checks the archive before anything is written', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const { target, profile, routes } = await fixture(() => [500, {}]);
+    await mkdir(join(profile, 'skills/web-research'), { recursive: true });
+    await writeFile(join(profile, 'skills/web-research/SKILL.md'), '---\nname: web-research\ndescription: Mine.\n---\n');
+    const bytes = archive([['SKILL.md', skillMd('1')]]);
+    await expect(installSkill(target, 'example', release(bytes), asTestUser)).rejects.toThrow(SkillInstallRefused);
+    expect(await readFile(join(profile, 'skills/web-research/SKILL.md'), 'utf8')).toContain('Mine.');
+    const send = (body: unknown) => routes.request('/action', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    const tampered = await send({ profile: 'example', action: 'skill-install', body: { ...release(bytes), sha256: 'a'.repeat(64) } });
+    expect(tampered.status).toBe(400);
+    expect(await tampered.json()).toEqual({ success: false, error: { code: 'SKILL_ARCHIVE_INVALID', message: 'Skill archive digest differs from the catalog release' } });
+    const unsafe = archive([['SKILL.md', skillMd('1')], ['../escape.md', 'x']]);
+    expect(await (await send({ profile: 'example', action: 'skill-install', body: release(unsafe) })).json()).toMatchObject({ error: { code: 'SKILL_ARCHIVE_INVALID' } });
+    const renamed = archive([['SKILL.md', skillMd('1').replace('name: web-research', 'name: other')]]);
+    expect(await (await send({ profile: 'example', action: 'skill-install', body: release(renamed) })).json()).toMatchObject({ error: { message: 'Skill archive is invalid: SKILL.md names the skill other, not web-research' } });
+    expect((await send({ profile: 'example', action: 'skill-install', body: { ...release(bytes), enable: true } })).status).toBe(400);
+    expect((await send({ profile: 'example', action: 'skill-install', target: 'web-research', body: release(bytes) })).status).toBe(400);
+    // A checked archive still needs a root node manager to install as the owner.
+    if (process.getuid?.() !== 0) expect(await (await send({ profile: 'example', action: 'skill-install', body: release(bytes) })).json())
+      .toEqual({ success: false, error: { code: 'ARDENT_ACTION_FAILED', message: 'Ardent skill installation requires a root node manager' } });
+  });
 });
 
 describe('relayBody', () => {
@@ -397,7 +676,8 @@ describe('profile HiveMem credential', () => {
     const routes = createArdentRoutes(async () => ({ owner: 'fixture', home, root: join(home, '.ardent'), install: join(home, 'install') }));
     const send = (body: unknown) => routes.request('/action', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
     const refused = await send({ profile: 'example', action: 'hivemem-credential-set', body: { token: 'a.b.c' } });
-    expect(refused.status).toBe(503);
+    // The handler finished with a refusal: a settled failure, not an unknown outcome.
+    expect(refused.status).toBe(422);
     expect(JSON.stringify(await refused.json())).not.toContain('a.b.c');
     expect((await send({ profile: 'example', action: 'hivemem-credential-set', target: 'x', body: { token: 'a.b.c' } })).status).toBe(400);
   });
