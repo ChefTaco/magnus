@@ -4,13 +4,78 @@
   "minUpgradeFrom": "1.0.0",
   "newRequiredEnv": [],
   "newOptionalEnv": [
-    { "name": "MAGNUS_ARDENT_HIVEMEM_URL", "component": "server", "secret": false, "description": "HTTPS HiveMem base URL that issues per-agent credentials for Ardent New Agent and Enable HiveMem." },
-    { "name": "MAGNUS_ARDENT_HIVEMEM_ENROLLMENT_TOKEN", "component": "server", "secret": true, "description": "HiveMem token with admin:agents that enrolls and rotates Ardent agent credentials." },
-    { "name": "MAGNUS_ARDENT_HIVEMEM_WORKSPACE_ID", "component": "server", "secret": false, "description": "Existing HiveMem workspace Ardent agents join." },
-    { "name": "MAGNUS_ARDENT_HIVEMEM_AGENT_URL", "component": "server", "secret": false, "description": "HiveMem base URL written into Ardent profile configs when agents reach HiveMem at another address." },
-    { "name": "MAGNUS_ARDENT_HIVEMEM_CREDENTIAL_HOURS", "component": "server", "secret": false, "description": "Lifetime of an Ardent agent HiveMem credential, 1 to 720 hours (default 720)." },
-    { "name": "MAGNUS_ARDENT_EMBERPATH_URL", "component": "server", "secret": false, "description": "OpenAI-compatible Emberpath base URL used for an Ardent agent's Emberpath model alias." },
-    { "name": "MAGNUS_AGENT_ARDENT_ARTIFACT_MAX_BYTES", "component": "agent", "secret": false, "description": "Largest Ardent artifact the agent streams, in bytes (default 64 MiB)." }
+    {
+      "name": "MAGNUS_ARDENT_HIVEMEM_URL",
+      "component": "server",
+      "secret": false,
+      "description": "HTTPS HiveMem base URL that issues per-agent credentials for Ardent New Agent and Enable HiveMem."
+    },
+    {
+      "name": "MAGNUS_ARDENT_HIVEMEM_ENROLLMENT_TOKEN",
+      "component": "server",
+      "secret": true,
+      "description": "HiveMem token with admin:agents for installs without Oathweave; the Oathweave machine client is preferred and the two are mutually exclusive."
+    },
+    {
+      "name": "MAGNUS_ARDENT_HIVEMEM_WORKSPACE_ID",
+      "component": "server",
+      "secret": false,
+      "description": "Existing HiveMem workspace Ardent agents join."
+    },
+    {
+      "name": "MAGNUS_ARDENT_HIVEMEM_AGENT_URL",
+      "component": "server",
+      "secret": false,
+      "description": "HiveMem base URL written into Ardent profile configs when agents reach HiveMem at another address."
+    },
+    {
+      "name": "MAGNUS_ARDENT_HIVEMEM_CREDENTIAL_HOURS",
+      "component": "server",
+      "secret": false,
+      "description": "Lifetime of an Ardent agent HiveMem credential, 1 to 720 hours (default 720)."
+    },
+    {
+      "name": "MAGNUS_ARDENT_EMBERPATH_URL",
+      "component": "server",
+      "secret": false,
+      "description": "OpenAI-compatible Emberpath base URL used for an Ardent agent's Emberpath model alias."
+    },
+    {
+      "name": "MAGNUS_AGENT_ARDENT_ARTIFACT_MAX_BYTES",
+      "component": "agent",
+      "secret": false,
+      "description": "Largest Ardent artifact the agent streams, in bytes (default 64 MiB)."
+    },
+    {
+      "name": "MAGNUS_ARDENT_HIVEMEM_CLIENT_ID",
+      "component": "server",
+      "secret": false,
+      "description": "Oathweave machine client (audience hivemem) Magnus uses to enroll and renew Ardent agent HiveMem credentials; preferred over the enrollment token."
+    },
+    {
+      "name": "MAGNUS_ARDENT_HIVEMEM_CLIENT_SECRET",
+      "component": "server",
+      "secret": true,
+      "description": "Secret of the Oathweave HiveMem machine client."
+    },
+    {
+      "name": "MAGNUS_ARDENT_HIVEMEM_TOKEN_URL",
+      "component": "server",
+      "secret": false,
+      "description": "Oathweave OAuth token endpoint for the HiveMem machine client."
+    },
+    {
+      "name": "MAGNUS_ARDENT_HIVEMEM_SCOPE",
+      "component": "server",
+      "secret": false,
+      "description": "Scope requested for the HiveMem machine client token (default: agent enrollment, workspace, memory and session permissions)."
+    },
+    {
+      "name": "MAGNUS_ARDENT_HIVESKILLS_URL",
+      "component": "server",
+      "secret": false,
+      "description": "HTTPS HiveSkills registry that Ardent skill-install fetches catalog releases from; unset, skill-install answers 503."
+    }
   ],
   "removedEnv": [],
   "migrations": [

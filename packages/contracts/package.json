@@ -1,6 +1,6 @@
 {
   "name": "@hivemagnus/magnus-contracts",
-  "version": "2.1.3",
+  "version": "2.2.0",
   "description": "Shared Zod schemas and TypeScript types for the Magnus server, UI and node agent wire contracts.",
   "keywords": [
     "magnus",
