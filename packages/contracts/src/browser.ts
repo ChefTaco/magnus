@@ -2600,6 +2600,117 @@ export const ardentTaskDoneEventSchema = z.object({
   id: z.string(), state: z.string(), result: z.string().nullable().optional(), error: z.string().nullable().optional(),
 });
 
+// ── Ardent missions, pause, preview and development (Ardent 2.2.0, node agents reporting studio >= 2) ──
+/**
+ * The node agent's `studio` capability, from its ping features and Ardent inventory. 1: sessions,
+ * task streams and streamed artifacts. 2: also missions, pause and resume, previews, development
+ * history, artifact manifests and session contexts. A route that needs a higher level than the agent
+ * reports answers 409 AGENT_UPGRADE_REQUIRED.
+ */
+export const ARDENT_STUDIO_CAPABILITY = { bridge: 1, missions: 2 } as const;
+/** task.event kinds that Ardent 2.2.0 adds. Other kinds appear too, so readers must accept unknown ones. */
+export const ARDENT_STUDIO_EVENT_KINDS = [
+  'mission', 'team_handoff', 'team_ask_user', 'team_propose_decision', 'artifact_registered', 'development_note',
+  'team_result', 'team_result_rejected', 'pause_requested', 'paused', 'resumed', 'preview',
+] as const;
+export const ardentStudioEventKindSchema = z.enum(ARDENT_STUDIO_EVENT_KINDS);
+const utf8Length = (value: string) => new TextEncoder().encode(value).length;
+const ardentGuidSchema = z.string().guid();
+const ardentDigestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
+const ardentBoundedIdSchema = z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/u);
+const ardentMissionText = (bytes: number) => z.string().trim().min(1).refine((value) => utf8Length(value) <= bytes, `Exceeds ${bytes} bytes`);
+const ardentMissionTexts = (minimum = 0) => z.array(ardentMissionText(1000)).min(minimum).max(32)
+  .refine((value) => new Set(value).size === value.length, 'Duplicate entries');
+/** Sessions serve tasks of their own context only: a mission needs a `mission` session, a preview a `preview` one. */
+export const ardentSessionContextSchema = z.enum(['direct', 'mission', 'preview']);
+// action session-open
+export const ardentSessionOpenSchema = z.object({
+  key: z.string().trim().min(1).max(256), reset: z.boolean().optional(), context: ardentSessionContextSchema.optional(),
+}).strict();
+// Ardent TeamMission 1.0
+export const ardentTeamMissionSchema = z.object({
+  id: ardentBoundedIdSchema,
+  revision: z.number().int().min(1).max(2_147_483_647),
+  parent_task: ardentBoundedIdSchema.nullable(),
+  constraints: ardentMissionTexts(),
+  allowed_actions: z.array(z.enum(['observe', 'analyze', 'create_artifact', 'create_draft', 'reversible_change', 'deploy', 'external_publish', 'destructive_response']))
+    .min(1).max(8).refine((value) => new Set(value).size === value.length, 'Duplicate action'),
+  /** Tool and memory grants, such as tool:artifact_write or project:<id>. */
+  resources: ardentMissionTexts(1),
+  /** Unix seconds. */
+  deadline: z.number().int().min(1).max(253_402_300_799),
+  acceptance_criteria: ardentMissionTexts(1),
+  expected_artifacts: ardentMissionTexts(),
+}).strict();
+/** Combined UTF-8 size of a mission's context item titles and texts. */
+export const ARDENT_CONTEXT_ITEMS_MAX_BYTES = 64 * 1024;
+export const ardentContextItemSchema = z.object({
+  title: z.string().trim().min(1).max(200), mime: z.string().regex(/^[a-z]+\/[A-Za-z0-9.+-]+$/u).max(100).optional(), text: z.string().min(1),
+}).strict();
+// action mission-submit (the whole action body is at most 200 KB)
+export const ardentMissionSubmitSchema = z.object({
+  /** A session opened with context mission. A direct session answers 400. */
+  session_id: ardentGuidSchema.optional(),
+  objective: z.string().trim().min(1).max(16_000),
+  mission: ardentTeamMissionSchema,
+  context_items: z.array(ardentContextItemSchema).max(64).optional()
+    .refine((items) => utf8Length((items ?? []).map((item) => item.title + item.text).join('')) <= ARDENT_CONTEXT_ITEMS_MAX_BYTES, 'Context items exceed 64 KiB'),
+  labels: z.record(z.string().regex(/^[a-z][a-z0-9._:-]{0,63}$/u), z.string().max(256))
+    .refine((value) => Object.keys(value).length <= 32, 'At most 32 labels').optional(),
+  idempotency_key: z.string().min(1).max(128),
+}).strict();
+// action preview-submit (the whole action body is at most 300 KB)
+export const ardentPreviewOverridesSchema = z.object({
+  soul: z.string().min(1).max(131_072).optional(),
+  identity: z.string().min(1).max(131_072).optional(),
+  skills_enabled: z.array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/u)).max(100).optional(),
+  model: z.string().trim().min(1).max(200).optional(),
+}).strict();
+export const ardentPreviewSubmitSchema = z.object({
+  prompt: z.string().trim().min(1).max(16_000),
+  overrides: ardentPreviewOverridesSchema.optional(),
+  /** A session opened with context preview. */
+  session_id: ardentGuidSchema.optional(),
+  idempotency_key: z.string().min(1).max(128).optional(),
+}).strict();
+export const ardentDevelopmentKindSchema = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/u);
+export const ardentDevelopmentSourceSchema = z.object({
+  kind: z.enum(['task', 'artifact', 'memory', 'url', 'identity', 'skill', 'note']), ref: z.string().trim().min(1).max(512),
+}).strict();
+// action development-note (author defaults to operator; agent marks a note relayed for the agent)
+export const ardentDevelopmentNoteSchema = z.object({
+  kind: ardentDevelopmentKindSchema,
+  title: z.string().trim().min(1).max(200),
+  body: z.string().trim().min(1).max(8000),
+  sources: z.array(ardentDevelopmentSourceSchema).max(16).optional(),
+  author: z.enum(['operator', 'agent']).optional(),
+}).strict();
+export const ardentDevelopmentRecordSchema = z.object({
+  id: z.string(), agent_ref: z.string(), kind: z.string(), title: z.string(), body: z.string(),
+  author: z.enum(['agent', 'operator', 'runtime']), epistemic: z.enum(['agent_reported', 'operator_reported', 'observed']),
+  before_sha256: ardentDigestSchema.nullable(), after_sha256: ardentDigestSchema.nullable(),
+  sources: z.array(z.object({ kind: z.string(), ref: z.string() })), created_at: z.string(),
+});
+// profile resource development
+export const ardentDevelopmentQuerySchema = z.object({
+  after: z.string().regex(/^[A-Za-z0-9_-]{1,400}$/u).optional(), limit: z.string().regex(/^\d{1,3}$/u).optional(), kind: ardentDevelopmentKindSchema.optional(),
+});
+export const ardentDevelopmentPageSchema = z.object({ records: z.array(ardentDevelopmentRecordSchema), next: z.string().nullable() });
+// actions task-submit, mission-submit and preview-submit: durable admission, never completion
+export const ardentTaskAdmissionSchema = z.object({ task_id: z.string(), state: z.string() });
+// actions task-pause and task-resume. A running task pauses at its next step boundary; a finished one answers 409.
+export const ardentTaskPauseStateSchema = z.object({ task_id: z.string(), state: z.string(), admission: z.enum(['open', 'paused']) });
+// Ardent artifact manifest 1.0 (key fields; Ardent may add others)
+export const ardentArtifactManifestSchema = z.looseObject({
+  schema_version: z.string(), name: z.string(), mime: z.string(), sha256: ardentDigestSchema, size: z.number().int().min(0),
+  revision: z.number().int(), supersedes_sha256: ardentDigestSchema.nullable(),
+  acceptance_status: z.enum(['unreviewed', 'approved', 'partial', 'rejected']), created_at: z.number(), expires_at: z.number().optional(),
+});
+// profile resource artifacts/{sha256}/manifest
+export const ardentArtifactRecordSchema = z.object({ task_id: z.string(), superseded_by_sha256: ardentDigestSchema.nullable(), manifest: ardentArtifactManifestSchema });
+// profile resource tasks/{id}/artifacts, oldest first
+export const ardentTaskArtifactsSchema = z.object({ artifacts: z.array(ardentArtifactRecordSchema) });
+
 // services/control-api/src/routes/ardent.ts (New Agent and Enable HiveMem operations)
 const ardentNodeIdSchema = z.string().regex(/^[A-Za-z0-9._-]{1,128}$/u);
 const ardentProfileIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/u);
@@ -2626,8 +2737,11 @@ export const ardentAgentDeployRequestSchema = z.object({
   model: ardentAgentModelSchema,
   skills: z.array(z.string().regex(/^[A-Za-z0-9_-]{1,100}$/u)).max(100).default([]),
   hivemem: z.literal(true),
-  /** Written as artifacts.max_bytes only on Ardent 2.2.0 or later; older runtimes skip it with a note in the receipt. */
-  artifacts_max_bytes: z.number().int().min(1).max(1_073_741_824).optional(),
+  /**
+   * Ardent's artifacts.max_bytes, 1 KiB to 64 MiB (Ardent's own bounds). Omitted: 64 MiB, the node agent's default
+   * relay cap. Written only on Ardent 2.2.0 or later; older runtimes skip it with a note in the receipt.
+   */
+  artifacts_max_bytes: z.number().int().min(1024).max(67_108_864).optional(),
 }).strict();
 export const ardentAgentStepNameSchema = z.enum([
   'profile-check', 'profile-create', 'service-start', 'identity-soul', 'identity-identity',

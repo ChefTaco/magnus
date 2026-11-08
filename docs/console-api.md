@@ -97,16 +97,19 @@ link, and a service token never matches a person's link. The audit actor is `ser
 
 A service may read `GET /api/v1/ardent/profiles`, `/installations`, `/installations/:nodeId`, the profile
 resources `status`, `profile`, `skills`, `memory/status`, `sessions`, `sessions/:id/messages`, `tasks`,
-`tasks/:id`, `tasks/:id/events`, `identity/soul` and `identity/identity`, task streams, artifacts and
-agent operations. Of the profile actions it may run `session-open`, `task-submit` and `task-cancel`.
-Everything else answers 403. `packages/contracts/src/ardent-service.ts` publishes these shapes.
+`tasks/:id`, `tasks/:id/events`, `tasks/:id/artifacts`, `artifacts/:sha256/manifest`, `development`,
+`identity/soul` and `identity/identity`, task streams, artifacts and agent operations. Of the profile
+actions it may run `session-open`, `task-submit`, `task-cancel`, `mission-submit`, `task-pause`,
+`task-resume`, `preview-submit` and `development-note`. Everything else answers 403.
+`packages/contracts/src/ardent-service.ts` publishes these shapes.
 
 The service names the person it acts for in `x-acting-subject`, their Oathweave subject. That subject
 must have exactly one person link on the service's issuer; the audit then names that person and
 records the service, client and subject in its details. `POST /api/v1/ardent/agents`,
 `POST /api/v1/ardent/agents/operations/:id/resume` and `POST …/profiles/:name/hivemem` need it, and
-need that link's role to be `ADMIN`; otherwise they answer 403 `ACTING_ADMIN_REQUIRED`. An unlinked
-subject answers 403 `ACTING_SUBJECT_UNLINKED`. The ingress must forward `x-acting-subject` only from
+need that link's role to be `ADMIN`; otherwise they answer 403 `ACTING_ADMIN_REQUIRED`. The
+`preview-submit` and `development-note` actions need a linked subject of any role, or answer 403
+`ACTING_SUBJECT_REQUIRED`. An unlinked subject answers 403 `ACTING_SUBJECT_UNLINKED`. The ingress must forward `x-acting-subject` only from
 that service, never from a browser.
 
 `GET /api/v1/console/session` replaces the dashboard's environment checks and build-time values:

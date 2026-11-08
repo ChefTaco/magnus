@@ -92,8 +92,9 @@ export async function createApp(): Promise<Hono> {
           managedMutations: ENABLE_NODE_MANAGEMENT ? 1 : 0,
           securityResponse: ENABLE_NODE_MANAGEMENT && process.env["MAGNUS_SECURITY_RESPONSE_ENABLED"] === "true" ? 1 : 0,
           commandReconciliation: commandReconciliationEnabled() ? 1 : 0,
-          // Ardent Studio bridge: sessions, task streams and streamed artifacts.
-          studio: ENABLE_NODE_MANAGEMENT ? 1 : 0,
+          // Ardent Studio bridge level (ARDENT_AGENT_CAPABILITIES): 1 sessions, task streams and
+          // streamed artifacts; 2 also missions, pause and resume, previews and development history.
+          studio: ENABLE_NODE_MANAGEMENT ? 2 : 0,
           commandCompletionRegistry: { version: COMMAND_COMPLETION_REGISTRY.version,
             sha256: COMMAND_COMPLETION_REGISTRY_SHA256, enabled: MAGNUS_EXECUTION_SUPERVISOR_ENABLED ? 1 : 0 },
         },
@@ -170,8 +171,9 @@ export async function createApp(): Promise<Hono> {
           managedMutations: ENABLE_NODE_MANAGEMENT ? 1 : 0,
           securityResponse: ENABLE_NODE_MANAGEMENT && process.env["MAGNUS_SECURITY_RESPONSE_ENABLED"] === "true" ? 1 : 0,
           commandReconciliation: commandReconciliationEnabled() ? 1 : 0,
-          // Ardent Studio bridge: sessions, task streams and streamed artifacts.
-          studio: ENABLE_NODE_MANAGEMENT ? 1 : 0,
+          // Ardent Studio bridge level (ARDENT_AGENT_CAPABILITIES): 1 sessions, task streams and
+          // streamed artifacts; 2 also missions, pause and resume, previews and development history.
+          studio: ENABLE_NODE_MANAGEMENT ? 2 : 0,
         },
         heartbeat: getHeartbeatStatus(),
         fingerprints: {

@@ -774,10 +774,15 @@ export class NodeApiClient {
     });
   }
 
-  /** Whether the agent reports the Ardent Studio bridge (sessions, task streams, streamed artifacts). */
-  async ardentStudioCapable(): Promise<boolean> {
-    const reply = await this.api.get('ping', { timeout: 5000, retry: 0 }).json<ApiResponse<{ features?: { studio?: number } }>>();
-    return reply.success === true && reply.data?.features?.studio === 1;
+  /**
+   * The agent's Ardent Studio bridge level from its ping features: 0 without the
+   * bridge, 1 for sessions, task streams and streamed artifacts, 2 for missions,
+   * pause and resume, previews, development history and artifact manifests.
+   */
+  async ardentStudioLevel(): Promise<number> {
+    const reply = await this.api.get('ping', { timeout: 5000, retry: 0 }).json<ApiResponse<{ features?: { studio?: unknown } }>>();
+    const level = reply.success === true ? reply.data?.features?.studio : undefined;
+    return typeof level === 'number' && Number.isSafeInteger(level) && level > 0 ? level : 0;
   }
 
   async performArdentAction<T>(profile: string, action: string, target?: string, body?: unknown): Promise<T> {

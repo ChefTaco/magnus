@@ -254,7 +254,7 @@ describe('Ardent Studio bridge', () => {
     const home = await mkdtemp(join(tmpdir(), 'magnus-ardent-capability-'));
     dirs.push(home);
     const state = await readArdentState({ owner: 'fixture', home, root: join(home, '.ardent'), install: join(home, 'install') }) as { capabilities?: { studio?: number } };
-    expect(state.capabilities).toEqual({ studio: 1 });
+    expect(state.capabilities).toEqual({ studio: 2 });
   });
 
   it('opens sessions and submits session-bound tasks with bounded input', async () => {
@@ -338,6 +338,89 @@ describe('Ardent Studio bridge', () => {
     } finally {
       if (previous === undefined) delete process.env['MAGNUS_AGENT_ARDENT_ARTIFACT_MAX_BYTES']; else process.env['MAGNUS_AGENT_ARDENT_ARTIFACT_MAX_BYTES'] = previous;
     }
+  });
+
+  const mission = { id: 'project-1:brief', revision: 1, parent_task: null, constraints: [], allowed_actions: ['analyze', 'create_artifact'],
+    resources: ['tool:artifact_write', 'project:p1'], deadline: 4_102_444_800, acceptance_criteria: ['A brief exists'], expected_artifacts: ['brief.md'] };
+  const missionBody = { session_id: taskId, objective: 'Write the brief', mission, context_items: [{ title: 'Notes', text: 'Fixture context' }],
+    labels: { 'studio.project': 'p1' }, idempotency_key: 'mission:project-1:brief:1' };
+
+  it('submits missions and previews, pauses and resumes tasks and records development notes', async () => {
+    const { routes, requests } = await fixtureProfile((request, response) => {
+      response.setHeader('Content-Type', 'application/json');
+      if (request.url === '/api/v1/sessions') response.end(JSON.stringify({ id: taskId, caller: 'management', context: 'mission', key: 'studio:p1', created_ms: 1, updated_ms: 1 }));
+      else if (request.url === '/api/v1/missions' || request.url === '/api/v1/preview/tasks') response.writeHead(202).end(JSON.stringify({ task_id: taskId, state: 'queued' }));
+      else if (request.url === `/api/v1/tasks/${taskId}/pause`) response.end(JSON.stringify({ task_id: taskId, state: 'running', admission: 'paused' }));
+      else if (request.url === `/api/v1/tasks/${taskId}/resume`) response.writeHead(409).end(JSON.stringify({ error: { code: 'CONFLICT', message: 'Task already finished' } }));
+      else if (request.url === '/api/v1/development') response.writeHead(201).end(JSON.stringify({ id: 'dev_1' }));
+      else response.writeHead(404).end('{}');
+    });
+    const run = async (body: unknown) => routes.request('/action', action({ profile: 'example', ...body as object }));
+    expect((await run({ action: 'session-open', body: { key: 'studio:p1', context: 'mission' } })).status).toBe(200);
+    expect((await run({ action: 'session-open', body: { key: 'studio:p1', context: 'peer' } })).status).toBe(400);
+    // Ardent answers 202; the agent settles the admission as 200 like task-submit.
+    const submitted = await run({ action: 'mission-submit', body: missionBody });
+    expect(submitted.status).toBe(200);
+    expect(await submitted.json()).toEqual({ task_id: taskId, state: 'queued' });
+    expect((await run({ action: 'preview-submit', body: { prompt: 'Say hello', overrides: { soul: '# Soul', model: 'fixture-model' } } })).status).toBe(200);
+    const paused = await run({ action: 'task-pause', target: taskId });
+    expect(paused.status).toBe(200);
+    expect(await paused.json()).toEqual({ task_id: taskId, state: 'running', admission: 'paused' });
+    // A finished task's 409 reaches the caller unchanged.
+    expect((await run({ action: 'task-resume', target: taskId })).status).toBe(409);
+    expect((await run({ action: 'development-note', body: { kind: 'operator_note', title: 'Tone', body: 'Shorter answers', author: 'operator' } })).status).toBe(201);
+    expect(requests.filter(item => item.url !== '/api/v1/profile').map(item => [item.method, item.url])).toEqual([
+      ['POST', '/api/v1/sessions'], ['POST', '/api/v1/missions'], ['POST', '/api/v1/preview/tasks'],
+      ['POST', `/api/v1/tasks/${taskId}/pause`], ['POST', `/api/v1/tasks/${taskId}/resume`], ['POST', '/api/v1/development'],
+    ]);
+    expect(JSON.parse(requests.find(item => item.url === '/api/v1/missions')!.body)).toEqual(missionBody);
+    expect(JSON.parse(requests.find(item => item.url === '/api/v1/sessions')!.body)).toEqual({ key: 'studio:p1', context: 'mission' });
+  });
+
+  it('refuses malformed or oversized mission, preview, pause and note requests before Ardent sees them', async () => {
+    const { routes, requests } = await fixtureProfile((_request, response) => { response.writeHead(500).end('{}'); });
+    const run = async (body: unknown) => (await routes.request('/action', action({ profile: 'example', ...body as object }))).status;
+    expect(await run({ action: 'mission-submit', body: { ...missionBody, extra: true } })).toBe(400);
+    expect(await run({ action: 'mission-submit', body: { ...missionBody, mission: { ...mission, allowed_actions: [] } } })).toBe(400);
+    expect(await run({ action: 'mission-submit', body: { ...missionBody, objective: 'x'.repeat(16_001) } })).toBe(400);
+    expect(await run({ action: 'mission-submit', body: { ...missionBody, context_items: [{ title: 'Big', text: 'x'.repeat(64 * 1024) }] } })).toBe(400);
+    expect(await run({ action: 'mission-submit', body: { ...missionBody, idempotency_key: undefined } })).toBe(400);
+    expect(await run({ action: 'preview-submit', body: { prompt: 'Hi', overrides: { temperature: 1 } } })).toBe(400);
+    expect(await run({ action: 'task-pause' })).toBe(400);
+    expect(await run({ action: 'task-pause', target: taskId, body: { now: true } })).toBe(400);
+    expect(await run({ action: 'task-resume', target: '../config' })).toBe(400);
+    expect(await run({ action: 'development-note', body: { kind: 'Bad Kind', title: 'x', body: 'y' } })).toBe(400);
+    expect(await run({ action: 'development-note', body: { kind: 'note', title: 'x', body: 'y', author: 'runtime' } })).toBe(400);
+    // A preview may carry a full soul and identity, which is more than the 200 KB other actions get.
+    const soul = 'x'.repeat(131_072);
+    expect(await run({ action: 'preview-submit', body: { prompt: 'Hi', overrides: { soul, identity: soul } } })).toBe(500);
+    expect(requests.filter(item => item.url !== '/api/v1/profile').map(item => item.url)).toEqual(['/api/v1/preview/tasks']);
+  });
+
+  it('reads artifact manifests and development history with checked query parameters', async () => {
+    const sha = 'd'.repeat(64);
+    const { routes, requests } = await fixtureProfile((request, response) => {
+      response.setHeader('Content-Type', 'application/json');
+      if (request.url === `/api/v1/tasks/${taskId}/artifacts`) response.end(JSON.stringify({ artifacts: [] }));
+      else if (request.url === `/api/v1/artifacts/${sha}/manifest`) response.end(JSON.stringify({ task_id: taskId, superseded_by_sha256: null, manifest: { sha256: sha } }));
+      else if (request.url?.startsWith('/api/v1/development')) response.end(JSON.stringify({ records: [], next: null }));
+      else if (request.url?.startsWith('/api/v1/sessions')) response.end(JSON.stringify({ sessions: [] }));
+      else response.writeHead(404).end('{}');
+    });
+    expect(await (await routes.request(`/profiles/example/api/tasks/${taskId}/artifacts`)).json()).toEqual({ artifacts: [] });
+    const manifest = await routes.request(`/profiles/example/api/artifacts/${sha}/manifest`);
+    // A manifest is JSON, read like any resource, not relayed as artifact bytes.
+    expect(manifest.headers.get('content-type')).toContain('application/json');
+    expect(await manifest.json()).toMatchObject({ manifest: { sha256: sha } });
+    expect((await routes.request('/profiles/example/api/development?after=eyJhIjoxfQ&limit=20&kind=skill_change&ignored=1')).status).toBe(200);
+    expect((await routes.request('/profiles/example/api/sessions?context=mission')).status).toBe(200);
+    expect((await routes.request('/profiles/example/api/development?kind=Bad')).status).toBe(400);
+    expect((await routes.request('/profiles/example/api/sessions?context=peer')).status).toBe(400);
+    expect((await routes.request(`/profiles/example/api/artifacts/${sha}/raw`)).status).toBe(404);
+    expect(requests.filter(item => item.url !== '/api/v1/profile').map(item => item.url)).toEqual([
+      `/api/v1/tasks/${taskId}/artifacts`, `/api/v1/artifacts/${sha}/manifest`,
+      '/api/v1/development?after=eyJhIjoxfQ&limit=20&kind=skill_change', '/api/v1/sessions?context=mission',
+    ]);
   });
 });
 

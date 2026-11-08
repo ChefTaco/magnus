@@ -83,6 +83,9 @@ function message(error: unknown): string {
   return (error instanceof Error ? error.message : String(error)).slice(0, 500);
 }
 
+/** artifacts.max_bytes a New Agent gets when the request does not set it: 64 MiB, the node agent's default relay cap. */
+export const ARDENT_NEW_AGENT_ARTIFACT_MAX_BYTES = 64 * 1024 * 1024;
+
 function newerOrEqual(version: string | null, wanted: [number, number, number]): boolean {
   const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version ?? '');
   if (!match) return false;
@@ -335,11 +338,10 @@ const STEPS: Record<StepName, (context: Context) => Promise<Result>> = {
       const model = 'emberpath_alias' in request.model ? { base_url: emberpathUrl(), model: request.model.emberpath_alias } : request.model;
       document.setIn(['providers', 'llamacpp', 'base_url'], model.base_url);
       document.setIn(['providers', 'llamacpp', 'model'], model.model);
-      if (request.artifacts_max_bytes !== undefined) {
-        const { installation } = await profileOf(context);
-        if (newerOrEqual(installation.version, [2, 2, 0])) document.setIn(['artifacts', 'max_bytes'], request.artifacts_max_bytes);
-        else notes.push(`artifacts.max_bytes needs Ardent 2.2.0 or later; this node runs ${installation.version ?? 'an unknown version'}`);
-      }
+      // Ardent 2.2.0 added artifacts.max_bytes (default 2 MiB). A new agent gets the node agent's relay cap unless told otherwise.
+      const { installation } = await profileOf(context);
+      if (newerOrEqual(installation.version, [2, 2, 0])) document.setIn(['artifacts', 'max_bytes'], request.artifacts_max_bytes ?? ARDENT_NEW_AGENT_ARTIFACT_MAX_BYTES);
+      else if (request.artifacts_max_bytes !== undefined) notes.push(`artifacts.max_bytes needs Ardent 2.2.0 or later; this node runs ${installation.version ?? 'an unknown version'}`);
     }
     document.setIn(['memory'], document.createNode({ provider: 'hivemem', base_url: settings.agentUrl, token_env: ARDENT_HIVEMEM_TOKEN_ENV,
       agent_id: agentId ?? ardentHiveMemAgentId(context.row.nodeId, context.row.profile), workspace_id: settings.workspaceId, default_scope: 'private' }));

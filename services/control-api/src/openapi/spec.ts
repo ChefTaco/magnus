@@ -2682,7 +2682,7 @@ const paths: Record<string, Record<string, unknown>> = {
   },
   '/ardent/installations': {
     get: { tags: ['Magnus Ardent'], summary: 'Inspect Ardent installations on managed nodes',
-      description: 'Admin-only node inventory. Node fetch failures remain distinct from a successful empty installation. capabilities.studio is 1 when the node agent supports sessions, task streams, streamed artifacts and New Agent.',
+      description: 'Admin-only node inventory. Node fetch failures remain distinct from a successful empty installation. capabilities.studio is the node agent\'s bridge level: 1 for sessions, task streams, streamed artifacts and New Agent; 2 also for missions, task pause and resume, previews, development history and artifact manifests.',
       security: apiSecretAuth, responses: { 200: success('Ardent installation observations', { type: 'array', items: { type: 'object' } }), 401: err401, 403: err403 } },
   },
   '/ardent/installations/{nodeId}': {
@@ -2696,13 +2696,17 @@ const paths: Record<string, Record<string, unknown>> = {
   },
   '/ardent/installations/{nodeId}/profiles/{name}/{resource}': {
     get: { tags: ['Magnus Ardent'], summary: 'Read an allowlisted Ardent profile resource through its node agent',
-      description: 'The node agent injects the profile-local management token. Browser clients receive only the authorized response body.',
-      security: apiSecretAuth, parameters: [pp('nodeId', 'Managed node ID'), pp('name', 'Profile name'), pp('resource', 'Allowlisted profile resource')],
-      responses: { 200: success('Ardent profile resource'), 401: err401, 403: err403, 404: err404, 503: { description: 'Node or profile API unavailable' } } },
+      description: 'The node agent injects the profile-local management token. Browser clients receive only the authorized response body. Resources: openapi, status, profile, config, config/schema, providers, channels, peers, peers/config, memory/status, skills, sessions, sessions/{id}/messages, tasks, tasks/{id}, tasks/{id}/events, identity/soul, identity/identity and their history; with a node agent at studio level 2 (Ardent 2.2.0) also tasks/{id}/artifacts, artifacts/{sha256}/manifest and development. Those, and sessions with context, answer 409 AGENT_UPGRADE_REQUIRED on an older agent.',
+      security: apiSecretAuth, parameters: [pp('nodeId', 'Managed node ID'), pp('name', 'Profile name'), pp('resource', 'Allowlisted profile resource'),
+        { name: 'after', in: 'query', schema: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,400}$' }, description: 'Page cursor: an event sequence, or development\'s next' },
+        { name: 'limit', in: 'query', schema: { type: 'string', pattern: '^\\d{1,3}$' } },
+        { name: 'kind', in: 'query', schema: { type: 'string', pattern: '^[a-z][a-z0-9_]{0,63}$' }, description: 'development only: one record kind' },
+        { name: 'context', in: 'query', schema: { type: 'string', enum: ['direct', 'mission', 'preview'] }, description: 'sessions only: the session context (default direct)' }],
+      responses: { 200: success('Ardent profile resource'), 400: err400, 401: err401, 403: err403, 404: err404, 409: { description: 'Node agent must be upgraded' }, 503: { description: 'Node or profile API unavailable' } } },
   },
   '/ardent/installations/{nodeId}/profiles/{name}/tasks/{taskId}/stream': {
     get: { tags: ['Magnus Ardent'], summary: 'Stream a task\'s live events',
-      description: 'Server-sent events relayed unbuffered from the profile API through the node agent: task.text (a snapshot of the current step on connect), task.delta (live reply text, never replayed), task.event (journal events with an id) and task.done (the final task). Ardent ends a stream after 60 seconds; reconnect with after or Last-Event-ID set to the last task.event id. Answers 409 AGENT_UPGRADE_REQUIRED when the node agent predates the bridge.',
+      description: 'Server-sent events relayed unbuffered from the profile API through the node agent, for tasks, missions and previews alike: task.text (a snapshot of the current step on connect), task.delta (live reply text, never replayed), task.event (journal events with an id) and task.done (the final task). Ardent ends a stream after 60 seconds; reconnect with after or Last-Event-ID set to the last task.event id. Answers 409 AGENT_UPGRADE_REQUIRED when the node agent predates the bridge.',
       security: apiSecretAuth, parameters: [pp('nodeId', 'Managed node ID'), pp('name', 'Profile name'), pp('taskId', 'Ardent task UUID'),
         { name: 'after', in: 'query', schema: { type: 'string', pattern: '^\\d{1,15}$' }, description: 'Resume after this journal sequence' },
         { name: 'Last-Event-ID', in: 'header', schema: { type: 'string', pattern: '^\\d{1,15}$' } }],
@@ -2730,12 +2734,13 @@ const paths: Record<string, Record<string, unknown>> = {
   },
   '/ardent/installations/{nodeId}/profiles/{name}/action': {
     post: { tags: ['Magnus Ardent'], summary: 'Run a finite node-scoped Ardent profile action',
-      description: 'The Control API dispatches through the node managed-mutation boundary. A task-submit result proves durable admission only; task completion is read from the Ardent task API or its stream. session-open takes {key, reset?} and task-submit takes {prompt, idempotency_key, session_id?}; both answer 409 AGENT_UPGRADE_REQUIRED when a session is involved and the node agent predates the bridge. Context-stage, context-adopt and context-rollback require a release UUID and exact bundle, base-runtime, policy and configuration SHA-256 pins in body, with no target. Context actions require a signed managed owner and return verified completion evidence. A timeout or failure after dispatch must be inspected, never automatically retried.',
+      description: 'The Control API dispatches through the node managed-mutation boundary. A task-submit result proves durable admission only; task completion is read from the Ardent task API or its stream. session-open takes {key, reset?, context?} and task-submit takes {prompt, idempotency_key, session_id?}; both answer 409 AGENT_UPGRADE_REQUIRED when a session is involved and the node agent predates the bridge. Ardent 2.2.0 actions need a node agent at studio level 2, or answer 409 AGENT_UPGRADE_REQUIRED: mission-submit takes {session_id?, objective, mission (TeamMission 1.0), context_items? (64 KiB in all), labels?, idempotency_key} in at most 200 KB and needs a session opened with context mission; preview-submit takes {prompt, overrides? {soul?, identity?, skills_enabled?, model?}, session_id?, idempotency_key?} in at most 300 KB; task-pause and task-resume take the task ID as target; development-note takes {kind, title, body, sources?, author? (operator or agent)}. Mission and preview submissions prove admission only and stream on the task stream. For these actions Ardent\'s 400, 404 and 409 (a finished task cannot pause) come back with that status. A linked service identity needs x-acting-subject for preview-submit and development-note. Context-stage, context-adopt and context-rollback require a release UUID and exact bundle, base-runtime, policy and configuration SHA-256 pins in body, with no target. Context actions require a signed managed owner and return verified completion evidence. A timeout or failure after dispatch must be inspected, never automatically retried.',
       security: apiSecretAuth, parameters: [pp('nodeId', 'Managed node ID'), pp('name', 'Profile name')],
       requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['action'],
-        properties: { action: { type: 'string', enum: ['profile-create', 'session-open', 'config-validate', 'config-save', 'peer-validate', 'peer-save', 'identity-save', 'identity-restore', 'provider-test', 'channel-test', 'peer-test', 'memory-search', 'task-submit', 'task-cancel', 'skill-set', 'service-start', 'service-stop', 'service-restart', 'package-install', 'context-stage', 'context-adopt', 'context-rollback'] },
+        properties: { action: { type: 'string', enum: ['profile-create', 'session-open', 'config-validate', 'config-save', 'peer-validate', 'peer-save', 'identity-save', 'identity-restore', 'provider-test', 'channel-test', 'peer-test', 'memory-search', 'task-submit', 'task-cancel', 'mission-submit', 'task-pause', 'task-resume', 'preview-submit', 'development-note', 'skill-set', 'service-start', 'service-stop', 'service-restart', 'package-install', 'context-stage', 'context-adopt', 'context-rollback'] },
           target: { type: 'string' }, body: {} }, additionalProperties: false } } } },
-      responses: { 200: success('Ardent action acknowledgement'), 400: err400, 401: err401, 403: err403,
+      responses: { 200: success('Ardent action acknowledgement'), 400: err400, 401: err401, 403: err403, 404: err404,
+        409: { description: 'Node agent must be upgraded, or Ardent refused the action in the task\'s current state' },
         503: { description: 'Node or Ardent action unavailable' } } },
   },
   '/ardent/agents': {

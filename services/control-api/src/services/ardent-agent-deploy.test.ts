@@ -44,17 +44,19 @@ const input = { nodeId: 'node-1', profile: 'lead', soul_md: '# Soul\n', identity
 interface Node { profiles: Array<{ id: string; name: string; backend: 'llamacpp'; apiPort: number; running: boolean; a2aEnabled: boolean; channels: Record<string, boolean>; error: null }>;
   config: string; identity: Record<string, string>; env: string[]; actions: string[]; failOnce: Set<string> }
 let node: Node;
+let ardentVersion = '2.1.2';
 const credential = vi.fn();
 
 beforeEach(() => {
   store.rows.clear();
   store.audit.length = 0;
   credential.mockReset();
+  ardentVersion = '2.1.2';
   credential.mockImplementation(async (_settings: unknown, plan: { agentId: string; action: string }) => ({ token: TOKEN, agentId: plan.agentId, expiresAt: '2026-12-01T00:00:00.000Z', operationId: 'f'.repeat(64) }));
   node = { profiles: [{ id: 'existing', name: 'existing', backend: 'llamacpp', apiPort: 9910, running: true, a2aEnabled: false, channels: {}, error: null }],
     config: TEMPLATE, identity: { soul: 'template soul', identity: 'template identity' }, env: [], actions: [], failOnce: new Set() };
   deploy.setArdentDeployDeps({
-    installation: async nodeId => ({ nodeId, nodeName: 'node-1', hostname: 'node-1.example.com', reachable: true, installed: true, version: '2.1.2',
+    installation: async nodeId => ({ nodeId, nodeName: 'node-1', hostname: 'node-1.example.com', reachable: true, installed: true, version: ardentVersion,
       owner: 'operator', profiles: node.profiles, checkedAt: new Date().toISOString(), error: null }),
     read: async <T,>(_nodeId: string, profile: string, resource: string) => {
       if (!node.profiles.some(item => item.id === profile && item.running)) throw new Error('Ardent management listener identity differs or is unavailable');
@@ -114,6 +116,28 @@ describe('New Agent operation', () => {
     expect(JSON.stringify(store.audit)).not.toContain(TOKEN);
     expect(store.audit.filter(event => event.action === 'ardent.agent.step')).toHaveLength(9);
     expect(store.audit.map(event => event.action)).toContain('ardent.agent.complete');
+  });
+
+  it('sets the artifact limit on Ardent 2.2.0 or later, 64 MiB unless asked otherwise', async () => {
+    ardentVersion = '2.2.0';
+    await run(() => deploy.startArdentAgentDeploy(input, actor));
+    expect((YAML.parse(node.config) as Record<string, any>)['artifacts']).toEqual({ max_bytes: 64 * 1024 * 1024 });
+    node.profiles = node.profiles.filter(item => item.id !== 'lead');
+    node.config = TEMPLATE;
+    await run(() => deploy.startArdentAgentDeploy({ ...input, artifacts_max_bytes: 8 * 1024 * 1024 }, actor));
+    expect((YAML.parse(node.config) as Record<string, any>)['artifacts']).toEqual({ max_bytes: 8 * 1024 * 1024 });
+    await expect(deploy.startArdentAgentDeploy({ ...input, profile: 'other', artifacts_max_bytes: 128 * 1024 * 1024 }, actor)).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('leaves the artifact limit alone on an older Ardent and says so', async () => {
+    const plain = await run(() => deploy.startArdentAgentDeploy(input, actor));
+    expect((YAML.parse(node.config) as Record<string, any>)['artifacts']).toBeUndefined();
+    expect(plain.steps.find(step => step.name === 'config-save')!.receipt!['notes']).toEqual([]);
+    node.profiles = node.profiles.filter(item => item.id !== 'lead');
+    node.config = TEMPLATE;
+    const asked = await run(() => deploy.startArdentAgentDeploy({ ...input, artifacts_max_bytes: 8 * 1024 * 1024 }, actor));
+    expect((YAML.parse(node.config) as Record<string, any>)['artifacts']).toBeUndefined();
+    expect(asked.steps.find(step => step.name === 'config-save')!.receipt!['notes']).toEqual([expect.stringMatching(/needs Ardent 2\.2\.0.*2\.1\.2/)]);
   });
 
   it('stops at a failed step with its receipts, and resume reruns only what did not finish', async () => {

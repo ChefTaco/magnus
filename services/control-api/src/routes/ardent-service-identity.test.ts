@@ -129,6 +129,43 @@ describe('linked Ardent service identity', () => {
     expect((await call(token, 'POST', `${profile}/action`, { acting: 'ardent-studio', body: { action: 'task-cancel', target: '00000000-0000-4000-8000-000000000001' } })).status).toBe(403);
   });
 
+  it('may submit missions, pause and resume tasks and read mission resources', async () => {
+    const token = await serviceToken();
+    const task = '00000000-0000-4000-8000-000000000001';
+    const mission = { id: 'p1:brief', revision: 2, parent_task: null, constraints: [], allowed_actions: ['analyze'], resources: ['project:p1'],
+      deadline: 4_102_444_800, acceptance_criteria: ['A brief'], expected_artifacts: [] };
+    const submitted = await call(token, 'POST', `${profile}/action`, { body: { action: 'mission-submit',
+      body: { objective: 'Write the secret plan', mission, context_items: [{ title: 'Notes', text: 'private context' }], idempotency_key: 'p1:brief:2' } } });
+    expect(submitted.status).toBe(200);
+    const audit = mocks.audit.mock.calls.at(-1)![0] as { action: string; details: Record<string, unknown> };
+    expect(audit).toMatchObject({ action: 'ardent.mission-submit', details: { missionId: 'p1:brief', missionRevision: 2, idempotencyKey: 'p1:brief:2' } });
+    // The audit keeps identifiers, never the objective or the context.
+    expect(JSON.stringify(audit)).not.toMatch(/secret plan|private context/);
+    for (const action of ['task-pause', 'task-resume']) expect((await call(token, 'POST', `${profile}/action`, { body: { action, target: task } })).status, action).toBe(200);
+    for (const resource of [`tasks/${task}/artifacts`, `artifacts/${'a'.repeat(64)}/manifest`, 'development?kind=skill_change', 'sessions?context=mission'])
+      expect((await call(token, 'GET', `${profile}/${resource}`)).status, resource).toBe(200);
+    expect(mocks.read).toHaveBeenCalledWith('node-1', 'lead', 'development', { kind: 'skill_change' });
+    expect(mocks.read).toHaveBeenCalledWith('node-1', 'lead', 'sessions', { context: 'mission' });
+  });
+
+  it('runs previews and development notes only for a named, linked person', async () => {
+    const token = await serviceToken();
+    const requests = [{ action: 'preview-submit', body: { prompt: 'Hello', overrides: { soul: '# Draft soul' } } },
+      { action: 'development-note', body: { kind: 'operator_note', title: 'Tone', body: 'Shorter answers' } }];
+    for (const body of requests) {
+      const missing = await call(token, 'POST', `${profile}/action`, { body });
+      expect(missing.status, body.action).toBe(403);
+      expect((await missing.json()).error.code).toBe('ACTING_SUBJECT_REQUIRED');
+      expect((await call(token, 'POST', `${profile}/action`, { acting: 'stranger', body })).status).toBe(403);
+      // Any linked role will do: a preview or a note changes no agent.
+      expect((await call(token, 'POST', `${profile}/action`, { acting: 'operator-subject', body })).status, body.action).toBe(200);
+    }
+    expect(mocks.action).toHaveBeenCalledTimes(2);
+    expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ action: 'ardent.preview-submit', actorId: 'bob',
+      details: expect.objectContaining({ overrides: ['soul'], actingSubject: 'operator-subject' }) }));
+    expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ action: 'ardent.development-note', actorId: 'bob', details: expect.objectContaining({ kind: 'operator_note' }) }));
+  });
+
   it('creates agents, resumes and enables HiveMem only for an acting ADMIN', async () => {
     const token = await serviceToken();
     const requests: Array<[string, string]> = [['POST', '/api/v1/ardent/agents'], ['POST', `${operation}/resume`], ['POST', `${profile}/hivemem`]];

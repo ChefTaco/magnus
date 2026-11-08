@@ -11,14 +11,17 @@ import { ardentPackageNames } from './ardent-packages.js';
 import { contextAdoptionInput, contextRelease, inspectContextAdoption, manageContextAdoption } from './ardent-context-adoption.js';
 import { childEnvironment } from '../utils/child-env.js';
 import { managedExecution } from '../security/managed-context.js';
+import { ardentDevelopmentNoteSchema, ardentMissionSubmitSchema, ardentPreviewSubmitSchema, ardentSessionOpenSchema } from '@hivemagnus/magnus-contracts';
 
 export { ardentPackageNames, DEFAULT_ARDENT_PACKAGE } from './ardent-packages.js';
 
 /**
  * What this agent's Ardent bridge supports. `studio: 1` means session-open,
  * session-bound task submission, unbuffered task streams and streamed artifacts.
+ * `studio: 2` adds missions, task pause and resume, previews, development
+ * history and notes, artifact manifests and session contexts (Ardent 2.2.0).
  */
-export const ARDENT_AGENT_CAPABILITIES = { studio: 1 } as const;
+export const ARDENT_AGENT_CAPABILITIES = { studio: 2 } as const;
 
 const profileName = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
 const configSummary = z.object({
@@ -216,7 +219,13 @@ async function managementToken(dir: string, envName: string): Promise<string> {
   return token;
 }
 
-const allowedRead = /^(?:openapi|status|profile|config|config\/schema|providers|channels|peers|peers\/config|memory\/status|skills|sessions|tasks|tasks\/[0-9a-f-]{36}(?:\/events)?|jobs\/definitions\/status|sessions\/[0-9a-f-]{36}\/messages|identity\/(?:soul|identity)(?:\/history)?|artifacts\/[a-f0-9]{64}|tasks\/[0-9a-f-]{36}\/stream)$/;
+const allowedRead = /^(?:openapi|status|profile|config|config\/schema|providers|channels|peers|peers\/config|memory\/status|skills|sessions|tasks|tasks\/[0-9a-f-]{36}(?:\/events)?|jobs\/definitions\/status|sessions\/[0-9a-f-]{36}\/messages|identity\/(?:soul|identity)(?:\/history)?|artifacts\/[a-f0-9]{64}(?:\/manifest)?|tasks\/[0-9a-f-]{36}\/(?:stream|artifacts)|development)$/;
+/** Streamed rather than buffered: a task's events and an artifact's bytes. */
+const streamedRead = /^(?:artifacts\/[a-f0-9]{64}|tasks\/[0-9a-f-]{36}\/stream)$/;
+/** Query parameters passed to the profile API, each with the values it may hold. */
+const readQuery: Record<string, RegExp> = {
+  after: /^[A-Za-z0-9_-]{1,400}$/, limit: /^\d{1,3}$/, kind: /^[a-z][a-z0-9_]{0,63}$/, context: /^(?:direct|mission|preview)$/,
+};
 /** Ardent closes a task stream after 60 seconds; a relay with no bytes for as long ends too. */
 export const ARDENT_STREAM_IDLE_MS = 60_000;
 const DEFAULT_ARTIFACT_MAX_BYTES = 64 * 1024 * 1024;
@@ -335,7 +344,7 @@ async function relayArdentStream(port: number, token: string, suffix: string, re
 }
 const actionInput = z.object({
   profile: profileName,
-  action: z.enum(['profile-create', 'session-open', 'hivemem-credential-set', 'config-validate', 'config-save', 'peer-validate', 'peer-save', 'identity-save', 'identity-restore', 'provider-test', 'channel-test', 'peer-test', 'memory-search', 'task-submit', 'task-cancel', 'skill-set', 'service-start', 'service-stop', 'service-restart', 'package-install', 'context-stage', 'context-adopt', 'context-rollback']),
+  action: z.enum(['profile-create', 'session-open', 'hivemem-credential-set', 'config-validate', 'config-save', 'peer-validate', 'peer-save', 'identity-save', 'identity-restore', 'provider-test', 'channel-test', 'peer-test', 'memory-search', 'task-submit', 'task-cancel', 'mission-submit', 'task-pause', 'task-resume', 'preview-submit', 'development-note', 'skill-set', 'service-start', 'service-stop', 'service-restart', 'package-install', 'context-stage', 'context-adopt', 'context-rollback']),
   target: z.string().max(128).optional(),
   body: z.unknown().optional(),
 }).strict();
@@ -355,6 +364,11 @@ const actionRoutes: Record<z.infer<typeof actionInput>['action'], { method: 'POS
   'memory-search': { method: 'POST', path: () => 'memory/search' },
   'task-submit': { method: 'POST', path: () => 'tasks' },
   'task-cancel': { method: 'POST', path: target => `tasks/${target}/cancel`, target: /^[0-9a-f-]{36}$/ },
+  'mission-submit': { method: 'POST', path: () => 'missions' },
+  'task-pause': { method: 'POST', path: target => `tasks/${target}/pause`, target: /^[0-9a-f-]{36}$/ },
+  'task-resume': { method: 'POST', path: target => `tasks/${target}/resume`, target: /^[0-9a-f-]{36}$/ },
+  'preview-submit': { method: 'POST', path: () => 'preview/tasks' },
+  'development-note': { method: 'POST', path: () => 'development' },
   'skill-set': { method: 'PUT', path: target => `skills/${target}`, target: /^[A-Za-z0-9_-]{1,100}$/ },
   'service-start': { method: 'POST', path: () => '' },
   'service-stop': { method: 'POST', path: () => '' },
@@ -612,11 +626,13 @@ export function createArdentRoutes(resolveRoot: () => Promise<ArdentRoot> = arde
       const { config, dir } = await profileConfig(target.root, name);
       if (!await probe(config.api.port, dir, config.api.token_env, name)) throw new Error('Ardent management listener identity differs or is unavailable');
       const token = await managementToken(dir, config.api.token_env);
-      if (suffix.startsWith('artifacts/') || suffix.endsWith('/stream')) return await relayArdentStream(config.api.port, token, suffix, c.req.raw, c.req.raw.signal);
+      if (streamedRead.test(suffix)) return await relayArdentStream(config.api.port, token, suffix, c.req.raw, c.req.raw.signal);
       const url = new URL(`http://127.0.0.1:${config.api.port}/${suffix === 'openapi' ? 'openapi.json' : `api/v1/${suffix}`}`);
-      for (const key of ['after', 'limit']) {
+      for (const [key, pattern] of Object.entries(readQuery)) {
         const value = c.req.query(key);
-        if (value !== undefined) url.searchParams.set(key, value);
+        if (value === undefined) continue;
+        if (!pattern.test(value)) return c.json({ error: `Invalid ${key} query` }, 400);
+        url.searchParams.set(key, value);
       }
       const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, redirect: 'error', signal: AbortSignal.timeout(10_000) });
       const body = await response.arrayBuffer();
@@ -632,15 +648,24 @@ export function createArdentRoutes(resolveRoot: () => Promise<ArdentRoot> = arde
     const input = parsed.data;
     if (input.action === 'task-submit' && !z.object({ prompt: z.string().trim().min(1).max(16000), idempotency_key: z.string().guid(), session_id: z.string().guid().optional() }).strict().safeParse(input.body).success)
       return c.json({ error: 'Task submission requires a bounded prompt and idempotency key' }, 400);
-    if (input.action === 'session-open' && !z.object({ key: z.string().trim().min(1).max(256), reset: z.boolean().optional() }).strict().safeParse(input.body).success)
-      return c.json({ error: 'Session open requires a bounded key' }, 400);
+    if (input.action === 'session-open' && !ardentSessionOpenSchema.safeParse(input.body).success)
+      return c.json({ error: 'Session open requires a bounded key and a known context' }, 400);
+    if (input.action === 'mission-submit' && !ardentMissionSubmitSchema.safeParse(input.body).success)
+      return c.json({ error: 'Mission submission requires an objective, a team mission and an idempotency key within bounds' }, 400);
+    if (input.action === 'preview-submit' && !ardentPreviewSubmitSchema.safeParse(input.body).success)
+      return c.json({ error: 'Preview submission requires a bounded prompt and known overrides' }, 400);
+    if (input.action === 'development-note' && !ardentDevelopmentNoteSchema.safeParse(input.body).success)
+      return c.json({ error: 'Development note requires a kind, title and body within bounds' }, 400);
+    if ((input.action === 'task-pause' || input.action === 'task-resume') && input.body !== undefined
+      && !z.object({}).strict().safeParse(input.body).success) return c.json({ error: 'Task pause and resume take no body' }, 400);
     if (input.action === 'memory-search' && !z.object({ query: z.string().trim().min(1).max(1000) }).strict().safeParse(input.body).success)
       return c.json({ error: 'Memory search requires a bounded query' }, 400);
     const route = actionRoutes[input.action];
     if (route.target ? !input.target || !route.target.test(input.target) : input.target !== undefined)
       return c.json({ error: 'Invalid Ardent action target' }, 400);
     const body = JSON.stringify(input.body ?? {});
-    if (Buffer.byteLength(body) > 200_000) return c.json({ error: 'Ardent action exceeds size limit' }, 413);
+    // A preview may carry a full soul and identity (128 KiB each); everything else, missions included, stays under 200 KB.
+    if (Buffer.byteLength(body) > (input.action === 'preview-submit' ? 300_000 : 200_000)) return c.json({ error: 'Ardent action exceeds size limit' }, 413);
     try {
       const root = await resolveRoot();
       if (input.action === 'context-stage' || input.action === 'context-adopt' || input.action === 'context-rollback') {
@@ -680,7 +705,7 @@ export function createArdentRoutes(resolveRoot: () => Promise<ArdentRoot> = arde
       // The signed managed HTTP receipt proves durable task admission, never
       // completion of the asynchronous model run. Return 200 for that bounded
       // admission so the node ledger can settle the synchronous operation.
-      const status = input.action === 'task-submit' && response.status === 202 ? 200 : response.status;
+      const status = ['task-submit', 'mission-submit', 'preview-submit'].includes(input.action) && response.status === 202 ? 200 : response.status;
       return new Response(new Uint8Array(result), { status, headers: { 'Content-Type': response.headers.get('content-type') ?? 'application/json', 'Cache-Control': 'no-store' } });
     } catch (error: unknown) {
       return c.json({ error: error instanceof Error ? error.message.slice(0, 200) : 'Ardent action unavailable' }, 503);

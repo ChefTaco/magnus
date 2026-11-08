@@ -7,8 +7,10 @@ import { logAuditEvent } from '../services/audit-service.js';
 import { actingOathweaveLink, watchOathweaveStream } from '../middleware/oathweave.js';
 import { getArdentAgentOperation, resumeArdentAgentOperation, startArdentAgentDeploy, startArdentHiveMemEnable, type ArdentOperationActor } from '../services/ardent-agent-deploy.js';
 import { getArdentContextAdoption, getArdentContextRelease, getArdentInstallation, getArdentProfileResource, listArdentInstallations, performArdentAction, requireArdentStudioAgent, streamArdentProfileResource } from '../services/ardent-service.js';
+import { AgentResponseError } from '../sdk/node-api-client.js';
+import { HTTPError } from 'ky';
 import { z } from 'zod';
-import { ArdentContextAdoptionInputSchema } from '@hivemagnus/magnus-contracts';
+import { ARDENT_STUDIO_CAPABILITY, ArdentContextAdoptionInputSchema, ardentDevelopmentNoteSchema, ardentMissionSubmitSchema, ardentPreviewSubmitSchema, ardentSessionOpenSchema } from '@hivemagnus/magnus-contracts';
 
 export const ardentRouter = new Hono<AppVariables>();
 ardentRouter.use('*', authMiddleware);
@@ -16,7 +18,8 @@ ardentRouter.use('*', authMiddleware);
 /**
  * ADMIN people, plus a linked Ardent service identity. Authentication already
  * confines a service to the bridge routes; the handlers below narrow it further
- * (read resources, three actions) and require an acting ADMIN to change agents.
+ * (read resources, the session, task, mission, preview and note actions) and
+ * require an acting person for previews and notes, and an acting ADMIN to change agents.
  */
 async function requireArdentAccess(c: Context<AppVariables>, next: Next): Promise<void> {
   const user = getUser(c);
@@ -32,9 +35,9 @@ export const ACTING_SUBJECT_HEADER = 'x-acting-subject';
  * Who the audit names. A person acts as themself. A service acts as itself, or
  * for the person its x-acting-subject names, which must be linked on the
  * service's issuer; both are recorded. `requireAdmin` additionally needs that
- * person's link role to be ADMIN.
+ * person's link role to be ADMIN; `requireSubject` needs a named person of any role.
  */
-export function ardentActor(c: Context<AppVariables>, requireAdmin: boolean): ArdentOperationActor {
+export function ardentActor(c: Context<AppVariables>, requireAdmin: boolean, requireSubject = requireAdmin): ArdentOperationActor {
   const user = getUser(c);
   if (!user.service) {
     if (requireAdmin && user.role !== 'ADMIN') throw new HttpError(403, 'FORBIDDEN', 'Requires one of: ADMIN');
@@ -43,6 +46,7 @@ export function ardentActor(c: Context<AppVariables>, requireAdmin: boolean): Ar
   const subject = c.req.header(ACTING_SUBJECT_HEADER);
   if (subject === undefined) {
     if (requireAdmin) throw new HttpError(403, 'ACTING_ADMIN_REQUIRED', `This change needs ${ACTING_SUBJECT_HEADER} naming a linked Magnus ADMIN`);
+    if (requireSubject) throw new HttpError(403, 'ACTING_SUBJECT_REQUIRED', `This action needs ${ACTING_SUBJECT_HEADER} naming the linked person it is for`);
     return { actorId: user.userId, details: { serviceClientId: user.service.clientId } };
   }
   const link = actingOathweaveLink(user.service.issuer, subject);
@@ -52,8 +56,32 @@ export function ardentActor(c: Context<AppVariables>, requireAdmin: boolean): Ar
 }
 
 /** Profile reads a service identity may make. Configuration, providers, channels and peers stay with ADMIN people. */
-const SERVICE_READ = /^(?:status|profile|skills|memory\/status|sessions|sessions\/[0-9a-f-]{36}\/messages|tasks|tasks\/[0-9a-f-]{36}(?:\/events)?|identity\/(?:soul|identity))$/;
-const SERVICE_ACTIONS = new Set(['session-open', 'task-submit', 'task-cancel']);
+const SERVICE_READ = /^(?:status|profile|skills|memory\/status|sessions|sessions\/[0-9a-f-]{36}\/messages|tasks|tasks\/[0-9a-f-]{36}(?:\/events|\/artifacts)?|artifacts\/[a-f0-9]{64}\/manifest|development|identity\/(?:soul|identity))$/;
+const SERVICE_ACTIONS = new Set(['session-open', 'task-submit', 'task-cancel', 'mission-submit', 'task-pause', 'task-resume', 'preview-submit', 'development-note']);
+/** Service actions that must name the person they are for. */
+const SERVICE_SUBJECT_ACTIONS = new Set(['preview-submit', 'development-note']);
+/** Actions and reads that Ardent 2.2.0 added, which need a node agent at studio level 2. */
+const MISSION_ACTIONS = new Set(['mission-submit', 'task-pause', 'task-resume', 'preview-submit', 'development-note']);
+const MISSION_READ = /^(?:tasks\/[0-9a-f-]{36}\/artifacts|artifacts\/[a-f0-9]{64}\/manifest|development)$/;
+/** Query parameters a profile read passes on, each with the values it may hold. */
+const READ_QUERY: Record<string, RegExp> = {
+  after: /^[A-Za-z0-9_-]{1,400}$/, limit: /^\d{1,3}$/, kind: /^[a-z][a-z0-9_]{0,63}$/, context: /^(?:direct|mission|preview)$/,
+};
+
+/** The HTTP status the node agent or Ardent answered, when a request reached them and was refused. */
+function refusedStatus(error: unknown): number | undefined {
+  if (error instanceof AgentResponseError) return error.agentStatus;
+  if (error instanceof HTTPError) return error.response.status;
+  return undefined;
+}
+/** Ardent's own refusal, passed on with its status: a bad request, a missing task or session, or a finished task. */
+function ardentRefusal(error: unknown): HttpError | undefined {
+  const status = refusedStatus(error);
+  if (status === 400 || status === 413) return new HttpError(400, 'VALIDATION_ERROR', 'Ardent rejected the request');
+  if (status === 404) return new HttpError(404, 'NOT_FOUND', 'Ardent task, session or resource not found');
+  if (status === 409) return new HttpError(409, 'CONFLICT', 'Ardent refused the request in the task\'s current state');
+  return undefined;
+}
 
 const id = (value: string | undefined) => {
   if (!value || !/^[A-Za-z0-9._-]{1,128}$/.test(value)) throw new HttpError(400, 'VALIDATION_ERROR', 'Invalid Ardent node or profile');
@@ -161,24 +189,53 @@ ardentRouter.get('/installations/:nodeId/profiles/:name/*', async c => {
   const name = id(c.req.param('name'));
   const marker = `/installations/${nodeId}/profiles/${name}/`;
   const resource = c.req.path.split(marker)[1] ?? '';
-  if (!/^(?:openapi|status|profile|config|config\/schema|providers|channels|peers|peers\/config|memory\/status|skills|sessions|tasks|tasks\/[0-9a-f-]{36}(?:\/events)?|sessions\/[0-9a-f-]{36}\/messages|identity\/(?:soul|identity)(?:\/history)?)$/.test(resource))
+  if (!/^(?:openapi|status|profile|config|config\/schema|providers|channels|peers|peers\/config|memory\/status|skills|sessions|tasks|tasks\/[0-9a-f-]{36}(?:\/events|\/artifacts)?|artifacts\/[a-f0-9]{64}\/manifest|development|sessions\/[0-9a-f-]{36}\/messages|identity\/(?:soul|identity)(?:\/history)?)$/.test(resource))
     throw new HttpError(404, 'NOT_FOUND', 'Ardent resource unavailable');
   if (getUser(c).service && !SERVICE_READ.test(resource)) throw new HttpError(403, 'FORBIDDEN', 'This Ardent resource is not available to a service identity');
   const query: Record<string, string> = {};
-  for (const key of ['after', 'limit']) {
+  for (const [key, pattern] of Object.entries(READ_QUERY)) {
     const value = c.req.query(key);
-    if (value !== undefined) query[key] = value;
+    if (value === undefined) continue;
+    if (!pattern.test(value)) throw new HttpError(400, 'VALIDATION_ERROR', `Invalid ${key} query`);
+    query[key] = value;
   }
+  // An older agent would drop the session context and list direct sessions instead.
+  if (MISSION_READ.test(resource) || query['context'] !== undefined) await requireArdentStudioAgent(nodeId, ARDENT_STUDIO_CAPABILITY.missions);
   try {
     const data = await getArdentProfileResource(nodeId, name, resource, query);
     return c.json({ success: true, data });
   } catch (error: unknown) {
+    const status = refusedStatus(error);
+    if (status === 404) throw new HttpError(404, 'NOT_FOUND', 'Ardent resource not found');
+    if (status === 400) throw new HttpError(400, 'VALIDATION_ERROR', 'Ardent rejected the read');
     throw new HttpError(503, 'DEPENDENCY_UNAVAILABLE', error instanceof Error ? error.message.slice(0, 300) : 'Ardent node unavailable');
   }
 });
 
+/** What the audit keeps of a mission or preview: identifiers, never the objective, context or identity texts. */
+function actionAuditDetails(action: string, body: unknown): Record<string, unknown> {
+  if (action === 'mission-submit') {
+    const mission = ardentMissionSubmitSchema.safeParse(body);
+    return mission.success ? { missionId: mission.data.mission.id, missionRevision: mission.data.mission.revision,
+      sessionId: mission.data.session_id ?? null, idempotencyKey: mission.data.idempotency_key } : {};
+  }
+  if (action === 'preview-submit') {
+    const preview = ardentPreviewSubmitSchema.safeParse(body);
+    return preview.success ? { sessionId: preview.data.session_id ?? null, overrides: Object.keys(preview.data.overrides ?? {}).sort() } : {};
+  }
+  if (action === 'development-note' && body && typeof body === 'object' && 'kind' in body && typeof body.kind === 'string')
+    return { kind: body.kind.slice(0, 64) };
+  return {};
+}
+
+/** Bodies checked here, before anything reaches a node; the node agent and Ardent check them again. */
+const ACTION_BODIES: Partial<Record<string, z.ZodType>> = {
+  'session-open': ardentSessionOpenSchema, 'mission-submit': ardentMissionSubmitSchema,
+  'preview-submit': ardentPreviewSubmitSchema, 'development-note': ardentDevelopmentNoteSchema,
+};
+
 const Action = z.object({
-  action: z.enum(['profile-create', 'session-open', 'config-validate', 'config-save', 'peer-validate', 'peer-save', 'identity-save', 'identity-restore', 'provider-test', 'channel-test', 'peer-test', 'memory-search', 'task-submit', 'task-cancel', 'skill-set', 'service-start', 'service-stop', 'service-restart', 'package-install', 'context-stage', 'context-adopt', 'context-rollback']),
+  action: z.enum(['profile-create', 'session-open', 'config-validate', 'config-save', 'peer-validate', 'peer-save', 'identity-save', 'identity-restore', 'provider-test', 'channel-test', 'peer-test', 'memory-search', 'task-submit', 'task-cancel', 'mission-submit', 'task-pause', 'task-resume', 'preview-submit', 'development-note', 'skill-set', 'service-start', 'service-stop', 'service-restart', 'package-install', 'context-stage', 'context-adopt', 'context-rollback']),
   target: z.string().min(1).max(128).optional(), body: z.unknown().optional(),
 }).strict();
 ardentRouter.post('/installations/:nodeId/profiles/:name/action', async c => {
@@ -187,22 +244,31 @@ ardentRouter.post('/installations/:nodeId/profiles/:name/action', async c => {
   const parsed = Action.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) throw new HttpError(400, 'VALIDATION_ERROR', 'Invalid Ardent action');
   const { action, target, body } = parsed.data;
-  if (getUser(c).service && !SERVICE_ACTIONS.has(action)) throw new HttpError(403, 'FORBIDDEN', 'A service identity may only open sessions and submit or cancel tasks');
-  const actor = ardentActor(c, false);
+  if (getUser(c).service && !SERVICE_ACTIONS.has(action)) throw new HttpError(403, 'FORBIDDEN', 'A service identity may only open sessions, run tasks, missions and previews, and record development notes');
+  const actor = ardentActor(c, false, SERVICE_SUBJECT_ACTIONS.has(action));
   if (['context-stage', 'context-adopt', 'context-rollback'].includes(action)
     && (target !== undefined || !ArdentContextAdoptionInputSchema.safeParse(body).success))
     throw new HttpError(400, 'VALIDATION_ERROR', 'Context adoption requires exact release, source and policy pins without an arbitrary target');
-  if (action === 'session-open' || (action === 'task-submit' && body && typeof body === 'object' && 'session_id' in body))
+  const shape = ACTION_BODIES[action]?.safeParse(body);
+  if (shape && !shape.success) throw new HttpError(400, 'VALIDATION_ERROR', shape.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; ').slice(0, 500));
+  if ((action === 'task-pause' || action === 'task-resume') && (!target || !/^[0-9a-f-]{36}$/.test(target) || (body !== undefined && !z.object({}).strict().safeParse(body).success)))
+    throw new HttpError(400, 'VALIDATION_ERROR', 'Task pause and resume need the task ID as target and no body');
+  if (MISSION_ACTIONS.has(action) || (action === 'session-open' && body && typeof body === 'object' && 'context' in body))
+    await requireArdentStudioAgent(nodeId, ARDENT_STUDIO_CAPABILITY.missions);
+  else if (action === 'session-open' || (action === 'task-submit' && body && typeof body === 'object' && 'session_id' in body))
     await requireArdentStudioAgent(nodeId);
   try {
     const result = await performArdentAction(nodeId, profile, action, target, body);
     await logAuditEvent({ action: `ardent.${action}`, actorId: actor.actorId,
       targetType: 'ardent-profile', targetId: `${nodeId}:${profile}`, details: {
-        target: target ?? null, ...actor.details,
+        target: target ?? null, ...actor.details, ...actionAuditDetails(action, body),
         ...(['context-stage', 'context-adopt', 'context-rollback'].includes(action) ? ArdentContextAdoptionInputSchema.parse(body) : {})
       } });
     return c.json({ success: true, data: result });
   } catch (error: unknown) {
+    // The agent refused it, or Ardent did: pass the newer actions' refusals on as such.
+    const refusal = MISSION_ACTIONS.has(action) ? ardentRefusal(error) : undefined;
+    if (refusal) throw refusal;
     throw new HttpError(503, 'DEPENDENCY_UNAVAILABLE', error instanceof Error ? error.message.slice(0, 300) : 'Ardent action unavailable');
   }
 });
