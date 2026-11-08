@@ -68,7 +68,56 @@ change, then `done`. Every step is audited (`ardent.agent.step`), as are the sta
 A failing step stops the operation with every receipt kept. `POST
 /api/v1/ardent/agents/operations/:id/resume` reruns the failed step and the ones after it; finished
 steps never run again. Only one operation per profile runs at a time. An operation left running by a
-server restart can be resumed once it has been idle for two minutes.
+server restart can be resumed once it has been idle for two minutes. While a command owner holds the
+node (below), resume answers 409 `COMMAND_OWNER_UNSETTLED` and says which action holds it and what to
+do; a step that failed because of one names it in its error.
+
+## Failed actions and command owners
+
+Every managed Ardent action owns the node's single execution slot through a command resource lease
+([COMMAND_RESOURCE_LEASES.md](COMMAND_RESOURCE_LEASES.md)), labelled `ardent:<profile>:<action>`.
+
+- A failure the node agent finished, such as a profile that did not reach the running state, answers
+  422 from the agent (424 when Ardent itself answered with a server error). The agent signs it as a
+  completed, failed operation, so the owner settles at once and the next action runs. Magnus answers
+  503 `DEPENDENCY_UNAVAILABLE` with the reason.
+- A request whose outcome nobody knows leaves the owner `unknown`: Ardent did not answer completely,
+  an owner command (for example `systemctl`) had to be stopped at its timeout, or a context adoption
+  step failed. Magnus answers 409 `ARDENT_OUTCOME_UNKNOWN`, and every later Ardent action on the node
+  409 `RESOURCE_LEASE_CONFLICT`, each naming the command.
+
+`GET /api/v1/ardent/installations` and `…/installations/:nodeId` list the held owners as
+`commandOwners` (command ID, state, profile, action, deadline and `reconcilableAfter`), and say in
+`commandReconciliation.configured` whether this server can sign a decision.
+
+### Reconciling an unknown outcome
+
+An ADMIN first establishes what the action did on the node: the unit's state and journal, the
+profile's files, Ardent's own status. Then:
+
+```json
+POST /api/v1/ardent/installations/:nodeId/profiles/:name/action
+{ "action": "command-reconcile", "target": "<commandId>",
+  "body": { "disposition": "no_effect_verified", "reason": "Unit inactive; no start job in the journal." } }
+```
+
+`disposition` is `effects_verified` (it took effect, fully or partly) or `no_effect_verified`. The
+action is node-wide; the profile segment only satisfies the route. ADMIN people only: a service
+identity cannot reconcile. It settles nothing that may still be running:
+
+1. The owner must be an Ardent action on this node, and its deadline must have passed by one minute.
+2. A result or decision the node agent already holds settles it as that evidence.
+3. With no receipt on the node, only the signed ledger trace (`magnus-server agents doctor --heal`)
+   settles it, when it proves the request never ran; otherwise 409 `RECEIPT_ABSENT_UNPROVEN`.
+4. A receipt the agent still runs answers 409 `COMMAND_IN_PROGRESS`.
+5. Only an outcome the agent itself records as unknown takes the ADMIN's decision. The server signs it
+   with `COMMAND_RECONCILIATION_SECRET`, bound to the exact request and fence, the ADMIN, their reason
+   and a digest of the node's Ardent inventory, and the node agent records it under its execution
+   lock. The same independent key must be set on the server and the node agent; without it the
+   answer is 409 `RECONCILIATION_UNAVAILABLE`.
+
+The command is never run again, and every attempt, settled or refused, is audited as
+`ardent.command-reconcile` with the decision and reason.
 
 ## HiveMem
 

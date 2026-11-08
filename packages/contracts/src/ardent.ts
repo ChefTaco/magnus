@@ -28,8 +28,52 @@ export const ArdentNodeStateSchema = z.object({
 });
 export type ArdentNodeState = z.infer<typeof ArdentNodeStateSchema>;
 
+/**
+ * A command owner holding the node's managed execution slot (docs/COMMAND_RESOURCE_LEASES.md). While one is
+ * held, no other managed Ardent action runs on the node. `unknown` means nobody knows what the command did.
+ */
+export const ArdentCommandOwnerSchema = z.object({
+  commandId: z.string(),
+  state: z.enum(['reserved', 'running', 'unknown']),
+  /** `ardent:<profile>:<action>` for an Ardent action; null for other commands and for owners older than the label. */
+  label: z.string().nullable(),
+  profile: z.string().nullable(),
+  action: z.string().nullable(),
+  /** An Ardent action, which the `command-reconcile` action can settle. Other commands use POST /commands/{id}/reconcile-resource. */
+  ardent: z.boolean(),
+  acquiredAt: z.string(),
+  dispatchedAt: z.string().nullable(),
+  deadline: z.string(),
+  /** When a reconciliation is first accepted: the deadline plus the receipt margin. */
+  reconcilableAfter: z.string(),
+});
+export type ArdentCommandOwner = z.infer<typeof ArdentCommandOwnerSchema>;
+
+/** The `command-reconcile` action body: an ADMIN's decision about an Ardent action whose outcome is unknown. */
+export const ArdentCommandReconcileSchema = z.object({
+  /** What the ADMIN established on the node: the action took effect (fully or partly), or it changed nothing. */
+  disposition: z.enum(['effects_verified', 'no_effect_verified']),
+  /** What they checked, kept in the audit and bound into the signed decision. */
+  reason: z.string().trim().min(10).max(500),
+}).strict();
+export type ArdentCommandReconcile = z.infer<typeof ArdentCommandReconcileSchema>;
+export const ArdentCommandReconcileResultSchema = z.object({
+  commandId: z.string(),
+  outcome: z.enum(['settled', 'already-settled']),
+  /** What the node agent held for the command: a result or decision that settled it, an unknown outcome the ADMIN decided, or nothing. */
+  receipt: z.enum(['completed', 'reconciled', 'unknown', 'absent']).nullable(),
+  settlement: z.string().nullable(),
+  evidenceSha256: z.string().nullable(),
+  decisionId: z.string().nullable(),
+});
+export type ArdentCommandReconcileResult = z.infer<typeof ArdentCommandReconcileResultSchema>;
+
 export const ArdentFleetInstallationSchema = ArdentNodeStateSchema.extend({
   nodeId: z.string(), nodeName: z.string(), hostname: z.string(),
   reachable: z.boolean(), error: z.string().nullable(),
+  /** Command owners held on the node, oldest first. Absent from servers older than this field. */
+  commandOwners: z.array(ArdentCommandOwnerSchema).optional(),
+  /** Whether this server can sign a reconciliation decision (COMMAND_RECONCILIATION_SECRET). The node agent needs the same key. */
+  commandReconciliation: z.object({ configured: z.boolean() }).optional(),
 });
 export type ArdentFleetInstallation = z.infer<typeof ArdentFleetInstallationSchema>;

@@ -17,7 +17,7 @@ import { NODE_MANAGER_SECRET } from '../utils/env.js';
 import { verifyWithRotation } from '../services/credential-rotation-service.js';
 import { resourceLeasesRequested } from '../services/command-resource-leases.js';
 import { readOwnershipHistory, stickyEnrollmentObserved } from '../services/resource-ownership.js';
-import { activateArdentScope, ardentScopeActivationSchema, assertArdentScope, inspectArdentScope } from '../services/ardent-scope-enrollment.js';
+import { activateArdentScope, ardentScopeActivationEvidence, ardentScopeActivationSchema, assertArdentScope, inspectArdentScope } from '../services/ardent-scope-enrollment.js';
 import { legacyAdmissionRequestSchema, resourceClaimSchema } from '../security/managed-http.js';
 import { participantWorkReconciliationSchema, historicalParticipantWorkReconciliationSchema } from '../schemas/resource-participant-reconciliation.js';
 import { reconcileParticipantWork, reconcileHistoricalParticipantWork, inspectHistoricalParticipantWork,
@@ -230,6 +230,11 @@ resourceLeasesRouter.get('/enrollment/:nodeId', authMiddleware, requireRole('ADM
 });
 resourceLeasesRouter.get('/enrollment/:nodeId/ardent-scope', authMiddleware, requireRole('ADMIN', 'OPERATOR'), async c => {
   return c.json({ success: true, data: await inspectArdentScope(c.req.param('nodeId')!) });
+});
+/** The activation's signed inputs (receipt digests, scheduler snapshot), so no one reads them from the database. */
+resourceLeasesRouter.get('/enrollment/:nodeId/ardent-scope/evidence', authMiddleware, requireRole('ADMIN'), async c => {
+  c.header('Cache-Control', 'no-store');
+  return c.json({ success: true, data: await ardentScopeActivationEvidence(c.req.param('nodeId')!) });
 });
 resourceLeasesRouter.post('/enrollment/:nodeId/ardent-scope/activate', authMiddleware, requireRole('ADMIN'), async c => {
   const input = await parseBody(c, ardentScopeActivationSchema);

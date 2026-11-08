@@ -10,10 +10,11 @@
  */
 import { randomUUID } from 'node:crypto';
 import YAML from 'yaml';
-import { ardentAgentDeployRequestSchema, type ArdentFleetInstallation } from '@hivemagnus/magnus-contracts';
+import { ardentAgentDeployRequestSchema, type ArdentCommandOwner, type ArdentFleetInstallation } from '@hivemagnus/magnus-contracts';
 import { getDb } from '../db/index.js';
 import { HttpError } from '../middleware/error-handler.js';
 import { logAuditEvent } from './audit-service.js';
+import { ardentCommandOwners, ardentOwnerBlock, describeOwner } from './ardent-command-owner.js';
 import { getArdentInstallation, getArdentProfileResource, performArdentAction, requireArdentStudioAgent } from './ardent-service.js';
 import {
   ARDENT_HIVEMEM_TOKEN_ENV, ardentHiveMemAgentId, HiveMemEnrollmentError, planArdentHiveMemCredential, prepareArdentHiveMem,
@@ -50,6 +51,10 @@ export interface ArdentDeployDeps {
   prepare(settings: ArdentHiveMemSettings): Promise<void>;
   credential(settings: ArdentHiveMemSettings, plan: ArdentHiveMemPlan): ReturnType<typeof requestArdentHiveMemCredential>;
   delay(ms: number): Promise<void>;
+  /** Command owners holding the node, oldest first. */
+  owners(nodeId: string): Promise<ArdentCommandOwner[]>;
+  /** Why a step's failure blocks the node, when a command owner is the cause. */
+  explain(nodeId: string, error: unknown): Promise<Error | undefined>;
 }
 
 const defaultDeps: ArdentDeployDeps = {
@@ -61,6 +66,8 @@ const defaultDeps: ArdentDeployDeps = {
   prepare: settings => prepareArdentHiveMem(settings),
   credential: (settings, plan) => requestArdentHiveMemCredential(settings, plan),
   delay: ms => new Promise(resolve => setTimeout(resolve, ms)),
+  owners: async nodeId => (await ardentCommandOwners([nodeId])).get(nodeId) ?? [],
+  explain: ardentOwnerBlock,
 };
 let deps = defaultDeps;
 /** Replace node, HiveMem and timer access in tests. Returns a restore function. */
@@ -182,6 +189,11 @@ export async function resumeArdentAgentOperation(id: string, actor: ArdentOperat
   if (!row) throw new HttpError(404, 'NOT_FOUND', 'Ardent agent operation not found');
   const interrupted = row.status === 'running' && !active.has(id) && Date.now() - row.updatedAt.getTime() > STALE_MS;
   if (row.status !== 'failed' && !interrupted) throw new HttpError(409, 'OPERATION_NOT_RESUMABLE', `The operation is ${row.status}; only a failed operation can be resumed`);
+  // Every step is a managed Ardent action, so a held command owner would stop it again at once.
+  const [owner] = await deps.owners(row.nodeId);
+  if (owner) throw new HttpError(409, 'COMMAND_OWNER_UNSETTLED', owner.state === 'unknown'
+    ? `The node could not confirm the outcome of ${describeOwner(owner)}, so no Ardent action can run there. An ADMIN must check what it did and reconcile it on the Ardent installations page, then resume this operation.`
+    : `${describeOwner(owner)} is still running on the node; resume this operation when it finishes.`);
   const steps = (JSON.parse(row.stepsJson) as Step[]).map(step => step.status === 'failed' || step.status === 'running'
     ? { ...step, status: 'pending' as const, error: null, finishedAt: null } : step);
   try {
@@ -235,7 +247,8 @@ async function runOperation(id: string): Promise<void> {
       result = await STEPS[step.name](context);
     } catch (error: unknown) {
       step.status = 'failed';
-      step.error = message(error);
+      // A command owner left unknown (by this step or an earlier action) is named, with what to do about it.
+      step.error = message(await deps.explain(row.nodeId, error).catch(() => undefined) ?? error);
       step.finishedAt = new Date().toISOString();
       await save({ status: 'failed', error: `${step.name}: ${step.error}`, completedAt: new Date() });
       await logAuditEvent({ action: 'ardent.agent.step', actorId: row.createdBy, targetType: 'ardent-profile', targetId: `${row.nodeId}:${row.profile}`,
