@@ -27,6 +27,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Changed
 
+- The Ardent bridge (`/api/v1/ardent/*`) has separate rate limits for reads and actions. `GET` and `HEAD` (profile reads, polls, task and operation streams, artifacts) allow 600 requests a minute per person and 3,000 per linked service identity; every other method (actions, New Agent, resume, Enable HiveMem) keeps 60 per person and 1,200 per service. The two budgets are separate buckets, so reading console pages quickly no longer uses up the budget for changing an agent.
+- A `429` from any rate-limited route now sends a `Retry-After` of the seconds until a request would be accepted again (refused requests still count), instead of always the whole window.
 - Manage the latest Ardent release, 2.2.0. A new check (`npm run ardent:latest:check`, also run daily in CI) fails when Magnus pins an older Ardent than the latest published release, so every Ardent release gets a matching Magnus update.
 
 ### New environment variables
