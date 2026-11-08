@@ -46,11 +46,14 @@ interface Node { profiles: Array<{ id: string; name: string; backend: 'llamacpp'
 let node: Node;
 let ardentVersion = '2.1.2';
 const credential = vi.fn();
+const prepare = vi.fn();
 
 beforeEach(() => {
   store.rows.clear();
   store.audit.length = 0;
   credential.mockReset();
+  prepare.mockReset();
+  prepare.mockResolvedValue(undefined);
   ardentVersion = '2.1.2';
   credential.mockImplementation(async (_settings: unknown, plan: { agentId: string; action: string }) => ({ token: TOKEN, agentId: plan.agentId, expiresAt: '2026-12-01T00:00:00.000Z', operationId: 'f'.repeat(64) }));
   node = { profiles: [{ id: 'existing', name: 'existing', backend: 'llamacpp', apiPort: 9910, running: true, a2aEnabled: false, channels: {}, error: null }],
@@ -79,7 +82,8 @@ beforeEach(() => {
       return { running: true };
     },
     studio: async () => undefined,
-    hivemem: () => ({ apiUrl: 'https://memory.example.com/', agentUrl: 'https://memory.example.com/', token: 'fixture-enrollment-token', workspaceId: 'agents', hours: 720 }),
+    hivemem: () => ({ apiUrl: 'https://memory.example.com/', agentUrl: 'https://memory.example.com/', auth: { kind: 'token', token: 'fixture-enrollment-token' }, workspaceId: 'agents', hours: 720 }),
+    prepare,
     credential,
     delay: async () => undefined,
   });
@@ -161,6 +165,11 @@ describe('New Agent operation', () => {
     await expect(deploy.startArdentAgentDeploy({ ...input, apiPort: 9910 }, actor)).rejects.toMatchObject({ code: 'PORT_IN_USE' });
     await expect(deploy.startArdentAgentDeploy({ ...input, hivemem: false }, actor)).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
     await expect(deploy.startArdentAgentDeploy({ ...input, model: { base_url: 'https://user:pw@models.example.com/v1', model: 'm' } }, actor)).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    // Magnus cannot reach HiveMem as itself: stop before the node is touched.
+    prepare.mockRejectedValue(Object.assign(new Error('Oathweave refused the client credentials (HTTP 401)'), { status: 503, code: 'HIVEMEM_IDENTITY_UNAVAILABLE' }));
+    await expect(deploy.startArdentAgentDeploy(input, actor)).rejects.toMatchObject({ code: 'HIVEMEM_IDENTITY_UNAVAILABLE' });
+    await expect(deploy.startArdentHiveMemEnable('node-1', 'existing', actor)).rejects.toMatchObject({ code: 'HIVEMEM_IDENTITY_UNAVAILABLE' });
+    expect(node.actions).toEqual([]);
     deploy.setArdentDeployDeps({ hivemem: () => { throw Object.assign(new Error('HiveMem enrollment is not configured'), { code: 'HIVEMEM_ENROLLMENT_UNAVAILABLE' }); } });
     await expect(deploy.startArdentAgentDeploy(input, actor)).rejects.toMatchObject({ code: 'HIVEMEM_ENROLLMENT_UNAVAILABLE' });
     expect(store.rows.size).toBe(0);
@@ -171,7 +180,7 @@ describe('New Agent operation', () => {
     deploy.setArdentDeployDeps({ studio: async () => undefined, installation: async nodeId => ({ nodeId, nodeName: 'node-1', hostname: 'node-1.example.com', reachable: true,
       installed: true, version: '2.1.2', owner: 'operator', profiles: [{ id: 'existing', name: 'existing', backend: 'llamacpp', apiPort: 9910, running: true, a2aEnabled: false, channels: {}, error: null }],
       checkedAt: new Date().toISOString(), error: null }),
-    hivemem: () => ({ apiUrl: 'https://memory.example.com/', agentUrl: 'https://memory.example.com/', token: 't', workspaceId: 'agents', hours: 720 }),
+    hivemem: () => ({ apiUrl: 'https://memory.example.com/', agentUrl: 'https://memory.example.com/', auth: { kind: 'token', token: 't' }, workspaceId: 'agents', hours: 720 }),
     credential: () => new Promise(resolve => { release = () => resolve({ token: TOKEN, agentId: 'a', expiresAt: null, operationId: 'f'.repeat(64) }); }),
     read: async <T,>() => ({ status: 'ready' }) as T, action: async () => ({}) });
     const first = await deploy.startArdentHiveMemEnable('node-1', 'existing', actor);

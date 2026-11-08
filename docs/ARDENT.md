@@ -78,17 +78,48 @@ token goes straight to the node agent, which writes it into the profile's privat
 as `ARDENT_HIVEMEM_TOKEN`. Magnus never stores, returns or logs it. The HiveMem agent ID is
 `ardent-<profile>-<digest of node and profile>`.
 
+Magnus calls HiveMem as its own service identity: an Oathweave machine client with the audience
+`hivemem`, whose short-lived `client_credentials` tokens Magnus fetches and renews itself. HiveMem
+links that client to a local principal (`HIVEMEM_OATHWEAVE_SERVICES_JSON`) allowed to enroll agents.
+Before New Agent or Enable HiveMem starts, Magnus checks that it gets a token and that the agents'
+workspace exists, creating it (owned by Magnus's principal) when it does not. A static HiveMem token
+remains available for an installation without Oathweave.
+
 Configure the control API:
 
 | Variable | Purpose |
 |---|---|
 | `MAGNUS_ARDENT_HIVEMEM_URL` | HTTPS HiveMem base URL (before `v1/`) that Magnus calls |
-| `MAGNUS_ARDENT_HIVEMEM_ENROLLMENT_TOKEN` | HiveMem token with `admin:agents` and admin rights on the workspace. Keep it on the server |
-| `MAGNUS_ARDENT_HIVEMEM_WORKSPACE_ID` | Existing workspace the agents join |
+| `MAGNUS_ARDENT_HIVEMEM_CLIENT_ID` | Oathweave machine client (audience `hivemem`) Magnus authenticates as |
+| `MAGNUS_ARDENT_HIVEMEM_CLIENT_SECRET` | Its secret. Keep it on the server |
+| `MAGNUS_ARDENT_HIVEMEM_TOKEN_URL` | HTTPS Oathweave token endpoint, for example `https://oathweave.example.com/api/v1/oauth/token` |
+| `MAGNUS_ARDENT_HIVEMEM_SCOPE` | Optional: the permissions requested. Default `hivemem:admin:agents hivemem:workspaces:write hivemem:memories:read hivemem:memories:write hivemem:sessions:read hivemem:sessions:write` |
+| `MAGNUS_ARDENT_HIVEMEM_ENROLLMENT_TOKEN` | Instead of the client: a HiveMem token with `admin:agents` and admin rights on an existing workspace. Keep it on the server |
+| `MAGNUS_ARDENT_HIVEMEM_WORKSPACE_ID` | Workspace the agents join. Default `ardent-agents` with the client, which creates it; required with a token |
 | `MAGNUS_ARDENT_HIVEMEM_AGENT_URL` | Optional: the URL agents use, when it differs (for example a suite ingress path) |
 | `MAGNUS_ARDENT_HIVEMEM_CREDENTIAL_HOURS` | Credential lifetime, 1 to 720 hours (default 720) |
 
-Without the first three, New Agent and Enable HiveMem answer 503 `HIVEMEM_ENROLLMENT_UNAVAILABLE`.
+The client, its Oathweave policy and the HiveMem link belong together:
+
+```text
+# Oathweave
+IAM_MACHINE_CLIENT_POLICIES={"magnus-hivemem":{"audience":"hivemem","permissions":["hivemem:admin:agents","hivemem:workspaces:write","hivemem:memories:read","hivemem:memories:write","hivemem:sessions:read","hivemem:sessions:write"],"lifetimeSeconds":300,"rotationOwner":"operator"}}
+IAM_MACHINE_CLIENT_SECRETS={"magnus-hivemem":"<generated secret>"}
+# HiveMem (issuer: Oathweave's native JWT_ISSUER)
+HIVEMEM_OATHWEAVE_SERVICES_JSON=[{"issuer":"<JWT_ISSUER>","clientId":"magnus-hivemem","localId":"magnus","scopes":["admin:agents","workspaces:write","memories:read","memories:write","sessions:read","sessions:write"]}]
+```
+
+Merge these into existing values rather than replacing them. The Hive suite generates all of them for
+a fresh installation with Magnus.
+
+Without a URL and either the client or the token, New Agent and Enable HiveMem answer 503
+`HIVEMEM_ENROLLMENT_UNAVAILABLE`. When Oathweave refuses the client they answer 503
+`HIVEMEM_IDENTITY_UNAVAILABLE`, and when HiveMem refuses the workspace (the link lacks
+`workspaces:write`, or an existing workspace is one Magnus does not administer) 503
+`HIVEMEM_WORKSPACE_UNAVAILABLE`, before anything on the node changes. A `hivemem-enroll` step that
+fails later names the same codes, or `HIVEMEM_ENROLLMENT_FAILED` with HiveMem's answer. A service
+token HiveMem rejects is replaced once.
+
 A retried step repeats its stored request, so HiveMem replays the same credential within its
 fifteen-minute receipt window. After that, or when the agent ID already exists in HiveMem, the step
 rotates the credential instead. HiveMem keeps the original deadline across rotations, so renew agent
