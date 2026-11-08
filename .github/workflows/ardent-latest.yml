@@ -1,0 +1,27 @@
+name: Ardent compatibility
+
+# Magnus deploys and manages Ardent agents, so it must pin the latest Ardent release.
+# The daily run catches a new Ardent release that has no matching Magnus update yet.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 9 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  latest:
+    name: Pins the latest Ardent
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.22.1
+      - run: node --test scripts/test-ardent-latest.mjs
+      - run: node scripts/check-ardent-latest.mjs

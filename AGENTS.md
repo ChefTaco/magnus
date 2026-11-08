@@ -84,6 +84,10 @@ Each workspace has its own `AGENTS.md` with package-specific guidance. Read it b
 - Never edit an applied Prisma migration; add a new one.
 - Published packages follow semver. Note user-facing changes in `CHANGELOG.md`.
 - Use Conventional Commits (`feat:`, `fix(server):`, `docs:` and so on).
+- Magnus manages Ardent agents, so it tracks the latest `@hivemagnus/ardent` release. After an Ardent
+  release, bump the three pins (root and agent `package.json`, agent `npm-shrinkwrap.json`), run
+  `npm install` and `npm run ardent:openapi:write`, and allow any new management routes in the node
+  agent. `npm run ardent:latest:check` fails while Magnus is behind.
 
 ## Gates
 
