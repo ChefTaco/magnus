@@ -101,7 +101,7 @@ resources `status`, `profile`, `skills`, `memory/status`, `sessions`, `sessions/
 `identity/soul` and `identity/identity`, task streams, artifacts and agent operations, and, for an acting
 ADMIN, `config`. Of the profile actions it may run `session-open`, `task-submit`, `task-cancel`,
 `mission-submit`, `task-pause`, `task-resume`, `preview-submit` and `development-note`, and, for an
-acting ADMIN, `identity-save`, `skill-set` and `config-save`. Everything else answers 403.
+acting ADMIN, `identity-save`, `skill-set`, `config-save` and `skill-install`. Everything else answers 403.
 `packages/contracts/src/ardent-service.ts` publishes these shapes.
 
 The service names the person it acts for in `x-acting-subject`, their Oathweave subject. That subject
@@ -113,7 +113,8 @@ need that link's role to be `ADMIN`; otherwise they answer 403 `ACTING_ADMIN_REQ
 `ACTING_SUBJECT_REQUIRED`. An unlinked subject answers 403 `ACTING_SUBJECT_UNLINKED`. The ingress must forward `x-acting-subject` only from
 that service, never from a browser.
 
-Agent changes follow the rule New Agent uses: `identity-save`, `skill-set` and `config-save` need
+Agent changes follow the rule New Agent uses: `identity-save`, `skill-set`, `config-save` and
+`skill-install` (install a HiveSkills catalog release, [Ardent](ARDENT.md#hiveskills-skill-install)) need
 `x-acting-subject` naming a linked `ADMIN`, or answer 403 `ACTING_ADMIN_REQUIRED` (403
 `ACTING_SUBJECT_UNLINKED` for an unlinked subject). Reading `config` needs the same, because a person
 reads it only as an ADMIN. It answers `{revision, text}`, exactly the text a person sees; Ardent keeps

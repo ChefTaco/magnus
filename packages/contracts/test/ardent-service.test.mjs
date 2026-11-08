@@ -8,7 +8,7 @@ import {
 const revision = 'a'.repeat(64);
 
 test('agent changes are separate from the actions any linked person may run', () => {
-  assert.deepEqual([...ARDENT_SERVICE_ADMIN_ACTIONS], ['identity-save', 'skill-set', 'config-save']);
+  assert.deepEqual([...ARDENT_SERVICE_ADMIN_ACTIONS], ['identity-save', 'skill-set', 'config-save', 'skill-install']);
   assert.equal(ARDENT_SERVICE_ADMIN_ACTIONS.some((action) => ARDENT_SERVICE_SUBJECT_ACTIONS.includes(action)), false);
 });
 
@@ -17,6 +17,8 @@ test('parses identity, skill and configuration changes with their revisions', ()
     { action: 'identity-save', target: 'soul', body: { text: '# Soul', revision } },
     { action: 'skill-set', target: 'web-research', body: { enabled: true, revision } },
     { action: 'config-save', body: { text: 'profile: lead\n', revision } },
+    { action: 'skill-install', body: { source: 'hiveskills', name: 'web-research', version: '1.2.0' } },
+    { action: 'skill-install', body: { source: 'hiveskills', name: 'web-research', version: '1.2.0', channel: 'canary', enable: true, revision } },
   ]) assert.equal(ardentServiceActionRequestSchema.safeParse(request).success, true, request.action);
   for (const request of [
     { action: 'identity-save', target: 'agents', body: { text: '# Soul', revision } },
@@ -26,6 +28,11 @@ test('parses identity, skill and configuration changes with their revisions', ()
     { action: 'config-save', body: { text: 'profile: lead\n', revision: 'stale' } },
     { action: 'config-save', target: 'x', body: { text: 'profile: lead\n', revision } },
     { action: 'config-validate', body: { text: 'profile: lead\n' } },
+    { action: 'skill-install', body: { source: 'hiveskills', name: 'web-research', version: '1.2.0', enable: true } },
+    { action: 'skill-install', body: { source: 'local', name: 'web-research', version: '1.2.0' } },
+    { action: 'skill-install', body: { source: 'hiveskills', name: 'Web_Research', version: '1.2.0' } },
+    { action: 'skill-install', body: { source: 'hiveskills', name: 'web-research', version: 'latest' } },
+    { action: 'skill-install', target: 'web-research', body: { source: 'hiveskills', name: 'web-research', version: '1.2.0' } },
   ]) assert.equal(ardentServiceActionRequestSchema.safeParse(request).success, false, JSON.stringify(request));
 });
 

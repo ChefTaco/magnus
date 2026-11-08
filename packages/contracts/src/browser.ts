@@ -2604,10 +2604,11 @@ export const ardentTaskDoneEventSchema = z.object({
 /**
  * The node agent's `studio` capability, from its ping features and Ardent inventory. 1: sessions,
  * task streams and streamed artifacts. 2: also missions, pause and resume, previews, development
- * history, artifact manifests and session contexts. A route that needs a higher level than the agent
- * reports answers 409 AGENT_UPGRADE_REQUIRED.
+ * history, artifact manifests and session contexts. 3: also skill-install, which installs a HiveSkills
+ * catalog skill onto a profile. A route that needs a higher level than the agent reports answers 409
+ * AGENT_UPGRADE_REQUIRED.
  */
-export const ARDENT_STUDIO_CAPABILITY = { bridge: 1, missions: 2 } as const;
+export const ARDENT_STUDIO_CAPABILITY = { bridge: 1, missions: 2, skillInstall: 3 } as const;
 /** task.event kinds that Ardent 2.2.0 adds. Other kinds appear too, so readers must accept unknown ones. */
 export const ARDENT_STUDIO_EVENT_KINDS = [
   'mission', 'team_handoff', 'team_ask_user', 'team_propose_decision', 'artifact_registered', 'development_note',
@@ -2696,6 +2697,39 @@ export const ardentDevelopmentQuerySchema = z.object({
   after: z.string().regex(/^[A-Za-z0-9_-]{1,400}$/u).optional(), limit: z.string().regex(/^\d{1,3}$/u).optional(), kind: ardentDevelopmentKindSchema.optional(),
 });
 export const ardentDevelopmentPageSchema = z.object({ records: z.array(ardentDevelopmentRecordSchema), next: z.string().nullable() });
+// action skill-install (node agents reporting studio >= 3; Magnus configured with MAGNUS_ARDENT_HIVESKILLS_URL)
+const ardentSkillInstallFields = {
+  source: z.literal('hiveskills'),
+  /** The HiveSkills catalog slug; it is also the skill's directory and Ardent name. */
+  name: z.string().regex(/^[a-z0-9][a-z0-9-]{1,62}$/u),
+  /** The release version, which must be the one promoted on `channel`. */
+  version: z.string().max(64).regex(/^v?\d+\.\d+\.\d+(?:-[a-z0-9.-]+)?$/iu),
+  channel: z.enum(['stable', 'canary']).optional(),
+  /** Also enable the skill, with `revision`, the configuration revision (GET …/config) it is based on. */
+  enable: z.boolean().optional(),
+  revision: ardentDigestSchema.optional(),
+};
+const enableNeedsRevision = (value: { enable?: boolean | undefined; revision?: string | undefined }) => !value.enable || value.revision !== undefined;
+const enableNeedsRevisionIssue = { message: 'enable needs the configuration revision', path: ['revision'] };
+/** The skill-install action body: a HiveSkills release Magnus fetches, verifies and installs onto the profile. */
+export const ardentSkillInstallSchema = z.object(ardentSkillInstallFields).strict().refine(enableNeedsRevision, enableNeedsRevisionIssue);
+/**
+ * The skill-install answer. `changed` is false when the same release digest was installed already. When
+ * enabling was asked for and failed, the skill stays installed, `enabled` is false and `enable_error`
+ * says why (a stale revision, or a profile that is not running). A change applies once the profile restarts.
+ */
+export const ardentSkillInstallResultSchema = z.object({
+  source: z.literal('hiveskills'), name: z.string(), version: z.string(), sha256: ardentDigestSchema, files: z.number().int().min(1),
+  changed: z.boolean(), enabled: z.boolean(), revision: ardentDigestSchema.nullable(), enable_error: z.string().nullable(),
+  activation_required: z.boolean(),
+});
+/** What Magnus sends the node agent: the request plus the verified archive and its digest. */
+export const ardentSkillInstallNodeSchema = z.object({
+  ...ardentSkillInstallFields,
+  sha256: ardentDigestSchema,
+  /** The release archive (gzip tar), base64; at most ARDENT_SKILL_ARCHIVE_LIMITS.archiveBytes once decoded. */
+  archive_base64: z.string().min(4).max(1_398_104).regex(/^[A-Za-z0-9+/]+={0,2}$/u),
+}).strict().refine(enableNeedsRevision, enableNeedsRevisionIssue);
 // actions task-submit, mission-submit and preview-submit: durable admission, never completion
 export const ardentTaskAdmissionSchema = z.object({ task_id: z.string(), state: z.string() });
 // actions task-pause and task-resume. A running task pauses at its next step boundary; a finished one answers 409.

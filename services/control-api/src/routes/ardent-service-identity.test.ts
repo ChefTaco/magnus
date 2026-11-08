@@ -10,15 +10,16 @@ vi.mock('../utils/env.js', async (original) => ({
   IAM_CORE_URL: '',
 }));
 vi.mock('../middleware/user-status.js', () => ({ getCurrentUserStatus: vi.fn(async () => ({ active: true, role: 'ADMIN' })), invalidateUserStatus: vi.fn() }));
-const mocks = vi.hoisted(() => ({ deploy: vi.fn(), hivemem: vi.fn(), resume: vi.fn(), operation: vi.fn(), action: vi.fn(), read: vi.fn(), audit: vi.fn(), list: vi.fn() }));
+const mocks = vi.hoisted(() => ({ deploy: vi.fn(), hivemem: vi.fn(), resume: vi.fn(), operation: vi.fn(), action: vi.fn(), read: vi.fn(), audit: vi.fn(), list: vi.fn(), release: vi.fn(), studio: vi.fn() }));
 vi.mock('../services/ardent-agent-deploy.js', () => ({
   startArdentAgentDeploy: mocks.deploy, startArdentHiveMemEnable: mocks.hivemem, resumeArdentAgentOperation: mocks.resume, getArdentAgentOperation: mocks.operation,
 }));
 vi.mock('../services/ardent-service.js', () => ({
-  performArdentAction: mocks.action, getArdentProfileResource: mocks.read, listArdentInstallations: mocks.list, requireArdentStudioAgent: vi.fn(),
+  performArdentAction: mocks.action, getArdentProfileResource: mocks.read, listArdentInstallations: mocks.list, requireArdentStudioAgent: mocks.studio,
   streamArdentProfileResource: vi.fn(), getArdentContextAdoption: vi.fn(), getArdentContextRelease: vi.fn(), getArdentInstallation: vi.fn(),
 }));
 vi.mock('../services/audit-service.js', () => ({ logAuditEvent: mocks.audit }));
+vi.mock('../services/ardent-hiveskills.js', () => ({ fetchArdentSkillRelease: mocks.release }));
 
 const { authMiddleware } = await import('../middleware/auth.js');
 const { errorHandler } = await import('../middleware/error-handler.js');
@@ -119,6 +120,8 @@ beforeEach(() => {
   mocks.action.mockResolvedValue({ task_id: 'task', state: 'queued' });
   mocks.read.mockImplementation(async (_node: string, _profile: string, resource: string) => resource === 'config' ? { revision: REVISION, text: CONFIG } : { ok: true });
   mocks.list.mockResolvedValue([]);
+  mocks.release.mockResolvedValue({ sha256: 'd'.repeat(64), archiveBase64: 'H4sIAAAA', files: 2 });
+  mocks.studio.mockResolvedValue(undefined);
 });
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -188,6 +191,50 @@ describe('linked Ardent service identity', () => {
     ];
     for (const body of bad) expect((await call(token, 'POST', `${profile}/action`, { acting: 'admin-subject', body })).status, JSON.stringify(body)).toBe(400);
     expect(mocks.action).not.toHaveBeenCalled();
+  });
+
+  it('installs a HiveSkills release only for an acting ADMIN, sending the node the release Magnus fetched', async () => {
+    const token = await serviceToken();
+    const request = { action: 'skill-install', body: { source: 'hiveskills', name: 'web-research', version: '1.2.0', enable: true, revision: REVISION } };
+    for (const acting of [undefined, 'operator-subject']) {
+      const refused = await call(token, 'POST', `${profile}/action`, { ...(acting ? { acting } : {}), body: request });
+      expect(refused.status).toBe(403);
+      expect((await refused.json()).error.code).toBe('ACTING_ADMIN_REQUIRED');
+    }
+    expect(mocks.release).not.toHaveBeenCalled();
+    mocks.action.mockResolvedValueOnce({ source: 'hiveskills', name: 'web-research', version: '1.2.0', sha256: 'd'.repeat(64), files: 2,
+      changed: true, enabled: true, revision: 'e'.repeat(64), enable_error: null, activation_required: true });
+    const installed = await call(token, 'POST', `${profile}/action`, { acting: 'admin-subject', body: { ...request, body: { ...request.body, archive_base64: 'caller-bytes' } } });
+    expect(installed.status).toBe(400);
+    const admin = await call(token, 'POST', `${profile}/action`, { acting: 'admin-subject', body: request });
+    expect(admin.status).toBe(200);
+    expect((await admin.json()).data).toMatchObject({ changed: true, enabled: true });
+    expect(mocks.studio).toHaveBeenCalledWith('node-1', 3);
+    expect(mocks.release).toHaveBeenCalledWith(request.body);
+    expect(mocks.action).toHaveBeenCalledWith('node-1', 'lead', 'skill-install', undefined, { ...request.body, sha256: 'd'.repeat(64), archive_base64: 'H4sIAAAA' });
+    expect(mocks.audit).toHaveBeenLastCalledWith(expect.objectContaining({ action: 'ardent.skill-install', actorId: 'alice', details: expect.objectContaining({
+      actingSubject: 'admin-subject', name: 'web-research', version: '1.2.0', channel: 'stable', enable: true, sha256: 'd'.repeat(64), files: 2 }) }));
+    expect(JSON.stringify(mocks.audit.mock.calls)).not.toContain('H4sIAAAA');
+  });
+
+  it('reports catalog and node refusals of a skill installation and audits a failed fetch', async () => {
+    const token = await serviceToken();
+    const { HttpError } = await import('../middleware/error-handler.js');
+    const body = { action: 'skill-install', body: { source: 'hiveskills', name: 'web-research', version: '1.2.0' } };
+    mocks.release.mockRejectedValueOnce(new HttpError(409, 'SKILL_VERSION_UNAVAILABLE', 'web-research 1.2.0 is not the release promoted on the stable channel'));
+    const stale = await call(token, 'POST', `${profile}/action`, { acting: 'admin-subject', body });
+    expect(stale.status).toBe(409);
+    expect((await stale.json()).error.code).toBe('SKILL_VERSION_UNAVAILABLE');
+    expect(mocks.action).not.toHaveBeenCalled();
+    expect(mocks.audit).toHaveBeenLastCalledWith(expect.objectContaining({ action: 'ardent.skill-install',
+      details: expect.objectContaining({ outcome: 'failed', code: 'SKILL_VERSION_UNAVAILABLE', dispatched: false }) }));
+    mocks.action.mockRejectedValueOnce(new AgentResponseError(409, { code: 'SKILL_CONFLICT', message: 'The profile has a skill named web-research that Magnus did not install; rename or remove it first' }));
+    const conflict = await call(token, 'POST', `${profile}/action`, { acting: 'admin-subject', body });
+    expect(conflict.status).toBe(409);
+    expect((await conflict.json()).error).toMatchObject({ code: 'SKILL_CONFLICT', message: expect.stringContaining('did not install') });
+    mocks.action.mockRejectedValueOnce(new AgentResponseError(400, { code: 'SKILL_ARCHIVE_INVALID', message: 'Skill archive digest differs from the catalog release' }));
+    expect((await (await call(token, 'POST', `${profile}/action`, { acting: 'admin-subject', body })).json()).error.code).toBe('SKILL_ARCHIVE_INVALID');
+    expect((await call(token, 'POST', `${profile}/action`, { acting: 'admin-subject', body: { ...body, target: 'web-research' } })).status).toBe(400);
   });
 
   it('passes on a stale revision as 409 CONFLICT', async () => {
