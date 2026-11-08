@@ -51,7 +51,12 @@ this exact mapping, with no prefix rule: `GET /api/magnus/docs/openapi.json` to
 
 Rate limits key on the verified Oathweave subject, so browsers behind one ingress do not share a
 bucket. Each subject still has one budget per prefix: `/hermes/*` allows 20 requests a minute and
-`/orchestra/*` allows 30, so poll those installation reads sparingly.
+`/orchestra/*` allows 30, so poll those installation reads sparingly. `/ardent/*` has two budgets in
+separate buckets: reads (`GET` and `HEAD`, streams included) allow 600 a minute, and actions (every
+other method) allow 60. A linked Ardent service identity gets 3,000 reads and 1,200 actions.
+
+A `429` carries `Retry-After`: the seconds until a request would be accepted again. Refused requests
+count against the window, so wait that long before retrying instead of retrying sooner.
 
 ## Authentication
 
