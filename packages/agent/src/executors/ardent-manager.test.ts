@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { ardentArtifactMaxBytes, ardentPackageNames, ardentUserUnit, createArdentRoutes, hermesTrafficConsumersDisabled, readArdentState, relayBody, verifiedInstalledArdentPackage, writeProfileCredential } from './ardent-manager.js';
+import { ardentArtifactMaxBytes, ardentPackageNames, ardentUserUnit, createArdentRoutes, hermesTrafficConsumersDisabled, ownerCommand, readArdentState, relayBody, verifiedInstalledArdentPackage, writeProfileCredential } from './ardent-manager.js';
 
 const dirs: string[] = [];
 const servers: Server[] = [];
@@ -37,6 +37,14 @@ describe('node-local Ardent inventory and management boundary', () => {
     expect(await verifiedInstalledArdentPackage(install, { ...staged, sha256: digest('other-package') })).toBe(false);
     await writeFile(join(packageRoot, 'dist/cli.js'), 'export const release = 2;\n');
     expect(await verifiedInstalledArdentPackage(install, staged)).toBe(false);
+  });
+  it('runs owner commands in the owner home, not the root-only agent directory', () => {
+    const root = { owner: 'ardent', home: '/var/lib/ardent', root: '/var/lib/ardent/.ardent', install: '/var/lib/ardent/.local/share/ardent' };
+    const command = ownerCommand(root, 1001, ['/usr/bin/node', '-e', 'process.exit(0)'], 10_000);
+    expect(command.file).toBe('/usr/sbin/runuser');
+    expect(command.args.slice(0, 6)).toEqual(['-u', 'ardent', '--', '/usr/bin/env', 'XDG_RUNTIME_DIR=/run/user/1001', 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1001/bus']);
+    expect(command.args.slice(6)).toEqual(['/usr/bin/node', '-e', 'process.exit(0)']);
+    expect(command.options).toMatchObject({ cwd: '/var/lib/ardent', timeout: 10_000, maxBuffer: 32 * 1024 });
   });
   it('permits restart beside Hermes only when all Hermes traffic consumers are explicitly disabled', async () => {
     const home = await mkdtemp(join(tmpdir(), 'magnus-ardent-handover-'));
@@ -80,6 +88,31 @@ describe('node-local Ardent inventory and management boundary', () => {
     } finally {
       if (previous === undefined) delete process.env['ARDENT_STAGED_PACKAGE']; else process.env['ARDENT_STAGED_PACKAGE'] = previous;
     }
+  });
+  it('recognizes profiles that ardent init creates and refuses another product on the port', async () => {
+    let product = 'Ardent';
+    const server = createServer((request, response) => {
+      response.setHeader('Content-Type', 'application/json');
+      if (request.url === '/api/v1/profile' && request.headers.authorization === 'Bearer private-fixture-token') response.end(JSON.stringify({ profile: 'example', name: 'example', product }));
+      else response.writeHead(404).end('{}');
+    });
+    servers.push(server);
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Fixture listener absent');
+    const home = await mkdtemp(join(tmpdir(), 'magnus-ardent-product-'));
+    dirs.push(home);
+    const profile = join(home, '.ardent/profiles/example');
+    await mkdir(profile, { recursive: true });
+    await writeFile(join(profile, 'config.yaml'), `schema_version: 1\nprofile: example\nname: Example\nexecution:\n  backend: llamacpp\napi:\n  host: 127.0.0.1\n  port: ${address.port}\n  token_env: ARDENT_API_TOKEN\na2a:\n  enabled: false\n`);
+    await writeFile(join(profile, '.env'), 'ARDENT_API_TOKEN=private-fixture-token\n', { mode: 0o600 });
+    const target = { owner: 'fixture', home, root: join(home, '.ardent'), install: join(home, '.local/share/ardent') };
+    const running = async () => ((await readArdentState(target)) as { profiles: { running: boolean }[] }).profiles[0]?.running;
+    expect(await running()).toBe(true);
+    product = 'Magnus Ardent';
+    expect(await running()).toBe(true);
+    product = 'Another Service';
+    expect(await running()).toBe(false);
   });
   it('proves profile identity with its private token and proxies only bounded reads', async () => {
     const requests: string[] = [];

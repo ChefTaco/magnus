@@ -114,7 +114,9 @@ async function probe(port: number, dir: string, tokenEnv: string, profile: strin
     const response = await fetch(`http://127.0.0.1:${port}/api/v1/profile`, { headers: { Authorization: `Bearer ${token}` }, redirect: 'error', signal: AbortSignal.timeout(1500) });
     if (!response.ok) return false;
     const identity: unknown = await response.json();
-    const parsed = z.object({ profile: z.string(), product: z.literal('Magnus Ardent') }).safeParse(identity);
+    // `ardent init` profiles report the product name Ardent; profiles from before the standalone
+    // runtime report Magnus Ardent. Anything else on the port is not this profile.
+    const parsed = z.object({ profile: z.string(), product: z.enum(['Ardent', 'Magnus Ardent']) }).safeParse(identity);
     return parsed.success && parsed.data.profile === profile;
   } catch { return false; }
 }
@@ -379,15 +381,26 @@ const actionRoutes: Record<z.infer<typeof actionInput>['action'], { method: 'POS
   'context-rollback': { method: 'POST', path: () => '' },
 };
 
+/**
+ * The command that runs `args` as the Ardent owner. It runs in the owner's home: the agent's own
+ * working directory is root-only (mode 0700 on suite installs), and Node resolves `node -e`
+ * scripts and npm resolves project config from the working directory, which the owner must read.
+ */
+export function ownerCommand(root: ArdentRoot, uid: number, args: string[], timeout = 100_000): { file: string; args: string[]; options: { cwd: string; timeout: number; maxBuffer: number; env: NodeJS.ProcessEnv } } {
+  const bus = `/run/user/${uid}/bus`;
+  return { file: '/usr/sbin/runuser', args: ['-u', root.owner, '--', '/usr/bin/env',
+    `XDG_RUNTIME_DIR=/run/user/${uid}`, `DBUS_SESSION_BUS_ADDRESS=unix:path=${bus}`, ...args],
+  options: { cwd: root.home, timeout, maxBuffer: 32 * 1024, env: childEnvironment() } };
+}
+
 async function runAsOwner(root: ArdentRoot, args: string[], timeout = 100_000): Promise<string> {
   const accounts = await readFile('/etc/passwd', 'utf8');
   const fields = accounts.split('\n').map(line => line.split(':')).find(parts => parts[0] === root.owner);
   const uid = Number(fields?.[2]);
   if (!Number.isSafeInteger(uid) || uid <= 0) throw new Error('Ardent owner UID is unavailable');
-  const bus = `/run/user/${uid}/bus`;
-  return new Promise<string>((resolve, reject) => execFile('/usr/sbin/runuser', ['-u', root.owner, '--', '/usr/bin/env',
-    `XDG_RUNTIME_DIR=/run/user/${uid}`, `DBUS_SESSION_BUS_ADDRESS=unix:path=${bus}`, ...args],
-  { timeout, maxBuffer: 32 * 1024, env: childEnvironment() }, (error, stdout) => error ? reject(new Error(`Ardent owner command failed: ${error.code ?? 'unknown'}`)) : resolve(stdout)));
+  const command = ownerCommand(root, uid, args, timeout);
+  return new Promise<string>((resolve, reject) => execFile(command.file, command.args, command.options,
+    (error, stdout) => error ? reject(new Error(`Ardent owner command failed: ${error.code ?? 'unknown'}`)) : resolve(stdout)));
 }
 
 export async function hermesTrafficConsumersDisabled(home: string): Promise<boolean> {
