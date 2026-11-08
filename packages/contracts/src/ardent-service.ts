@@ -22,12 +22,32 @@ export const ARDENT_ACTING_SUBJECT_HEADER = 'x-acting-subject';
 
 const ok = <T extends z.ZodType>(data: T) => z.object({ success: z.literal(true), data });
 const uuid = z.string().regex(/^[0-9a-f-]{36}$/u);
+const revision = z.string().regex(/^[a-f0-9]{64}$/u);
 
 /**
  * Actions a service runs only for a named person: x-acting-subject must name a person linked on the
  * service's issuer (any role). They answer 403 ACTING_SUBJECT_REQUIRED without it.
  */
 export const ARDENT_SERVICE_SUBJECT_ACTIONS = ['preview-submit', 'development-note'] as const;
+/**
+ * Agent changes a service runs only for a linked ADMIN named in x-acting-subject, the check New Agent uses.
+ * Without one they answer 403 ACTING_ADMIN_REQUIRED, and an unlinked subject 403 ACTING_SUBJECT_UNLINKED.
+ */
+export const ARDENT_SERVICE_ADMIN_ACTIONS = ['identity-save', 'skill-set', 'config-save'] as const;
+/**
+ * The only configuration values a service's config-save may change: the backend and model settings,
+ * the enabled skills and the artifact size limit. A change anywhere else, including provider URLs,
+ * credentials and their environment names, the Codex command, memory, channels, peers, plugins and
+ * the API and A2A listeners, answers 403 CONFIG_PATH_FORBIDDEN. An array is one value.
+ */
+export const ARDENT_SERVICE_CONFIG_PATHS = [
+  'execution.backend',
+  'providers.llamacpp.model', 'providers.llamacpp.request_timeout_seconds', 'providers.llamacpp.context_window_tokens',
+  'providers.llamacpp.max_output_tokens', 'providers.llamacpp.reasoning_effort',
+  'providers.codex.model',
+  'skills.enabled',
+  'artifacts.max_bytes',
+] as const;
 
 // POST /ardent/installations/{nodeId}/profiles/{name}/action — the actions a service may run
 export const ardentServiceSessionOpenRequestSchema = z.object({ action: z.literal('session-open'), body: ardentSessionOpenSchema }).strict();
@@ -46,11 +66,33 @@ export const ardentServiceTaskPauseRequestSchema = z.object({ action: z.literal(
 export const ardentServiceTaskResumeRequestSchema = z.object({ action: z.literal('task-resume'), target: uuid }).strict();
 export const ardentServicePreviewSubmitRequestSchema = z.object({ action: z.literal('preview-submit'), body: ardentPreviewSubmitSchema }).strict();
 export const ardentServiceDevelopmentNoteRequestSchema = z.object({ action: z.literal('development-note'), body: ardentDevelopmentNoteSchema }).strict();
+// Agent changes (ARDENT_SERVICE_ADMIN_ACTIONS). Each carries the revision it was based on; a stale one answers 409 CONFLICT.
+/** Ardent's identity edit: the new SOUL.md or IDENTITY.md text and the revision it replaces. */
+export const ardentIdentityEditSchema = z.object({ text: z.string().min(1).max(128 * 1024), revision }).strict();
+/** Ardent's skill toggle: `revision` is the configuration revision (GET …/config). */
+export const ardentSkillEditSchema = z.object({ enabled: z.boolean(), revision }).strict();
+/** Ardent's configuration edit: the whole config.yaml text and the configuration revision it replaces. */
+export const ardentConfigEditSchema = z.object({ text: z.string().min(1).max(200_000), revision }).strict();
+export const ardentServiceIdentitySaveRequestSchema = z.object({
+  action: z.literal('identity-save'), target: z.enum(['soul', 'identity']), body: ardentIdentityEditSchema,
+}).strict();
+export const ardentServiceSkillSetRequestSchema = z.object({
+  action: z.literal('skill-set'), target: z.string().regex(/^[A-Za-z0-9_-]{1,100}$/u), body: ardentSkillEditSchema,
+}).strict();
+/** Only ARDENT_SERVICE_CONFIG_PATHS may differ between the current configuration and `text`. */
+export const ardentServiceConfigSaveRequestSchema = z.object({ action: z.literal('config-save'), body: ardentConfigEditSchema }).strict();
 export const ardentServiceActionRequestSchema = z.union([
   ardentServiceSessionOpenRequestSchema, ardentServiceTaskSubmitRequestSchema, ardentServiceTaskCancelRequestSchema,
   ardentServiceMissionSubmitRequestSchema, ardentServiceTaskPauseRequestSchema, ardentServiceTaskResumeRequestSchema,
   ardentServicePreviewSubmitRequestSchema, ardentServiceDevelopmentNoteRequestSchema,
+  ardentServiceIdentitySaveRequestSchema, ardentServiceSkillSetRequestSchema, ardentServiceConfigSaveRequestSchema,
 ]);
+/** GET …/identity/soul and …/identity/identity, and the identity-save answer. */
+export const ardentIdentityFileSchema = z.object({ kind: z.enum(['soul', 'identity']), name: z.string(), text: z.string(), revision });
+/** GET …/config: the raw config.yaml and its revision. Secrets appear only as environment variable names or ${NAME} references. */
+export const ardentConfigFileSchema = z.object({ revision, text: z.string() });
+/** The skill-set and config-save answer: the new configuration revision. The change applies once the profile restarts. */
+export const ardentConfigSavedSchema = z.object({ revision, activation_required: z.boolean() });
 
 // GET /ardent/profiles
 export const ardentServiceProfileSchema = z.object({
@@ -81,9 +123,9 @@ export const ardentServiceRoutes: readonly ArdentServiceRoute[] = [
     note: 'Each installation carries capabilities.studio: 1 for sessions and streams, 2 for missions, pause, previews and development. Below what a feature needs, offer an agent upgrade.' },
   { method: 'GET', path: '/ardent/installations/{nodeId}', response: ok(z.record(z.string(), z.unknown())), actingAdmin: false },
   { method: 'GET', path: '/ardent/installations/{nodeId}/profiles/{name}/{resource}', response: ok(z.unknown()), actingAdmin: false,
-    note: 'resource is one of status, profile, skills, memory/status, sessions, sessions/{id}/messages, tasks, tasks/{id}, tasks/{id}/events, identity/soul, identity/identity; with studio >= 2 also tasks/{id}/artifacts (ardentTaskArtifactsSchema), artifacts/{sha256}/manifest (ardentArtifactRecordSchema) and development (ardentDevelopmentPageSchema, query ardentDevelopmentQuerySchema). sessions takes context=direct|mission|preview (studio >= 2). data is the Ardent response.' },
+    note: 'resource is one of status, profile, skills, memory/status, sessions, sessions/{id}/messages, tasks, tasks/{id}, tasks/{id}/events, identity/soul, identity/identity (ardentIdentityFileSchema), and config (ardentConfigFileSchema, which needs x-acting-subject naming a linked ADMIN, as a person reading it needs ADMIN); with studio >= 2 also tasks/{id}/artifacts (ardentTaskArtifactsSchema), artifacts/{sha256}/manifest (ardentArtifactRecordSchema) and development (ardentDevelopmentPageSchema, query ardentDevelopmentQuerySchema). sessions takes context=direct|mission|preview (studio >= 2). data is the Ardent response.' },
   { method: 'POST', path: '/ardent/installations/{nodeId}/profiles/{name}/action', request: ardentServiceActionRequestSchema, response: ok(z.unknown()), actingAdmin: false,
-    note: 'session-open answers an Ardent session, task-submit, mission-submit and preview-submit a task admission (ardentTaskAdmissionSchema), task-cancel the cancelled task, task-pause and task-resume ardentTaskPauseStateSchema, development-note the stored ardentDevelopmentRecordSchema. preview-submit and development-note need x-acting-subject (ARDENT_SERVICE_SUBJECT_ACTIONS). mission-submit, task-pause, task-resume, preview-submit, development-note and a session-open with context answer 409 AGENT_UPGRADE_REQUIRED below studio 2. Ardent\'s own 400, 404 and 409 (a finished task cannot pause) come back with that status. Any other action answers 403.' },
+    note: 'session-open answers an Ardent session, task-submit, mission-submit and preview-submit a task admission (ardentTaskAdmissionSchema), task-cancel the cancelled task, task-pause and task-resume ardentTaskPauseStateSchema, development-note the stored ardentDevelopmentRecordSchema. preview-submit and development-note need x-acting-subject (ARDENT_SERVICE_SUBJECT_ACTIONS). identity-save answers ardentIdentityFileSchema, skill-set and config-save ardentConfigSavedSchema; they need x-acting-subject naming a linked ADMIN (ARDENT_SERVICE_ADMIN_ACTIONS), answer 409 CONFLICT when the revision is stale, and config-save answers 403 CONFIG_PATH_FORBIDDEN when anything outside ARDENT_SERVICE_CONFIG_PATHS changes. mission-submit, task-pause, task-resume, preview-submit, development-note and a session-open with context answer 409 AGENT_UPGRADE_REQUIRED below studio 2. Ardent\'s own 400, 404 and 409 (a finished task cannot pause) come back with that status. Any other action answers 403.' },
   { method: 'GET', path: '/ardent/installations/{nodeId}/profiles/{name}/tasks/{taskId}/stream', query: ardentTaskStreamQuerySchema, response: null, actingAdmin: false,
     events: { 'task.text': ardentTaskTextEventSchema, 'task.delta': ardentTaskTextEventSchema, 'task.event': ardentTaskJournalEventSchema, 'task.done': ardentTaskDoneEventSchema },
     note: 'Missions and previews stream here like any task. task.event kinds include ARDENT_STUDIO_EVENT_KINDS (mission, team_handoff, paused, ...) on Ardent 2.2.0; accept unknown kinds.' },
@@ -105,6 +147,10 @@ export type ArdentDevelopmentNote = z.infer<typeof ardentDevelopmentNoteSchema>;
 export type ArdentDevelopmentRecord = z.infer<typeof ardentDevelopmentRecordSchema>;
 export type ArdentArtifactRecord = z.infer<typeof ardentArtifactRecordSchema>;
 export type ArdentTaskPauseState = z.infer<typeof ardentTaskPauseStateSchema>;
+export type ArdentIdentityFile = z.infer<typeof ardentIdentityFileSchema>;
+export type ArdentConfigFile = z.infer<typeof ardentConfigFileSchema>;
+export type ArdentConfigSaved = z.infer<typeof ardentConfigSavedSchema>;
+export type ArdentServiceConfigPath = typeof ARDENT_SERVICE_CONFIG_PATHS[number];
 export type ArdentServiceSession = z.infer<typeof ardentServiceSessionSchema>;
 export type ArdentServiceTaskAdmission = z.infer<typeof ardentServiceTaskAdmissionSchema>;
 export type ArdentServiceProfile = z.infer<typeof ardentServiceProfileSchema>;

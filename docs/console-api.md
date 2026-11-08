@@ -98,9 +98,10 @@ link, and a service token never matches a person's link. The audit actor is `ser
 A service may read `GET /api/v1/ardent/profiles`, `/installations`, `/installations/:nodeId`, the profile
 resources `status`, `profile`, `skills`, `memory/status`, `sessions`, `sessions/:id/messages`, `tasks`,
 `tasks/:id`, `tasks/:id/events`, `tasks/:id/artifacts`, `artifacts/:sha256/manifest`, `development`,
-`identity/soul` and `identity/identity`, task streams, artifacts and agent operations. Of the profile
-actions it may run `session-open`, `task-submit`, `task-cancel`, `mission-submit`, `task-pause`,
-`task-resume`, `preview-submit` and `development-note`. Everything else answers 403.
+`identity/soul` and `identity/identity`, task streams, artifacts and agent operations, and, for an acting
+ADMIN, `config`. Of the profile actions it may run `session-open`, `task-submit`, `task-cancel`,
+`mission-submit`, `task-pause`, `task-resume`, `preview-submit` and `development-note`, and, for an
+acting ADMIN, `identity-save`, `skill-set` and `config-save`. Everything else answers 403.
 `packages/contracts/src/ardent-service.ts` publishes these shapes.
 
 The service names the person it acts for in `x-acting-subject`, their Oathweave subject. That subject
@@ -111,6 +112,31 @@ need that link's role to be `ADMIN`; otherwise they answer 403 `ACTING_ADMIN_REQ
 `preview-submit` and `development-note` actions need a linked subject of any role, or answer 403
 `ACTING_SUBJECT_REQUIRED`. An unlinked subject answers 403 `ACTING_SUBJECT_UNLINKED`. The ingress must forward `x-acting-subject` only from
 that service, never from a browser.
+
+Agent changes follow the rule New Agent uses: `identity-save`, `skill-set` and `config-save` need
+`x-acting-subject` naming a linked `ADMIN`, or answer 403 `ACTING_ADMIN_REQUIRED` (403
+`ACTING_SUBJECT_UNLINKED` for an unlinked subject). Reading `config` needs the same, because a person
+reads it only as an ADMIN. It answers `{revision, text}`, exactly the text a person sees; Ardent keeps
+secrets out of `config.yaml`, which names them only as environment variables or `${NAME}` references.
+Identity reads need no acting person and carry their own `revision`.
+
+A service's `config-save` may change only these values; any other difference from the current
+configuration answers 403 `CONFIG_PATH_FORBIDDEN` and lists the paths:
+
+| Path | |
+|---|---|
+| `execution.backend` | `llamacpp` or `codex` |
+| `providers.llamacpp.model`, `request_timeout_seconds`, `context_window_tokens`, `max_output_tokens`, `reasoning_effort` | model settings |
+| `providers.codex.model` | Codex model |
+| `skills.enabled` | the whole list |
+| `artifacts.max_bytes` | artifact size limit |
+
+Provider URLs, credentials and their environment names, the Codex command and auth mode, memory,
+channels, peers, plugins and the API and A2A listeners stay with ADMIN people. Magnus compares parsed
+values, so comments and formatting do not count. The edit's `revision` must still be current, or it
+answers 409 `CONFLICT`; Ardent's own 409 for a stale identity or skill revision also comes back as 409
+`CONFLICT`. The audit names the acting person, the service and the changed paths, never the text.
+`ARDENT_SERVICE_CONFIG_PATHS` and `ARDENT_SERVICE_ADMIN_ACTIONS` publish these lists.
 
 `GET /api/v1/console/session` replaces the dashboard's environment checks and build-time values:
 

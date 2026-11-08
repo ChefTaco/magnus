@@ -24,6 +24,7 @@ const { authMiddleware } = await import('../middleware/auth.js');
 const { errorHandler } = await import('../middleware/error-handler.js');
 const { resetOathweaveVerifier } = await import('../middleware/oathweave-verifier.js');
 const { ardentRouter } = await import('./ardent.js');
+const { AgentResponseError } = await import('../sdk/node-api-client.js');
 
 const ISSUER = 'https://identity.example.com';
 const JWKS_URL = `${ISSUER}/oauth/jwks`;
@@ -65,6 +66,37 @@ const call = (token: string, method: string, path: string, options: { body?: unk
   ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}),
 });
 const profile = '/api/v1/ardent/installations/node-1/profiles/lead';
+const REVISION = 'a'.repeat(64);
+const CONFIG = `schema_version: 1
+profile: lead
+name: Lead
+execution:
+  backend: llamacpp
+  max_model_steps: 12
+  max_tool_calls: 24
+  max_parallel_tools: 4
+  deadline_seconds: 900
+  max_delegation_depth: 1
+providers:
+  llamacpp:
+    base_url: http://127.0.0.1:8080/v1
+    model: local-model
+    api_key_env: LLAMACPP_API_KEY
+    request_timeout_seconds: 120
+  codex:
+    command: codex
+    model: codex-model
+    auth_mode: chatgpt
+    approval_policy: never
+    sandbox: read-only
+skills:
+  directories: [skills]
+  enabled: [web-research]
+api:
+  host: 127.0.0.1
+  port: 9910
+  token_env: ARDENT_API_TOKEN
+`;
 const operation = '/api/v1/ardent/agents/operations/00000000-0000-4000-8000-0000000000aa';
 
 beforeEach(() => {
@@ -85,7 +117,7 @@ beforeEach(() => {
   mocks.resume.mockResolvedValue('00000000-0000-4000-8000-0000000000aa');
   mocks.operation.mockResolvedValue({ id: 'op', status: 'running' });
   mocks.action.mockResolvedValue({ task_id: 'task', state: 'queued' });
-  mocks.read.mockResolvedValue({ ok: true });
+  mocks.read.mockImplementation(async (_node: string, _profile: string, resource: string) => resource === 'config' ? { revision: REVISION, text: CONFIG } : { ok: true });
   mocks.list.mockResolvedValue([]);
 });
 afterEach(() => {
@@ -100,8 +132,8 @@ describe('linked Ardent service identity', () => {
     expect((await call(token, 'GET', `${profile}/status`)).status).toBe(200);
     expect((await call(token, 'GET', operation)).status).toBe(200);
     expect((await call(token, 'GET', '/api/v1/nodes')).status).toBe(403);
-    // Configuration, providers and peers stay with ADMIN people.
-    for (const resource of ['config', 'providers', 'peers/config', 'channels']) expect((await call(token, 'GET', `${profile}/${resource}`)).status, resource).toBe(403);
+    // Providers, channels, peers and histories stay with ADMIN people.
+    for (const resource of ['config/schema', 'providers', 'peers/config', 'channels', 'identity/soul/history']) expect((await call(token, 'GET', `${profile}/${resource}`)).status, resource).toBe(403);
     expect(mocks.read).toHaveBeenCalledTimes(1);
   });
 
@@ -111,9 +143,128 @@ describe('linked Ardent service identity', () => {
     expect(submit.status).toBe(200);
     expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ action: 'ardent.task-submit', actorId: 'service:ardent:ardent-studio',
       details: expect.objectContaining({ serviceClientId: 'ardent-studio' }) }));
-    for (const action of ['config-save', 'service-stop', 'identity-save', 'package-install'])
-      expect((await call(token, 'POST', `${profile}/action`, { body: { action, body: {} } })).status, action).toBe(403);
+    for (const action of ['config-validate', 'service-stop', 'identity-restore', 'peer-save', 'package-install'])
+      expect((await call(token, 'POST', `${profile}/action`, { acting: 'admin-subject', body: { action, body: {} } })).status, action).toBe(403);
     expect(mocks.action).toHaveBeenCalledTimes(1);
+  });
+
+  it('changes identity, skills and configuration only for an acting ADMIN, and audits both', async () => {
+    const token = await serviceToken();
+    const requests = [
+      { action: 'identity-save', target: 'soul', body: { text: '# Soul\nCalm and exact.', revision: REVISION } },
+      { action: 'skill-set', target: 'web-research', body: { enabled: true, revision: REVISION } },
+      { action: 'config-save', body: { text: CONFIG.replace('model: local-model', 'model: other-model'), revision: REVISION } },
+    ];
+    for (const body of requests) {
+      const missing = await call(token, 'POST', `${profile}/action`, { body });
+      expect(missing.status, body.action).toBe(403);
+      expect((await missing.json()).error.code).toBe('ACTING_ADMIN_REQUIRED');
+      const operator = await call(token, 'POST', `${profile}/action`, { acting: 'operator-subject', body });
+      expect(operator.status, body.action).toBe(403);
+      expect((await operator.json()).error.code).toBe('ACTING_ADMIN_REQUIRED');
+      const unlinked = await call(token, 'POST', `${profile}/action`, { acting: 'stranger', body });
+      expect((await unlinked.json()).error.code).toBe('ACTING_SUBJECT_UNLINKED');
+      expect(mocks.action, body.action).not.toHaveBeenCalled();
+      const admin = await call(token, 'POST', `${profile}/action`, { acting: 'admin-subject', body });
+      expect(admin.status, body.action).toBe(200);
+      expect(mocks.action).toHaveBeenLastCalledWith('node-1', 'lead', body.action, 'target' in body ? body.target : undefined, body.body);
+      expect(mocks.audit).toHaveBeenLastCalledWith(expect.objectContaining({ action: `ardent.${body.action}`, actorId: 'alice',
+        details: expect.objectContaining({ serviceActor: 'service:ardent:ardent-studio', serviceClientId: 'ardent-studio', actingSubject: 'admin-subject' }) }));
+      mocks.action.mockClear();
+    }
+    expect(mocks.audit.mock.calls.at(-1)![0]).toMatchObject({ details: { configPaths: ['providers.llamacpp.model'] } });
+    // The audit keeps identifiers and paths, never identity or configuration text.
+    expect(JSON.stringify(mocks.audit.mock.calls)).not.toMatch(/Calm and exact|other-model/);
+  });
+
+  it('checks change bodies and targets before anything reaches the node', async () => {
+    const token = await serviceToken();
+    const bad = [
+      { action: 'identity-save', target: 'agents', body: { text: 'x', revision: REVISION } },
+      { action: 'identity-save', target: 'soul', body: { text: 'x' } },
+      { action: 'skill-set', body: { enabled: true, revision: REVISION } },
+      { action: 'skill-set', target: 'web-research', body: { enabled: 'yes', revision: REVISION } },
+      { action: 'config-save', body: { text: CONFIG, revision: 'stale' } },
+    ];
+    for (const body of bad) expect((await call(token, 'POST', `${profile}/action`, { acting: 'admin-subject', body })).status, JSON.stringify(body)).toBe(400);
+    expect(mocks.action).not.toHaveBeenCalled();
+  });
+
+  it('passes on a stale revision as 409 CONFLICT', async () => {
+    const token = await serviceToken();
+    mocks.action.mockRejectedValueOnce(new AgentResponseError(409, { code: 'CONFLICT', message: 'Configuration revision conflict' }));
+    const stale = await call(token, 'POST', `${profile}/action`, { acting: 'admin-subject', body: { action: 'skill-set', target: 'web-research', body: { enabled: false, revision: REVISION } } });
+    expect(stale.status).toBe(409);
+    expect((await stale.json()).error.code).toBe('CONFLICT');
+    mocks.action.mockRejectedValueOnce(new AgentResponseError(400, { code: 'INVALID_REQUEST', message: 'Invalid Ardent config: artifacts.max_bytes: Too big' }));
+    const invalid = await call(token, 'POST', `${profile}/action`, { acting: 'admin-subject',
+      body: { action: 'config-save', body: { text: `${CONFIG}artifacts:\n  max_bytes: 999999999999\n`, revision: REVISION } } });
+    expect(invalid.status).toBe(400);
+    expect((await invalid.json()).error.message).toMatch(/artifacts\.max_bytes/);
+  });
+
+  it('reads configuration only for an acting ADMIN, and only its text and revision', async () => {
+    const token = await serviceToken();
+    mocks.read.mockResolvedValue({ revision: REVISION, text: CONFIG, extra: 'never passed on' });
+    const missing = await call(token, 'GET', `${profile}/config`);
+    expect(missing.status).toBe(403);
+    expect((await missing.json()).error.code).toBe('ACTING_ADMIN_REQUIRED');
+    const operator = await call(token, 'GET', `${profile}/config`, { acting: 'operator-subject' });
+    expect((await operator.json()).error.code).toBe('ACTING_ADMIN_REQUIRED');
+    expect(mocks.read).not.toHaveBeenCalled();
+    const admin = await call(token, 'GET', `${profile}/config`, { acting: 'admin-subject' });
+    expect(admin.status).toBe(200);
+    expect((await admin.json()).data).toEqual({ revision: REVISION, text: CONFIG });
+    // Identity files carry their revisions without an acting person, as before.
+    expect((await call(token, 'GET', `${profile}/identity/soul`)).status).toBe(200);
+  });
+
+  it('limits a service\'s config-save to the allowlisted paths', async () => {
+    const token = await serviceToken();
+    const save = (text: string, revision = REVISION) => call(token, 'POST', `${profile}/action`, { acting: 'admin-subject', body: { action: 'config-save', body: { text, revision } } });
+    const allowed: Array<[string, string[]]> = [
+      [CONFIG.replace('backend: llamacpp', 'backend: codex').replace('model: codex-model', 'model: codex-next'), ['execution.backend', 'providers.codex.model']],
+      [CONFIG.replace('request_timeout_seconds: 120', 'request_timeout_seconds: 300\n    reasoning_effort: low'), ['providers.llamacpp.reasoning_effort', 'providers.llamacpp.request_timeout_seconds']],
+      [CONFIG.replace('enabled: [web-research]', 'enabled: [web-research, writing]'), ['skills.enabled']],
+      [`${CONFIG}artifacts:\n  max_bytes: 67108864\n`, ['artifacts.max_bytes']],
+      [`# Edited in a studio\n${CONFIG}`, []],
+    ];
+    for (const [text, paths] of allowed) {
+      expect((await save(text)).status, text).toBe(200);
+      expect(mocks.audit.mock.calls.at(-1)![0], text).toMatchObject({ details: { configPaths: paths } });
+    }
+    const forbidden: Array<[string, string]> = [
+      [CONFIG.replace('port: 9910', 'port: 9911'), 'api.port'],
+      [CONFIG.replace('token_env: ARDENT_API_TOKEN', 'token_env: OTHER_TOKEN'), 'api.token_env'],
+      [CONFIG.replace('base_url: http://127.0.0.1:8080/v1', 'base_url: https://collector.example.com/v1'), 'providers.llamacpp.base_url'],
+      [CONFIG.replace('api_key_env: LLAMACPP_API_KEY', 'api_key_env: ARDENT_API_TOKEN'), 'providers.llamacpp.api_key_env'],
+      [CONFIG.replace('command: codex', 'command: /tmp/run-anything'), 'providers.codex.command'],
+      [CONFIG.replace('auth_mode: chatgpt', 'auth_mode: api_key'), 'providers.codex.auth_mode'],
+      [CONFIG.replace('directories: [skills]', 'directories: [skills, ../other]'), 'skills.directories'],
+      [`${CONFIG}channels:\n  telegram:\n    enabled: true\n`, 'channels.telegram.enabled'],
+      [`${CONFIG}a2a:\n  enabled: true\n  listen_host: 0.0.0.0\n`, 'a2a.enabled'],
+      [`${CONFIG}memory:\n  provider: none\n`, 'memory.provider'],
+      [`${CONFIG}plugins: [left-pad]\n`, 'plugins'],
+      [`${CONFIG}skills.enabled: [writing]\n`, 'skills.enabled'],
+      [CONFIG.replace(/providers:[\s\S]*?skills:/, 'providers: none\nskills:'), 'providers'],
+      ['[]\n', '(document)'],
+    ];
+    for (const [text, path] of forbidden) {
+      const refused = await save(text);
+      expect(refused.status, path).toBe(403);
+      const error = (await refused.json()).error as { code: string; message: string };
+      expect(error.code).toBe('CONFIG_PATH_FORBIDDEN');
+      expect(error.message, path).toContain(path);
+    }
+    // A change the allowlist permits beside one it does not is refused whole.
+    const mixed = await save(CONFIG.replace('model: local-model', 'model: other-model').replace('port: 9910', 'port: 9911'));
+    expect((await mixed.json()).error.message).not.toContain('providers.llamacpp.model');
+    const stale = await save(CONFIG, 'b'.repeat(64));
+    expect(stale.status).toBe(409);
+    expect((await stale.json()).error.code).toBe('CONFLICT');
+    expect((await save('model: [unclosed\n')).status).toBe(400);
+    expect((await save(`${CONFIG}name: Second\n`)).status).toBe(400);
+    expect(mocks.action).toHaveBeenCalledTimes(allowed.length);
   });
 
   it('records the person it acts for, who must be linked', async () => {
@@ -193,6 +344,14 @@ describe('linked Ardent service identity', () => {
 });
 
 describe('Ardent routes for people', () => {
+  it('let an ADMIN change any configuration path, with no allowlist', async () => {
+    const admin = await userToken('admin-subject', ['magnus:admin']);
+    const body = { action: 'config-save', body: { text: CONFIG.replace('port: 9910', 'port: 9911'), revision: REVISION } };
+    expect((await call(admin, 'POST', `${profile}/action`, { body })).status).toBe(200);
+    expect(mocks.read).not.toHaveBeenCalled();
+    expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ actorId: 'alice', details: expect.not.objectContaining({ configPaths: expect.anything() }) }));
+  });
+
   it('keep ADMIN-only access and need no acting subject', async () => {
     const admin = await userToken('admin-subject', ['magnus:admin']);
     expect((await call(admin, 'POST', '/api/v1/ardent/agents', { body: {} })).status).toBe(202);

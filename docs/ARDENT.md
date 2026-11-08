@@ -175,6 +175,25 @@ what it may call. In short:
   have one person link on the same issuer, and the audit names that person with the service in its
   details.
 - New Agent, resume and Enable HiveMem additionally need that person's link role to be `ADMIN`.
+- So do agent changes: `identity-save`, `skill-set` and `config-save`, and reading `config` (as a
+  person needs ADMIN to read it). Without an acting ADMIN they answer 403 `ACTING_ADMIN_REQUIRED`.
+- A service's `config-save` may change only the backend and model settings, `skills.enabled` and
+  `artifacts.max_bytes` (`ARDENT_SERVICE_CONFIG_PATHS`); anything else answers 403
+  `CONFIG_PATH_FORBIDDEN`. A stale revision answers 409 `CONFLICT`.
+
+Applying a draft from a product such as an agent studio:
+
+1. `GET …/profiles/:name/identity/soul` (and `identity/identity`) for each file's `revision`, and, with
+   an acting ADMIN, `GET …/profiles/:name/config` for the configuration `revision` and text.
+2. `identity-save` with target `soul` or `identity` and `{text, revision}`; the answer carries the new
+   identity revision.
+3. `skill-set` with the skill name as target and `{enabled, revision}`, where `revision` is the
+   configuration revision. Each answer's `revision` is the base for the next skill change.
+4. `config-save` with `{text, revision}`: the configuration text from step 1 with only allowlisted
+   values changed. It answers the new configuration revision.
+
+Skill and configuration changes apply after the profile restarts (`activation_required`).
 
 `@hivemagnus/magnus-contracts/ardent-service` publishes the routes (`ardentServiceRoutes`), request and
-response schemas, `ARDENT_SERVICE_PERMISSION` and `ARDENT_ACTING_SUBJECT_HEADER`.
+response schemas, `ARDENT_SERVICE_PERMISSION`, `ARDENT_ACTING_SUBJECT_HEADER`,
+`ARDENT_SERVICE_ADMIN_ACTIONS` and `ARDENT_SERVICE_CONFIG_PATHS`.
