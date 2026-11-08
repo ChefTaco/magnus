@@ -2,6 +2,77 @@ import { test, expect } from '@playwright/test';
 import { SignJWT } from 'jose';
 import { createCipheriv, createHash, randomBytes } from 'node:crypto';
 import { Redis } from 'ioredis';
+import type { CodexInstallation } from '../src/types/codex';
+
+test('Codex Overview updates a selected client and reports failures without losing fleet state', async ({ page }) => {
+  await page.goto('/login');
+  await page.getByLabel('Username').fill('ci-admin');
+  await page.getByLabel('Password', { exact: true }).fill('ci-only-browser-password');
+  await page.getByRole('button', { name: 'Sign In', exact: true }).click();
+  await expect(page).toHaveURL('/');
+
+  const installation: CodexInstallation = {
+    nodeId: 'codex-fixture', nodeName: 'Codex fixture', hostname: 'node-1.example.com',
+    nodeStatus: 'ONLINE', lastHeartbeatAt: null, reachable: true, installed: true,
+    user: 'operator', userHome: '/home/operator', codexHome: '/home/operator/.codex',
+    codexBin: '/usr/bin/codex', version: '0.153.0', latestVersion: '0.154.0',
+    updateAvailable: true, provenance: 'npm', updateSupported: true,
+    auth: {
+      status: 'authenticated', mode: 'chatgpt', oauth: true, tokenExpiresAt: null,
+      tokenExpired: false, refreshTokenPresent: true, lastRefreshAt: null,
+      planType: null, autoLoggedOut: false, message: 'Fixture OAuth current',
+    },
+    checkedAt: new Date().toISOString(), error: null,
+  };
+  const fleet = [
+    installation,
+    { ...installation, nodeId: 'readonly', nodeName: 'Read only fixture', updateSupported: false, provenance: 'nix' },
+    { ...installation, nodeId: 'current', nodeName: 'Current fixture', version: '0.154.0', updateAvailable: false },
+    { ...installation, nodeId: 'unknown', nodeName: 'Unknown release fixture', latestVersion: null, updateAvailable: false },
+  ];
+  let fail = true;
+  const requests: string[] = [];
+  let releaseUpdate: () => void = () => {};
+  const pendingUpdate = new Promise<void>((resolve) => { releaseUpdate = resolve; });
+  await page.route('**/api/proxy/codex/**', async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === 'GET' && path === '/api/proxy/codex/installations') {
+      return route.fulfill({ json: { success: true, data: fleet } });
+    }
+    requests.push(`${request.method()} ${path}`);
+    if (path !== '/api/proxy/codex/installations/codex-fixture/update' || request.method() !== 'POST') {
+      return route.fulfill({ status: 400, json: { success: false } });
+    }
+    if (fail) return route.fulfill({ json: { success: false, error: { message: 'Fixture update refused' } } });
+    await pendingUpdate;
+    return route.fulfill({ json: { success: true, data: { ...installation, version: '0.154.0', updateAvailable: false } } });
+  });
+
+  await page.goto('/codex');
+  const update = page.getByRole('button', { name: 'Update Codex on Codex fixture', exact: true });
+  await expect(update).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Update Codex on Read only fixture' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Update Codex on Current fixture' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Update Codex on Unknown release fixture' })).toHaveText('Check & Update Codex');
+  await update.click();
+  await expect(page.getByRole('main').getByRole('alert')).toHaveText('Codex fixture: Fixture update refused');
+  await expect(page.getByText('0.153.0', { exact: true })).toHaveCount(3);
+  await expect(update).toBeEnabled();
+
+  fail = false;
+  await update.click();
+  await expect(update).toBeDisabled();
+  await expect(update).toHaveText('Updating Codex…');
+  await expect(page.getByRole('main').getByRole('button', { name: 'Refresh', exact: true })).toBeDisabled();
+  releaseUpdate();
+  await expect(update).toHaveCount(0);
+  await expect(page.getByRole('main').getByRole('alert')).toHaveCount(0);
+  await expect(page.getByText('0.154.0', { exact: true })).toHaveCount(2);
+  await expect(page.getByRole('button', { name: 'Update Codex on Unknown release fixture' })).toBeEnabled();
+  expect(requests).toEqual(Array(2).fill('POST /api/proxy/codex/installations/codex-fixture/update'));
+});
+
 test('real login, node read, failed mutation feedback and durable rollout controls', async ({
   page,
 }) => {

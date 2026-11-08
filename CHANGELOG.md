@@ -6,6 +6,13 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Fixed
+
+- Codex Agents Overview offers per-node CLI updates, reports failures, and refreshes the installed
+  version and fleet counts after an update.
+- Fleet Map gives tied gateway subnets separate positions instead of stacking their hosts at the
+  center of the canvas.
+
 ## [2.2.1] - 2026-11-08
 
 ### Changed

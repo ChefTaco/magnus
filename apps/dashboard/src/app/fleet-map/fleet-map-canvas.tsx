@@ -4,31 +4,8 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { cn } from '@/lib/utils';
 import { readThemeColors, type ThemeColors } from '@/lib/theme-colors';
 import { useReducedMotion } from '@/hooks/use-reduced-motion';
-
-export interface CanvasTopologyNode {
-  id: string;
-  name: string;
-  hostname: string;
-  ip: string;
-  port: number;
-  status: string;
-  subnet: string;
-  reachable: boolean;
-  latencyMs: number | null;
-}
-
-export interface CanvasTopologyEdge {
-  from: string;
-  to: string;
-  latencyMs: number | null;
-  type: 'same-subnet' | 'cross-subnet';
-}
-
-export interface CanvasTopology {
-  nodes: CanvasTopologyNode[];
-  edges: CanvasTopologyEdge[];
-  subnets: Array<{ cidr: string; nodeCount: number; nodes: string[]; isGateway: boolean }>;
-}
+import { layoutNodes, type CanvasTopology, type CanvasTopologyNode, type LaidOutNode, type Cluster } from '@/lib/fleet-map-layout';
+export type { CanvasTopology, CanvasTopologyNode, CanvasTopologyEdge } from '@/lib/fleet-map-layout';
 
 interface InFlightCommand {
   nodeId: string;
@@ -42,23 +19,6 @@ interface Props {
   selectedNodeId?: string | null;
 }
 
-interface LaidOutNode {
-  node: CanvasTopologyNode;
-  x: number;
-  y: number;
-  phase: number;
-  stress: number; // 0..1
-}
-
-interface Cluster {
-  x: number;
-  y: number;
-  r: number;
-  cidr: string;
-  isGateway: boolean;
-  size: number;
-}
-
 const TAU = Math.PI * 2;
 
 /** Fractional part in [0, 1), also for negative input (id hashes can be negative). */
@@ -66,18 +26,6 @@ function frac(value: number): number {
   return ((value % 1) + 1) % 1;
 }
 const GLOW_BUCKETS = 8;
-
-function stressFromNode(n: CanvasTopologyNode): number {
-  if (!n.reachable) return 1;
-  if (n.status === 'OFFLINE') return 1;
-  if (n.status === 'DEGRADED') return 0.75;
-  if (n.status === 'PROVISIONING') return 0.45;
-  const lat = n.latencyMs ?? 0;
-  if (lat > 100) return 0.8;
-  if (lat > 50) return 0.55;
-  if (lat > 20) return 0.3;
-  return 0.12;
-}
 
 function hexToRgb(hex: string): [number, number, number] {
   const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i.exec(hex.trim());
@@ -93,46 +41,6 @@ function makeStressColor(colors: ThemeColors): (stress: number, alpha?: number) 
     const mix = (i: number): number => Math.round(from[i]! + (to[i]! - from[i]!) * k);
     return `rgba(${mix(0)},${mix(1)},${mix(2)},${alpha})`;
   };
-}
-
-function layoutNodes(
-  topo: CanvasTopology,
-  width: number,
-  height: number,
-): { nodes: LaidOutNode[]; clusters: Cluster[] } {
-  // Cluster by subnet. Each subnet becomes a ring-cluster arranged on an outer ring.
-  const subnets = topo.subnets.length > 0
-    ? topo.subnets
-    : [{ cidr: 'default', nodeCount: topo.nodes.length, nodes: topo.nodes.map((n) => n.id), isGateway: false }];
-
-  const cx = width / 2;
-  const cy = height / 2;
-  const outerR = Math.min(width, height) * 0.38;
-  const result: LaidOutNode[] = [];
-  const clusters: Cluster[] = [];
-
-  subnets.forEach((subnet, si) => {
-    const subnetAngle = (si / Math.max(1, subnets.length)) * TAU;
-    const single = subnets.length === 1;
-    const subnetX = subnet.isGateway || single ? cx : cx + Math.cos(subnetAngle) * outerR;
-    const subnetY = subnet.isGateway || single ? cy : cy + Math.sin(subnetAngle) * outerR;
-    const nodes = topo.nodes.filter((n) => subnet.nodes.includes(n.id));
-    const clusterR = nodes.length <= 1 ? 0 : Math.min(single ? outerR * 0.75 : 80, 24 + nodes.length * 8);
-    clusters.push({ x: subnetX, y: subnetY, r: clusterR + 18, cidr: subnet.cidr, isGateway: subnet.isGateway, size: nodes.length });
-
-    nodes.forEach((node, ni) => {
-      const a = (ni / Math.max(1, nodes.length)) * TAU;
-      const x = subnetX + Math.cos(a) * clusterR;
-      const y = subnetY + Math.sin(a) * clusterR;
-      // Stable phase from id hash
-      let h = 0;
-      for (let i = 0; i < node.id.length; i++) h = (h * 31 + node.id.charCodeAt(i)) | 0;
-      const phase = (Math.abs(h % 1000) / 1000) * TAU;
-      result.push({ node, x, y, phase, stress: stressFromNode(node) });
-    });
-  });
-
-  return { nodes: result, clusters };
 }
 
 function makeCanvas(w: number, h: number): HTMLCanvasElement {
