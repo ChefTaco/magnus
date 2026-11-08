@@ -9,6 +9,7 @@ import { CONTROL_API_NODE_ID } from '../utils/sentinel-nodes.js';
 vi.mock('../queue/workers.js', () => ({ enqueueCommand: vi.fn(async () => undefined) }));
 vi.mock('../middleware/rate-limit.js', () => ({
   rateLimitMiddleware: () => async (_c: unknown, next: () => Promise<void>) => next(),
+  ardentRateLimitMiddleware: () => async (_c: unknown, next: () => Promise<void>) => next(),
   getRateLimitHealth: () => ({ status: 'pass', message: 'not limited in this suite', lastErrorAt: null }),
 }));
 
