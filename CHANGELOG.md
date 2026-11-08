@@ -6,6 +6,14 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Changed
+
+- Manage the latest Ardent release, 2.1.2. A new check (`npm run ardent:latest:check`, also run daily in CI) fails when Magnus pins an older Ardent than the latest published release, so every Ardent release gets a matching Magnus update.
+
+### Removed
+
+- The `profile-import-hermes` Ardent action. It called an Ardent CLI command that does not exist, so it could never succeed.
+
 ## [2.1.3] - 2026-11-07
 
 ### Fixed

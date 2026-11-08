@@ -212,13 +212,12 @@ async function managementToken(dir: string, envName: string): Promise<string> {
 const allowedRead = /^(?:openapi|status|profile|config|config\/schema|providers|channels|peers|peers\/config|memory\/status|skills|sessions|tasks|tasks\/[0-9a-f-]{36}(?:\/events)?|jobs\/definitions\/status|sessions\/[0-9a-f-]{36}\/messages|identity\/(?:soul|identity)(?:\/history)?|artifacts\/[a-f0-9]{64})$/;
 const actionInput = z.object({
   profile: profileName,
-  action: z.enum(['profile-create', 'profile-import-hermes', 'config-validate', 'config-save', 'peer-validate', 'peer-save', 'identity-save', 'identity-restore', 'provider-test', 'channel-test', 'peer-test', 'memory-search', 'task-submit', 'task-cancel', 'skill-set', 'service-start', 'service-stop', 'service-restart', 'package-install', 'context-stage', 'context-adopt', 'context-rollback']),
+  action: z.enum(['profile-create', 'config-validate', 'config-save', 'peer-validate', 'peer-save', 'identity-save', 'identity-restore', 'provider-test', 'channel-test', 'peer-test', 'memory-search', 'task-submit', 'task-cancel', 'skill-set', 'service-start', 'service-stop', 'service-restart', 'package-install', 'context-stage', 'context-adopt', 'context-rollback']),
   target: z.string().max(128).optional(),
   body: z.unknown().optional(),
 }).strict();
 const actionRoutes: Record<z.infer<typeof actionInput>['action'], { method: 'POST' | 'PUT'; path: (target?: string) => string; target?: RegExp }> = {
   'profile-create': { method: 'POST', path: () => '' },
-  'profile-import-hermes': { method: 'POST', path: () => '' },
   'config-validate': { method: 'POST', path: () => 'config/validate' },
   'config-save': { method: 'PUT', path: () => 'config' },
   'peer-validate': { method: 'POST', path: () => 'peers/validate' },
@@ -412,29 +411,6 @@ async function createProfile(root: ArdentRoot, profile: string, body: unknown): 
   return { profile, apiPort: input.api_port, initialized: true };
 }
 
-async function importHermesProfile(root: ArdentRoot, profile: string, body: unknown): Promise<object> {
-  if (process.getuid?.() !== 0) throw new Error('Ardent profile import requires a root node manager');
-  profileName.parse(profile);
-  const input = z.object({ apply: z.boolean(), expected_source_revision: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict().parse(body);
-  if (input.apply && !input.expected_source_revision) throw new Error('Profile import apply requires a pinned source revision from preview');
-  const state = await readArdentState(root) as { version: string | null; profiles: Array<{ id: string; running: boolean }> };
-  if (!state.version) throw new Error('Install the verified Ardent package before importing a profile');
-  if (state.profiles.some(item => item.id === profile && item.running)) throw new Error('Stop the Ardent profile service before importing its profile');
-  const source = join(root.home, '.hermes');
-  const sourceInfo = await lstat(source);
-  if (!sourceInfo.isDirectory() || sourceInfo.isSymbolicLink()) throw new Error('Hermes source home is unsafe');
-  const script = await installedCli(root.install);
-  const scriptInfo = await lstat(script);
-  if (!scriptInfo.isFile() || scriptInfo.isSymbolicLink()) throw new Error('Installed Ardent CLI is unsafe');
-  const stdout = await runAsOwner(root, ['/usr/bin/env', `ARDENT_HOME=${root.root}`, '/usr/bin/node', script,
-    'import', 'hermes', '--source', source, '--profile', profile, '--profile-path', join(root.root, 'profiles', profile),
-    '--non-interactive', ...(input.expected_source_revision ? ['--expected-source-revision', input.expected_source_revision] : []),
-    input.apply ? '--apply' : '--dry-run'], 60_000);
-  return z.object({ source: z.literal(source), role: z.literal(profile), applied: z.literal(input.apply), imported: z.array(z.string()),
-    omitted: z.array(z.string()), incompatible: z.array(z.string()), source_persona_sha256: z.string().regex(/^[a-f0-9]{64}$/) }).passthrough()
-    .parse(JSON.parse(stdout) as unknown);
-}
-
 export function createArdentRoutes(resolveRoot: () => Promise<ArdentRoot> = ardentRoot): Hono {
   const routes = new Hono();
   routes.get('/state', async c => {
@@ -526,7 +502,6 @@ export function createArdentRoutes(resolveRoot: () => Promise<ArdentRoot> = arde
       }
       if (input.action === 'package-install') return c.json(await installPackage(root));
       if (input.action === 'profile-create') return c.json(await createProfile(root, input.profile, input.body));
-      if (input.action === 'profile-import-hermes') return c.json(await importHermesProfile(root, input.profile, input.body));
       if (input.action === 'service-start' || input.action === 'service-stop' || input.action === 'service-restart') {
         return c.json(await serviceAction(root, input.profile, input.action));
       }

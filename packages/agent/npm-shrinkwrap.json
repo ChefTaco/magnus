@@ -24,7 +24,7 @@
         "magnus-agent": "dist/index.js"
       },
       "devDependencies": {
-        "@hivemagnus/ardent": "2.1.1",
+        "@hivemagnus/ardent": "2.1.2",
         "@types/node": "^24.19.2",
         "@types/tar-stream": "^3.1.5",
         "tsx": "^4.23.15",
@@ -566,9 +566,9 @@
       }
     },
     "node_modules/@hivemagnus/ardent": {
-      "version": "2.1.1",
-      "resolved": "https://registry.npmjs.org/@hivemagnus/ardent/-/ardent-2.1.1.tgz",
-      "integrity": "sha512-yFxgMfiY5CJfYL11MH18E2D0ZYNKvzMMy5bWRqmZ9pdB4QZkzDxxpOlYc0xI/mhDq049UT4nrU/O0JTeISpBgA==",
+      "version": "2.1.2",
+      "resolved": "https://registry.npmjs.org/@hivemagnus/ardent/-/ardent-2.1.2.tgz",
+      "integrity": "sha512-bHcWck3FuDgfNGFdSioC7dxbw3hINbh0vYfZm9xHKznD6pZByaHvs+OashR/coBGLi13QNXdckZiPnmQvgXzJw==",
       "dev": true,
       "license": "Apache-2.0",
       "dependencies": {
