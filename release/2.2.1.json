@@ -1,0 +1,11 @@
+{
+  "summary": "Durable HiveMem renewal retries, authorized standalone command recovery, and dependency fixes. Stop all old control API workers before migrating; unresolved legacy renewals require explicit ADMIN recovery.",
+  "breaking": false,
+  "minUpgradeFrom": "1.0.0",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": [
+    "20261108060000_ardent_hivemem_retry"
+  ]
+}

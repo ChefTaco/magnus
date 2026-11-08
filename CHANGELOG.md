@@ -8,6 +8,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Fixed
 
+- Assign the durable renewal migration to the upcoming 2.2.1 release manifest, preserving
+  the published 2.2.0 migration inventory and allowing release validation to pass.
 - Background HiveMem renewal persists its complete request and idempotency key before issuance,
   replays them across restarts and delivery failures, and fences concurrent workers. Retries run
   each minute within HiveMem's receipt window. Expired receipts and ambiguous legacy attempts

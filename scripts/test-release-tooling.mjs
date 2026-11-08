@@ -31,6 +31,24 @@ test('the committed release manifest is current', async () => {
   assert.deepEqual(problems, []);
 });
 
+test('upcoming migration ownership leaves the published manifest unchanged', async (t) => {
+  const root = fixture(t);
+  const version = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
+  mkdirSync(join(root, 'release'));
+  cpSync(join(repo, `release/${version}.json`), join(root, `release/${version}.json`));
+  const published = JSON.parse(readFileSync(join(root, `release/${version}.json`), 'utf8'));
+  for (const name of published.migrations ?? []) cpSync(join(repo, 'services/control-api/prisma/migrations', name),
+    join(root, 'services/control-api/prisma/migrations', name), { recursive: true });
+  const before = buildManifest(root);
+  const migration = '20270101000000_pending_retry';
+  mkdirSync(join(root, 'services/control-api/prisma/migrations', migration));
+  writeFileSync(join(root, 'services/control-api/prisma/migrations', migration, 'migration.sql'), 'SELECT 1;');
+  assert((await checkRelease(root)).problems.some(problem => problem.includes(`${migration} is not listed`)));
+  writeFileSync(join(root, 'release/9.9.9.json'), JSON.stringify({ migrations: [migration] }));
+  assert.deepEqual(buildManifest(root), before);
+  assert.deepEqual((await checkRelease(root)).problems, []);
+});
+
 test('bumping sets every version and pin, and the manifest follows', async (t) => {
   const root = fixture(t);
   const workspaces = [...PACKAGE_DIRECTORIES, ...UNPUBLISHED_DIRECTORIES];
