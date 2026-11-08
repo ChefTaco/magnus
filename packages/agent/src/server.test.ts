@@ -2,6 +2,8 @@
  * Tests for the unified agent server — feature flag routing + auth.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { ARDENT_STUDIO_CAPABILITY } from '@hivemagnus/magnus-contracts';
+import { ARDENT_AGENT_CAPABILITIES } from './ardent-capabilities.js';
 
 // Mock env module with node management enabled.
 vi.mock('./env.js', () => ({
@@ -79,6 +81,12 @@ describe('server', () => {
     expect(body.data.features.commandReconciliation).toBe(0);
     expect(body.data.features.commandCompletionRegistry).toEqual({ version: 1,
       sha256: '2909a7be52ea7242fe37c6dc38e817895989c12d13affbeb4254eb65c46b0029', enabled: 1 });
+  });
+
+  it('GET /api/v1/ping reports the Studio level the Ardent bridge implements, which the server gates skill-install on', async () => {
+    const body = (await (await app.request('/api/v1/ping')).json()) as Record<string, any>;
+    expect(body.data.features.studio).toBe(ARDENT_AGENT_CAPABILITIES.studio);
+    expect(body.data.features.studio).toBe(ARDENT_STUDIO_CAPABILITY.skillInstall);
   });
 
   it('advertises reconciliation only with a configured independent key', async () => {

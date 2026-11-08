@@ -119,9 +119,11 @@ export async function requireArdentStudioAgent(nodeId: string, level: number = A
   catch (error: unknown) {
     throw new HttpError(503, 'DEPENDENCY_UNAVAILABLE', error instanceof Error ? error.message.slice(0, 300) : 'Node agent unavailable');
   }
-  if (reported < level) throw new HttpError(409, 'AGENT_UPGRADE_REQUIRED', level > ARDENT_STUDIO_CAPABILITY.bridge
-    ? `Upgrade the Magnus agent on ${node.name} to use Ardent missions, previews, pause and development history`
-    : `Upgrade the Magnus agent on ${node.name} to use Ardent sessions and streams`);
+  if (reported < level) throw new HttpError(409, 'AGENT_UPGRADE_REQUIRED', level >= ARDENT_STUDIO_CAPABILITY.skillInstall
+    ? `Upgrade the Magnus agent on ${node.name} to install HiveSkills catalog skills on Ardent`
+    : level > ARDENT_STUDIO_CAPABILITY.bridge
+      ? `Upgrade the Magnus agent on ${node.name} to use Ardent missions, previews, pause and development history`
+      : `Upgrade the Magnus agent on ${node.name} to use Ardent sessions and streams`);
   studioCapability.set(nodeId, { level: reported, at: Date.now() });
 }
 

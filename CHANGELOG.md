@@ -46,6 +46,7 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Fixed
 
+- The node agent's ping reports its Ardent bridge level from the same constant as its Ardent inventory, so it now answers `studio: 3`; it reported 2, and the server refused every `skill-install` with 409 `AGENT_UPGRADE_REQUIRED`. That refusal for a skill install now names skill installs instead of missions and previews.
 - The node agent runs Ardent owner commands in the owner's home instead of its own root-only directory, so the package check after `package-install` no longer fails on suite installs.
 - The node agent recognizes profiles that `ardent init` creates (product name `Ardent`) as running, so New Agent no longer fails at `service-start` on a standalone Ardent runtime.
 - A failed Ardent action no longer blocks the node. The node agent answered every action failure with 503, which kept its command owner unknown, so each later Ardent action and New Agent resume was refused with no way out. A failure the agent finished now settles its owner with a signed receipt (agent 422, or 424 for Ardent's own server error); only an outcome nobody knows stays unknown. Magnus names the held command in its 409 (`ARDENT_OUTCOME_UNKNOWN`, `RESOURCE_LEASE_CONFLICT`), New Agent resume explains it (`COMMAND_OWNER_UNSETTLED`), and failed actions are now audited with their outcome.

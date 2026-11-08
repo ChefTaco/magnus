@@ -9,6 +9,7 @@ import { COMMAND_COMPLETION_REGISTRY, COMMAND_COMPLETION_REGISTRY_SHA256 } from 
 import { nodeAuthMiddleware } from './middleware.js';
 import { tracingMiddleware } from './collectors/otel-middleware.js';
 import { getHeartbeatStatus } from './agent.js';
+import { ARDENT_AGENT_CAPABILITIES } from './ardent-capabilities.js';
 import { controlApiFetch } from './tls.js';
 
 import type { HealthCheck } from './types/index.js';
@@ -92,9 +93,10 @@ export async function createApp(): Promise<Hono> {
           managedMutations: ENABLE_NODE_MANAGEMENT ? 1 : 0,
           securityResponse: ENABLE_NODE_MANAGEMENT && process.env["MAGNUS_SECURITY_RESPONSE_ENABLED"] === "true" ? 1 : 0,
           commandReconciliation: commandReconciliationEnabled() ? 1 : 0,
-          // Ardent Studio bridge level (ARDENT_AGENT_CAPABILITIES): 1 sessions, task streams and
-          // streamed artifacts; 2 also missions, pause and resume, previews and development history.
-          studio: ENABLE_NODE_MANAGEMENT ? 2 : 0,
+          // Ardent Studio bridge level (ARDENT_AGENT_CAPABILITIES), which the server gates on: 1 sessions,
+          // task streams and streamed artifacts; 2 also missions, pause and resume, previews and development
+          // history; 3 also HiveSkills skill-install.
+          studio: ENABLE_NODE_MANAGEMENT ? ARDENT_AGENT_CAPABILITIES.studio : 0,
           commandCompletionRegistry: { version: COMMAND_COMPLETION_REGISTRY.version,
             sha256: COMMAND_COMPLETION_REGISTRY_SHA256, enabled: MAGNUS_EXECUTION_SUPERVISOR_ENABLED ? 1 : 0 },
         },
@@ -171,9 +173,10 @@ export async function createApp(): Promise<Hono> {
           managedMutations: ENABLE_NODE_MANAGEMENT ? 1 : 0,
           securityResponse: ENABLE_NODE_MANAGEMENT && process.env["MAGNUS_SECURITY_RESPONSE_ENABLED"] === "true" ? 1 : 0,
           commandReconciliation: commandReconciliationEnabled() ? 1 : 0,
-          // Ardent Studio bridge level (ARDENT_AGENT_CAPABILITIES): 1 sessions, task streams and
-          // streamed artifacts; 2 also missions, pause and resume, previews and development history.
-          studio: ENABLE_NODE_MANAGEMENT ? 2 : 0,
+          // Ardent Studio bridge level (ARDENT_AGENT_CAPABILITIES), which the server gates on: 1 sessions,
+          // task streams and streamed artifacts; 2 also missions, pause and resume, previews and development
+          // history; 3 also HiveSkills skill-install.
+          studio: ENABLE_NODE_MANAGEMENT ? ARDENT_AGENT_CAPABILITIES.studio : 0,
         },
         heartbeat: getHeartbeatStatus(),
         fingerprints: {

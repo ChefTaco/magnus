@@ -31,6 +31,13 @@ describe('Ardent Studio bridge level', () => {
     expect(mocks.level).toHaveBeenCalledTimes(3);
   });
 
+  it('names skill installs when a level 2 agent is asked for one', async () => {
+    mocks.level.mockResolvedValue(2);
+    await expect(requireArdentStudioAgent('node-1', 3)).rejects.toMatchObject({ status: 409, code: 'AGENT_UPGRADE_REQUIRED', message: expect.stringMatching(/HiveSkills catalog skills/) });
+    mocks.level.mockResolvedValue(3);
+    await expect(requireArdentStudioAgent('node-1', 3)).resolves.toBeUndefined();
+  });
+
   it('refuses an agent without the bridge and reports an unreachable one as unavailable', async () => {
     mocks.level.mockResolvedValue(0);
     await expect(requireArdentStudioAgent('node-1')).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/sessions and streams/) });
