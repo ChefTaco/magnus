@@ -93,6 +93,12 @@ Every managed Ardent action owns the node's single execution slot through a comm
 
 ### Reconciling an unknown outcome
 
+The standalone dashboard at `/ardent/installations` lists held commands and offers **Review
+reconciliation** to an ADMIN after `reconcilableAfter`. Select the verified outcome, enter what
+you checked (10 to 500 characters), then confirm the decision. HiveXUI offers the same recovery
+on its Ardent installations page. Without a reconciliation key, only the node's own evidence
+can settle the owner; the page says so. The server enforces ADMIN authorization in both consoles.
+
 An ADMIN first establishes what the action did on the node: the unit's state and journal, the
 profile's files, Ardent's own status. Then:
 
@@ -191,12 +197,50 @@ its lifetime has passed, so agents keep their memory without being enrolled agai
 4. Magnus checks that the agent reports HiveMem ready and audits `ardent.hivemem.renew` with the old and
    new deadlines and how the credential was activated.
 
-A failed renewal is retried after 15 minutes, doubling up to every six hours, audited, and raised as an
+A failure before a request is prepared is retried after 15 minutes, doubling up to every six hours. Once a request
+is prepared, Magnus persists its exact wire policy (including scopes, display name, absolute expiry
+and grace), operation key and destination/principal binding before contacting HiveMem. Every retry
+reuses that request, even after a server restart or a node write whose response was lost. The renewal
+counter advances only after delivery and activation succeed. Claims and writes are fenced by a
+unique lease token; expired claims may replay the same request, and a stale worker cannot complete
+or overwrite a replacement enrollment. Adoption of earlier enrollments never overwrites a tracked row.
+
+The job checks every minute and retries pending requests every minute: HiveMem's encrypted token
+receipt lasts only 15 minutes. Failures are audited and raised as an
 `ardent.hivemem.renewal_failed` notification, which is critical within three days of the deadline. A
 profile with a New Agent or Enable HiveMem operation running is left to that operation. A profile that
 no longer exists on its node is no longer renewed (`ardent.hivemem.untrack`). Profiles enrolled before
 Magnus recorded credentials are adopted from their enrollment receipts. Renewal needs a HiveMem with
 `actor_credential_renewal`; with an older one each attempt fails with `HIVEMEM_RENEWAL_UNSUPPORTED`.
+
+A 409 digest/owner conflict, a 410 expired/acknowledged receipt, or a destination/principal change
+holds the operation for explicit recovery and raises a critical notification. No new key, credential
+or extended grace is generated automatically. HiveMem cannot replay a token after its receipt expires;
+access cannot be guaranteed through an outage longer than that window. An ADMIN must inspect the node
+and memory status, reconcile any unknown command owner as above, and explicitly start **Enable HiveMem**
+(the ADMIN endpoint below) to authorize a replacement. Do not simply clear the hold or edit its request.
+
+For rollout, stop **all** control API renewal workers before applying migration
+`20261108060000_ardent_hivemem_retry`, then start only updated workers. It adds nullable pending-request
+and lease fields plus a recovery flag; it retains existing agent identities, counters and deadlines.
+Pristine and successfully completed rows remain eligible. Legacy failed or in-flight attempts are held:
+their exact requests were never stored, so their outcomes cannot safely be inferred. Inspect their
+`lastError` in profile credential status and use the explicit ADMIN recovery path. Back up the database
+before migration. A code rollback also requires stopping every worker; an old worker cannot honor
+these holds or pending plans, so keep renewal disabled until the retry-capable version is restored.
+
+The native receipt regression can run against a built HiveMem package (no deployed service):
+
+```bash
+TEST_DATABASE_URL=postgresql://postgres@localhost:5432/magnus_ideas_renewal \
+HIVEMEM_CONTRACT_ROOT=/opt/test/hivemem-server \
+npm run test:integration --workspace services/control-api -- src/services/ardent-hivemem-renewal.integration.test.ts
+```
+
+The database must be disposable and migrated; `HIVEMEM_CONTRACT_ROOT` must contain the real
+`dist/src/{store,server,auth}.js` from HiveMem with credential renewal support. The test spawns separate
+worker processes, uses PostgreSQL claims and the native HTTP receipt/digest behavior, and checks
+response loss, restart, receipt expiry, delivery ambiguity, concurrency and stale-worker takeover.
 
 Every profile in `GET /api/v1/ardent/installations`, `GET /api/v1/ardent/installations/:nodeId` and
 `GET /api/v1/ardent/profiles` carries `hivemem`: `null` when Magnus manages no credential for it, or

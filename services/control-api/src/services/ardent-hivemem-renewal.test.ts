@@ -2,34 +2,51 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 type Row = { id: string; nodeId: string; profile: string; agentId: string; workspaceId: string; issuedAt: Date; expiresAt: Date;
   lastRenewedAt: Date | null; lastAttemptAt: Date | null; nextAttemptAt: Date; failures: number; lastError: string | null;
-  renewals: number; leaseUntil: Date | null };
+  renewals: number; leaseUntil: Date | null; leaseToken: string | null; pendingJson: string | null; recoveryRequired: boolean; updatedAt: Date };
 type Operation = { nodeId: string; profile: string; status: string; stepsJson: string; completedAt: Date | null };
 const store = vi.hoisted(() => ({ rows: new Map<string, Row>(), operations: [] as Operation[],
   audit: [] as Array<{ action: string; actorId: string; targetId: string; details?: Record<string, unknown> }>,
   notifications: [] as Array<{ type: string; severity: string; title: string; message: string; sourceRef?: string | null }> }));
-const before = (value: Date | null, bound: { lte?: Date; lt?: Date }) => value !== null
-  && (bound.lte ? value.getTime() <= bound.lte.getTime() : true) && (bound.lt ? value.getTime() < bound.lt.getTime() : true);
+const matches = (row: Row, where: Record<string, unknown>): boolean => Object.entries(where).every(([key, value]) => {
+  if (key === 'OR') return (value as Record<string, unknown>[]).some(option => matches(row, option));
+  const actual = row[key as keyof Row];
+  if (value instanceof Date) return actual instanceof Date && actual.getTime() === value.getTime();
+  if (value && typeof value === 'object') return Object.entries(value).every(([op, bound]) => {
+    if (op === 'in') return (bound as unknown[]).includes(actual);
+    if (!(actual instanceof Date) || !(bound instanceof Date)) return false;
+    return op === 'lte' ? actual <= bound : op === 'lt' ? actual < bound : op === 'gt' ? actual > bound : false;
+  });
+  return actual === value;
+});
 vi.mock('../db/index.js', () => ({ getDb: () => ({
   ardentHiveMemCredential: {
+    createMany: async ({ data }: { data: Row }) => {
+      if ([...store.rows.values()].some(row => row.nodeId === data.nodeId && row.profile === data.profile)) return { count: 0 };
+      const row = { ...data, id: `cred-${store.rows.size + 1}`, lastAttemptAt: null, lastRenewedAt: null, renewals: 0, updatedAt: new Date() };
+      store.rows.set(row.id, row); return { count: 1 };
+    },
     upsert: async ({ where, create, update }: { where: { nodeId_profile: { nodeId: string; profile: string } }; create: Partial<Row>; update: Partial<Row> }) => {
       const existing = [...store.rows.values()].find(row => row.nodeId === where.nodeId_profile.nodeId && row.profile === where.nodeId_profile.profile);
       if (existing) { Object.assign(existing, update); return { ...existing }; }
-      const row = { id: `cred-${store.rows.size + 1}`, lastRenewedAt: null, lastAttemptAt: null, renewals: 0, ...create } as Row;
+      const row = { id: `cred-${store.rows.size + 1}`, lastRenewedAt: null, lastAttemptAt: null, renewals: 0, updatedAt: new Date(), ...create } as Row;
       store.rows.set(row.id, row);
       return { ...row };
     },
-    findMany: async ({ where }: { where?: { nodeId?: { in: string[] }; nextAttemptAt?: { lte: Date } } } = {}) => [...store.rows.values()]
-      .filter(row => !where?.nodeId || where.nodeId.in.includes(row.nodeId))
-      .filter(row => !where?.nextAttemptAt || before(row.nextAttemptAt, where.nextAttemptAt))
-      .sort((a, b) => a.expiresAt.getTime() - b.expiresAt.getTime()).map(row => ({ ...row })),
-    update: async ({ where, data }: { where: { id: string }; data: Partial<Row> }) => { Object.assign(store.rows.get(where.id)!, data); return { ...store.rows.get(where.id)! }; },
-    updateMany: async ({ where, data }: { where: { id: string; nextAttemptAt: { lte: Date }; OR: unknown[] }; data: Partial<Row> }) => {
-      const row = store.rows.get(where.id);
-      if (!row || !before(row.nextAttemptAt, where.nextAttemptAt) || (row.leaseUntil && row.leaseUntil.getTime() >= where.nextAttemptAt.lte.getTime())) return { count: 0 };
-      Object.assign(row, data);
+    findMany: async ({ where = {} }: { where?: Record<string, unknown> } = {}) => [...store.rows.values()]
+      .filter(row => matches(row, where)).sort((a, b) => a.expiresAt.getTime() - b.expiresAt.getTime()).map(row => ({ ...row })),
+    findFirst: async ({ where }: { where: Record<string, unknown> }) => {
+      const row = [...store.rows.values()].find(row => matches(row, where)); return row ? { ...row } : null;
+    },
+    updateMany: async ({ where, data }: { where: Record<string, unknown>; data: Partial<Row> }) => {
+      const row = [...store.rows.values()].find(row => matches(row, where));
+      if (!row) return { count: 0 };
+      Object.assign(row, data, { updatedAt: new Date(row.updatedAt.getTime() + 1) });
       return { count: 1 };
     },
-    delete: async ({ where }: { where: { id: string } }) => { store.rows.delete(where.id); },
+    deleteMany: async ({ where }: { where: Record<string, unknown> }) => {
+      const row = [...store.rows.values()].find(row => matches(row, where));
+      if (!row) return { count: 0 }; store.rows.delete(row.id); return { count: 1 };
+    },
   },
   ardentAgentOperation: {
     findFirst: async ({ where }: { where: { nodeId: string; profile: string; status: string } }) =>
@@ -159,20 +176,20 @@ describe('Ardent HiveMem credential renewal', () => {
     let current = store.rows.get(row.id)!;
     expect(current).toMatchObject({ failures: 1, leaseUntil: null, lastAttemptAt: now });
     expect(current.lastError).toContain('HTTP 503');
-    expect(current.nextAttemptAt.getTime()).toBe(now.getTime() + 15 * 60_000);
+    expect(current.nextAttemptAt.getTime()).toBe(now.getTime() + 60_000);
     expect(renewal.ardentHiveMemCredentialStatus(current, now)).toMatchObject({ state: 'renewal-failing', failures: 1 });
     expect(store.notifications.at(-1)).toMatchObject({ type: 'ardent.hivemem.renewal_failed', severity: 'warning', sourceRef: 'ardent-hivemem:node-1:lead' });
     expect(store.audit.at(-1)).toMatchObject({ action: 'ardent.hivemem.renew', details: { status: 'failed', failures: 1 } });
     expect(actions).toEqual([]);
 
     // Not due again until the backoff passes.
-    now = new Date(now.getTime() + 10 * 60_000);
+    now = new Date(now.getTime() + 30_000);
     expect(await renewal.renewDueArdentHiveMemCredentials()).toMatchObject({ failed: 0, renewed: 0 });
-    now = new Date(now.getTime() + 6 * 60_000);
+    now = new Date(now.getTime() + 31_000);
     await renewal.renewDueArdentHiveMemCredentials();
     current = store.rows.get(row.id)!;
     expect(current.failures).toBe(2);
-    expect(current.nextAttemptAt.getTime()).toBe(now.getTime() + 30 * 60_000);
+    expect(current.nextAttemptAt.getTime()).toBe(now.getTime() + 60_000);
 
     // Within three days of the deadline the alert is critical; after it the credential reads as expired.
     now = new Date(START.getTime() + 700 * HOUR);
@@ -189,14 +206,18 @@ describe('Ardent HiveMem credential renewal', () => {
     expect(store.rows.get(row.id)).toMatchObject({ failures: 0, lastError: null });
   });
 
-  it('replaces a renewal whose receipt expired, refuses an older HiveMem, and never runs beside an operation or another claim', async () => {
+  it('holds an expired receipt for explicit recovery, refuses older HiveMem, and never runs beside an operation or another claim', async () => {
     const row = await enrolled();
     now = new Date(START.getTime() + 361 * HOUR);
     credential.mockRejectedValueOnce(new HiveMemEnrollmentError(410, 'receipt expired'));
     await renewal.renewDueArdentHiveMemCredentials();
     const keys = credential.mock.calls.map(call => (call[1] as { key: string }).key);
-    expect(keys).toEqual([`renew:${row.id}:0`, `renew:${row.id}:1`]);
-    expect(store.rows.get(row.id)!.renewals).toBe(2);
+    expect(keys).toHaveLength(1);
+    expect(store.rows.get(row.id)).toMatchObject({ renewals: 0, recoveryRequired: true });
+    now = new Date(now.getTime() + HOUR);
+    expect(await renewal.renewDueArdentHiveMemCredentials()).toMatchObject({ renewed: 0, failed: 0 });
+    expect(credential).toHaveBeenCalledTimes(1);
+    store.rows.get(row.id)!.recoveryRequired = false;
 
     credential.mockClear();
     now = new Date(now.getTime() + 400 * HOUR);
@@ -213,6 +234,58 @@ describe('Ardent HiveMem credential renewal', () => {
     store.rows.get(row.id)!.leaseUntil = new Date(now.getTime() + 60_000);
     expect(await renewal.renewDueArdentHiveMemCredentials()).toMatchObject({ skipped: 1, renewed: 0 });
     expect(credential).not.toHaveBeenCalled();
+  });
+
+  it('replays the full frozen plan across a worker restart and setting/name drift', async () => {
+    const row = await enrolled();
+    now = new Date(START.getTime() + 361 * HOUR);
+    credential.mockRejectedValueOnce(new Error('response lost'));
+    await renewal.renewDueArdentHiveMemCredentials();
+    const first = structuredClone(credential.mock.calls[0]![1]);
+    expect(JSON.parse(store.rows.get(row.id)!.pendingJson!).plan).toEqual(first);
+    // Replace all process-local dependencies; only the database survives.
+    restore();
+    now = new Date(now.getTime() + 2 * 60_000);
+    restore = renewal.setArdentHiveMemRenewalDeps({ settings: () => ({ ...settings, hours: 24 }), now: () => now,
+      supportsRenewal, credential,
+      installation: async nodeId => ({ nodeId, nodeName: 'renamed', hostname: 'node-1.example.com', reachable: true, installed: true,
+        checkedAt: now.toISOString(), profiles: [{ id: 'lead', running: false }] }) as never,
+      action: async () => ({}) });
+    expect(await renewal.renewDueArdentHiveMemCredentials()).toMatchObject({ renewed: 1 });
+    expect(credential.mock.calls[1]![1]).toEqual(first);
+    expect(store.rows.get(row.id)).toMatchObject({ pendingJson: null, renewals: 1 });
+  });
+
+  it('holds a digest conflict without advancing the key and raises a critical recovery notification', async () => {
+    const row = await enrolled(); now = new Date(START.getTime() + 361 * HOUR);
+    credential.mockRejectedValue(new HiveMemEnrollmentError(409, 'Operation belongs to another operator or policy'));
+    expect(await renewal.renewDueArdentHiveMemCredentials()).toMatchObject({ failed: 1 });
+    expect(store.rows.get(row.id)).toMatchObject({ recoveryRequired: true, renewals: 0 });
+    expect(store.notifications.at(-1)).toMatchObject({ severity: 'critical' });
+    now = new Date(now.getTime() + HOUR);
+    expect(await renewal.renewDueArdentHiveMemCredentials()).toMatchObject({ failed: 0, renewed: 0 });
+    expect(credential).toHaveBeenCalledTimes(1);
+  });
+
+  it('adoption never resets an existing pending renewal or its recovery hold', async () => {
+    const row = await enrolled();
+    row.pendingJson = '{"fixture":"pending"}'; row.recoveryRequired = true;
+    await renewal.recordArdentHiveMemCredential({ nodeId: row.nodeId, profile: row.profile, agentId: 'older-enrollment',
+      workspaceId: 'default', expiresAt: new Date(now.getTime() + HOUR).toISOString(), adopt: true });
+    expect(store.rows.get(row.id)).toMatchObject({ agentId: row.agentId, pendingJson: '{"fixture":"pending"}', recoveryRequired: true });
+  });
+
+  it('does not overwrite a replacement enrollment when an old worker returns', async () => {
+    await enrolled();
+    now = new Date(START.getTime() + 361 * HOUR);
+    credential.mockImplementationOnce(async () => {
+      await renewal.recordArdentHiveMemCredential({ nodeId: 'node-1', profile: 'lead', agentId: 'replacement', workspaceId: 'ardent-agents',
+        expiresAt: new Date(now.getTime() + 48 * HOUR).toISOString() });
+      return { token: TOKEN, agentId: 'ardent-lead-0000', expiresAt: new Date(now.getTime() + 720 * HOUR).toISOString(), operationId: 'e'.repeat(64) };
+    });
+    expect(await renewal.renewDueArdentHiveMemCredentials()).toMatchObject({ skipped: 1 });
+    expect(delivered).toEqual([]);
+    expect([...store.rows.values()][0]).toMatchObject({ agentId: 'replacement', renewals: 0, pendingJson: null });
   });
 
   it('stops tracking a profile removed from its node, and does nothing without HiveMem settings', async () => {

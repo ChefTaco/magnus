@@ -11,6 +11,7 @@
  * without it. A failure is retried with backoff, audited, and raised as a
  * notification that turns critical close to the deadline.
  */
+import { createHash, randomUUID } from 'node:crypto';
 import type { ArdentFleetInstallation, ArdentHiveMemCredentialStatus } from '@hivemagnus/magnus-contracts';
 import { getDb } from '../db/index.js';
 import { AgentResponseError } from '../sdk/node-api-client.js';
@@ -18,12 +19,12 @@ import { logAuditEvent } from './audit-service.js';
 import { createNotification } from './notification-service.js';
 import { getArdentInstallation, getArdentProfileResource, performArdentAction } from './ardent-service.js';
 import {
-  ardentHiveMemDisplayName, ardentHiveMemSettings, ardentHiveMemSupportsRenewal, HiveMemEnrollmentError,
+  ardentHiveMemCredentialRequest, ardentHiveMemDisplayName, ardentHiveMemSettings, ardentHiveMemSupportsRenewal, HiveMemEnrollmentError,
   requestArdentHiveMemCredential, type ArdentHiveMemPlan, type ArdentHiveMemSettings,
 } from './ardent-hivemem.js';
 
 /** How often the job looks for credentials to renew. */
-export const RENEWAL_CHECK_INTERVAL_MS = 15 * 60_000;
+export const RENEWAL_CHECK_INTERVAL_MS = 60_000;
 /** Renew once this share of a credential's lifetime has passed. */
 export const RENEWAL_AT_LIFETIME = 0.5;
 /** How long the previous credential keeps working after a renewal: long enough to survive a node being briefly away. */
@@ -40,6 +41,7 @@ interface Row {
   id: string; nodeId: string; profile: string; agentId: string; workspaceId: string;
   issuedAt: Date; expiresAt: Date; lastRenewedAt: Date | null; lastAttemptAt: Date | null; nextAttemptAt: Date;
   failures: number; lastError: string | null; renewals: number; leaseUntil: Date | null;
+  leaseToken: string | null; pendingJson: string | null; recoveryRequired: boolean; updatedAt: Date;
 }
 
 /** When a credential issued at `issuedAt` with this deadline is due for renewal. */
@@ -98,14 +100,18 @@ export function setArdentHiveMemRenewalDeps(overrides: Partial<ArdentHiveMemRene
  * failure count.
  */
 export async function recordArdentHiveMemCredential(input: { nodeId: string; profile: string; agentId: string; workspaceId: string;
-  expiresAt: string | null; issuedAt?: Date }): Promise<void> {
+  expiresAt: string | null; issuedAt?: Date; adopt?: boolean }): Promise<void> {
   const issuedAt = input.issuedAt ?? deps.now();
   const settings = deps.settings();
   // HiveMem always answers with the deadline; without one, assume the requested lifetime.
   const expiresAt = input.expiresAt ? new Date(input.expiresAt) : new Date(issuedAt.getTime() + (settings?.hours ?? 720) * 3_600_000);
   if (Number.isNaN(expiresAt.getTime())) throw new Error('HiveMem returned an invalid credential deadline');
   const data = { agentId: input.agentId, workspaceId: input.workspaceId, issuedAt, expiresAt, nextAttemptAt: renewalDueAt(issuedAt, expiresAt),
-    failures: 0, lastError: null, leaseUntil: null };
+    failures: 0, lastError: null, leaseUntil: null, leaseToken: null, pendingJson: null, recoveryRequired: false };
+  if (input.adopt) {
+    await getDb().ardentHiveMemCredential.createMany({ data: { nodeId: input.nodeId, profile: input.profile, ...data }, skipDuplicates: true });
+    return;
+  }
   await getDb().ardentHiveMemCredential.upsert({ where: { nodeId_profile: { nodeId: input.nodeId, profile: input.profile } },
     create: { nodeId: input.nodeId, profile: input.profile, ...data }, update: data });
 }
@@ -141,7 +147,7 @@ export async function adoptEnrolledArdentProfiles(): Promise<number> {
     if (typeof receipt['expiresAt'] !== 'string' || !(Date.parse(receipt['expiresAt']) > deps.now().getTime())) continue;
     await recordArdentHiveMemCredential({ nodeId: operation.nodeId, profile: operation.profile, agentId: receipt['agentId'],
       workspaceId: receipt['workspaceId'], expiresAt: receipt['expiresAt'],
-      issuedAt: new Date(enroll.finishedAt ?? operation.completedAt ?? deps.now()) });
+      issuedAt: new Date(enroll.finishedAt ?? operation.completedAt ?? deps.now()), adopt: true });
     adopted++;
   }
   return adopted;
@@ -153,6 +159,21 @@ function message(error: unknown): string {
 
 /** Stop tracking a profile that no longer exists on a reachable node. Its credential simply expires. */
 class ProfileGone extends Error {}
+class ClaimLost extends Error {}
+class RecoveryRequired extends Error {}
+
+/** Only the current, unexpired claim may change state or begin a node mutation. */
+async function assertClaim(row: Row): Promise<void> {
+  const owned = await getDb().ardentHiveMemCredential.findFirst({ where: { id: row.id, leaseToken: row.leaseToken,
+    leaseUntil: { gt: deps.now() } }, select: { id: true } });
+  if (!owned) throw new ClaimLost('Renewal claim was superseded');
+}
+async function updateClaim(row: Row, data: Record<string, unknown>): Promise<void> {
+  const result = await getDb().ardentHiveMemCredential.updateMany({ where: { id: row.id, leaseToken: row.leaseToken,
+    leaseUntil: { gt: deps.now() } }, data });
+  if (result.count !== 1) throw new ClaimLost('Renewal claim was superseded');
+}
+
 
 /** The installed Ardent did not know the reload route, or the node agent did not know the action: restart instead. */
 function reloadUnsupported(error: unknown): boolean {
@@ -170,6 +191,7 @@ async function activate(row: Row, running: boolean): Promise<Activation> {
   } catch (error: unknown) {
     if (!reloadUnsupported(error)) throw error;
   }
+  await assertClaim(row);
   await deps.action(row.nodeId, row.profile, 'service-restart');
   return 'restarted';
 }
@@ -204,47 +226,53 @@ async function renew(row: Row, settings: ArdentHiveMemSettings): Promise<{ expir
   }
   if (!await deps.supportsRenewal(settings)) throw new HiveMemEnrollmentError(501,
     'HiveMem cannot renew agent credentials (no actor_credential_renewal capability); upgrade HiveMem', 'HIVEMEM_RENEWAL_UNSUPPORTED');
-  let renewals = row.renewals;
-  const plan = (): ArdentHiveMemPlan => ({ key: `renew:${row.id}:${renewals}`, action: 'renew', agentId: row.agentId,
-    displayName: ardentHiveMemDisplayName(row.profile, installation.nodeName), workspaceId: row.workspaceId,
-    expiresAt: new Date(deps.now().getTime() + settings.hours * 3_600_000 - 60_000).toISOString(), graceSeconds: RENEWAL_GRACE_SECONDS });
-  let current = plan();
-  let issued: Awaited<ReturnType<ArdentHiveMemRenewalDeps['credential']>>;
-  try { issued = await deps.credential(settings, current); }
-  catch (error: unknown) {
-    // 410: an earlier attempt's receipt expired before its token reached the node. That credential is
-    // superseded by a fresh renewal; the agent's working one stays valid for the grace period.
-    if (!(error instanceof HiveMemEnrollmentError) || error.status !== 410) throw error;
-    renewals++;
-    current = plan();
-    issued = await deps.credential(settings, current);
+  // The entire wire policy and its destination/principal binding are durable BEFORE issuance.
+  // A retry also freezes scopes, descriptions and the display name across upgrades/settings drift.
+  let pending: { plan: ArdentHiveMemPlan; authority: string; startedAt: string };
+  const authority = createHash('sha256').update(JSON.stringify([settings.apiUrl, settings.auth.kind,
+    settings.auth.kind === 'token' ? settings.auth.token : [settings.auth.tokenUrl, settings.auth.clientId]])).digest('hex');
+  if (row.pendingJson) pending = JSON.parse(row.pendingJson) as typeof pending;
+  else {
+    const plan: ArdentHiveMemPlan = { key: `renew-v2:${row.id}:${randomUUID()}`, action: 'renew', agentId: row.agentId,
+      displayName: ardentHiveMemDisplayName(row.profile, installation.nodeName), workspaceId: row.workspaceId,
+      expiresAt: new Date(deps.now().getTime() + settings.hours * 3_600_000 - 60_000).toISOString(), graceSeconds: RENEWAL_GRACE_SECONDS };
+    plan.request = ardentHiveMemCredentialRequest(plan);
+    pending = { plan, authority, startedAt: deps.now().toISOString() };
+    const pendingJson = JSON.stringify(pending);
+    await updateClaim(row, { pendingJson });
+    row.pendingJson = pendingJson;
   }
-  // From here on a retry needs a new renewal: this one's token may be on the node.
-  renewals++;
-  await getDb().ardentHiveMemCredential.update({ where: { id: row.id }, data: { renewals } });
+  if (pending.authority !== authority) throw new RecoveryRequired('HiveMem destination or service identity changed during a pending renewal');
+  await assertClaim(row);
+  const issued = await deps.credential(settings, pending.plan);
+  // Neither delivery nor activation failure advances the key. Repeat the SAME token, even when
+  // the node committed a credential write but its response was lost.
+  await assertClaim(row);
   await deps.action(row.nodeId, row.profile, 'hivemem-credential-set', undefined, { token: issued.token });
+  await assertClaim(row);
   const activation = await activate(row, profile.running);
   const warning = activation === 'deferred' ? null : await verify(row);
-  const grace = new Date(deps.now().getTime() + RENEWAL_GRACE_SECONDS * 1000).toISOString();
-  return { expiresAt: issued.expiresAt, activation, operationId: issued.operationId, previousCredentialValidUntil: grace, warning, renewals };
+  return { expiresAt: issued.expiresAt ?? pending.plan.expiresAt, activation, operationId: issued.operationId,
+    previousCredentialValidUntil: new Date(Date.parse(pending.startedAt) + RENEWAL_GRACE_SECONDS * 1000).toISOString(),
+    warning, renewals: row.renewals + 1 };
 }
 
-async function notifyFailure(row: Row, error: string, now: Date): Promise<void> {
+async function notifyFailure(row: Row, error: string, now: Date, recovery = false): Promise<void> {
   const remaining = row.expiresAt.getTime() - now.getTime();
   const expired = remaining <= 0;
   await createNotification({
-    type: 'ardent.hivemem.renewal_failed', severity: remaining < CRITICAL_WITHIN_MS ? 'critical' : 'warning',
+    type: 'ardent.hivemem.renewal_failed', severity: recovery || remaining < CRITICAL_WITHIN_MS ? 'critical' : 'warning',
     title: expired ? `Ardent ${row.profile} has lost HiveMem` : `HiveMem credential renewal failed for Ardent ${row.profile}`,
     message: (expired
       ? `The credential expired at ${row.expiresAt.toISOString()}. Run Enable HiveMem on the profile to enroll it again. Last error: ${error}`
-      : `The credential expires at ${row.expiresAt.toISOString()}; Magnus retries automatically. Last error: ${error}`).slice(0, 1000),
+      : `The recorded credential expires at ${row.expiresAt.toISOString()}. Last error: ${error}`).slice(0, 1000),
     nodeId: row.nodeId, sourceRef: `ardent-hivemem:${row.nodeId}:${row.profile}`,
     metadata: { profile: row.profile, agentId: row.agentId, failures: row.failures + 1, expiresAt: row.expiresAt.toISOString() },
   }).catch((cause: unknown) => console.warn(`[ardent-hivemem] notification failed: ${message(cause)}`));
 }
 
 /** Renew one claimed credential and record the outcome. Never throws. */
-async function renewClaimed(row: Row, settings: ArdentHiveMemSettings): Promise<'renewed' | 'failed' | 'untracked'> {
+async function renewClaimed(row: Row, settings: ArdentHiveMemSettings): Promise<'renewed' | 'failed' | 'untracked' | 'skipped'> {
   const db = getDb();
   const target = `${row.nodeId}:${row.profile}`;
   const previousExpiresAt = row.expiresAt.toISOString();
@@ -252,8 +280,8 @@ async function renewClaimed(row: Row, settings: ArdentHiveMemSettings): Promise<
     const result = await renew(row, settings);
     const now = deps.now();
     const expiresAt = result.expiresAt ? new Date(result.expiresAt) : new Date(now.getTime() + settings.hours * 3_600_000);
-    await db.ardentHiveMemCredential.update({ where: { id: row.id }, data: { issuedAt: now, expiresAt, lastRenewedAt: now,
-      nextAttemptAt: renewalDueAt(now, expiresAt), failures: 0, lastError: result.warning, leaseUntil: null } });
+    await updateClaim(row, { issuedAt: now, expiresAt, lastRenewedAt: now, renewals: result.renewals, pendingJson: null,
+      nextAttemptAt: renewalDueAt(now, expiresAt), failures: 0, lastError: result.warning, leaseUntil: null, leaseToken: null });
     await logAuditEvent({ action: 'ardent.hivemem.renew', actorId: SYSTEM_ACTOR, actorType: 'system', targetType: 'ardent-profile', targetId: target,
       details: { status: 'succeeded', agentId: row.agentId, workspaceId: row.workspaceId, previousExpiresAt, expiresAt: expiresAt.toISOString(),
         previousCredentialValidUntil: result.previousCredentialValidUntil, activation: result.activation, hivememOperationId: result.operationId,
@@ -261,32 +289,43 @@ async function renewClaimed(row: Row, settings: ArdentHiveMemSettings): Promise<
     console.log(`[ardent-hivemem] renewed ${target} until ${expiresAt.toISOString()} (${result.activation})`);
     return 'renewed';
   } catch (error: unknown) {
+    if (error instanceof ClaimLost) return 'skipped';
     const now = deps.now();
-    const text = message(error);
+    const recovery = error instanceof RecoveryRequired || error instanceof HiveMemEnrollmentError && [409, 410].includes(error.status);
+    const text = recovery ? 'Renewal outcome requires recovery: ' + message(error)
+      + '. An ADMIN must inspect the profile and explicitly run Enable HiveMem; no replacement is issued automatically.' : message(error);
     if (error instanceof ProfileGone) {
-      await db.ardentHiveMemCredential.delete({ where: { id: row.id } });
+      const deleted = await db.ardentHiveMemCredential.deleteMany({ where: { id: row.id, leaseToken: row.leaseToken, leaseUntil: { gt: now } } });
+      if (!deleted.count) return 'skipped';
       await logAuditEvent({ action: 'ardent.hivemem.untrack', actorId: SYSTEM_ACTOR, actorType: 'system', targetType: 'ardent-profile', targetId: target,
         details: { agentId: row.agentId, reason: text, expiresAt: previousExpiresAt } });
       console.log(`[ardent-hivemem] stopped renewing ${target}: ${text}`);
       return 'untracked';
     }
     const failures = row.failures + 1;
-    await db.ardentHiveMemCredential.update({ where: { id: row.id }, data: { failures, lastError: text,
-      nextAttemptAt: renewalRetryAt(now, failures), leaseUntil: null } });
+    // Pending issuance has only a fifteen-minute replay window: retry each minute.
+    // A 409/410 is held for explicit recovery, never hidden by a new key or more grace.
+    try { await updateClaim(row, { failures, lastError: text, recoveryRequired: recovery,
+      nextAttemptAt: row.pendingJson ? new Date(now.getTime() + 60_000) : renewalRetryAt(now, failures), leaseUntil: null, leaseToken: null }); }
+    catch (cause) { if (cause instanceof ClaimLost) return 'skipped'; throw cause; }
     await logAuditEvent({ action: 'ardent.hivemem.renew', actorId: SYSTEM_ACTOR, actorType: 'system', targetType: 'ardent-profile', targetId: target,
       details: { status: 'failed', agentId: row.agentId, error: text, failures, expiresAt: previousExpiresAt } });
     console.warn(`[ardent-hivemem] renewal of ${target} failed (${failures} in a row, expires ${previousExpiresAt}): ${text}`);
-    await notifyFailure(row, text, now);
+    await notifyFailure(row, text, now, recovery);
     return 'failed';
   }
 }
 
-/** Claim a due credential for this process. False when another process has it. */
-async function claim(row: Row, now: Date): Promise<boolean> {
-  const claimed = await getDb().ardentHiveMemCredential.updateMany({
-    where: { id: row.id, nextAttemptAt: { lte: now }, OR: [{ leaseUntil: null }, { leaseUntil: { lt: now } }] },
-    data: { leaseUntil: new Date(now.getTime() + LEASE_MS), lastAttemptAt: now } });
-  return claimed.count === 1;
+/** Claim a due credential and re-read its current plan. Null when the snapshot or lease is stale. */
+async function claim(row: Row, now: Date): Promise<Row | null> {
+  const leaseToken = randomUUID();
+  const db = getDb();
+  const claimed = await db.ardentHiveMemCredential.updateMany({
+    where: { id: row.id, updatedAt: row.updatedAt, recoveryRequired: false, nextAttemptAt: { lte: now },
+      OR: [{ leaseUntil: null }, { leaseUntil: { lt: now } }] },
+    data: { leaseToken, leaseUntil: new Date(now.getTime() + LEASE_MS), lastAttemptAt: now } });
+  if (!claimed.count) return null;
+  return db.ardentHiveMemCredential.findFirst({ where: { id: row.id, leaseToken } }) as Promise<Row | null>;
 }
 
 /**
@@ -302,11 +341,12 @@ export async function renewDueArdentHiveMemCredentials(): Promise<{ renewed: num
   if (!settings) return counts;
   const db = getDb();
   const now = deps.now();
-  const due = await db.ardentHiveMemCredential.findMany({ where: { nextAttemptAt: { lte: now } }, orderBy: { expiresAt: 'asc' }, take: 100 }) as Row[];
+  const due = await db.ardentHiveMemCredential.findMany({ where: { nextAttemptAt: { lte: now }, recoveryRequired: false }, orderBy: { expiresAt: 'asc' }, take: 100 }) as Row[];
   for (const row of due) {
     const running = await db.ardentAgentOperation.findFirst({ where: { nodeId: row.nodeId, profile: row.profile, status: 'running' }, select: { id: true } });
-    if (running || !await claim(row, now)) { counts.skipped++; continue; }
-    counts[await renewClaimed({ ...row, lastAttemptAt: now }, settings)]++;
+    const claimed = running ? null : await claim(row, now);
+    if (!claimed) { counts.skipped++; continue; }
+    counts[await renewClaimed(claimed, settings)]++;
   }
   return counts;
 }

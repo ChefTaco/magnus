@@ -115,6 +115,14 @@ export interface ArdentHiveMemPlan {
   expiresAt: string;
   /** renew only. */
   graceSeconds?: number;
+  /** Frozen wire policy for background renewal, including scopes and descriptions. Never a token. */
+  request?: ReturnType<typeof ardentHiveMemCredentialRequest>;
+}
+
+export function ardentHiveMemCredentialRequest(plan: ArdentHiveMemPlan) {
+  return { action: plan.action, agent_id: plan.agentId, display_name: plan.displayName,
+    description: 'Ardent profile managed by Magnus', scopes: [...ARDENT_HIVEMEM_SCOPES], workspace_id: plan.workspaceId,
+    expires_at: plan.expiresAt, ...(plan.action === 'renew' ? { grace_seconds: plan.graceSeconds ?? ARDENT_HIVEMEM_RENEWAL_GRACE_SECONDS } : {}) };
 }
 
 /** How long a renewed agent's previous credential keeps working when nothing else is asked: one hour. */
@@ -231,9 +239,7 @@ export async function requestArdentHiveMemCredential(settings: ArdentHiveMemSett
   fetcher: typeof fetch = fetch): Promise<{ token: string; agentId: string; expiresAt: string | null; operationId: string }> {
   const operationId = createHash('sha256').update(`magnus-ardent:${plan.key}`).digest('hex');
   await ensureArdentHiveMemWorkspace(settings, fetcher);
-  const response = await callHiveMem(settings, `v1/actor-credentials/${operationId}`, { action: plan.action, agent_id: plan.agentId,
-    display_name: plan.displayName, description: 'Ardent profile managed by Magnus', scopes: [...ARDENT_HIVEMEM_SCOPES],
-    workspace_id: plan.workspaceId, expires_at: plan.expiresAt, ...(plan.action === 'renew' ? { grace_seconds: plan.graceSeconds ?? ARDENT_HIVEMEM_RENEWAL_GRACE_SECONDS } : {}) }, fetcher);
+  const response = await callHiveMem(settings, `v1/actor-credentials/${operationId}`, plan.request ?? ardentHiveMemCredentialRequest(plan), fetcher);
   if (!response.ok) throw new HiveMemEnrollmentError(response.status, `HiveMem ${plan.action} answered ${await refusal(response)}`);
   const body = await response.json() as { ok?: unknown; token?: unknown; agent_id?: unknown; expires_at?: unknown };
   if (body.ok !== true || typeof body.token !== 'string' || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(body.token) || body.agent_id !== plan.agentId)

@@ -138,3 +138,52 @@ test('Ardent profile navigation, saved configuration, provider error, channel st
     // Scoped to main: during client navigation the streamed page can briefly render a second copy.
     await expect(page.getByRole('main').getByText('Hermes Agent integration not enabled')).toBeVisible();
 });
+
+for (const role of ['ADMIN', 'OPERATOR', 'VIEWER']) {
+  test(`standalone installations command recovery as ${role}`, async ({ page }) => {
+    await page.goto('/ardent/installations');
+    if (new URL(page.url()).pathname === '/login') {
+      await page.getByLabel('Username').fill(process.env.TEST_USERNAME ?? 'ci-admin');
+      await page.getByLabel('Password', { exact: true }).fill(process.env.TEST_PASSWORD ?? 'ci-only-browser-password');
+      await page.getByRole('button', { name: 'Sign In', exact: true }).click();
+      await expect(page).toHaveURL('/');
+    }
+    await page.route('**/api/auth/me', route => route.fulfill({ json: { username: 'admin', role } }));
+    const owner = { commandId: 'held-ardent-command', state: 'unknown', label: 'ardent:assistant:hivemem-credential-set',
+      profile: 'assistant', action: 'hivemem-credential-set', ardent: true, acquiredAt: '2026-01-01T00:00:00Z',
+      dispatchedAt: '2026-01-01T00:00:00Z', deadline: '2026-01-01T00:01:00Z', reconcilableAfter: '2026-01-01T00:02:00Z' };
+    let held = true;
+    const decisions: unknown[] = [];
+    await page.route('**/api/proxy/ardent/**', async route => {
+      if (route.request().method() === 'GET') return route.fulfill({ json: { success: true,
+        data: [{ ...installation, commandOwners: held ? [owner] : [], commandReconciliation: { configured: false } }] } });
+      decisions.push(route.request().postDataJSON()); held = false;
+      return route.fulfill({ json: { success: true, data: { commandId: owner.commandId, outcome: 'settled', receipt: 'completed',
+        settlement: 'effects_verified', evidenceSha256: 'e'.repeat(64), decisionId: null } } });
+    });
+    await page.goto('/ardent/installations');
+    const section = page.getByRole('region', { name: 'Unsettled commands on Fixture node' });
+    await expect(section).toContainText(owner.commandId);
+    if (role !== 'ADMIN') {
+      await expect(section).toContainText('An ADMIN must inspect and reconcile');
+      await expect(section.getByRole('button', { name: 'Review reconciliation' })).toHaveCount(0);
+      expect(decisions).toEqual([]); return;
+    }
+    await expect(section).toContainText('Only the node’s own evidence');
+    const review = section.getByRole('button', { name: 'Review reconciliation' });
+    await expect(review).toBeDisabled();
+    await section.getByLabel('What did it do?').selectOption('no_effect_verified');
+    await section.getByLabel('What you checked').fill('Checked the profile environment and node journal; no write occurred.');
+    await review.click();
+    const dialog = page.getByRole('dialog', { name: 'Reconcile this command?' });
+    await expect(dialog).toContainText('Only when the node itself records an unknown outcome');
+    expect(decisions).toEqual([]);
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    expect(decisions).toEqual([]);
+    await review.click();
+    await dialog.getByRole('button', { name: 'Confirm reconciliation' }).click();
+    await expect(section).toHaveCount(0);
+    expect(decisions).toEqual([{ action: 'command-reconcile', target: owner.commandId,
+      body: { disposition: 'no_effect_verified', reason: 'Checked the profile environment and node journal; no write occurred.' } }]);
+  });
+}

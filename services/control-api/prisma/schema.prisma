@@ -2118,6 +2118,9 @@ model ArdentHiveMemCredential {
   lastError     String?
   renewals      Int       @default(0)
   leaseUntil    DateTime?
+  leaseToken    String?
+  pendingJson   String?
+  recoveryRequired Boolean @default(false)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 

@@ -10,11 +10,22 @@ import { Button } from '@/components/ui/button';
 import { PageItem, PageTransition } from '@/components/ui/page-transition';
 import { ServiceControls } from './service-controls';
 import { PackageControls } from './package-controls';
+import { CommandOwners } from './command-owners';
 
 export default function ArdentInstallationsPage(): React.ReactElement {
   const [installations, setInstallations] = useState<ArdentFleetInstallation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [admin, setAdmin] = useState(false);
+  useEffect(() => {
+    let active = true;
+    void fetch('/api/auth/me', { cache: 'no-store' }).then(async response => {
+      if (!response.ok) return;
+      const session = await response.json() as { role?: unknown };
+      if (active) setAdmin(session.role === 'ADMIN');
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, []);
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
@@ -48,6 +59,7 @@ export default function ArdentInstallationsPage(): React.ReactElement {
                 <div><p className="text-[10px] uppercase tracking-wider text-text-muted">Profiles</p><p className="mt-1 font-mono text-text">{item.profiles.length}</p></div>
               </div>
               <PackageControls item={item} refresh={load} />
+              <CommandOwners installation={item} admin={admin} refresh={load} />
               {item.profiles.length > 0 && <div className="mt-3 space-y-3">{item.profiles.map(profile => <div key={profile.id} className="rounded border border-border/40 bg-bg/40 p-3"><Link href={`/ardent/profiles/${encodeURIComponent(`${item.nodeId}~${profile.id}`)}`} className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary hover:underline">{profile.name} <ArrowUpRight className="h-3 w-3" /></Link><ServiceControls nodeId={item.nodeId} profileId={profile.id} running={profile.running} refresh={load} /></div>)}</div>}
             </div>
           ))}
