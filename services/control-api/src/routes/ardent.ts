@@ -11,8 +11,9 @@ import { AgentResponseError, managedCommandOf } from '../sdk/node-api-client.js'
 import { ardentOwnerBlock, reconcileArdentCommandOwner } from '../services/ardent-command-owner.js';
 import { HTTPError } from 'ky';
 import { z } from 'zod';
-import { ARDENT_STUDIO_CAPABILITY, ArdentCommandReconcileSchema, ArdentContextAdoptionInputSchema, ardentConfigEditSchema, ardentConfigFileSchema, ardentDevelopmentNoteSchema, ardentIdentityEditSchema, ardentMissionSubmitSchema, ardentPreviewSubmitSchema, ardentSessionOpenSchema, ardentSkillEditSchema } from '@hivemagnus/magnus-contracts';
+import { ARDENT_STUDIO_CAPABILITY, ArdentCommandReconcileSchema, ArdentContextAdoptionInputSchema, ardentConfigEditSchema, ardentConfigFileSchema, ardentDevelopmentNoteSchema, ardentIdentityEditSchema, ardentMissionSubmitSchema, ardentPreviewSubmitSchema, ardentSessionOpenSchema, ardentSkillEditSchema, ardentSkillInstallSchema } from '@hivemagnus/magnus-contracts';
 import { classifyServiceConfigEdit } from '../services/ardent-config-allowlist.js';
+import { fetchArdentSkillRelease } from '../services/ardent-hiveskills.js';
 
 export const ardentRouter = new Hono<AppVariables>();
 ardentRouter.use('*', authMiddleware);
@@ -21,9 +22,9 @@ ardentRouter.use('*', authMiddleware);
  * ADMIN people, plus a linked Ardent service identity. Authentication already
  * confines a service to the bridge routes; the handlers below narrow it further
  * (read resources, the session, task, mission, preview and note actions, and
- * identity, skill and limited configuration changes) and require an acting
- * person for previews and notes, and an acting ADMIN to read configuration or
- * change agents.
+ * identity, skill, skill installation and limited configuration changes) and
+ * require an acting person for previews and notes, and an acting ADMIN to read
+ * configuration or change agents.
  */
 async function requireArdentAccess(c: Context<AppVariables>, next: Next): Promise<void> {
   const user = getUser(c);
@@ -64,11 +65,11 @@ export function ardentActor(c: Context<AppVariables>, requireAdmin: boolean, req
  * person; providers, channels, peers and histories stay with ADMIN people.
  */
 const SERVICE_READ = /^(?:status|profile|config|skills|memory\/status|sessions|sessions\/[0-9a-f-]{36}\/messages|tasks|tasks\/[0-9a-f-]{36}(?:\/events|\/artifacts)?|artifacts\/[a-f0-9]{64}\/manifest|development|identity\/(?:soul|identity))$/;
-const SERVICE_ACTIONS = new Set(['session-open', 'task-submit', 'task-cancel', 'mission-submit', 'task-pause', 'task-resume', 'preview-submit', 'development-note', 'identity-save', 'skill-set', 'config-save']);
+const SERVICE_ACTIONS = new Set(['session-open', 'task-submit', 'task-cancel', 'mission-submit', 'task-pause', 'task-resume', 'preview-submit', 'development-note', 'identity-save', 'skill-set', 'config-save', 'skill-install']);
 /** Service actions that must name the person they are for. */
 const SERVICE_SUBJECT_ACTIONS = new Set(['preview-submit', 'development-note']);
 /** Service actions that change an agent, which need an acting ADMIN like New Agent does. */
-const SERVICE_ADMIN_ACTIONS = new Set(['identity-save', 'skill-set', 'config-save']);
+const SERVICE_ADMIN_ACTIONS = new Set(['identity-save', 'skill-set', 'config-save', 'skill-install']);
 /** Actions that carry the revision they replace. Ardent answers a stale one with 409. */
 const REVISION_ACTIONS = new Set(['identity-save', 'skill-set', 'config-save']);
 /** Actions and reads that Ardent 2.2.0 added, which need a node agent at studio level 2. */
@@ -102,6 +103,14 @@ function revisionRefusal(error: unknown): HttpError | undefined {
     return new HttpError(400, 'VALIDATION_ERROR', `Ardent rejected the change${detail ? `: ${detail}` : ''}`.slice(0, 500));
   }
   if (status === 404) return new HttpError(404, 'NOT_FOUND', 'Ardent skill or resource not found');
+  return undefined;
+}
+/** The node agent's refusal of a skill installation, before it changed anything. */
+function skillInstallRefusal(error: unknown): HttpError | undefined {
+  const status = refusedStatus(error);
+  const detail = error instanceof AgentResponseError ? error.agentMessage : null;
+  if (status === 409) return new HttpError(409, 'SKILL_CONFLICT', (detail ?? 'The profile has a skill of that name that Magnus did not install').slice(0, 500));
+  if (status === 400 || status === 413) return new HttpError(422, 'SKILL_ARCHIVE_INVALID', (detail ?? 'The node agent refused the skill archive').slice(0, 500));
   return undefined;
 }
 
@@ -265,6 +274,7 @@ const ACTION_BODIES: Partial<Record<string, z.ZodType>> = {
   'session-open': ardentSessionOpenSchema, 'mission-submit': ardentMissionSubmitSchema,
   'preview-submit': ardentPreviewSubmitSchema, 'development-note': ardentDevelopmentNoteSchema,
   'identity-save': ardentIdentityEditSchema, 'skill-set': ardentSkillEditSchema, 'config-save': ardentConfigEditSchema,
+  'skill-install': ardentSkillInstallSchema,
 };
 /** Targets checked here; the node agent checks them again. */
 const ACTION_TARGETS: Partial<Record<string, RegExp>> = { 'identity-save': /^(?:soul|identity)$/, 'skill-set': /^[A-Za-z0-9_-]{1,100}$/ };
@@ -292,7 +302,7 @@ async function checkServiceConfigEdit(nodeId: string, profile: string, body: unk
 }
 
 const Action = z.object({
-  action: z.enum(['command-reconcile', 'profile-create', 'session-open', 'config-validate', 'config-save', 'peer-validate', 'peer-save', 'identity-save', 'identity-restore', 'provider-test', 'channel-test', 'peer-test', 'memory-search', 'task-submit', 'task-cancel', 'mission-submit', 'task-pause', 'task-resume', 'preview-submit', 'development-note', 'skill-set', 'service-start', 'service-stop', 'service-restart', 'package-install', 'context-stage', 'context-adopt', 'context-rollback']),
+  action: z.enum(['command-reconcile', 'profile-create', 'session-open', 'config-validate', 'config-save', 'peer-validate', 'peer-save', 'identity-save', 'identity-restore', 'provider-test', 'channel-test', 'peer-test', 'memory-search', 'task-submit', 'task-cancel', 'mission-submit', 'task-pause', 'task-resume', 'preview-submit', 'development-note', 'skill-set', 'service-start', 'service-stop', 'service-restart', 'package-install', 'context-stage', 'context-adopt', 'context-rollback', 'skill-install']),
   target: z.string().min(1).max(128).optional(), body: z.unknown().optional(),
 }).strict();
 ardentRouter.post('/installations/:nodeId/profiles/:name/action', async c => {
@@ -327,22 +337,42 @@ ardentRouter.post('/installations/:nodeId/profiles/:name/action', async c => {
     await requireArdentStudioAgent(nodeId, ARDENT_STUDIO_CAPABILITY.missions);
   else if (action === 'session-open' || (action === 'task-submit' && body && typeof body === 'object' && 'session_id' in body))
     await requireArdentStudioAgent(nodeId);
+  if (action === 'skill-install' && target !== undefined) throw new HttpError(400, 'VALIDATION_ERROR', 'skill-install names the skill in its body, not as a target');
+  // A skill installation sends the node the release Magnus fetched and checked, never anything the caller sent.
+  let nodeBody = body;
+  let installDetails: Record<string, unknown> = {};
+  if (action === 'skill-install') {
+    const request = ardentSkillInstallSchema.parse(body);
+    await requireArdentStudioAgent(nodeId, ARDENT_STUDIO_CAPABILITY.skillInstall);
+    installDetails = { source: request.source, name: request.name, version: request.version, channel: request.channel ?? 'stable', enable: request.enable ?? false };
+    let release: Awaited<ReturnType<typeof fetchArdentSkillRelease>>;
+    try { release = await fetchArdentSkillRelease(request); }
+    catch (error: unknown) {
+      const failure = error instanceof HttpError ? error : new HttpError(503, 'DEPENDENCY_UNAVAILABLE', 'The HiveSkills release could not be fetched');
+      await logAuditEvent({ action: 'ardent.skill-install', actorId: actor.actorId, targetType: 'ardent-profile', targetId: `${nodeId}:${profile}`,
+        details: { target: null, ...actor.details, ...installDetails, outcome: 'failed', code: failure.code, dispatched: false } });
+      throw failure;
+    }
+    installDetails = { ...installDetails, sha256: release.sha256, files: release.files };
+    nodeBody = { ...request, sha256: release.sha256, archive_base64: release.archiveBase64 };
+  }
   try {
-    const result = await performArdentAction(nodeId, profile, action, target, body);
+    const result = await performArdentAction(nodeId, profile, action, target, nodeBody);
     await logAuditEvent({ action: `ardent.${action}`, actorId: actor.actorId,
       targetType: 'ardent-profile', targetId: `${nodeId}:${profile}`, details: {
-        target: target ?? null, ...actor.details, ...actionAuditDetails(action, body), ...(configPaths ? { configPaths } : {}),
+        target: target ?? null, ...actor.details, ...actionAuditDetails(action, body), ...installDetails, ...(configPaths ? { configPaths } : {}),
         ...(['context-stage', 'context-adopt', 'context-rollback'].includes(action) ? ArdentContextAdoptionInputSchema.parse(body) : {})
       } });
     return c.json({ success: true, data: result });
   } catch (error: unknown) {
     // A held command owner, or this action's own unknown outcome, blocks the node: say which and what to do.
     const blocked = await ardentOwnerBlock(nodeId, error).catch(() => undefined);
-    const refusal = blocked ?? (MISSION_ACTIONS.has(action) ? ardentRefusal(error) : REVISION_ACTIONS.has(action) ? revisionRefusal(error) : undefined);
+    const refusal = blocked ?? (MISSION_ACTIONS.has(action) ? ardentRefusal(error) : REVISION_ACTIONS.has(action) ? revisionRefusal(error)
+      : action === 'skill-install' ? skillInstallRefusal(error) : undefined);
     const failure = refusal ?? new HttpError(503, 'DEPENDENCY_UNAVAILABLE', actionFailure(error));
     try {
       await logAuditEvent({ action: `ardent.${action}`, actorId: actor.actorId, targetType: 'ardent-profile', targetId: `${nodeId}:${profile}`,
-        details: { target: target ?? null, ...actor.details, outcome: failure.code === 'ARDENT_OUTCOME_UNKNOWN' ? 'unknown' : 'failed',
+        details: { target: target ?? null, ...actor.details, ...installDetails, outcome: failure.code === 'ARDENT_OUTCOME_UNKNOWN' ? 'unknown' : 'failed',
           code: failure.code, commandId: managedCommandOf(error) ?? null } });
     } catch (auditError: unknown) {
       console.warn(`[ardent] audit of a failed ${action} on ${nodeId}:${profile} failed: ${auditError instanceof Error ? auditError.message : String(auditError)}`);

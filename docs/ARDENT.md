@@ -13,6 +13,7 @@ Every route below needs a node agent that reports a `studio` level in its ping f
 |---|---|
 | 1 | Sessions, task streams, streamed artifacts, New Agent and Enable HiveMem |
 | 2 | Also missions, task pause and resume, previews, development history and notes, artifact manifests and session contexts (Ardent 2.2.0) |
+| 3 | Also `skill-install`, which installs a HiveSkills catalog release onto a profile |
 
 A request that needs a higher level than the agent reports answers 409 `AGENT_UPGRADE_REQUIRED`:
 upgrade the agent from the console first. Level 2 features also need Ardent 2.2.0 or later on the
@@ -266,6 +267,39 @@ The audit keeps a mission's ID, revision, session and idempotency key, a preview
 names of its overrides, and a note's kind. It never records objectives, context items or identity
 texts.
 
+## HiveSkills skill install
+
+`{"action": "skill-install", "body": {"source": "hiveskills", "name": "web-research", "version": "1.2.0"}}`
+installs a skill from the HiveSkills catalog onto a profile. It needs `MAGNUS_ARDENT_HIVESKILLS_URL`
+(the HTTPS registry base URL, which this server must trust; use `NODE_EXTRA_CA_CERTS` for a private
+CA), a node agent at `studio` level 3, and ADMIN (or a service acting for a linked ADMIN). There is no
+`target`. Optional fields: `channel` (`stable`, the default, or `canary`), and `enable: true` with
+`revision`, the configuration revision from `GET …/config`, to enable the skill in the same step.
+
+1. The Control API reads the catalog entry (`GET /v1/skills/:name`). The requested version must be the
+   release promoted on the channel, or it answers 409 `SKILL_VERSION_UNAVAILABLE` naming the promoted
+   one; a skill the catalog lacks answers 404.
+2. It downloads that release's archive and checks it the way the HiveSkills Hermes bridge does: its
+   SHA-256 must equal the catalog digest and the registry's `X-Content-SHA256` header. HiveSkills
+   releases are immutable and unsigned, so the catalog digest over verified HTTPS is the trust anchor.
+   The archive may hold only regular files and directories (safe relative paths, no duplicates) under a
+   root `SKILL.md` whose front matter Ardent indexes under the requested name, within 1 MiB
+   compressed, 4 MiB unpacked and 256 entries. A failure answers 422 `SKILL_ARCHIVE_INVALID`.
+3. It sends the node agent the request with the digest and archive, never bytes from the caller. The
+   agent checks the digest and the archive again, then, as the Ardent owner (never as root), extracts it
+   into a hidden staging directory in the profile's first skill directory, makes it private to the
+   owner, writes a `.hiveskills.json` receipt (source, version, digest) and swaps it in for any earlier
+   copy. It replaces only a skill directory that carries that receipt: a local skill of the same name
+   answers 409 `SKILL_CONFLICT` and is left alone. The same digest again changes nothing.
+4. With `enable`, the agent calls Ardent's `PUT /api/v1/skills/:name` with the revision. If that fails
+   (a stale revision, or a profile that is not running), the skill stays installed and the answer says
+   why in `enable_error`; enable it from the skill list.
+
+The answer is `{source, name, version, sha256, files, changed, enabled, revision, enable_error,
+activation_required}`; `revision` is the new configuration revision when the skill was enabled. Like
+any skill change, it applies once the profile restarts. The audit records the skill, version, channel,
+digest and file count, and a failed fetch is audited before anything reaches the node.
+
 ## Service identity
 
 A product that drives Ardent agents for people, without holding Ardent tokens or full ADMIN, uses an
@@ -283,7 +317,7 @@ what it may call. In short:
   have one person link on the same issuer, and the audit names that person with the service in its
   details.
 - New Agent, resume and Enable HiveMem additionally need that person's link role to be `ADMIN`.
-- So do agent changes: `identity-save`, `skill-set` and `config-save`, and reading `config` (as a
+- So do agent changes: `identity-save`, `skill-set`, `config-save` and `skill-install`, and reading `config` (as a
   person needs ADMIN to read it). Without an acting ADMIN they answer 403 `ACTING_ADMIN_REQUIRED`.
 - A service's `config-save` may change only the backend and model settings, `skills.enabled` and
   `artifacts.max_bytes` (`ARDENT_SERVICE_CONFIG_PATHS`); anything else answers 403

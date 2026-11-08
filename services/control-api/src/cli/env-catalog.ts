@@ -114,6 +114,7 @@ export const ENV_CATALOG: readonly EnvVariable[] = [
   { name: 'MAGNUS_ARDENT_HIVEMEM_WORKSPACE_ID', group: 'hivemem', default: 'ardent-agents (Oathweave client only)', description: 'HiveMem workspace Ardent agents are enrolled into. Magnus creates it with an Oathweave client; with an enrollment token it must exist and is required.' },
   { name: 'MAGNUS_ARDENT_HIVEMEM_CREDENTIAL_HOURS', group: 'hivemem', default: '720', description: 'Lifetime of an Ardent agent HiveMem credential, 1 to 720 hours.' },
   { name: 'MAGNUS_ARDENT_EMBERPATH_URL', group: 'router', description: 'OpenAI-compatible Emberpath base URL that Ardent New Agent writes for an Emberpath model alias.' },
+  { name: 'MAGNUS_ARDENT_HIVESKILLS_URL', group: 'plugins', description: 'HTTPS HiveSkills registry base URL that the Ardent skill-install action fetches catalog releases from and checks against their catalog digest. Unset: skill-install answers 503 HIVESKILLS_UNCONFIGURED.' },
 
   // ── Security Fusion / external security console ──
   { name: 'CINDERTRACE_RESPONSE_SECRET', group: 'security', description: 'Dedicated HMAC credential for the optional Cindertrace managed response bridge.' },

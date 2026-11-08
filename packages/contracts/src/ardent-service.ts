@@ -12,6 +12,7 @@ import {
   ardentDevelopmentRecordSchema, ardentMissionSubmitSchema, ardentPreviewOverridesSchema, ardentPreviewSubmitSchema,
   ardentSessionContextSchema, ardentSessionOpenSchema, ardentStudioEventKindSchema, ardentTaskAdmissionSchema,
   ardentTaskArtifactsSchema, ardentTaskDoneEventSchema, ardentTaskJournalEventSchema, ardentTaskPauseStateSchema,
+  ardentSkillInstallNodeSchema, ardentSkillInstallResultSchema, ardentSkillInstallSchema,
   ardentTaskStreamQuerySchema, ardentTaskTextEventSchema, ardentTeamMissionSchema,
 } from './browser.js';
 
@@ -33,7 +34,7 @@ export const ARDENT_SERVICE_SUBJECT_ACTIONS = ['preview-submit', 'development-no
  * Agent changes a service runs only for a linked ADMIN named in x-acting-subject, the check New Agent uses.
  * Without one they answer 403 ACTING_ADMIN_REQUIRED, and an unlinked subject 403 ACTING_SUBJECT_UNLINKED.
  */
-export const ARDENT_SERVICE_ADMIN_ACTIONS = ['identity-save', 'skill-set', 'config-save'] as const;
+export const ARDENT_SERVICE_ADMIN_ACTIONS = ['identity-save', 'skill-set', 'config-save', 'skill-install'] as const;
 /**
  * The only configuration values a service's config-save may change: the backend and model settings,
  * the enabled skills and the artifact size limit. A change anywhere else, including provider URLs,
@@ -79,6 +80,11 @@ export const ardentServiceIdentitySaveRequestSchema = z.object({
 export const ardentServiceSkillSetRequestSchema = z.object({
   action: z.literal('skill-set'), target: z.string().regex(/^[A-Za-z0-9_-]{1,100}$/u), body: ardentSkillEditSchema,
 }).strict();
+/**
+ * Install a HiveSkills catalog release onto the profile (studio >= 3). Magnus fetches the archive from its
+ * configured registry, checks it against the catalog digest and installs it; with `enable` it also enables it.
+ */
+export const ardentServiceSkillInstallRequestSchema = z.object({ action: z.literal('skill-install'), body: ardentSkillInstallSchema }).strict();
 /** Only ARDENT_SERVICE_CONFIG_PATHS may differ between the current configuration and `text`. */
 export const ardentServiceConfigSaveRequestSchema = z.object({ action: z.literal('config-save'), body: ardentConfigEditSchema }).strict();
 export const ardentServiceActionRequestSchema = z.union([
@@ -86,6 +92,7 @@ export const ardentServiceActionRequestSchema = z.union([
   ardentServiceMissionSubmitRequestSchema, ardentServiceTaskPauseRequestSchema, ardentServiceTaskResumeRequestSchema,
   ardentServicePreviewSubmitRequestSchema, ardentServiceDevelopmentNoteRequestSchema,
   ardentServiceIdentitySaveRequestSchema, ardentServiceSkillSetRequestSchema, ardentServiceConfigSaveRequestSchema,
+  ardentServiceSkillInstallRequestSchema,
 ]);
 /** GET …/identity/soul and …/identity/identity, and the identity-save answer. */
 export const ardentIdentityFileSchema = z.object({ kind: z.enum(['soul', 'identity']), name: z.string(), text: z.string(), revision });
@@ -120,12 +127,12 @@ export interface ArdentServiceRoute {
 export const ardentServiceRoutes: readonly ArdentServiceRoute[] = [
   { method: 'GET', path: '/ardent/profiles', response: ok(z.array(ardentServiceProfileSchema)), actingAdmin: false },
   { method: 'GET', path: '/ardent/installations', response: ok(z.array(z.record(z.string(), z.unknown()))), actingAdmin: false,
-    note: 'Each installation carries capabilities.studio: 1 for sessions and streams, 2 for missions, pause, previews and development. Below what a feature needs, offer an agent upgrade.' },
+    note: 'Each installation carries capabilities.studio: 1 for sessions and streams, 2 for missions, pause, previews and development, 3 for skill-install. Below what a feature needs, offer an agent upgrade.' },
   { method: 'GET', path: '/ardent/installations/{nodeId}', response: ok(z.record(z.string(), z.unknown())), actingAdmin: false },
   { method: 'GET', path: '/ardent/installations/{nodeId}/profiles/{name}/{resource}', response: ok(z.unknown()), actingAdmin: false,
     note: 'resource is one of status, profile, skills, memory/status, sessions, sessions/{id}/messages, tasks, tasks/{id}, tasks/{id}/events, identity/soul, identity/identity (ardentIdentityFileSchema), and config (ardentConfigFileSchema, which needs x-acting-subject naming a linked ADMIN, as a person reading it needs ADMIN); with studio >= 2 also tasks/{id}/artifacts (ardentTaskArtifactsSchema), artifacts/{sha256}/manifest (ardentArtifactRecordSchema) and development (ardentDevelopmentPageSchema, query ardentDevelopmentQuerySchema). sessions takes context=direct|mission|preview (studio >= 2). data is the Ardent response.' },
   { method: 'POST', path: '/ardent/installations/{nodeId}/profiles/{name}/action', request: ardentServiceActionRequestSchema, response: ok(z.unknown()), actingAdmin: false,
-    note: 'session-open answers an Ardent session, task-submit, mission-submit and preview-submit a task admission (ardentTaskAdmissionSchema), task-cancel the cancelled task, task-pause and task-resume ardentTaskPauseStateSchema, development-note the stored ardentDevelopmentRecordSchema. preview-submit and development-note need x-acting-subject (ARDENT_SERVICE_SUBJECT_ACTIONS). identity-save answers ardentIdentityFileSchema, skill-set and config-save ardentConfigSavedSchema; they need x-acting-subject naming a linked ADMIN (ARDENT_SERVICE_ADMIN_ACTIONS), answer 409 CONFLICT when the revision is stale, and config-save answers 403 CONFIG_PATH_FORBIDDEN when anything outside ARDENT_SERVICE_CONFIG_PATHS changes. mission-submit, task-pause, task-resume, preview-submit, development-note and a session-open with context answer 409 AGENT_UPGRADE_REQUIRED below studio 2. Ardent\'s own 400, 404 and 409 (a finished task cannot pause) come back with that status. Any other action answers 403.' },
+    note: 'session-open answers an Ardent session, task-submit, mission-submit and preview-submit a task admission (ardentTaskAdmissionSchema), task-cancel the cancelled task, task-pause and task-resume ardentTaskPauseStateSchema, development-note the stored ardentDevelopmentRecordSchema. preview-submit and development-note need x-acting-subject (ARDENT_SERVICE_SUBJECT_ACTIONS). identity-save answers ardentIdentityFileSchema, skill-set and config-save ardentConfigSavedSchema; they need x-acting-subject naming a linked ADMIN (ARDENT_SERVICE_ADMIN_ACTIONS), answer 409 CONFLICT when the revision is stale, and config-save answers 403 CONFIG_PATH_FORBIDDEN when anything outside ARDENT_SERVICE_CONFIG_PATHS changes. skill-install answers ardentSkillInstallResultSchema and also needs a linked ADMIN; it answers 503 HIVESKILLS_UNCONFIGURED when Magnus has no HiveSkills registry, 404 NOT_FOUND when the catalog has no such skill, 409 SKILL_VERSION_UNAVAILABLE when that version is not the one promoted on the channel, 422 SKILL_ARCHIVE_INVALID when the archive fails its digest or checks, 409 SKILL_CONFLICT when the profile has a local skill of that name Magnus did not install, and 409 AGENT_UPGRADE_REQUIRED below studio 3. mission-submit, task-pause, task-resume, preview-submit, development-note and a session-open with context answer 409 AGENT_UPGRADE_REQUIRED below studio 2. Ardent\'s own 400, 404 and 409 (a finished task cannot pause) come back with that status. Any other action answers 403.' },
   { method: 'GET', path: '/ardent/installations/{nodeId}/profiles/{name}/tasks/{taskId}/stream', query: ardentTaskStreamQuerySchema, response: null, actingAdmin: false,
     events: { 'task.text': ardentTaskTextEventSchema, 'task.delta': ardentTaskTextEventSchema, 'task.event': ardentTaskJournalEventSchema, 'task.done': ardentTaskDoneEventSchema },
     note: 'Missions and previews stream here like any task. task.event kinds include ARDENT_STUDIO_EVENT_KINDS (mission, team_handoff, paused, ...) on Ardent 2.2.0; accept unknown kinds.' },
@@ -150,6 +157,9 @@ export type ArdentTaskPauseState = z.infer<typeof ardentTaskPauseStateSchema>;
 export type ArdentIdentityFile = z.infer<typeof ardentIdentityFileSchema>;
 export type ArdentConfigFile = z.infer<typeof ardentConfigFileSchema>;
 export type ArdentConfigSaved = z.infer<typeof ardentConfigSavedSchema>;
+export type ArdentSkillInstall = z.infer<typeof ardentSkillInstallSchema>;
+export type ArdentSkillInstallNode = z.infer<typeof ardentSkillInstallNodeSchema>;
+export type ArdentSkillInstallResult = z.infer<typeof ardentSkillInstallResultSchema>;
 export type ArdentServiceConfigPath = typeof ARDENT_SERVICE_CONFIG_PATHS[number];
 export type ArdentServiceSession = z.infer<typeof ardentServiceSessionSchema>;
 export type ArdentServiceTaskAdmission = z.infer<typeof ardentServiceTaskAdmissionSchema>;
@@ -163,5 +173,6 @@ export {
   ardentDevelopmentRecordSchema, ardentMissionSubmitSchema, ardentPreviewOverridesSchema, ardentPreviewSubmitSchema,
   ardentSessionContextSchema, ardentSessionOpenSchema, ardentStudioEventKindSchema, ardentTaskAdmissionSchema,
   ardentTaskArtifactsSchema, ardentTaskDoneEventSchema, ardentTaskJournalEventSchema, ardentTaskPauseStateSchema,
+  ardentSkillInstallNodeSchema, ardentSkillInstallResultSchema, ardentSkillInstallSchema,
   ardentTaskStreamQuerySchema, ardentTaskTextEventSchema, ardentTeamMissionSchema,
 };
