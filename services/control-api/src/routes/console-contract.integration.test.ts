@@ -189,6 +189,7 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('browser contract against rea
   const NOT_RUN_HERE = new Set([
     '/assistant/insights', // model provider
     '/events/stream', '/logs/stream', // streams
+    '/ardent/installations/{nodeId}/profiles/{name}/tasks/{taskId}/stream', // stream from a live agent
     '/agents/upgrade/runs/{id}', // needs a run
     '/files/read', '/ops/storage-evidence/{nodeId}', // live agent
     '/library/files/{fileId}', '/ops/incidents/{id}/evidence', // covered below
