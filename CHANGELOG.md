@@ -6,6 +6,12 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Added
+
+- Ardent sessions and live task streams through Magnus. The `session-open` action opens or resets a keyed Ardent session, and `task-submit` accepts an optional `session_id` and prompts up to 16,000 characters. `GET /api/v1/ardent/installations/:nodeId/profiles/:name/tasks/:taskId/stream` relays the task's server-sent events from the node unbuffered; the node agent ends a stream after 60 seconds without data, and clients resume with `after` or `Last-Event-ID`.
+- Artifact downloads stream from the node instead of being buffered, up to the agent's `MAGNUS_AGENT_ARDENT_ARTIFACT_MAX_BYTES` (64 MiB by default; it was a fixed 2 MiB).
+- The node agent reports `studio: 1` in its ping features and Ardent inventory. Session and stream requests to an older agent answer 409 `AGENT_UPGRADE_REQUIRED`.
+
 ### Changed
 
 - Manage the latest Ardent release, 2.1.2. A new check (`npm run ardent:latest:check`, also run daily in CI) fails when Magnus pins an older Ardent than the latest published release, so every Ardent release gets a matching Magnus update.

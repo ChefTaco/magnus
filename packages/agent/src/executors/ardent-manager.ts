@@ -14,6 +14,12 @@ import { managedExecution } from '../security/managed-context.js';
 
 export { ardentPackageNames, DEFAULT_ARDENT_PACKAGE } from './ardent-packages.js';
 
+/**
+ * What this agent's Ardent bridge supports. `studio: 1` means session-open,
+ * session-bound task submission, unbuffered task streams and streamed artifacts.
+ */
+export const ARDENT_AGENT_CAPABILITIES = { studio: 1 } as const;
+
 const profileName = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
 const configSummary = z.object({
   schema_version: z.literal(1), profile: profileName, name: z.string().min(1),
@@ -195,7 +201,8 @@ export async function readArdentState(target?: ArdentRoot): Promise<object> {
   let stagedPackageError: string | null = null;
   try { staged = await stagedPackage(); }
   catch (error: unknown) { stagedPackageError = error instanceof Error ? error.message.slice(0, 200) : 'Staged package unavailable'; }
-  return { installed: version !== null, version, packageName, owner: root.owner, profiles, stagedPackage: staged, stagedPackageError, checkedAt: new Date().toISOString() };
+  return { installed: version !== null, version, packageName, owner: root.owner, profiles, stagedPackage: staged, stagedPackageError,
+    capabilities: ARDENT_AGENT_CAPABILITIES, checkedAt: new Date().toISOString() };
 }
 
 async function managementToken(dir: string, envName: string): Promise<string> {
@@ -209,15 +216,132 @@ async function managementToken(dir: string, envName: string): Promise<string> {
   return token;
 }
 
-const allowedRead = /^(?:openapi|status|profile|config|config\/schema|providers|channels|peers|peers\/config|memory\/status|skills|sessions|tasks|tasks\/[0-9a-f-]{36}(?:\/events)?|jobs\/definitions\/status|sessions\/[0-9a-f-]{36}\/messages|identity\/(?:soul|identity)(?:\/history)?|artifacts\/[a-f0-9]{64})$/;
+const allowedRead = /^(?:openapi|status|profile|config|config\/schema|providers|channels|peers|peers\/config|memory\/status|skills|sessions|tasks|tasks\/[0-9a-f-]{36}(?:\/events)?|jobs\/definitions\/status|sessions\/[0-9a-f-]{36}\/messages|identity\/(?:soul|identity)(?:\/history)?|artifacts\/[a-f0-9]{64}|tasks\/[0-9a-f-]{36}\/stream)$/;
+/** Ardent closes a task stream after 60 seconds; a relay with no bytes for as long ends too. */
+export const ARDENT_STREAM_IDLE_MS = 60_000;
+const DEFAULT_ARTIFACT_MAX_BYTES = 64 * 1024 * 1024;
+/** Largest artifact the agent relays, from MAGNUS_AGENT_ARDENT_ARTIFACT_MAX_BYTES (default 64 MiB, at most 1 GiB). */
+export function ardentArtifactMaxBytes(): number {
+  const raw = process.env['MAGNUS_AGENT_ARDENT_ARTIFACT_MAX_BYTES'];
+  if (raw === undefined || raw === '') return DEFAULT_ARTIFACT_MAX_BYTES;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 1 || value > 1024 * 1024 * 1024) throw new Error('MAGNUS_AGENT_ARDENT_ARTIFACT_MAX_BYTES must be an integer from 1 to 1073741824');
+  return value;
+}
+
+/**
+ * Relay an upstream body chunk by chunk, never buffering it. The upstream request
+ * is aborted after `idleMs` without a chunk, past `maxBytes`, or when the reader
+ * goes away. An idle stream ends cleanly when `idle` is 'close' (SSE clients
+ * reconnect with their cursor) and fails when it is 'error', so a stalled
+ * download can never look complete.
+ */
+export function relayBody(upstream: ReadableStream<Uint8Array>, abort: AbortController,
+  options: { idleMs: number; maxBytes?: number; idle: 'close' | 'error' }): ReadableStream<Uint8Array> {
+  const reader = upstream.getReader();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let idled = false;
+  let total = 0;
+  const stop = () => { if (timer) clearTimeout(timer); timer = undefined; };
+  const arm = () => {
+    stop();
+    timer = setTimeout(() => { idled = true; abort.abort(new Error('Ardent stream idle limit reached')); }, options.idleMs);
+    timer.unref?.();
+  };
+  return new ReadableStream<Uint8Array>({
+    start() { arm(); },
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) { stop(); controller.close(); return; }
+        total += value.byteLength;
+        if (options.maxBytes !== undefined && total > options.maxBytes) {
+          stop();
+          abort.abort(new Error('Ardent artifact exceeds size limit'));
+          controller.error(new Error('Ardent artifact exceeds size limit'));
+          return;
+        }
+        arm();
+        controller.enqueue(value);
+      } catch (error: unknown) {
+        stop();
+        if (idled && options.idle === 'close') controller.close();
+        else controller.error(error instanceof Error ? error : new Error('Ardent stream failed'));
+      }
+    },
+    cancel(reason) {
+      stop();
+      abort.abort(reason);
+      return reader.cancel(reason).catch(() => undefined);
+    },
+  });
+}
+
+/** A bounded JSON answer from an upstream error, so a failure never streams an unbounded body. */
+async function boundedError(response: Response): Promise<Response> {
+  const reader = response.body?.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (reader) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > 64 * 1024) { await reader.cancel().catch(() => undefined); return Response.json({ error: 'Ardent error response exceeds size limit' }, { status: 502 }); }
+      chunks.push(value);
+    }
+  } catch { return Response.json({ error: 'Ardent error response was interrupted' }, { status: 502 }); }
+  return new Response(Buffer.concat(chunks), { status: response.status, headers: { 'Content-Type': response.headers.get('content-type') ?? 'application/json', 'Cache-Control': 'no-store' } });
+}
+
+/** Stream a task's SSE events or an artifact's bytes from the profile API without buffering them. */
+async function relayArdentStream(port: number, token: string, suffix: string, request: Request, clientSignal: AbortSignal): Promise<Response> {
+  const artifact = suffix.startsWith('artifacts/');
+  const maxBytes = artifact ? ardentArtifactMaxBytes() : undefined;
+  const url = new URL(`http://127.0.0.1:${port}/api/v1/${suffix}`);
+  const after = new URL(request.url).searchParams.get('after');
+  if (!artifact && after !== null) {
+    if (!/^\d{1,15}$/.test(after)) return Response.json({ error: 'Invalid stream cursor' }, { status: 400 });
+    url.searchParams.set('after', after);
+  }
+  const lastEventId = request.headers.get('last-event-id');
+  const headers: Record<string, string> = { Authorization: `Bearer ${token}`, Accept: artifact ? 'application/octet-stream' : 'text/event-stream' };
+  if (!artifact && lastEventId !== null && /^\d{1,15}$/.test(lastEventId)) headers['Last-Event-ID'] = lastEventId;
+  const abort = new AbortController();
+  const onClientAbort = () => abort.abort(clientSignal.reason);
+  if (clientSignal.aborted) abort.abort(clientSignal.reason);
+  else clientSignal.addEventListener('abort', onClientAbort, { once: true });
+  const connect = setTimeout(() => abort.abort(new Error('Ardent stream did not answer')), 10_000);
+  let response: Response;
+  try { response = await fetch(url, { headers, redirect: 'error', signal: abort.signal }); }
+  finally { clearTimeout(connect); }
+  if (!response.ok || !response.body) { clientSignal.removeEventListener('abort', onClientAbort); return boundedError(response); }
+  const type = response.headers.get('content-type') ?? '';
+  if (artifact ? !type.startsWith('application/octet-stream') : !type.startsWith('text/event-stream')) {
+    abort.abort();
+    clientSignal.removeEventListener('abort', onClientAbort);
+    return Response.json({ error: 'Ardent stream response type differs' }, { status: 502 });
+  }
+  const length = Number(response.headers.get('content-length') ?? Number.NaN);
+  if (maxBytes !== undefined && Number.isFinite(length) && length > maxBytes) {
+    abort.abort();
+    clientSignal.removeEventListener('abort', onClientAbort);
+    return Response.json({ error: 'Ardent artifact exceeds size limit' }, { status: 502 });
+  }
+  const body = relayBody(response.body, abort, { idleMs: ARDENT_STREAM_IDLE_MS, idle: artifact ? 'error' : 'close', ...(maxBytes !== undefined ? { maxBytes } : {}) });
+  return new Response(body, { status: 200, headers: artifact
+    ? { 'Content-Type': 'application/octet-stream', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...(Number.isFinite(length) ? { 'Content-Length': String(length) } : {}) }
+    : { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no', 'X-Content-Type-Options': 'nosniff' } });
+}
 const actionInput = z.object({
   profile: profileName,
-  action: z.enum(['profile-create', 'config-validate', 'config-save', 'peer-validate', 'peer-save', 'identity-save', 'identity-restore', 'provider-test', 'channel-test', 'peer-test', 'memory-search', 'task-submit', 'task-cancel', 'skill-set', 'service-start', 'service-stop', 'service-restart', 'package-install', 'context-stage', 'context-adopt', 'context-rollback']),
+  action: z.enum(['profile-create', 'session-open', 'config-validate', 'config-save', 'peer-validate', 'peer-save', 'identity-save', 'identity-restore', 'provider-test', 'channel-test', 'peer-test', 'memory-search', 'task-submit', 'task-cancel', 'skill-set', 'service-start', 'service-stop', 'service-restart', 'package-install', 'context-stage', 'context-adopt', 'context-rollback']),
   target: z.string().max(128).optional(),
   body: z.unknown().optional(),
 }).strict();
 const actionRoutes: Record<z.infer<typeof actionInput>['action'], { method: 'POST' | 'PUT'; path: (target?: string) => string; target?: RegExp }> = {
   'profile-create': { method: 'POST', path: () => '' },
+  'session-open': { method: 'POST', path: () => 'sessions' },
   'config-validate': { method: 'POST', path: () => 'config/validate' },
   'config-save': { method: 'PUT', path: () => 'config' },
   'peer-validate': { method: 'POST', path: () => 'peers/validate' },
@@ -454,6 +578,7 @@ export function createArdentRoutes(resolveRoot: () => Promise<ArdentRoot> = arde
       const { config, dir } = await profileConfig(target.root, name);
       if (!await probe(config.api.port, dir, config.api.token_env, name)) throw new Error('Ardent management listener identity differs or is unavailable');
       const token = await managementToken(dir, config.api.token_env);
+      if (suffix.startsWith('artifacts/') || suffix.endsWith('/stream')) return await relayArdentStream(config.api.port, token, suffix, c.req.raw, c.req.raw.signal);
       const url = new URL(`http://127.0.0.1:${config.api.port}/${suffix === 'openapi' ? 'openapi.json' : `api/v1/${suffix}`}`);
       for (const key of ['after', 'limit']) {
         const value = c.req.query(key);
@@ -462,7 +587,7 @@ export function createArdentRoutes(resolveRoot: () => Promise<ArdentRoot> = arde
       const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, redirect: 'error', signal: AbortSignal.timeout(10_000) });
       const body = await response.arrayBuffer();
       if (body.byteLength > 2 * 1024 * 1024) return c.json({ error: 'Ardent management response exceeds size limit' }, 502);
-      return new Response(new Uint8Array(body), { status: response.status, headers: { 'Content-Type': suffix.startsWith('artifacts/') && response.ok ? 'application/octet-stream' : response.headers.get('content-type') ?? 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
+      return new Response(new Uint8Array(body), { status: response.status, headers: { 'Content-Type': response.headers.get('content-type') ?? 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
     } catch (error: unknown) {
       return c.json({ error: error instanceof Error ? error.message.slice(0, 200) : 'Ardent profile unavailable' }, 503);
     }
@@ -471,8 +596,10 @@ export function createArdentRoutes(resolveRoot: () => Promise<ArdentRoot> = arde
     const parsed = actionInput.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: 'Invalid Ardent action' }, 400);
     const input = parsed.data;
-    if (input.action === 'task-submit' && !z.object({ prompt: z.string().trim().min(1).max(4000), idempotency_key: z.string().guid() }).strict().safeParse(input.body).success)
+    if (input.action === 'task-submit' && !z.object({ prompt: z.string().trim().min(1).max(16000), idempotency_key: z.string().guid(), session_id: z.string().guid().optional() }).strict().safeParse(input.body).success)
       return c.json({ error: 'Task submission requires a bounded prompt and idempotency key' }, 400);
+    if (input.action === 'session-open' && !z.object({ key: z.string().trim().min(1).max(256), reset: z.boolean().optional() }).strict().safeParse(input.body).success)
+      return c.json({ error: 'Session open requires a bounded key' }, 400);
     if (input.action === 'memory-search' && !z.object({ query: z.string().trim().min(1).max(1000) }).strict().safeParse(input.body).success)
       return c.json({ error: 'Memory search requires a bounded query' }, 400);
     const route = actionRoutes[input.action];

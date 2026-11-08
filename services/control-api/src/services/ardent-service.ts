@@ -4,6 +4,7 @@ import { NodeApiClient } from '../sdk/index.js';
 import { getNodeBaseUrl } from '../utils/node-url.js';
 import { getNodeManagerSecret } from '../utils/env.js';
 import { SENTINEL_NODE_IDS } from '../utils/sentinel-nodes.js';
+import { HttpError } from '../middleware/error-handler.js';
 
 type NodeTarget = { id: string; name: string; hostname: string; ipAddress: string; port: number };
 
@@ -79,8 +80,35 @@ export async function getArdentProfileResource(nodeId: string, profile: string, 
   return clientFor(await nodeTarget(nodeId)).getArdentProfileResource<unknown>(profile, resource, query);
 }
 
-export async function getArdentArtifact(nodeId: string, profile: string, artifactId: string): Promise<Uint8Array> {
-  return clientFor(await nodeTarget(nodeId)).getArdentArtifact(profile, artifactId);
+/** An unbuffered task event stream or artifact byte stream, straight from the node agent. */
+export async function streamArdentProfileResource(nodeId: string, profile: string, resource: string,
+  options: { after?: string; lastEventId?: string; signal?: AbortSignal } = {}): Promise<Response> {
+  return clientFor(await nodeTarget(nodeId)).streamArdentProfileResource(profile, resource, options);
+}
+
+const studioCapability = new Map<string, number>();
+const STUDIO_CAPABILITY_TTL_MS = 60_000;
+
+/**
+ * Refuse Studio bridge work on an agent that predates it. A positive answer is
+ * cached briefly; a negative one is not, so an upgraded agent is seen at once.
+ */
+export async function requireArdentStudioAgent(nodeId: string): Promise<void> {
+  const seen = studioCapability.get(nodeId);
+  if (seen !== undefined && Date.now() - seen < STUDIO_CAPABILITY_TTL_MS) return;
+  const node = await nodeTarget(nodeId);
+  let capable = false;
+  try { capable = await clientFor(node).ardentStudioCapable(); }
+  catch (error: unknown) {
+    throw new HttpError(503, 'DEPENDENCY_UNAVAILABLE', error instanceof Error ? error.message.slice(0, 300) : 'Node agent unavailable');
+  }
+  if (!capable) throw new HttpError(409, 'AGENT_UPGRADE_REQUIRED', `Upgrade the Magnus agent on ${node.name} to use Ardent sessions and streams`);
+  studioCapability.set(nodeId, Date.now());
+}
+
+/** Drop cached agent capabilities so a test can reconfigure a node. */
+export function resetArdentStudioCapabilities(): void {
+  studioCapability.clear();
 }
 
 export async function performArdentAction(nodeId: string, profile: string, action: string, target?: string, body?: unknown): Promise<unknown> {

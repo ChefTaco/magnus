@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { ardentPackageNames, ardentUserUnit, createArdentRoutes, hermesTrafficConsumersDisabled, readArdentState, verifiedInstalledArdentPackage } from './ardent-manager.js';
+import { ardentArtifactMaxBytes, ardentPackageNames, ardentUserUnit, createArdentRoutes, hermesTrafficConsumersDisabled, readArdentState, relayBody, verifiedInstalledArdentPackage } from './ardent-manager.js';
 
 const dirs: string[] = [];
 const servers: Server[] = [];
@@ -216,5 +216,161 @@ describe('accepted Ardent package names', () => {
     await writeFile(join(profile, '.env'), 'ARDENT_API_TOKEN=fixture-token\n', { mode: 0o600 });
     const state = await readArdentState(target) as { profiles: Array<{ id: string; channels: Record<string, boolean>; error: string | null }> };
     expect(state.profiles).toEqual([expect.objectContaining({ id: 'example', error: null, channels: { telegram: true, 'legacy-chat': false } })]);
+  });
+});
+
+describe('Ardent Studio bridge', () => {
+  const taskId = '00000000-0000-4000-8000-0000000000aa';
+  async function fixtureProfile(handler: (request: import('node:http').IncomingMessage, response: import('node:http').ServerResponse) => void) {
+    const requests: Array<{ url: string; method: string; body: string; lastEventId?: string }> = [];
+    const server = createServer((request, response) => {
+      let body = '';
+      request.on('data', chunk => { body += String(chunk); });
+      request.on('end', () => {
+        requests.push({ url: request.url ?? '', method: request.method ?? '', body,
+          ...(typeof request.headers['last-event-id'] === 'string' ? { lastEventId: request.headers['last-event-id'] } : {}) });
+        if (request.headers.authorization !== 'Bearer private-fixture-token') { response.writeHead(401).end('{}'); return; }
+        if (request.url === '/api/v1/profile') { response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ profile: 'example', product: 'Magnus Ardent' })); return; }
+        handler(request, response);
+      });
+    });
+    servers.push(server);
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Fixture listener absent');
+    const home = await mkdtemp(join(tmpdir(), 'magnus-ardent-studio-'));
+    dirs.push(home);
+    const root = join(home, '.ardent');
+    const profile = join(root, 'profiles/example');
+    await mkdir(profile, { recursive: true });
+    await writeFile(join(profile, 'config.yaml'), `schema_version: 1\nprofile: example\nname: Example\nexecution:\n  backend: llamacpp\napi:\n  host: 127.0.0.1\n  port: ${address.port}\n  token_env: ARDENT_API_TOKEN\na2a:\n  enabled: false\n`);
+    await writeFile(join(profile, '.env'), 'ARDENT_API_TOKEN=private-fixture-token\n', { mode: 0o600 });
+    const target = { owner: 'fixture', home, root, install: join(home, '.local/share/ardent') };
+    return { routes: createArdentRoutes(async () => target), requests };
+  }
+  const action = (body: unknown) => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+
+  it('reports the studio capability with its inventory', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'magnus-ardent-capability-'));
+    dirs.push(home);
+    const state = await readArdentState({ owner: 'fixture', home, root: join(home, '.ardent'), install: join(home, 'install') }) as { capabilities?: { studio?: number } };
+    expect(state.capabilities).toEqual({ studio: 1 });
+  });
+
+  it('opens sessions and submits session-bound tasks with bounded input', async () => {
+    const { routes, requests } = await fixtureProfile((request, response) => {
+      response.setHeader('Content-Type', 'application/json');
+      if (request.url === '/api/v1/sessions') response.end(JSON.stringify({ id: taskId, caller: 'management', context: 'direct', key: 'studio:p1', created_ms: 1, updated_ms: 1 }));
+      else if (request.url === '/api/v1/tasks') response.writeHead(202).end(JSON.stringify({ task_id: taskId, state: 'queued' }));
+      else response.writeHead(404).end('{}');
+    });
+    const opened = await routes.request('/action', action({ profile: 'example', action: 'session-open', body: { key: 'studio:p1' } }));
+    expect(opened.status).toBe(200);
+    expect(await opened.json()).toMatchObject({ id: taskId, key: 'studio:p1' });
+    expect((await routes.request('/action', action({ profile: 'example', action: 'session-open', body: { key: '' } }))).status).toBe(400);
+    expect((await routes.request('/action', action({ profile: 'example', action: 'session-open', body: { key: 'k', extra: 1 } }))).status).toBe(400);
+    const submitted = await routes.request('/action', action({ profile: 'example', action: 'task-submit',
+      body: { prompt: 'x'.repeat(16000), idempotency_key: '00000000-0000-4000-8000-000000000002', session_id: taskId } }));
+    expect(submitted.status).toBe(200);
+    expect((await routes.request('/action', action({ profile: 'example', action: 'task-submit',
+      body: { prompt: 'x'.repeat(16001), idempotency_key: '00000000-0000-4000-8000-000000000003' } }))).status).toBe(400);
+    expect((await routes.request('/action', action({ profile: 'example', action: 'task-submit',
+      body: { prompt: 'Test', idempotency_key: '00000000-0000-4000-8000-000000000003', session_id: 'not-a-session' } }))).status).toBe(400);
+    expect(requests.filter(item => item.url !== '/api/v1/profile').map(item => [item.method, item.url, JSON.parse(item.body)])).toEqual([
+      ['POST', '/api/v1/sessions', { key: 'studio:p1' }],
+      ['POST', '/api/v1/tasks', { prompt: 'x'.repeat(16000), idempotency_key: '00000000-0000-4000-8000-000000000002', session_id: taskId }],
+    ]);
+  });
+
+  it('relays task stream events as they arrive, with the resume cursor', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const { routes, requests } = await fixtureProfile((request, response) => {
+      if (request.url?.startsWith(`/api/v1/tasks/${taskId}/stream`)) {
+        response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        response.write('event: task.delta\ndata: {"step":1,"text":"Hel"}\n\n');
+        void gate.then(() => response.end('event: task.done\ndata: {"state":"completed"}\n\n'));
+        return;
+      }
+      response.writeHead(404).end('{}');
+    });
+    const response = await routes.request(`/profiles/example/api/tasks/${taskId}/stream?after=7`, { headers: { 'Last-Event-ID': '9' } });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toBe('text/event-stream');
+    expect(response.headers.get('x-accel-buffering')).toBe('no');
+    const reader = response.body!.getReader();
+    const first = await reader.read();
+    // The first event is readable while the upstream is still open: nothing waits for the end.
+    expect(new TextDecoder().decode(first.value)).toContain('"text":"Hel"');
+    release();
+    let rest = '';
+    for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) rest += new TextDecoder().decode(chunk.value);
+    expect(rest).toContain('task.done');
+    expect(requests.at(-1)).toMatchObject({ url: `/api/v1/tasks/${taskId}/stream?after=7`, lastEventId: '9' });
+    expect((await routes.request(`/profiles/example/api/tasks/${taskId}/stream?after=x`)).status).toBe(400);
+  });
+
+  it('streams artifacts above 2 MiB and refuses ones above the configured cap', async () => {
+    const artifactId = 'b'.repeat(64);
+    const size = 3 * 1024 * 1024;
+    const { routes } = await fixtureProfile((request, response) => {
+      if (request.url === `/api/v1/artifacts/${artifactId}`) {
+        response.writeHead(200, { 'Content-Type': 'application/octet-stream' });
+        const chunk = Buffer.alloc(256 * 1024, 7);
+        for (let sent = 0; sent < size; sent += chunk.length) response.write(chunk);
+        response.end();
+        return;
+      }
+      response.writeHead(404, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: { code: 'NOT_FOUND' } }));
+    });
+    const previous = process.env['MAGNUS_AGENT_ARDENT_ARTIFACT_MAX_BYTES'];
+    try {
+      delete process.env['MAGNUS_AGENT_ARDENT_ARTIFACT_MAX_BYTES'];
+      const artifact = await routes.request(`/profiles/example/api/artifacts/${artifactId}`);
+      expect(artifact.status).toBe(200);
+      expect(artifact.headers.get('content-type')).toBe('application/octet-stream');
+      expect((await artifact.arrayBuffer()).byteLength).toBe(size);
+      const missing = await routes.request(`/profiles/example/api/artifacts/${'c'.repeat(64)}`);
+      expect(missing.status).toBe(404);
+      process.env['MAGNUS_AGENT_ARDENT_ARTIFACT_MAX_BYTES'] = String(1024 * 1024);
+      const capped = await routes.request(`/profiles/example/api/artifacts/${artifactId}`);
+      await expect(capped.arrayBuffer()).rejects.toThrow();
+    } finally {
+      if (previous === undefined) delete process.env['MAGNUS_AGENT_ARDENT_ARTIFACT_MAX_BYTES']; else process.env['MAGNUS_AGENT_ARDENT_ARTIFACT_MAX_BYTES'] = previous;
+    }
+  });
+});
+
+describe('relayBody', () => {
+  it('ends an idle event stream cleanly and fails an idle download', async () => {
+    const stalled = () => new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new Uint8Array([1])); } });
+    for (const idle of ['close', 'error'] as const) {
+      const abort = new AbortController();
+      const upstream = stalled();
+      const source = upstream.getReader();
+      // An upstream that fails once aborted, as fetch bodies do.
+      const linked = new ReadableStream<Uint8Array>({ async pull(controller) {
+        const next = await Promise.race([source.read(), new Promise<never>((_, reject) => abort.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true }))]);
+        if (next.done) controller.close(); else controller.enqueue(next.value);
+      } });
+      const relay = relayBody(linked, abort, { idleMs: 20, idle });
+      const reader = relay.getReader();
+      expect((await reader.read()).value).toEqual(new Uint8Array([1]));
+      if (idle === 'close') expect((await reader.read()).done).toBe(true);
+      else await expect(reader.read()).rejects.toThrow();
+      expect(abort.signal.aborted).toBe(true);
+    }
+  });
+
+  it('rejects an invalid artifact cap', () => {
+    const previous = process.env['MAGNUS_AGENT_ARDENT_ARTIFACT_MAX_BYTES'];
+    try {
+      process.env['MAGNUS_AGENT_ARDENT_ARTIFACT_MAX_BYTES'] = '0';
+      expect(() => ardentArtifactMaxBytes()).toThrow();
+      delete process.env['MAGNUS_AGENT_ARDENT_ARTIFACT_MAX_BYTES'];
+      expect(ardentArtifactMaxBytes()).toBe(64 * 1024 * 1024);
+    } finally {
+      if (previous === undefined) delete process.env['MAGNUS_AGENT_ARDENT_ARTIFACT_MAX_BYTES']; else process.env['MAGNUS_AGENT_ARDENT_ARTIFACT_MAX_BYTES'] = previous;
+    }
   });
 });
