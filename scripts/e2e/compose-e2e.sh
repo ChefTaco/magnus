@@ -33,7 +33,7 @@ hash=$(docker run --rm --entrypoint node -e PASSWORD=ci-only-compose-password -w
 
 echo ">>> 1. The stack starts; the server migrates before it listens"
 compose up -d --wait --wait-timeout 300 || fail "the stack did not become healthy"
-compose logs magnus-server | grep -q '\[auto-migrate\]' || fail "the server did not run auto-migrate"
+grep -q '\[auto-migrate\]' <<< "$(compose logs magnus-server)" || fail "the server did not run auto-migrate"
 pending=$(compose exec -T magnus-server magnus-server migrations --format json | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).pending.length))")
 [[ $pending == 0 ]] || fail "$pending migration(s) pending after startup"
 
@@ -46,6 +46,6 @@ compose exec -T magnus-server sh -c 'test ! -e /var/lib/magnus-cert/server.key' 
 
 echo ">>> 3. Recreating the containers (pull && up -d) keeps the stack healthy"
 compose up -d --force-recreate --wait --wait-timeout 300 || fail "the recreated stack did not become healthy"
-compose logs magnus-server | grep -q 'nothing to do' || fail "auto-migrate did not find the database current"
+grep -q 'nothing to do' <<< "$(compose logs magnus-server)" || fail "auto-migrate did not find the database current"
 
 echo "PASS: docker/compose.yml"
