@@ -131,6 +131,9 @@ describe('node-local Ardent inventory and management boundary', () => {
     expect(await validated.json()).toEqual({ valid: true });
     expect((await routes.request('/action', { method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ profile: 'example', action: 'channel-test', target: '../private' }) })).status).toBe(400);
+    // Ardent has no Hermes profile importer; the action was removed rather than left to fail at run time.
+    expect((await routes.request('/action', { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ profile: 'example', action: 'profile-import-hermes', body: { apply: false } }) })).status).toBe(400);
     const admission = await routes.request('/action', { method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ profile: 'example', action: 'task-submit', body: { prompt: 'Test', idempotency_key: '00000000-0000-4000-8000-000000000002' } }) });
     expect(admission.status).toBe(200);

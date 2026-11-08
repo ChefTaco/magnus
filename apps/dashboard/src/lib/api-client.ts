@@ -346,7 +346,7 @@ class DashboardApiClient {
     action: <T>(nodeId: string, profile: string, action: string, body?: unknown, target?: string) =>
       this.client.post(`ardent/installations/${encodeURIComponent(nodeId)}/profiles/${encodeURIComponent(profile)}/action`,
         { json: { action, ...(target ? { target } : {}), body: body ?? {} },
-          timeout: action === 'package-install' ? 620_000 : action === 'profile-import-hermes' ? 100_000 : action.startsWith('service-') ? 125_000 : 55_000 }).json<ApiResponse<T>>(),
+          timeout: action === 'package-install' ? 620_000 : action.startsWith('service-') ? 125_000 : 55_000 }).json<ApiResponse<T>>(),
   };
 
   codex = {

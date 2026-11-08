@@ -768,7 +768,7 @@ export class NodeApiClient {
   async performArdentAction<T>(profile: string, action: string, target?: string, body?: unknown): Promise<T> {
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(profile) || !/^[a-z-]{1,32}$/.test(action)
       || (target !== undefined && !/^[A-Za-z0-9_-]{1,128}$/.test(target))) throw new Error('Invalid Ardent action target');
-    const timeout = action === 'package-install' ? 600_000 : action === 'profile-import-hermes' ? 90_000 : action.startsWith('service-') ? 115_000 : 45_000;
+    const timeout = action === 'package-install' ? 600_000 : action.startsWith('service-') ? 115_000 : 45_000;
     return this.mutate('POST', 'ardent/action', { profile, action, ...(target ? { target } : {}), body: body ?? {} }, timeout);
   }
 
