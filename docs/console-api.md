@@ -10,7 +10,7 @@ moved without updating it.
 
 | Class | Meaning | Rows | At the ingress |
 |---|---|---|---|
-| `browser` | A person's console drives it with a user token | 138 | Allow the exact method and path |
+| `browser` | A person's console drives it with a user token | 139 | Allow the exact method and path |
 | `machine` | Agents, services and integrations, with their own credentials | 73 | Deny |
 | `exclude` | Reachable with a user token, but no console needs it, or it was written for a server-side caller | 142 | Deny until a feature needs it and it is reviewed |
 | `retired` | Always answers 404 or 410 | 64 | Deny |
@@ -36,7 +36,7 @@ this exact mapping, with no prefix rule: `GET /api/magnus/docs/openapi.json` to
   [Explicit denies](#explicit-denies).
 - **Strip machine credentials.** Remove `x-api-secret` and `x-node-token` from browser requests. The
   server treats a valid `x-api-secret` as the system administrator before it looks at the bearer token.
-- **Forward only what the API reads:** `Authorization`, `Content-Type`, `Accept`,
+- **Forward only what the API reads:** `Authorization`, `Content-Type`, `Accept`, `Last-Event-ID`,
   `x-idempotency-key` and `x-trace-id`. Authorization may hold only a bearer token.
 - **Normalize before matching.** Reject encoded slashes, dot segments and repeated slashes. If
   `MAGNUS_ROUTE_ALIASES_JSON` is set, the server rewrites paths before routing: review each alias
@@ -45,6 +45,9 @@ this exact mapping, with no prefix rule: `GET /api/magnus/docs/openapi.json` to
 - **Do not buffer streams.** `Stream` rows are `text/event-stream` and need a bearer token, so a
   browser reads them with `fetch`, because `EventSource` cannot send the header. Oathweave streams close
   on logout and at token expiry: reconnect with a fresh token.
+- **Do not buffer or cap Ardent artifacts.** `GET …/ardent/…/artifacts/:artifactId` streams bytes up to
+  the node agent's `MAGNUS_AGENT_ARDENT_ARTIFACT_MAX_BYTES` (64 MiB by default). An Ardent task stream
+  ends after 60 seconds: reconnect with `after` or `Last-Event-ID`, which the ingress must forward.
 
 Rate limits key on the verified Oathweave subject, so browsers behind one ingress do not share a
 bucket. Each subject still has one budget per prefix: `/hermes/*` allows 20 requests a minute and
@@ -192,6 +195,7 @@ unless these rows change. `POST /api/v1/hermes/deploy` is retired and always ans
 | GET | `/api/v1/ardent/installations/:nodeId/profiles/:name/*` | browser | `user:ADMIN` |  |
 | POST | `/api/v1/ardent/installations/:nodeId/profiles/:name/action` | browser | `user:ADMIN` |  |
 | GET | `/api/v1/ardent/installations/:nodeId/profiles/:name/artifacts/:artifactId` | browser | `user:ADMIN` |  |
+| GET | `/api/v1/ardent/installations/:nodeId/profiles/:name/tasks/:taskId/stream` | browser | `user:ADMIN` | yes Stream |
 | GET | `/api/v1/ardent/profiles` | browser | `user:ADMIN` |  |
 | GET | `/api/v1/assistant/conversations` | browser | `user:any` | yes |
 | GET | `/api/v1/assistant/insights` | browser | `user:any` | yes |

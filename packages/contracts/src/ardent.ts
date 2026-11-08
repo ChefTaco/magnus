@@ -23,6 +23,8 @@ export const ArdentNodeStateSchema = z.object({
   profiles: z.array(ArdentProfileSummarySchema), checkedAt: z.string().datetime(),
   stagedPackage: z.object({ version: z.string(), sha256: z.string().regex(/^[a-f0-9]{64}$/) }).nullable().optional(),
   stagedPackageError: z.string().nullable().optional(),
+  /** Bridge features of the node agent. Absent on agents older than the Studio bridge. */
+  capabilities: z.object({ studio: z.number().int().min(0).optional() }).optional(),
 });
 export type ArdentNodeState = z.infer<typeof ArdentNodeStateSchema>;
 

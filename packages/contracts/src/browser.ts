@@ -2586,6 +2586,20 @@ export const topologyResponseSchema = ok(z.object({
 // services/control-api/src/routes/topology.ts
 export const topologyScanRequestSchema = z.object({ probeTimeoutMs: z.number().int().min(1).optional() });
 
+// ── Ardent agents ──
+// services/control-api/src/routes/ardent.ts (task stream query; Last-Event-ID carries the same cursor)
+export const ardentTaskStreamQuerySchema = z.object({ after: z.string().regex(/^\d{1,15}$/u).optional() });
+// Ardent task.text (snapshot of the current step on connect) and task.delta (live text, never replayed)
+export const ardentTaskTextEventSchema = z.object({ step: z.number().int(), text: z.string() });
+// Ardent task.event: one journal event; its SSE id is the sequence to resume after
+export const ardentTaskJournalEventSchema = z.object({
+  sequence: z.number().int(), task_id: z.string(), kind: z.string(), detail: z.unknown().optional(), created_ms: z.number(),
+});
+// Ardent task.done: the final task record
+export const ardentTaskDoneEventSchema = z.object({
+  id: z.string(), state: z.string(), result: z.string().nullable().optional(), error: z.string().nullable().optional(),
+});
+
 // ── Agent upgrade remedies ──
 // A copy of packages/contracts/src/upgrade-remedies.ts, which is the source and stays free of dependencies so
 // browser bundles can import it alone. This file is exported as one file, so the copy travels with it, and
@@ -2881,6 +2895,11 @@ export const magnusBrowserRoutes: readonly MagnusBrowserRoute[] = [
   { method: 'GET', path: '/webhooks/{id}/deliveries', query: webhookDeliveriesQuerySchema, response: webhookDeliveriesResponseSchema, roles: ADMIN_ONLY },
   { method: 'POST', path: '/webhooks/{id}/deliveries/{deliveryId}/redeliver', response: webhookRedeliverResponseSchema, roles: ADMIN_ONLY },
   { method: 'POST', path: '/webhooks/{id}/test', response: webhookTestResponseSchema, roles: ADMIN_ONLY, note: 'Sends one real delivery. 200 when delivered, 502 with this same body when not.' },
+
+  // Ardent agents
+  { method: 'GET', path: '/ardent/installations/{nodeId}/profiles/{name}/tasks/{taskId}/stream', query: ardentTaskStreamQuerySchema, response: null, roles: ADMIN_ONLY,
+    events: { 'task.text': ardentTaskTextEventSchema, 'task.delta': ardentTaskTextEventSchema, 'task.event': ardentTaskJournalEventSchema, 'task.done': ardentTaskDoneEventSchema },
+    note: 'Relayed unbuffered from Ardent. task.delta and task.text appear only with an Ardent that streams live text. Ardent ends a stream after 60 seconds: reconnect with after or Last-Event-ID set to the last task.event id. 409 AGENT_UPGRADE_REQUIRED when the node agent predates the bridge.' },
 
   // Topology
   { method: 'GET', path: '/topology', response: topologyResponseSchema, roles: ANY_ROLE, note: 'Cached for five minutes. A cache miss probes every node, which can take seconds.' },

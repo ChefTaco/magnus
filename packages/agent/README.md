@@ -203,7 +203,7 @@ and `magnus-agent env-schema` prints them as JSON.
 | `SKILLS_DIR` / `SKILLS_EXTRA_DIRS` | Skill directories |
 | `HERMES_USER`, `HERMES_REGISTRY_TOKEN`, `MAGNUS_HERMES_SYNC_PULL` | Hermes Agent management and registry sync |
 | `CODEX_USER`, `CODEX_BIN`, `CODEX_HOME` | Codex CLI management |
-| `ARDENT_OWNER_USER`, `ARDENT_STAGED_PACKAGE`, `MAGNUS_AGENT_ARDENT_PACKAGES` | Ardent management |
+| `ARDENT_OWNER_USER`, `ARDENT_STAGED_PACKAGE`, `MAGNUS_AGENT_ARDENT_PACKAGES`, `MAGNUS_AGENT_ARDENT_ARTIFACT_MAX_BYTES` | Ardent management (artifact stream cap, default 64 MiB) |
 | `MAGNUS_AGENT_RENEWAL_*` | HiveMem credential renewal allowlists (empty by default) |
 | `MAGNUS_AGENT_TLS_RENEWAL=tailscale` | Renew a Tailscale listener certificate |
 | `MAGNUS_AGENT_PRIVILEGED` | Privileged (root, default `true`) or unprivileged mode |

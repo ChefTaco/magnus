@@ -756,13 +756,28 @@ export class NodeApiClient {
     return this.api.get(`ardent/profiles/${profile}/api/${resource}`, { ...(query ? { searchParams: query } : {}), timeout: 15_000 }).json<T>();
   }
 
-  async getArdentArtifact(profile: string, artifactId: string): Promise<Uint8Array> {
-    if (!/^[A-Za-z0-9_-]{1,64}$/.test(profile) || !/^[a-f0-9]{64}$/.test(artifactId)) throw new Error('Invalid Ardent artifact target');
-    const response = await this.api.get(`ardent/profiles/${profile}/api/artifacts/${artifactId}`, { timeout: 15_000 });
-    if (response.headers.get('content-type') !== 'application/octet-stream') throw new Error('Ardent artifact response type differs');
-    const bytes = await response.arrayBuffer();
-    if (bytes.byteLength > 2 * 1024 * 1024) throw new Error('Ardent artifact exceeds size limit');
-    return new Uint8Array(bytes);
+  /**
+   * Open an unbuffered byte stream from the agent: a task's SSE events
+   * (`tasks/<id>/stream`) or an artifact's bytes (`artifacts/<sha256>`). There is
+   * no overall timeout; the agent ends idle streams and caps artifact size.
+   * Error statuses are returned, not thrown, so the caller maps them.
+   */
+  async streamArdentProfileResource(profile: string, resource: string, options: { after?: string; lastEventId?: string; signal?: AbortSignal } = {}): Promise<Response> {
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(profile) || !/^(?:tasks\/[0-9a-f-]{36}\/stream|artifacts\/[a-f0-9]{64})$/.test(resource)) throw new Error('Invalid Ardent stream target');
+    if ((options.after !== undefined && !/^\d{1,15}$/.test(options.after)) || (options.lastEventId !== undefined && !/^\d{1,15}$/.test(options.lastEventId)))
+      throw new Error('Invalid Ardent stream cursor');
+    return this.api.get(`ardent/profiles/${profile}/api/${resource}`, {
+      ...(options.after !== undefined ? { searchParams: { after: options.after } } : {}),
+      ...(options.lastEventId !== undefined ? { headers: { 'Last-Event-ID': options.lastEventId } } : {}),
+      ...(options.signal ? { signal: options.signal } : {}),
+      timeout: false, retry: 0, throwHttpErrors: false,
+    });
+  }
+
+  /** Whether the agent reports the Ardent Studio bridge (sessions, task streams, streamed artifacts). */
+  async ardentStudioCapable(): Promise<boolean> {
+    const reply = await this.api.get('ping', { timeout: 5000, retry: 0 }).json<ApiResponse<{ features?: { studio?: number } }>>();
+    return reply.success === true && reply.data?.features?.studio === 1;
   }
 
   async performArdentAction<T>(profile: string, action: string, target?: string, body?: unknown): Promise<T> {
