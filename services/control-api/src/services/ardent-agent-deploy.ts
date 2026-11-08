@@ -16,8 +16,8 @@ import { HttpError } from '../middleware/error-handler.js';
 import { logAuditEvent } from './audit-service.js';
 import { getArdentInstallation, getArdentProfileResource, performArdentAction, requireArdentStudioAgent } from './ardent-service.js';
 import {
-  ARDENT_HIVEMEM_TOKEN_ENV, ardentHiveMemAgentId, HiveMemEnrollmentError, planArdentHiveMemCredential, requestArdentHiveMemCredential,
-  requireArdentHiveMemSettings, type ArdentHiveMemPlan, type ArdentHiveMemSettings,
+  ARDENT_HIVEMEM_TOKEN_ENV, ardentHiveMemAgentId, HiveMemEnrollmentError, planArdentHiveMemCredential, prepareArdentHiveMem,
+  requestArdentHiveMemCredential, requireArdentHiveMemSettings, type ArdentHiveMemPlan, type ArdentHiveMemSettings,
 } from './ardent-hivemem.js';
 import type { z } from 'zod';
 
@@ -46,6 +46,8 @@ export interface ArdentDeployDeps {
   action(nodeId: string, profile: string, action: string, target?: string, body?: unknown): Promise<unknown>;
   studio(nodeId: string): Promise<void>;
   hivemem(): ArdentHiveMemSettings;
+  /** Before an operation starts: Magnus reaches HiveMem as itself and the agents' workspace exists. */
+  prepare(settings: ArdentHiveMemSettings): Promise<void>;
   credential(settings: ArdentHiveMemSettings, plan: ArdentHiveMemPlan): ReturnType<typeof requestArdentHiveMemCredential>;
   delay(ms: number): Promise<void>;
 }
@@ -56,6 +58,7 @@ const defaultDeps: ArdentDeployDeps = {
   action: performArdentAction,
   studio: requireArdentStudioAgent,
   hivemem: requireArdentHiveMemSettings,
+  prepare: settings => prepareArdentHiveMem(settings),
   credential: (settings, plan) => requestArdentHiveMemCredential(settings, plan),
   delay: ms => new Promise(resolve => setTimeout(resolve, ms)),
 };
@@ -137,9 +140,10 @@ export async function startArdentAgentDeploy(raw: unknown, actor: ArdentOperatio
   const parsed = ardentAgentDeployRequestSchema.safeParse(raw);
   if (!parsed.success) throw new HttpError(400, 'VALIDATION_ERROR', parsed.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; ').slice(0, 500));
   const input = parsed.data;
-  deps.hivemem();
+  const hivemem = deps.hivemem();
   if ('emberpath_alias' in input.model) emberpathUrl();
   await deps.studio(input.nodeId);
+  await deps.prepare(hivemem);
   const installation = await deps.installation(input.nodeId);
   if (!installation.reachable) throw new HttpError(503, 'DEPENDENCY_UNAVAILABLE', installation.error ?? 'Ardent node unavailable');
   if (!installation.installed) throw new HttpError(409, 'ARDENT_NOT_INSTALLED', 'Install the Ardent package on this node first');
@@ -161,8 +165,9 @@ export async function startArdentAgentDeploy(raw: unknown, actor: ArdentOperatio
 
 /** Enable HiveMem on an existing, running profile (the backfill for agents created before New Agent). */
 export async function startArdentHiveMemEnable(nodeId: string, profile: string, actor: ArdentOperationActor): Promise<string> {
-  deps.hivemem();
+  const hivemem = deps.hivemem();
   await deps.studio(nodeId);
+  await deps.prepare(hivemem);
   const id = await createOperation('hivemem', { nodeId, profile, hivemem: true }, actor);
   await logAuditEvent({ action: 'ardent.hivemem.enable', actorId: actor.actorId, targetType: 'ardent-profile', targetId: `${nodeId}:${profile}`,
     details: { operationId: id, ...actor.details } });
