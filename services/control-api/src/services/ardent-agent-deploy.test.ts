@@ -48,6 +48,8 @@ let ardentVersion = '2.1.2';
 let owners: Array<import('@hivemagnus/magnus-contracts').ArdentCommandOwner> = [];
 const credential = vi.fn();
 const prepare = vi.fn();
+const record = vi.fn();
+let renewalSupported = false;
 
 beforeEach(() => {
   store.rows.clear();
@@ -56,6 +58,9 @@ beforeEach(() => {
   credential.mockReset();
   prepare.mockReset();
   prepare.mockResolvedValue(undefined);
+  record.mockReset();
+  record.mockResolvedValue(undefined);
+  renewalSupported = false;
   ardentVersion = '2.1.2';
   credential.mockImplementation(async (_settings: unknown, plan: { agentId: string; action: string }) => ({ token: TOKEN, agentId: plan.agentId, expiresAt: '2026-12-01T00:00:00.000Z', operationId: 'f'.repeat(64) }));
   node = { profiles: [{ id: 'existing', name: 'existing', backend: 'llamacpp', apiPort: 9910, running: true, a2aEnabled: false, channels: {}, error: null }],
@@ -87,6 +92,8 @@ beforeEach(() => {
     hivemem: () => ({ apiUrl: 'https://memory.example.com/', agentUrl: 'https://memory.example.com/', auth: { kind: 'token', token: 'fixture-enrollment-token' }, workspaceId: 'agents', hours: 720 }),
     prepare,
     credential,
+    supportsRenewal: async () => renewalSupported,
+    record,
     delay: async () => undefined,
     owners: async () => owners,
     explain: async (_nodeId, error) => (error instanceof Error && error.message === 'outcome unknown' ? new Error('The node could not confirm the outcome of service-start on lead (command native-1).') : undefined),
@@ -224,6 +231,37 @@ describe('Enable HiveMem', () => {
     expect(node.actions).toEqual(['hivemem-credential-set', 'config-save', 'service-restart']);
     // A backfill changes memory only: the model settings are untouched.
     expect((YAML.parse(node.config) as Record<string, any>)['providers']['llamacpp']['model']).toBe('${ARDENT_LLAMA_MODEL}');
+    // The delivered credential is recorded for the renewal job, never with its token.
+    expect(record).toHaveBeenCalledWith({ nodeId: 'node-1', profile: 'existing', agentId: expect.stringMatching(/^ardent-existing-/), workspaceId: 'agents',
+      expiresAt: '2026-12-01T00:00:00.000Z' });
+    expect(JSON.stringify(record.mock.calls)).not.toContain(TOKEN);
+  });
+
+  it('renews instead of rotating where HiveMem supports it, so a known agent gets a fresh deadline', async () => {
+    renewalSupported = true;
+    credential.mockImplementationOnce(async () => { throw new HiveMemEnrollmentError(409, 'HiveMem enroll answered HTTP 409'); });
+    const operation = await run(() => deploy.startArdentHiveMemEnable('node-1', 'existing', actor));
+    expect(operation.status).toBe('succeeded');
+    expect(credential.mock.calls.map(call => (call[1] as { action: string }).action)).toEqual(['enroll', 'renew']);
+    expect(credential.mock.calls[1]![1]).toMatchObject({ graceSeconds: 3600 });
+    expect(operation.steps[1]!.receipt).toMatchObject({ action: 'renew' });
+  });
+
+  it('falls back to rotation when HiveMem refuses the renewal, and stops after that', async () => {
+    renewalSupported = true;
+    credential.mockImplementationOnce(async () => { throw new HiveMemEnrollmentError(409, 'exists'); })
+      .mockImplementationOnce(async () => { throw new HiveMemEnrollmentError(403, 'not a member'); });
+    const operation = await run(() => deploy.startArdentHiveMemEnable('node-1', 'existing', actor));
+    expect(operation.status).toBe('succeeded');
+    expect(credential.mock.calls.map(call => (call[1] as { action: string }).action)).toEqual(['enroll', 'renew', 'rotate']);
+
+    credential.mockReset();
+    credential.mockImplementationOnce(async () => { throw new HiveMemEnrollmentError(409, 'exists'); })
+      .mockImplementation(async () => { throw new HiveMemEnrollmentError(400, 'deadline'); });
+    const failed = await run(() => deploy.startArdentHiveMemEnable('node-1', 'existing', actor));
+    expect(failed.status).toBe('failed');
+    expect(credential.mock.calls.map(call => (call[1] as { action: string }).action)).toEqual(['enroll', 'renew']);
+    expect(node.actions.filter(action => action === 'hivemem-credential-set')).toHaveLength(1);
   });
 
   it('refuses a stopped profile and leaves it unchanged', async () => {

@@ -17,9 +17,11 @@ import { logAuditEvent } from './audit-service.js';
 import { ardentCommandOwners, ardentOwnerBlock, describeOwner } from './ardent-command-owner.js';
 import { getArdentInstallation, getArdentProfileResource, performArdentAction, requireArdentStudioAgent } from './ardent-service.js';
 import {
-  ARDENT_HIVEMEM_TOKEN_ENV, ardentHiveMemAgentId, HiveMemEnrollmentError, planArdentHiveMemCredential, prepareArdentHiveMem,
-  requestArdentHiveMemCredential, requireArdentHiveMemSettings, type ArdentHiveMemPlan, type ArdentHiveMemSettings,
+  ARDENT_HIVEMEM_TOKEN_ENV, ardentHiveMemAgentId, ardentHiveMemSupportsRenewal, HiveMemEnrollmentError, planArdentHiveMemCredential,
+  prepareArdentHiveMem, requestArdentHiveMemCredential, requireArdentHiveMemSettings, type ArdentHiveMemAction, type ArdentHiveMemPlan,
+  type ArdentHiveMemSettings,
 } from './ardent-hivemem.js';
+import { recordArdentHiveMemCredential } from './ardent-hivemem-renewal.js';
 import type { z } from 'zod';
 
 export type ArdentAgentDeployInput = z.infer<typeof ardentAgentDeployRequestSchema>;
@@ -50,6 +52,10 @@ export interface ArdentDeployDeps {
   /** Before an operation starts: Magnus reaches HiveMem as itself and the agents' workspace exists. */
   prepare(settings: ArdentHiveMemSettings): Promise<void>;
   credential(settings: ArdentHiveMemSettings, plan: ArdentHiveMemPlan): ReturnType<typeof requestArdentHiveMemCredential>;
+  /** Whether HiveMem can renew a credential with a new deadline, rather than only rotate it. */
+  supportsRenewal(settings: ArdentHiveMemSettings): Promise<boolean>;
+  /** Remember the credential delivered to a profile, so the renewal job keeps it ahead of its deadline. */
+  record(input: Parameters<typeof recordArdentHiveMemCredential>[0]): Promise<void>;
   delay(ms: number): Promise<void>;
   /** Command owners holding the node, oldest first. */
   owners(nodeId: string): Promise<ArdentCommandOwner[]>;
@@ -65,6 +71,8 @@ const defaultDeps: ArdentDeployDeps = {
   hivemem: requireArdentHiveMemSettings,
   prepare: settings => prepareArdentHiveMem(settings),
   credential: (settings, plan) => requestArdentHiveMemCredential(settings, plan),
+  supportsRenewal: settings => ardentHiveMemSupportsRenewal(settings),
+  record: recordArdentHiveMemCredential,
   delay: ms => new Promise(resolve => setTimeout(resolve, ms)),
   owners: async nodeId => (await ardentCommandOwners([nodeId])).get(nodeId) ?? [],
   explain: ardentOwnerBlock,
@@ -319,27 +327,39 @@ const STEPS: Record<StepName, (context: Context) => Promise<Result>> = {
   'hivemem-enroll': async context => {
     const settings = deps.hivemem();
     const name = (await deps.installation(context.row.nodeId)).nodeName;
-    const plan = (action: 'enroll' | 'rotate') => planArdentHiveMemCredential(settings, { operationId: `${context.row.id}:${context.row.attempts}`,
+    const plan = (action: ArdentHiveMemAction) => planArdentHiveMemCredential(settings, { operationId: `${context.row.id}:${context.row.attempts}`,
       nodeId: context.row.nodeId, nodeName: name, profile: context.row.profile, action });
     // The plan is stored before the request, so a retry repeats it and HiveMem replays the same credential.
     let current = (context.step.receipt?.['plan'] as ArdentHiveMemPlan | undefined) ?? plan('enroll');
     const remember = async () => { context.step.receipt = { ...context.step.receipt, plan: current }; await context.save(); };
     await remember();
     let issued: Awaited<ReturnType<ArdentDeployDeps['credential']>> | undefined;
-    for (let tries = 0; !issued; tries++) {
+    let fallbacks: ArdentHiveMemAction[] | undefined;
+    while (!issued) {
       try {
         issued = await deps.credential(settings, current);
       } catch (error: unknown) {
-        const replacement = plan('rotate');
+        if (!(error instanceof HiveMemEnrollmentError)) throw error;
         // 409: the agent ID already exists (an earlier profile of this name). 410: an earlier
-        // attempt's receipt expired before its token reached the node. Both rotate, which
-        // also invalidates any credential that never arrived.
-        if (tries > 0 || !(error instanceof HiveMemEnrollmentError) || ![409, 410].includes(error.status) || replacement.key === current.key) throw error;
-        current = replacement;
+        // attempt's receipt expired before its token reached the node. Both issue a replacement,
+        // which also invalidates any credential that never arrived: a renewal with a fresh
+        // deadline where HiveMem supports it (a rotation keeps the first one), else a rotation.
+        // A renewal HiveMem refuses (403/404, say an agent outside the workspace) falls back to rotation.
+        // A plan stored by an earlier attempt of this operation is replaced the same way.
+        const stale = !current.key.startsWith(`${context.row.id}:${context.row.attempts}:`);
+        const recoverable = (current.action === 'enroll' || stale) && [409, 410].includes(error.status)
+          || current.action === 'renew' && [403, 404, 410].includes(error.status);
+        if (!recoverable) throw error;
+        fallbacks ??= (await deps.supportsRenewal(settings).catch(() => false)) ? ['renew', 'rotate'] : ['rotate'];
+        const next = fallbacks.shift();
+        if (!next) throw error;
+        current = plan(next);
         await remember();
       }
     }
     await deps.action(context.row.nodeId, context.row.profile, 'hivemem-credential-set', undefined, { token: issued.token });
+    await deps.record({ nodeId: context.row.nodeId, profile: context.row.profile, agentId: issued.agentId, workspaceId: current.workspaceId,
+      expiresAt: issued.expiresAt });
     return { receipt: { plan: current, agentId: issued.agentId, workspaceId: settings.workspaceId, expiresAt: issued.expiresAt,
       action: current.action, tokenEnv: ARDENT_HIVEMEM_TOKEN_ENV } };
   },

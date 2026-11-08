@@ -98,33 +98,52 @@ export function ardentHiveMemAgentId(nodeId: string, profile: string): string {
   return `ardent-${slug}-${digest}`;
 }
 
+/**
+ * What a credential request does. `rotate` keeps the agent's first deadline; `renew`
+ * (HiveMem's `actor_credential_renewal` capability) sets a new one and keeps the
+ * previous credential working for `graceSeconds`.
+ */
+export type ArdentHiveMemAction = 'enroll' | 'rotate' | 'renew';
+
 /** The exact request a step sends. It is stored with the step so a retry repeats it byte for byte. */
 export interface ArdentHiveMemPlan {
   key: string;
-  action: 'enroll' | 'rotate';
+  action: ArdentHiveMemAction;
   agentId: string;
   displayName: string;
   workspaceId: string;
   expiresAt: string;
+  /** renew only. */
+  graceSeconds?: number;
 }
 
+/** How long a renewed agent's previous credential keeps working when nothing else is asked: one hour. */
+export const ARDENT_HIVEMEM_RENEWAL_GRACE_SECONDS = 3600;
+
 export function planArdentHiveMemCredential(settings: ArdentHiveMemSettings, input: {
-  operationId: string; nodeId: string; nodeName: string; profile: string; action: 'enroll' | 'rotate'; now?: number;
+  operationId: string; nodeId: string; nodeName: string; profile: string; action: ArdentHiveMemAction; now?: number;
+  workspaceId?: string; graceSeconds?: number;
 }): ArdentHiveMemPlan {
   const now = input.now ?? Date.now();
   return {
     key: `${input.operationId}:${input.action}`,
     action: input.action,
     agentId: ardentHiveMemAgentId(input.nodeId, input.profile),
-    displayName: `Ardent ${input.profile} on ${input.nodeName}`.slice(0, 128),
-    workspaceId: settings.workspaceId,
+    displayName: ardentHiveMemDisplayName(input.profile, input.nodeName),
+    workspaceId: input.workspaceId ?? settings.workspaceId,
     // A minute short of the limit, so the deadline is still valid when HiveMem checks it.
     expiresAt: new Date(now + settings.hours * 3_600_000 - 60_000).toISOString(),
+    ...(input.action === 'renew' ? { graceSeconds: input.graceSeconds ?? ARDENT_HIVEMEM_RENEWAL_GRACE_SECONDS } : {}),
   };
 }
 
+/** The display name HiveMem keeps for an agent. A renewal repeats it, so it must not drift. */
+export function ardentHiveMemDisplayName(profile: string, nodeName: string): string {
+  return `Ardent ${profile} on ${nodeName}`.slice(0, 128);
+}
+
 /** Why HiveMem enrollment stopped. The code leads the message, so a failed step names it too. */
-export type HiveMemEnrollmentCode = 'HIVEMEM_IDENTITY_UNAVAILABLE' | 'HIVEMEM_WORKSPACE_UNAVAILABLE' | 'HIVEMEM_ENROLLMENT_FAILED';
+export type HiveMemEnrollmentCode = 'HIVEMEM_IDENTITY_UNAVAILABLE' | 'HIVEMEM_WORKSPACE_UNAVAILABLE' | 'HIVEMEM_ENROLLMENT_FAILED' | 'HIVEMEM_RENEWAL_UNSUPPORTED';
 
 export class HiveMemEnrollmentError extends Error {
   constructor(readonly status: number, readonly detail: string, readonly code: HiveMemEnrollmentCode = 'HIVEMEM_ENROLLMENT_FAILED') {
@@ -160,13 +179,14 @@ async function bearer(settings: ArdentHiveMemSettings, fetcher: typeof fetch): P
   }
 }
 
-/** Call HiveMem as Magnus. A service token HiveMem rejects as expired or revoked is replaced once. */
+/** Call HiveMem as Magnus (a GET when there is no body). A service token HiveMem rejects as expired or revoked is replaced once. */
 async function callHiveMem(settings: ArdentHiveMemSettings, path: string, body: unknown, fetcher: typeof fetch): Promise<Response> {
   for (let attempt = 0; ; attempt++) {
     const response = await fetcher(new URL(path, settings.apiUrl), {
-      method: 'POST', redirect: 'error', signal: AbortSignal.timeout(15_000),
-      headers: { Authorization: `Bearer ${await bearer(settings, fetcher)}`, 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify(body),
+      method: body === undefined ? 'GET' : 'POST', redirect: 'error', signal: AbortSignal.timeout(15_000),
+      headers: { Authorization: `Bearer ${await bearer(settings, fetcher)}`, Accept: 'application/json',
+        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     if (response.status !== 401 || settings.auth.kind !== 'oathweave' || attempt > 0) return response;
     await response.body?.cancel().catch(() => undefined);
@@ -213,10 +233,22 @@ export async function requestArdentHiveMemCredential(settings: ArdentHiveMemSett
   await ensureArdentHiveMemWorkspace(settings, fetcher);
   const response = await callHiveMem(settings, `v1/actor-credentials/${operationId}`, { action: plan.action, agent_id: plan.agentId,
     display_name: plan.displayName, description: 'Ardent profile managed by Magnus', scopes: [...ARDENT_HIVEMEM_SCOPES],
-    workspace_id: plan.workspaceId, expires_at: plan.expiresAt }, fetcher);
+    workspace_id: plan.workspaceId, expires_at: plan.expiresAt, ...(plan.action === 'renew' ? { grace_seconds: plan.graceSeconds ?? ARDENT_HIVEMEM_RENEWAL_GRACE_SECONDS } : {}) }, fetcher);
   if (!response.ok) throw new HiveMemEnrollmentError(response.status, `HiveMem ${plan.action} answered ${await refusal(response)}`);
   const body = await response.json() as { ok?: unknown; token?: unknown; agent_id?: unknown; expires_at?: unknown };
   if (body.ok !== true || typeof body.token !== 'string' || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(body.token) || body.agent_id !== plan.agentId)
     throw new HiveMemEnrollmentError(502, 'HiveMem returned no usable agent credential');
   return { token: body.token, agentId: plan.agentId, expiresAt: typeof body.expires_at === 'string' ? body.expires_at : null, operationId };
+}
+
+/**
+ * Whether HiveMem can renew an agent's credential with a new deadline
+ * (`actor_credential_renewal` in its capabilities). An older HiveMem only
+ * rotates, which keeps the first deadline.
+ */
+export async function ardentHiveMemSupportsRenewal(settings: ArdentHiveMemSettings, fetcher: typeof fetch = fetch): Promise<boolean> {
+  const response = await callHiveMem(settings, 'v1/capabilities', undefined, fetcher);
+  if (!response.ok) throw new HiveMemEnrollmentError(response.status, `HiveMem capabilities answered ${await refusal(response)}`);
+  const body = await response.json().catch(() => null) as { actor_credential_renewal?: unknown } | null;
+  return typeof body?.actor_credential_renewal === 'string' && body.actor_credential_renewal.startsWith('renew-');
 }

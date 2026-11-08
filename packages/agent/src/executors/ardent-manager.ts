@@ -347,7 +347,7 @@ async function relayArdentStream(port: number, token: string, suffix: string, re
 }
 const actionInput = z.object({
   profile: profileName,
-  action: z.enum(['profile-create', 'session-open', 'hivemem-credential-set', 'config-validate', 'config-save', 'peer-validate', 'peer-save', 'identity-save', 'identity-restore', 'provider-test', 'channel-test', 'peer-test', 'memory-search', 'task-submit', 'task-cancel', 'mission-submit', 'task-pause', 'task-resume', 'preview-submit', 'development-note', 'skill-set', 'service-start', 'service-stop', 'service-restart', 'package-install', 'context-stage', 'context-adopt', 'context-rollback']),
+  action: z.enum(['profile-create', 'session-open', 'hivemem-credential-set', 'hivemem-credential-reload', 'config-validate', 'config-save', 'peer-validate', 'peer-save', 'identity-save', 'identity-restore', 'provider-test', 'channel-test', 'peer-test', 'memory-search', 'task-submit', 'task-cancel', 'mission-submit', 'task-pause', 'task-resume', 'preview-submit', 'development-note', 'skill-set', 'service-start', 'service-stop', 'service-restart', 'package-install', 'context-stage', 'context-adopt', 'context-rollback']),
   target: z.string().max(128).optional(),
   body: z.unknown().optional(),
 }).strict();
@@ -355,6 +355,8 @@ const actionRoutes: Record<z.infer<typeof actionInput>['action'], { method: 'POS
   'profile-create': { method: 'POST', path: () => '' },
   'session-open': { method: 'POST', path: () => 'sessions' },
   'hivemem-credential-set': { method: 'POST', path: () => '' },
+  // Ardent re-reads only memory.token_env from the profile's .env. Older Ardent answers 404; Magnus then restarts the service.
+  'hivemem-credential-reload': { method: 'POST', path: () => 'memory/credential/reload' },
   'config-validate': { method: 'POST', path: () => 'config/validate' },
   'config-save': { method: 'PUT', path: () => 'config' },
   'peer-validate': { method: 'POST', path: () => 'peers/validate' },
@@ -701,6 +703,8 @@ export function createArdentRoutes(resolveRoot: () => Promise<ArdentRoot> = arde
       return c.json({ error: 'Development note requires a kind, title and body within bounds' }, 400);
     if ((input.action === 'task-pause' || input.action === 'task-resume') && input.body !== undefined
       && !z.object({}).strict().safeParse(input.body).success) return c.json({ error: 'Task pause and resume take no body' }, 400);
+    if (input.action === 'hivemem-credential-reload' && input.body !== undefined && !z.object({}).strict().safeParse(input.body).success)
+      return c.json({ error: 'Credential reload takes no body; the token is read from the profile .env' }, 400);
     if (input.action === 'memory-search' && !z.object({ query: z.string().trim().min(1).max(1000) }).strict().safeParse(input.body).success)
       return c.json({ error: 'Memory search requires a bounded query' }, 400);
     const route = actionRoutes[input.action];

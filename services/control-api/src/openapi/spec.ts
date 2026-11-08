@@ -2693,12 +2693,13 @@ const paths: Record<string, Record<string, unknown>> = {
   },
   '/ardent/installations/{nodeId}': {
     get: { tags: ['Magnus Ardent'], summary: 'Inspect one node Ardent installation', security: apiSecretAuth,
-      description: 'Includes commandOwners, the command owners holding the node (oldest first; an unknown one blocks every managed Ardent action until it is reconciled), and commandReconciliation.configured, whether this server can sign a reconciliation decision.',
+      description: 'Includes commandOwners, the command owners holding the node (oldest first; an unknown one blocks every managed Ardent action until it is reconciled), and commandReconciliation.configured, whether this server can sign a reconciliation decision. Each profile carries hivemem: null when Magnus manages no HiveMem credential for it, otherwise {agentId, workspaceId, expiresAt, lastRenewedAt, lastAttemptAt, nextRenewalAt, failures, lastError, state} with state ok, renewal-failing or expired.',
       parameters: [pp('nodeId', 'Managed node ID')],
       responses: { 200: success('Ardent installation observation'), 401: err401, 403: err403, 404: err404 } },
   },
   '/ardent/profiles': {
     get: { tags: ['Magnus Ardent'], summary: 'List Ardent profiles reported by managed nodes', security: apiSecretAuth,
+      description: 'Each profile carries hivemem, its Magnus-managed HiveMem credential status (null when there is none), as in the installation read.',
       responses: { 200: success('Ardent profile summaries', { type: 'array', items: { type: 'object' } }), 401: err401, 403: err403 } },
   },
   '/ardent/installations/{nodeId}/profiles/{name}/{resource}': {

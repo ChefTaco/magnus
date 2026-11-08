@@ -155,7 +155,7 @@ The client, its Oathweave policy and the HiveMem link belong together:
 IAM_MACHINE_CLIENT_POLICIES={"magnus-hivemem":{"audience":"hivemem","permissions":["hivemem:admin:agents","hivemem:workspaces:write","hivemem:memories:read","hivemem:memories:write","hivemem:sessions:read","hivemem:sessions:write"],"lifetimeSeconds":300,"rotationOwner":"operator"}}
 IAM_MACHINE_CLIENT_SECRETS={"magnus-hivemem":"<generated secret>"}
 # HiveMem (issuer: Oathweave's native JWT_ISSUER)
-HIVEMEM_OATHWEAVE_SERVICES_JSON=[{"issuer":"<JWT_ISSUER>","clientId":"magnus-hivemem","localId":"magnus","scopes":["admin:agents","workspaces:write","memories:read","memories:write","sessions:read","sessions:write"]}]
+HIVEMEM_OATHWEAVE_SERVICES_JSON=[{"issuer":"<JWT_ISSUER>","clientId":"magnus-hivemem","localId":"magnus-ardent","scopes":["admin:agents","workspaces:write","memories:read","memories:write","sessions:read","sessions:write"]}]
 ```
 
 Merge these into existing values rather than replacing them. The Hive suite generates all of them for
@@ -171,9 +171,37 @@ token HiveMem rejects is replaced once.
 
 A retried step repeats its stored request, so HiveMem replays the same credential within its
 fifteen-minute receipt window. After that, or when the agent ID already exists in HiveMem, the step
-rotates the credential instead. HiveMem keeps the original deadline across rotations, so renew agent
-credentials with the node agent's renewal entries (`MAGNUS_AGENT_RENEWAL_*`, which accept
-`ARDENT_HIVEMEM_TOKEN` in Ardent profile env files) before they expire.
+issues a replacement: a renewal with a fresh deadline where HiveMem supports it (its capabilities
+report `actor_credential_renewal`), otherwise a rotation, which keeps the agent's first deadline.
+
+### Credential renewal
+
+HiveMem agent credentials last at most 720 hours. Magnus records each credential it delivers (agent,
+workspace and deadline, never the token) and a background job in the control API renews it once half
+its lifetime has passed, so agents keep their memory without being enrolled again:
+
+1. HiveMem's `renew` action issues a new credential with a new deadline. The agent's previous one keeps
+   working for a day, then stops. The request needs nothing beyond what enrollment needs.
+2. The node agent writes it into the profile's `.env` (`hivemem-credential-set`).
+3. A running gateway switches to it through Ardent's credential reload (`hivemem-credential-reload`,
+   `POST /api/v1/memory/credential/reload`), which re-reads only `ARDENT_HIVEMEM_TOKEN` without
+   interrupting tasks. An Ardent or node agent without that route is restarted instead. A stopped
+   profile reads the new credential when it starts.
+4. Magnus checks that the agent reports HiveMem ready and audits `ardent.hivemem.renew` with the old and
+   new deadlines and how the credential was activated.
+
+A failed renewal is retried after 15 minutes, doubling up to every six hours, audited, and raised as an
+`ardent.hivemem.renewal_failed` notification, which is critical within three days of the deadline. A
+profile with a New Agent or Enable HiveMem operation running is left to that operation. A profile that
+no longer exists on its node is no longer renewed (`ardent.hivemem.untrack`). Profiles enrolled before
+Magnus recorded credentials are adopted from their enrollment receipts. Renewal needs a HiveMem with
+`actor_credential_renewal`; with an older one each attempt fails with `HIVEMEM_RENEWAL_UNSUPPORTED`.
+
+Every profile in `GET /api/v1/ardent/installations`, `GET /api/v1/ardent/installations/:nodeId` and
+`GET /api/v1/ardent/profiles` carries `hivemem`: `null` when Magnus manages no credential for it, or
+`{agentId, workspaceId, expiresAt, lastRenewedAt, lastAttemptAt, nextRenewalAt, failures, lastError,
+state}` where `state` is `ok`, `renewal-failing` or `expired`. An expired credential needs Enable
+HiveMem again. Servers older than credential renewal leave the field out.
 
 ### Enable HiveMem on an existing agent
 

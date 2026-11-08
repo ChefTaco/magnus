@@ -145,6 +145,8 @@ export type AuditAction =
   | 'ardent.agent.step'
   | 'ardent.agent.complete'
   | 'ardent.hivemem.enable'
+  | 'ardent.hivemem.renew'
+  | 'ardent.hivemem.untrack'
   | `ardent.${'command-reconcile' | 'profile-create' | 'session-open' | 'config-validate' | 'config-save' | 'peer-validate' | 'peer-save' | 'identity-save' | 'identity-restore' | 'provider-test' | 'channel-test' | 'peer-test' | 'memory-search' | 'task-submit' | 'task-cancel' | 'mission-submit' | 'task-pause' | 'task-resume' | 'preview-submit' | 'development-note' | 'skill-set' | 'service-start' | 'service-stop' | 'service-restart' | 'package-install' | 'context-stage' | 'context-adopt' | 'context-rollback'}`
   | 'codex.auth.logout'
   | 'codex.auth.expired_logout'

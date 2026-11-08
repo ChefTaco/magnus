@@ -9,12 +9,34 @@ export const ArdentContextReleaseSchema = z.object({ schema_version: z.literal(1
 export type ArdentContextAdoptionInput = z.infer<typeof ArdentContextAdoptionInputSchema>;
 export type ArdentContextRelease = z.infer<typeof ArdentContextReleaseSchema>;
 
+/**
+ * The HiveMem credential Magnus issued a profile (New Agent or Enable HiveMem) and renews before its
+ * deadline. `renewal-failing` means the last renewal failed and Magnus is retrying; `expired` means the
+ * deadline passed, so the agent has no HiveMem until Enable HiveMem runs again. The token is never shown.
+ */
+export const ArdentHiveMemCredentialStatusSchema = z.object({
+  agentId: z.string(), workspaceId: z.string(),
+  expiresAt: z.string().datetime().nullable(),
+  lastRenewedAt: z.string().datetime().nullable(),
+  lastAttemptAt: z.string().datetime().nullable(),
+  nextRenewalAt: z.string().datetime().nullable(),
+  failures: z.number().int().min(0),
+  lastError: z.string().nullable(),
+  state: z.enum(['ok', 'renewal-failing', 'expired']),
+});
+export type ArdentHiveMemCredentialStatus = z.infer<typeof ArdentHiveMemCredentialStatusSchema>;
+
 export const ArdentProfileSummarySchema = z.object({
   id: z.string(), name: z.string(), backend: z.enum(['llamacpp', 'codex']).nullable(),
   apiPort: z.number().int().nullable(), running: z.boolean(), a2aEnabled: z.boolean(),
   /** Channel name (for example telegram) -> enabled, for every channel the profile declares. */
   channels: z.record(z.string(), z.boolean()),
   error: z.string().nullable(),
+  /**
+   * Set by the server, never by the node agent: the profile's Magnus-managed HiveMem credential, or null
+   * when Magnus manages none. Absent from servers older than credential renewal.
+   */
+  hivemem: ArdentHiveMemCredentialStatusSchema.nullable().optional(),
 });
 export type ArdentProfileSummary = z.infer<typeof ArdentProfileSummarySchema>;
 

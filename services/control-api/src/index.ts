@@ -43,6 +43,7 @@ const { disconnectRedis } = await import('./queue/redis.js');
 const { eventBus } = await import('./services/event-bus.js');
 const { disconnectDb } = await import('./db/index.js');
 const { startCodexFleetMonitor, stopCodexFleetMonitor } = await import('./services/codex-service.js');
+const { startArdentHiveMemRenewal, stopArdentHiveMemRenewal } = await import('./services/ardent-hivemem-renewal.js');
 const { startExtensionSourceMonitor, stopExtensionSourceMonitor } = await import('./services/hermes-plugin-source.js');
 const { importPackageSkills } = await import('./services/hermes-catalog-import.js');
 
@@ -72,6 +73,7 @@ function startBackgroundServices(listenPort: number): void {
   startRolloutReconciler();
   startWebhookWorker();
   startCodexFleetMonitor();
+  startArdentHiveMemRenewal();
   startUpdateCheck();
   if (features.hermesRegistry) {
     startExtensionSourceMonitor();
@@ -146,13 +148,14 @@ async function shutdown(signal: string) {
       stopNotificationRetention();
       stopSecurityExporter();
       stopCodexFleetMonitor();
+      const renewalStopped = stopArdentHiveMemRenewal();
       stopUpdateCheck();
       stopExtensionSourceMonitor();
       for (const client of terminalWss?.clients ?? []) client.terminate();
       const httpClosed = new Promise<void>((resolvePromise) => server.close(() => resolvePromise()));
       (server as typeof server & { closeAllConnections?: () => void }).closeAllConnections?.();
       const webSocketsClosed = terminalWss ? new Promise<void>((resolvePromise) => terminalWss.close(() => resolvePromise())) : Promise.resolve();
-      await Promise.all([httpClosed, webSocketsClosed]);
+      await Promise.all([httpClosed, webSocketsClosed, renewalStopped]);
       await closeCommandQueue();
       await closeWebhookQueue();
       await eventBus.close();

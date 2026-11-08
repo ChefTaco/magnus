@@ -405,6 +405,23 @@ describe('Ardent Studio bridge', () => {
   const missionBody = { session_id: taskId, objective: 'Write the brief', mission, context_items: [{ title: 'Notes', text: 'Fixture context' }],
     labels: { 'studio.project': 'p1' }, idempotency_key: 'mission:project-1:brief:1' };
 
+  it('asks Ardent to reload the HiveMem credential and passes an older Ardent\'s 404 through', async () => {
+    let supported = true;
+    const { routes, requests } = await fixtureProfile((request, response) => {
+      response.setHeader('Content-Type', 'application/json');
+      if (supported && request.method === 'POST' && request.url === '/api/v1/memory/credential/reload') response.end(JSON.stringify({ reloaded: true, token_env: 'ARDENT_HIVEMEM_TOKEN', changed: true }));
+      else response.writeHead(404).end(JSON.stringify({ error: 'Not found' }));
+    });
+    const reloaded = await routes.request('/action', action({ profile: 'example', action: 'hivemem-credential-reload' }));
+    expect(reloaded.status).toBe(200);
+    expect(await reloaded.json()).toEqual({ reloaded: true, token_env: 'ARDENT_HIVEMEM_TOKEN', changed: true });
+    expect(requests.find(item => item.url === '/api/v1/memory/credential/reload')?.body).toBe('{}');
+    // The token never travels with the request; a body is refused.
+    expect((await routes.request('/action', action({ profile: 'example', action: 'hivemem-credential-reload', body: { token: 'a.b.c' } }))).status).toBe(400);
+    supported = false;
+    expect((await routes.request('/action', action({ profile: 'example', action: 'hivemem-credential-reload' }))).status).toBe(404);
+  });
+
   it('submits missions and previews, pauses and resumes tasks and records development notes', async () => {
     const { routes, requests } = await fixtureProfile((request, response) => {
       response.setHeader('Content-Type', 'application/json');

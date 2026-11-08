@@ -6,6 +6,7 @@ import { getNodeManagerSecret } from '../utils/env.js';
 import { SENTINEL_NODE_IDS } from '../utils/sentinel-nodes.js';
 import { HttpError } from '../middleware/error-handler.js';
 import { ardentCommandOwners, commandReconciliationKey } from './ardent-command-owner.js';
+import { ardentHiveMemCredentialStatuses } from './ardent-hivemem-renewal.js';
 
 type NodeTarget = { id: string; name: string; hostname: string; ipAddress: string; port: number };
 
@@ -77,11 +78,17 @@ export async function getArdentInstallation(id: string): Promise<ArdentFleetInst
   return (await withCommandOwners([await inspect(await nodeTarget(id))]))[0]!;
 }
 
-/** Each installation with the command owners that hold its node, so a blocked node says why. */
+/**
+ * Each installation with the command owners that hold its node, so a blocked node says why, and each
+ * profile with the HiveMem credential Magnus keeps renewed for it (null when there is none).
+ */
 async function withCommandOwners(installations: ArdentFleetInstallation[]): Promise<ArdentFleetInstallation[]> {
-  const owners = await ardentCommandOwners(installations.map(item => item.nodeId));
+  const nodeIds = installations.map(item => item.nodeId);
+  const owners = await ardentCommandOwners(nodeIds);
+  const credentials = await ardentHiveMemCredentialStatuses(nodeIds);
   const commandReconciliation = { configured: commandReconciliationKey() !== null };
-  return installations.map(item => ({ ...item, commandOwners: owners.get(item.nodeId) ?? [], commandReconciliation }));
+  return installations.map(item => ({ ...item, commandOwners: owners.get(item.nodeId) ?? [], commandReconciliation,
+    profiles: item.profiles.map(profile => ({ ...profile, hivemem: credentials.get(`${item.nodeId}:${profile.id}`) ?? null })) }));
 }
 
 export async function getArdentProfileResource(nodeId: string, profile: string, resource: string, query?: Record<string, string>): Promise<unknown> {
