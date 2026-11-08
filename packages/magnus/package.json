@@ -1,6 +1,6 @@
 {
   "name": "@hivemagnus/magnus",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "description": "Install, upgrade and roll back a Magnus server and console with one command: `npx @hivemagnus/magnus init`, then `magnus upgrade`. Pins exact, tested component versions, backs up PostgreSQL before every migration and reverts automatically when the new version fails its health check.",
   "keywords": [
     "magnus",
@@ -47,7 +47,7 @@
     "clean": "node -e \"const fs=require('node:fs');fs.rmSync('dist',{recursive:true,force:true});fs.rmSync('tsconfig.tsbuildinfo',{force:true})\""
   },
   "dependencies": {
-    "@hivemagnus/magnus-contracts": "2.2.0"
+    "@hivemagnus/magnus-contracts": "2.2.1"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
@@ -56,108 +56,25 @@
   },
   "magnusRelease": {
     "schema": 1,
-    "version": "2.2.0",
+    "version": "2.2.1",
     "engines": {
       "node": "^24.22.1 || ^26.13.0"
     },
     "components": {
-      "@hivemagnus/magnus-server": "2.2.0",
-      "@hivemagnus/magnus-ui": "2.2.0",
-      "@hivemagnus/magnus-contracts": "2.2.0",
-      "@hivemagnus/magnus-agent": "2.2.0"
+      "@hivemagnus/magnus-server": "2.2.1",
+      "@hivemagnus/magnus-ui": "2.2.1",
+      "@hivemagnus/magnus-contracts": "2.2.1",
+      "@hivemagnus/magnus-agent": "2.2.1"
     },
     "breaking": false,
     "minUpgradeFrom": "1.0.0",
     "engineProtocol": 2,
     "newRequiredEnv": [],
-    "newOptionalEnv": [
-      {
-        "name": "MAGNUS_ARDENT_HIVEMEM_URL",
-        "component": "server",
-        "secret": false,
-        "description": "HTTPS HiveMem base URL that issues per-agent credentials for Ardent New Agent and Enable HiveMem."
-      },
-      {
-        "name": "MAGNUS_ARDENT_HIVEMEM_ENROLLMENT_TOKEN",
-        "component": "server",
-        "secret": true,
-        "description": "HiveMem token with admin:agents for installs without Oathweave; the Oathweave machine client is preferred and the two are mutually exclusive."
-      },
-      {
-        "name": "MAGNUS_ARDENT_HIVEMEM_WORKSPACE_ID",
-        "component": "server",
-        "secret": false,
-        "description": "Existing HiveMem workspace Ardent agents join."
-      },
-      {
-        "name": "MAGNUS_ARDENT_HIVEMEM_AGENT_URL",
-        "component": "server",
-        "secret": false,
-        "description": "HiveMem base URL written into Ardent profile configs when agents reach HiveMem at another address."
-      },
-      {
-        "name": "MAGNUS_ARDENT_HIVEMEM_CREDENTIAL_HOURS",
-        "component": "server",
-        "secret": false,
-        "description": "Lifetime of an Ardent agent HiveMem credential, 1 to 720 hours (default 720)."
-      },
-      {
-        "name": "MAGNUS_ARDENT_EMBERPATH_URL",
-        "component": "server",
-        "secret": false,
-        "description": "OpenAI-compatible Emberpath base URL used for an Ardent agent's Emberpath model alias."
-      },
-      {
-        "name": "MAGNUS_AGENT_ARDENT_ARTIFACT_MAX_BYTES",
-        "component": "agent",
-        "secret": false,
-        "description": "Largest Ardent artifact the agent streams, in bytes (default 64 MiB)."
-      },
-      {
-        "name": "MAGNUS_ARDENT_HIVEMEM_CLIENT_ID",
-        "component": "server",
-        "secret": false,
-        "description": "Oathweave machine client (audience hivemem) Magnus uses to enroll and renew Ardent agent HiveMem credentials; preferred over the enrollment token."
-      },
-      {
-        "name": "MAGNUS_ARDENT_HIVEMEM_CLIENT_SECRET",
-        "component": "server",
-        "secret": true,
-        "description": "Secret of the Oathweave HiveMem machine client."
-      },
-      {
-        "name": "MAGNUS_ARDENT_HIVEMEM_TOKEN_URL",
-        "component": "server",
-        "secret": false,
-        "description": "Oathweave OAuth token endpoint for the HiveMem machine client."
-      },
-      {
-        "name": "MAGNUS_ARDENT_HIVEMEM_SCOPE",
-        "component": "server",
-        "secret": false,
-        "description": "Scope requested for the HiveMem machine client token (default: agent enrollment, workspace, memory and session permissions)."
-      },
-      {
-        "name": "MAGNUS_ARDENT_HIVESKILLS_URL",
-        "component": "server",
-        "secret": false,
-        "description": "HTTPS HiveSkills registry that Ardent skill-install fetches catalog releases from; unset, skill-install answers 503."
-      }
-    ],
+    "newOptionalEnv": [],
     "removedEnv": [],
     "migrations": [
       {
-        "name": "20261108000000_ardent_agent_operations",
-        "impact": "fast",
-        "note": "Add an empty table for Ardent New Agent and Enable HiveMem operation receipts; existing rows are unchanged."
-      },
-      {
-        "name": "20261108020000_command_lease_label",
-        "impact": "fast",
-        "note": ""
-      },
-      {
-        "name": "20261108040000_ardent_hivemem_credentials",
+        "name": "20261108060000_ardent_hivemem_retry",
         "impact": "fast",
         "note": ""
       }
@@ -166,8 +83,8 @@
       "selfUpgradeProtocol": 1,
       "minLauncher": 1
     },
-    "summary": "Ardent agents through Magnus: sessions, unbuffered task event streams and streamed artifacts; Ardent 2.2.0 missions, task pause and resume, previews and development history (node agent studio capability 2); New Agent deployment as a durable, resumable, audited operation; per-agent HiveMem credentials for new and existing profiles, renewed before every deadline; linked Oathweave service identities confined to the Ardent bridge; failed Ardent actions that settle their command owner, and an audited ADMIN reconciliation for an unknown outcome; HiveSkills catalog skills installed onto Ardent profiles, checked against the catalog digest (node agent studio capability 3).",
-    "notesUrl": "https://github.com/ChefTaco/magnus/releases/tag/v2.2.0",
+    "summary": "Durable HiveMem renewal retries, authorized standalone command recovery, and dependency fixes. Stop all old control API workers before migrating; unresolved legacy renewals require explicit ADMIN recovery.",
+    "notesUrl": "https://github.com/ChefTaco/magnus/releases/tag/v2.2.1",
     "allowScripts": {
       "@prisma/engines": true,
       "argon2": true,

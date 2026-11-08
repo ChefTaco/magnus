@@ -6,6 +6,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [2.2.1] - 2026-11-08
+
 ### Changed
 
 - The agent and the generated Ardent client track `@hivemagnus/ardent` 2.3.0 (DOCX output from
@@ -13,8 +15,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Fixed
 
-- Assign the durable renewal migration to the upcoming 2.2.1 release manifest, preserving
-  the published 2.2.0 migration inventory and allowing release validation to pass.
+- Assign the durable renewal migration to the 2.2.1 release manifest, preserving the published
+  2.2.0 migration inventory and allowing release validation to pass.
 - Background HiveMem renewal persists its complete request and idempotency key before issuance,
   replays them across restarts and delivery failures, and fences concurrent workers. Retries run
   each minute within HiveMem's receipt window. Expired receipts and ambiguous legacy attempts
@@ -22,6 +24,8 @@ All notable changes to this project are documented in this file. The format is b
   with all old renewal workers stopped; see `docs/ARDENT.md`.
 - The standalone Ardent installations page shows held command owners and provides the existing
   ADMIN-only reconciliation flow with a verified disposition, audit reason and confirmation.
+- The compose e2e check reads the server logs before matching them, so `pipefail` no longer
+  fails it when `grep -q` exits early.
 - Update the workspace Undici resolution to 8.12.4 and synchronize the standalone agent's
   dependency declaration and shrinkwrap.
 
