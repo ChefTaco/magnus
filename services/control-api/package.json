@@ -90,8 +90,8 @@
     "@hono/swagger-ui": "^0.6.2",
     "@prisma/adapter-pg": "7.10.1",
     "@prisma/client": "^7.10.1",
-    "argon2": "^0.45.1",
-    "bullmq": "^6.5.1",
+    "argon2": "^0.45.2",
+    "bullmq": "^6.7.0",
     "dotenv": "^18.0.9",
     "hono": "4.13.16",
     "ioredis": "^6.0.0",
@@ -116,7 +116,7 @@
     "@types/ws": "^8.18.2",
     "tsx": "^4.23.15",
     "typescript": "^6.0.3",
-    "vitest": "^5.0.5"
+    "vitest": "^5.1.0"
   },
   "prisma": {
     "schema": "prisma/schema.prisma",
