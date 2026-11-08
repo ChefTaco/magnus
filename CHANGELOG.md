@@ -21,7 +21,7 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Changed
 
-- Manage the latest Ardent release, 2.1.2. A new check (`npm run ardent:latest:check`, also run daily in CI) fails when Magnus pins an older Ardent than the latest published release, so every Ardent release gets a matching Magnus update.
+- Manage the latest Ardent release, 2.2.0. A new check (`npm run ardent:latest:check`, also run daily in CI) fails when Magnus pins an older Ardent than the latest published release, so every Ardent release gets a matching Magnus update.
 
 ### New environment variables
 
