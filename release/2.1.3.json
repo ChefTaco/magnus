@@ -1,0 +1,9 @@
+{
+  "summary": "Fix agent upgrade dialog overflow, show complete blocking reasons, distinguish previous rollout results from current eligibility, and explain manual major-version upgrades in the dashboard and update banner.",
+  "breaking": false,
+  "minUpgradeFrom": "1.0.0",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}
