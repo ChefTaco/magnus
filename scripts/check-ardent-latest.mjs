@@ -51,7 +51,7 @@ export function checkArdentPins(pins, latest) {
 }
 
 async function latestPublished() {
-  const response = await fetch(`https://registry.npmjs.org/${PACKAGE.replace('/', '%2f')}`, {
+  const response = await fetch(`https://registry.npmjs.org/${encodeURIComponent(PACKAGE)}`, {
     headers: { accept: 'application/vnd.npm.install-v1+json' },
     signal: AbortSignal.timeout(30_000),
   });
