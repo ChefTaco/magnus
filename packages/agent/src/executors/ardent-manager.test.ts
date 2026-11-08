@@ -283,6 +283,33 @@ describe('Ardent Studio bridge', () => {
   }
   const action = (body: unknown) => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 
+  it('answers a finished action failure as settled and keeps an unanswered request uncertain', async () => {
+    const { routes } = await fixtureProfile((request, response) => {
+      if (request.url === '/api/v1/sessions') { response.writeHead(500, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: 'database is locked' })); return; }
+      // The request reached Ardent, which closed the connection without an answer.
+      if (request.url === '/api/v1/memory/search') { request.socket.destroy(); return; }
+      response.writeHead(404).end('{}');
+    });
+    const failed = await routes.request('/action', action({ profile: 'example', action: 'session-open', body: { key: 'studio:p1' } }));
+    // A 4xx is signed as a completed operation by the managed boundary, so the command owner settles.
+    expect(failed.status).toBe(424);
+    expect(await failed.json()).toEqual({ success: false, error: { code: 'ARDENT_ACTION_FAILED', message: 'Ardent answered session-open with HTTP 500: database is locked' } });
+    const lost = await routes.request('/action', action({ profile: 'example', action: 'memory-search', body: { query: 'notes' } }));
+    expect(lost.status).toBe(503);
+    expect(await lost.json()).toEqual({ error: 'Ardent did not answer the memory-search request completely' });
+    // A failure the handler finished with (here: not running as root) settles too.
+    const service = await routes.request('/action', action({ profile: 'example', action: 'service-start' }));
+    expect(service.status).toBe(process.getuid?.() === 0 ? service.status : 422);
+    if (process.getuid?.() !== 0) expect(await service.json()).toEqual({ success: false, error: { code: 'ARDENT_ACTION_FAILED', message: 'Ardent service management requires a root node manager' } });
+  });
+
+  it('keeps context adoption failures uncertain for its own journal', async () => {
+    const { routes } = await fixtureProfile((_request, response) => { response.writeHead(404).end('{}'); });
+    const body = { profile: 'example', action: 'context-stage', body: {} };
+    // Without a managed claim the step is refused before it starts, which is still answered as before.
+    expect((await routes.request('/action', action(body))).status).toBe(409);
+  });
+
   it('reports the studio capability with its inventory', async () => {
     const home = await mkdtemp(join(tmpdir(), 'magnus-ardent-capability-'));
     dirs.push(home);
@@ -426,7 +453,8 @@ describe('Ardent Studio bridge', () => {
     expect(await run({ action: 'development-note', body: { kind: 'note', title: 'x', body: 'y', author: 'runtime' } })).toBe(400);
     // A preview may carry a full soul and identity, which is more than the 200 KB other actions get.
     const soul = 'x'.repeat(131_072);
-    expect(await run({ action: 'preview-submit', body: { prompt: 'Hi', overrides: { soul, identity: soul } } })).toBe(500);
+    // It reaches Ardent, whose server error comes back as a settled failure.
+    expect(await run({ action: 'preview-submit', body: { prompt: 'Hi', overrides: { soul, identity: soul } } })).toBe(424);
     expect(requests.filter(item => item.url !== '/api/v1/profile').map(item => item.url)).toEqual(['/api/v1/preview/tasks']);
   });
 
@@ -513,7 +541,8 @@ describe('profile HiveMem credential', () => {
     const routes = createArdentRoutes(async () => ({ owner: 'fixture', home, root: join(home, '.ardent'), install: join(home, 'install') }));
     const send = (body: unknown) => routes.request('/action', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
     const refused = await send({ profile: 'example', action: 'hivemem-credential-set', body: { token: 'a.b.c' } });
-    expect(refused.status).toBe(503);
+    // The handler finished with a refusal: a settled failure, not an unknown outcome.
+    expect(refused.status).toBe(422);
     expect(JSON.stringify(await refused.json())).not.toContain('a.b.c');
     expect((await send({ profile: 'example', action: 'hivemem-credential-set', target: 'x', body: { token: 'a.b.c' } })).status).toBe(400);
   });
