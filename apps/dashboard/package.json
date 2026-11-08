@@ -57,7 +57,7 @@
     "prepack": "node scripts/stage-package.mjs"
   },
   "dependencies": {
-    "argon2": "^0.45.1",
+    "argon2": "^0.45.2",
     "ioredis": "^6.0.0",
     "jose": "^6.2.13",
     "ssh2": "^1.17.0",
@@ -66,7 +66,7 @@
   "devDependencies": {
     "@hivemagnus/magnus-contracts": "2.2.0",
     "@playwright/test": "^1.64.1",
-    "@tailwindcss/postcss": "^4.0.0",
+    "@tailwindcss/postcss": "^4.3.4",
     "@types/node": "^24.19.2",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
@@ -78,8 +78,8 @@
     "dotenv": "^18.0.9",
     "eslint": "^10.14.0",
     "ky": "^2.2.0",
-    "lucide-react": "^1.64.0",
-    "motion": "^14.7.1",
+    "lucide-react": "^1.69.0",
+    "motion": "^14.9.1",
     "nanoid": "^6.0.2",
     "next": "16.4.5",
     "postcss": "8.5.32",
@@ -92,8 +92,8 @@
     "tailwind-merge": "^3.7.0",
     "tailwindcss": "^4.0.0",
     "typescript": "^6.0.3",
-    "undici": "^8.12.3",
-    "vitest": "^5.0.5",
+    "undici": "^8.12.4",
+    "vitest": "^5.1.0",
     "yaml": "^2.9.1"
   },
   "overrides": {
