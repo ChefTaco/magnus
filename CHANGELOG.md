@@ -6,6 +6,11 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Changed
+
+- The agent and the generated Ardent client track `@hivemagnus/ardent` 2.3.0 (DOCX output from
+  the `document_render` mission tool; no route or schema changes).
+
 ### Fixed
 
 - Assign the durable renewal migration to the upcoming 2.2.1 release manifest, preserving
