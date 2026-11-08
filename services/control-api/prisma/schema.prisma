@@ -2075,6 +2075,30 @@ model ResourceEnrollment {
 }
 
 /// One-way Ardent-only admission while whole-node scheduler drain remains open.
+/// A New Agent deployment or an Enable HiveMem backfill on one Ardent profile.
+/// Steps run in order; a failure stops the operation and keeps every receipt so
+/// it can be resumed. Holds no credential: HiveMem tokens go straight to the node.
+model ArdentAgentOperation {
+  id            String    @id
+  kind          String // deploy | hivemem
+  nodeId        String
+  profile       String
+  status        String    @default("running") // running | succeeded | failed
+  requestJson   String
+  stepsJson     String    @default("[]")
+  error         String?
+  createdBy     String
+  actingJson    String?
+  attempts      Int       @default(1)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  completedAt   DateTime?
+
+  @@index([nodeId, profile])
+  @@index([status])
+  @@map("ardent_agent_operations")
+}
+
 model ArdentScopeEnrollment {
   nodeId String @id
   nodeFqdn String

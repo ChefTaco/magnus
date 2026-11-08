@@ -2600,6 +2600,69 @@ export const ardentTaskDoneEventSchema = z.object({
   id: z.string(), state: z.string(), result: z.string().nullable().optional(), error: z.string().nullable().optional(),
 });
 
+// services/control-api/src/routes/ardent.ts (New Agent and Enable HiveMem operations)
+const ardentNodeIdSchema = z.string().regex(/^[A-Za-z0-9._-]{1,128}$/u);
+const ardentProfileIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/u);
+const ardentIdentityTextSchema = z.string().max(131_072)
+  .refine((value) => value.trim().length > 0 && new TextEncoder().encode(value).length <= 131_072, 'Identity text must be 1 to 128 KiB');
+const credentialFreeUrl = (value: string) => {
+  try {
+    const url = new URL(value);
+    return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password && !url.search && !url.hash;
+  } catch { return false; }
+};
+/** An Emberpath alias (served at the server's MAGNUS_ARDENT_EMBERPATH_URL) or an OpenAI-compatible endpoint and model. */
+export const ardentAgentModelSchema = z.union([
+  z.object({ emberpath_alias: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/u) }).strict(),
+  z.object({ base_url: z.string().max(2048).refine(credentialFreeUrl, 'Expected an HTTP(S) URL without credentials, query or fragment'), model: z.string().min(1).max(200) }).strict(),
+]);
+export const ardentAgentDeployRequestSchema = z.object({
+  nodeId: ardentNodeIdSchema,
+  profile: ardentProfileIdSchema,
+  /** Omitted: the first free port from 9910 on that node. */
+  apiPort: z.number().int().min(1024).max(65535).optional(),
+  soul_md: ardentIdentityTextSchema,
+  identity_md: ardentIdentityTextSchema,
+  model: ardentAgentModelSchema,
+  skills: z.array(z.string().regex(/^[A-Za-z0-9_-]{1,100}$/u)).max(100).default([]),
+  hivemem: z.literal(true),
+  /** Written as artifacts.max_bytes only on Ardent 2.2.0 or later; older runtimes skip it with a note in the receipt. */
+  artifacts_max_bytes: z.number().int().min(1).max(1_073_741_824).optional(),
+}).strict();
+export const ardentAgentStepNameSchema = z.enum([
+  'profile-check', 'profile-create', 'service-start', 'identity-soul', 'identity-identity',
+  'hivemem-enroll', 'config-save', 'skill-set', 'service-restart', 'ready-probe',
+]);
+export const ardentAgentStepSchema = z.object({
+  name: ardentAgentStepNameSchema,
+  status: z.enum(['pending', 'running', 'succeeded', 'skipped', 'failed']),
+  startedAt: z.string().nullable(),
+  finishedAt: z.string().nullable(),
+  /** What the step did or found, for display. Never holds a credential. */
+  receipt: z.record(z.string(), z.unknown()).nullable(),
+  error: z.string().nullable(),
+});
+export const ardentAgentOperationSchema = z.object({
+  id: z.string(),
+  kind: z.enum(['deploy', 'hivemem']),
+  nodeId: z.string(),
+  profile: z.string(),
+  status: z.enum(['running', 'succeeded', 'failed']),
+  steps: z.array(ardentAgentStepSchema),
+  error: z.string().nullable(),
+  createdBy: z.string(),
+  attempts: z.number().int(),
+  request: z.object({
+    apiPort: z.number().int().nullable(), model: ardentAgentModelSchema.nullable(), skills: z.array(z.string()),
+    hivemem: z.boolean(), artifacts_max_bytes: z.number().int().nullable(),
+  }),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  completedAt: z.string().nullable(),
+});
+export const ardentAgentOperationResponseSchema = ok(ardentAgentOperationSchema);
+export const ardentAgentOperationAcceptedResponseSchema = ok(z.object({ operationId: z.string() }));
+
 // ── Agent upgrade remedies ──
 // A copy of packages/contracts/src/upgrade-remedies.ts, which is the source and stays free of dependencies so
 // browser bundles can import it alone. This file is exported as one file, so the copy travels with it, and
@@ -2900,6 +2963,17 @@ export const magnusBrowserRoutes: readonly MagnusBrowserRoute[] = [
   { method: 'GET', path: '/ardent/installations/{nodeId}/profiles/{name}/tasks/{taskId}/stream', query: ardentTaskStreamQuerySchema, response: null, roles: ADMIN_ONLY,
     events: { 'task.text': ardentTaskTextEventSchema, 'task.delta': ardentTaskTextEventSchema, 'task.event': ardentTaskJournalEventSchema, 'task.done': ardentTaskDoneEventSchema },
     note: 'Relayed unbuffered from Ardent. task.delta and task.text appear only with an Ardent that streams live text. Ardent ends a stream after 60 seconds: reconnect with after or Last-Event-ID set to the last task.event id. 409 AGENT_UPGRADE_REQUIRED when the node agent predates the bridge.' },
+
+  { method: 'POST', path: '/ardent/agents', request: ardentAgentDeployRequestSchema, response: ardentAgentOperationAcceptedResponseSchema, roles: ADMIN_ONLY, successStatus: 202,
+    note: 'Starts a New Agent operation: profile-create, service-start, identity-soul, identity-identity, hivemem-enroll, config-save, skill-set, service-restart, ready-probe. 409 when the profile exists or another operation on it is running; 409 AGENT_UPGRADE_REQUIRED for an agent without the bridge; 503 HIVEMEM_ENROLLMENT_UNAVAILABLE when the server has no HiveMem enrollment settings.' },
+  { method: 'GET', path: '/ardent/agents/operations/{id}', response: ardentAgentOperationResponseSchema, roles: ADMIN_ONLY, note: '404 for an unknown operation.' },
+  { method: 'GET', path: '/ardent/agents/operations/{id}/stream', response: null, roles: ADMIN_ONLY,
+    events: { operation: ardentAgentOperationSchema, done: ardentAgentOperationSchema },
+    note: 'operation on connect and on every step change; done once the operation succeeds or fails, then the stream ends. Oathweave streams close on logout and at token expiry: reconnect with a fresh token.' },
+  { method: 'POST', path: '/ardent/agents/operations/{id}/resume', response: ardentAgentOperationAcceptedResponseSchema, roles: ADMIN_ONLY, successStatus: 202,
+    note: 'Reruns a failed operation from its first unfinished step; finished steps are never rerun. 409 unless the operation failed.' },
+  { method: 'POST', path: '/ardent/installations/{nodeId}/profiles/{name}/hivemem', response: ardentAgentOperationAcceptedResponseSchema, roles: ADMIN_ONLY, successStatus: 202,
+    note: 'Enable HiveMem on an existing running profile: profile-check, hivemem-enroll, config-save, service-restart, ready-probe. A profile already enrolled in HiveMem gets a rotated credential.' },
 
   // Topology
   { method: 'GET', path: '/topology', response: topologyResponseSchema, roles: ANY_ROLE, note: 'Cached for five minutes. A cache miss probes every node, which can take seconds.' },

@@ -57,6 +57,15 @@ function mint(subject: string, key: CryptoKey = signingKey, sessionId = 'fixture
 const limited = new Hono<AppVariables>();
 limited.use('/hermes/*', rateLimitMiddleware({ windowMs: 60_000, max: MAX, keyPrefix: 'rl:hermes' }));
 limited.get('/hermes/ping', (c) => c.text('ok'));
+limited.use('/ardent/*', rateLimitMiddleware({ windowMs: 60_000, max: MAX, serviceMax: MAX * 3, keyPrefix: 'rl:ardent' }));
+limited.get('/ardent/ping', (c) => c.text('ok'));
+
+function mintService(clientId: string): Promise<string> {
+  return new SignJWT({ actorType: 'SERVICE_ACCOUNT', token_type: 'access', clientId, permissions: ['magnus:ardent'] })
+    .setProtectedHeader({ alg: 'RS256', kid: 'fixture-key' })
+    .setIssuer(ISSUER).setAudience('magnus').setSubject(clientId).setJti(`jti-${clientId}`)
+    .setIssuedAt().setExpirationTime('10m').sign(signingKey);
+}
 
 /** The ingress: every browser arrives from the same socket peer. */
 const INGRESS = { incoming: { socket: { remoteAddress: '192.0.2.10', remotePort: 44321, remoteFamily: 'IPv4' } } };
@@ -159,6 +168,15 @@ describe('rate-limit identity behind a shared ingress', () => {
   it('leaves opaque service credentials on the peer bucket without any identity traffic', async () => {
     await call('opaque-service-credential');
     expect([...buckets.keys()]).toEqual([expect.stringMatching(/rl:hermes:.*192\.0\.2\.10$/)]);
+    expect(userinfoCalls).toBe(0);
+  });
+
+  it('gives a verified service identity its own, larger budget', async () => {
+    const service = await mintService('ardent-studio');
+    const ping = (token: string) => limited.request('/ardent/ping', { headers: { Authorization: `Bearer ${token}` } }, INGRESS as object);
+    for (let attempt = 0; attempt < MAX * 3; attempt += 1) expect((await ping(service)).status).toBe(200);
+    expect((await ping(service)).status).toBe(429);
+    expect([...buckets.keys()]).toEqual([expect.stringMatching(/^.*rl:ardent:subject:service:[a-f0-9]{64}$/)]);
     expect(userinfoCalls).toBe(0);
   });
 });

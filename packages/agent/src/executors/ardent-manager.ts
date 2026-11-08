@@ -335,13 +335,14 @@ async function relayArdentStream(port: number, token: string, suffix: string, re
 }
 const actionInput = z.object({
   profile: profileName,
-  action: z.enum(['profile-create', 'session-open', 'config-validate', 'config-save', 'peer-validate', 'peer-save', 'identity-save', 'identity-restore', 'provider-test', 'channel-test', 'peer-test', 'memory-search', 'task-submit', 'task-cancel', 'skill-set', 'service-start', 'service-stop', 'service-restart', 'package-install', 'context-stage', 'context-adopt', 'context-rollback']),
+  action: z.enum(['profile-create', 'session-open', 'hivemem-credential-set', 'config-validate', 'config-save', 'peer-validate', 'peer-save', 'identity-save', 'identity-restore', 'provider-test', 'channel-test', 'peer-test', 'memory-search', 'task-submit', 'task-cancel', 'skill-set', 'service-start', 'service-stop', 'service-restart', 'package-install', 'context-stage', 'context-adopt', 'context-rollback']),
   target: z.string().max(128).optional(),
   body: z.unknown().optional(),
 }).strict();
 const actionRoutes: Record<z.infer<typeof actionInput>['action'], { method: 'POST' | 'PUT'; path: (target?: string) => string; target?: RegExp }> = {
   'profile-create': { method: 'POST', path: () => '' },
   'session-open': { method: 'POST', path: () => 'sessions' },
+  'hivemem-credential-set': { method: 'POST', path: () => '' },
   'config-validate': { method: 'POST', path: () => 'config/validate' },
   'config-save': { method: 'PUT', path: () => 'config' },
   'peer-validate': { method: 'POST', path: () => 'peers/validate' },
@@ -535,6 +536,39 @@ async function createProfile(root: ArdentRoot, profile: string, body: unknown): 
   return { profile, apiPort: input.api_port, initialized: true };
 }
 
+/** The profile environment key that carries the agent's HiveMem token (also renewable by credential renewal). */
+export const ARDENT_HIVEMEM_TOKEN_ENV = 'ARDENT_HIVEMEM_TOKEN';
+const jwt = z.string().max(8192).regex(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+
+/**
+ * Set one key in a profile's private `.env`, keeping every other line, its
+ * owner and mode 0600. The file is replaced atomically, never followed through
+ * a symlink, and never left world- or group-readable.
+ */
+export async function writeProfileCredential(dir: string, key: typeof ARDENT_HIVEMEM_TOKEN_ENV, value: string): Promise<void> {
+  jwt.parse(value);
+  const file = join(dir, '.env');
+  const info = await lstat(file);
+  if (info.isSymbolicLink() || !info.isFile() || info.size > 64_000 || (info.mode & 0o077) !== 0) throw new Error('Ardent credential file is invalid');
+  const kept = (await readFile(file, 'utf8')).split(/\r?\n/).filter(line => !line.startsWith(`${key}=`));
+  while (kept.length > 0 && kept[kept.length - 1] === '') kept.pop();
+  const temporary = join(dir, `.${randomUUID()}.env`);
+  try {
+    await writeFile(temporary, [...kept, `${key}=${value}`, ''].join('\n'), { mode: 0o600, flag: 'wx' });
+    await chown(temporary, info.uid, info.gid);
+    await rename(temporary, file);
+  } finally { await rm(temporary, { force: true }); }
+}
+
+async function setHiveMemCredential(root: ArdentRoot, profile: string, body: unknown): Promise<object> {
+  if (process.getuid?.() !== 0) throw new Error('Ardent credential management requires a root node manager');
+  const input = z.object({ token: jwt }).strict().parse(body);
+  const { dir } = await profileConfig(root.root, profile);
+  await writeProfileCredential(dir, ARDENT_HIVEMEM_TOKEN_ENV, input.token);
+  // Report only that the key is set: the token never leaves the node again.
+  return { profile, tokenEnv: ARDENT_HIVEMEM_TOKEN_ENV, configured: true, activationRequired: true };
+}
+
 export function createArdentRoutes(resolveRoot: () => Promise<ArdentRoot> = ardentRoot): Hono {
   const routes = new Hono();
   routes.get('/state', async c => {
@@ -629,6 +663,7 @@ export function createArdentRoutes(resolveRoot: () => Promise<ArdentRoot> = arde
       }
       if (input.action === 'package-install') return c.json(await installPackage(root));
       if (input.action === 'profile-create') return c.json(await createProfile(root, input.profile, input.body));
+      if (input.action === 'hivemem-credential-set') return c.json(await setHiveMemCredential(root, input.profile, input.body));
       if (input.action === 'service-start' || input.action === 'service-stop' || input.action === 'service-restart') {
         return c.json(await serviceAction(root, input.profile, input.action));
       }

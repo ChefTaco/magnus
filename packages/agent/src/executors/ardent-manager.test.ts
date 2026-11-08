@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { ardentArtifactMaxBytes, ardentPackageNames, ardentUserUnit, createArdentRoutes, hermesTrafficConsumersDisabled, readArdentState, relayBody, verifiedInstalledArdentPackage } from './ardent-manager.js';
+import { ardentArtifactMaxBytes, ardentPackageNames, ardentUserUnit, createArdentRoutes, hermesTrafficConsumersDisabled, readArdentState, relayBody, verifiedInstalledArdentPackage, writeProfileCredential } from './ardent-manager.js';
 
 const dirs: string[] = [];
 const servers: Server[] = [];
@@ -372,5 +372,33 @@ describe('relayBody', () => {
     } finally {
       if (previous === undefined) delete process.env['MAGNUS_AGENT_ARDENT_ARTIFACT_MAX_BYTES']; else process.env['MAGNUS_AGENT_ARDENT_ARTIFACT_MAX_BYTES'] = previous;
     }
+  });
+});
+
+describe('profile HiveMem credential', () => {
+  it('sets the token key atomically and keeps every other line private', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'magnus-ardent-credential-'));
+    dirs.push(dir);
+    const { readFile, stat, readdir } = await import('node:fs/promises');
+    await writeFile(join(dir, '.env'), 'ARDENT_API_TOKEN=private-fixture-token\nARDENT_HIVEMEM_TOKEN=old.fixture.token\n', { mode: 0o600 });
+    await writeProfileCredential(dir, 'ARDENT_HIVEMEM_TOKEN', 'new.fixture.token');
+    expect(await readFile(join(dir, '.env'), 'utf8')).toBe('ARDENT_API_TOKEN=private-fixture-token\nARDENT_HIVEMEM_TOKEN=new.fixture.token\n');
+    expect((await stat(join(dir, '.env'))).mode & 0o777).toBe(0o600);
+    expect(await readdir(dir)).toEqual(['.env']);
+    await expect(writeProfileCredential(dir, 'ARDENT_HIVEMEM_TOKEN', 'not a token\nINJECTED=1')).rejects.toThrow();
+    const { chmod } = await import('node:fs/promises');
+    await chmod(join(dir, '.env'), 0o644);
+    await expect(writeProfileCredential(dir, 'ARDENT_HIVEMEM_TOKEN', 'new.fixture.token')).rejects.toThrow(/invalid/);
+  });
+
+  it('accepts the credential action only with a token and only as root', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'magnus-ardent-credential-route-'));
+    dirs.push(home);
+    const routes = createArdentRoutes(async () => ({ owner: 'fixture', home, root: join(home, '.ardent'), install: join(home, 'install') }));
+    const send = (body: unknown) => routes.request('/action', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    const refused = await send({ profile: 'example', action: 'hivemem-credential-set', body: { token: 'a.b.c' } });
+    expect(refused.status).toBe(503);
+    expect(JSON.stringify(await refused.json())).not.toContain('a.b.c');
+    expect((await send({ profile: 'example', action: 'hivemem-credential-set', target: 'x', body: { token: 'a.b.c' } })).status).toBe(400);
   });
 });

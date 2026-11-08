@@ -34,6 +34,10 @@
     "./browser": {
       "types": "./dist/browser.d.ts",
       "default": "./dist/browser.js"
+    },
+    "./ardent-service": {
+      "types": "./dist/ardent-service.d.ts",
+      "default": "./dist/ardent-service.js"
     }
   },
   "files": [

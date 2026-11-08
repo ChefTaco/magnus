@@ -113,11 +113,30 @@ function matchesBearerDigest(token: string, expectedDigest: string): boolean {
   return Boolean(expectedDigest) && safeEqual(createHash('sha256').update(token).digest('hex'), expectedDigest);
 }
 
+const ARDENT_PROFILE = String.raw`^/api/v1/ardent/installations/[A-Za-z0-9._-]{1,128}/profiles/[A-Za-z0-9._-]{1,128}`;
+const ARDENT_UUID = '[0-9a-f-]{36}';
+/** The Ardent bridge a linked service identity may use. Everything else answers 403. */
+const ARDENT_SERVICE_READS = [
+  /^\/api\/v1\/ardent\/(?:profiles|installations)$/,
+  /^\/api\/v1\/ardent\/installations\/[A-Za-z0-9._-]{1,128}$/,
+  new RegExp(`${ARDENT_PROFILE}/(?:status|profile|skills|memory/status|sessions|sessions/${ARDENT_UUID}/messages|tasks|tasks/${ARDENT_UUID}(?:/events|/stream)?|identity/(?:soul|identity)|artifacts/[a-f0-9]{64})$`),
+  new RegExp(`^/api/v1/ardent/agents/operations/${ARDENT_UUID}(?:/stream)?$`),
+];
+const ARDENT_SERVICE_WRITES = [
+  new RegExp(`${ARDENT_PROFILE}/(?:action|hivemem)$`),
+  /^\/api\/v1\/ardent\/agents$/,
+  new RegExp(`^/api/v1/ardent/agents/operations/${ARDENT_UUID}/resume$`),
+];
+
 export function isScopedServiceRequestAllowed(
-  service: 'plugin-read' | 'plugin-operator' | 'fleet' | 'shared-resource',
+  service: 'plugin-read' | 'plugin-operator' | 'fleet' | 'shared-resource' | 'ardent-service',
   method: string,
   path: string,
 ): boolean {
+  if (service === 'ardent-service') {
+    return (method === 'GET' && ARDENT_SERVICE_READS.some((pattern) => pattern.test(path)))
+      || (method === 'POST' && ARDENT_SERVICE_WRITES.some((pattern) => pattern.test(path)));
+  }
   const pluginExactReads = new Set([
     '/api/v1/stats/overview', '/api/v1/fleet-checks/latest', '/api/v1/fleet-checks/runs',
     '/api/v1/nodes', '/api/v1/nodes/wazuh/summary', '/api/v1/nodes/system-updates/summary',
@@ -165,7 +184,7 @@ export function isScopedServiceRequestAllowed(
 
 function assertScopedServiceRequest(
   c: Context<AppVariables>,
-  service: 'plugin-read' | 'plugin-operator' | 'fleet' | 'shared-resource',
+  service: 'plugin-read' | 'plugin-operator' | 'fleet' | 'shared-resource' | 'ardent-service',
 ): void {
   const allowed = isScopedServiceRequestAllowed(service, c.req.method, c.req.path);
   if (!allowed) {
@@ -320,6 +339,8 @@ export async function authMiddleware(c: Context<AppVariables>, next: Next): Prom
     throw new HttpError(401, 'UNAUTHORIZED', 'Invalid or inactive identity session');
   }
   if (oathweaveUser) {
+    // A linked service identity reaches only the Ardent bridge.
+    if (oathweaveUser.service) assertScopedServiceRequest(c, 'ardent-service');
     c.set('user', oathweaveUser);
     await next();
     return;

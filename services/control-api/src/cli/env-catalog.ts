@@ -104,6 +104,12 @@ export const ENV_CATALOG: readonly EnvVariable[] = [
   { name: 'HIVEMEM_TOKEN', group: 'hivemem', secret: true, description: 'HiveMem API token.' },
   { name: 'MAGNUS_LESSONS_HIVEMEM_URL', group: 'hivemem', description: 'Optional HiveMem URL for operational lessons.' },
   { name: 'MAGNUS_LESSONS_HIVEMEM_TOKEN', group: 'hivemem', secret: true, description: 'Token for MAGNUS_LESSONS_HIVEMEM_URL.' },
+  { name: 'MAGNUS_ARDENT_HIVEMEM_URL', group: 'hivemem', description: 'HTTPS HiveMem base URL (before v1/) that issues per-agent credentials for Ardent New Agent and Enable HiveMem. Set together with the enrollment token and workspace.' },
+  { name: 'MAGNUS_ARDENT_HIVEMEM_AGENT_URL', group: 'hivemem', description: 'HiveMem base URL written into Ardent profile configs, when agents reach HiveMem at another address. Defaults to MAGNUS_ARDENT_HIVEMEM_URL.' },
+  { name: 'MAGNUS_ARDENT_HIVEMEM_ENROLLMENT_TOKEN', group: 'hivemem', secret: true, description: 'HiveMem token with admin:agents (and workspace admin) that enrolls and rotates Ardent agent credentials. Never sent to nodes.' },
+  { name: 'MAGNUS_ARDENT_HIVEMEM_WORKSPACE_ID', group: 'hivemem', description: 'Existing HiveMem workspace Ardent agents are enrolled into.' },
+  { name: 'MAGNUS_ARDENT_HIVEMEM_CREDENTIAL_HOURS', group: 'hivemem', default: '720', description: 'Lifetime of an Ardent agent HiveMem credential, 1 to 720 hours.' },
+  { name: 'MAGNUS_ARDENT_EMBERPATH_URL', group: 'router', description: 'OpenAI-compatible Emberpath base URL that Ardent New Agent writes for an Emberpath model alias.' },
 
   // ── Security Fusion / external security console ──
   { name: 'CINDERTRACE_RESPONSE_SECRET', group: 'security', description: 'Dedicated HMAC credential for the optional Cindertrace managed response bridge.' },

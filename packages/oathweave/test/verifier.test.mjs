@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
-import { createOathweaveVerifier, parseOathweaveLinks, uniqueOathweaveLink } from '../dist/index.js';
+import { createOathweaveServiceVerifier, createOathweaveVerifier, parseOathweaveLinks, uniqueOathweaveLink } from '../dist/index.js';
 
 const ISSUER = 'https://identity.example.com';
 const options = { issuer: ISSUER, jwksUrl: `${ISSUER}/jwks`, userinfoUrl: `${ISSUER}/userinfo`, audience: 'magnus' };
@@ -54,4 +54,36 @@ test('a duplicate identity link grants nothing', () => {
 
 test('a link may not name a system actor', () => {
   assert.throws(() => parseOathweaveLinks(JSON.stringify([{ issuer: ISSUER, subject: 's', localUserId: 'system', role: 'ADMIN' }])));
+});
+
+function mintService(claims = {}, subject = 'ardent-studio') {
+  const now = Math.floor(Date.now() / 1000);
+  return new SignJWT({ actorType: 'SERVICE_ACCOUNT', token_type: 'access', clientId: subject, permissions: ['magnus:ardent'], ...claims })
+    .setProtectedHeader({ alg: 'RS256', kid: 'k' }).setIssuer(ISSUER).setAudience('magnus').setSubject(subject)
+    .setJti('service-jti').setIssuedAt(now).setExpirationTime(now + 300).sign(privateKey);
+}
+const serviceVerifier = () => createOathweaveServiceVerifier({ issuer: ISSUER, jwksUrl: `${ISSUER}/jwks`, audience: 'magnus' }, { keys });
+
+test('accepts a client-credentials token for its own client', async () => {
+  const identity = await serviceVerifier()(await mintService());
+  assert.equal(identity.clientId, 'ardent-studio');
+  assert.deepEqual(identity.permissions, ['magnus:ardent']);
+});
+
+for (const [name, claims] of [
+  ['a person', { actorType: 'USER' }],
+  ['a session', { sessionId: 'session' }],
+  ['another client', { clientId: 'other-client' }],
+  ['a refresh token', { token_type: 'refresh' }],
+  ['no permissions', { permissions: 'magnus:ardent' }],
+]) {
+  test(`rejects a service token with ${name}`, async () => {
+    await assert.rejects(serviceVerifier()(await mintService(claims)), /Invalid service identity/);
+  });
+}
+
+test('the person verifier still refuses service tokens, and a service link role parses', async () => {
+  await assert.rejects(verifier()(await mintService()), /Invalid resource identity/);
+  const link = { issuer: ISSUER, subject: 'ardent-studio', localUserId: 'ardent-studio', role: 'ARDENT_SERVICE' };
+  assert.equal(parseOathweaveLinks(JSON.stringify([link]))[0].role, 'ARDENT_SERVICE');
 });

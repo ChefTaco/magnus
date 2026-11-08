@@ -1,0 +1,1 @@
+{"schema":1,"migration":"20261108000000_ardent_agent_operations","impact":"fast","note":"Add an empty table for Ardent New Agent and Enable HiveMem operation receipts; existing rows are unchanged."}

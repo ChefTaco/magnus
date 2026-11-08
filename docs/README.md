@@ -27,6 +27,8 @@ README is the reference for its installation, configuration and environment vari
 
 ## Operations
 
+- [Ardent agents](ARDENT.md): New Agent deployment, per-agent HiveMem credentials, live task
+  streams and the Oathweave service identity for the Ardent bridge.
 - [Context-only Ardent adoption](ARDENT_CONTEXT_ADOPTION.md): pinned engine staging,
   per-profile continuity acceptance, managed activation and runtime rollback.
 - [Public-release privacy and security review](PUBLIC_RELEASE_REVIEW.md): fixes, validation and
