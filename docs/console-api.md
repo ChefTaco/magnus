@@ -11,7 +11,7 @@ moved without updating it.
 | Class | Meaning | Rows | At the ingress |
 |---|---|---|---|
 | `browser` | A person's console drives it with a user token | 144 | Allow the exact method and path |
-| `machine` | Agents, services and integrations, with their own credentials | 73 | Deny |
+| `machine` | Agents, services and integrations, with their own credentials | 74 | Deny |
 | `exclude` | Reachable with a user token, but no console needs it, or it was written for a server-side caller | 142 | Deny until a feature needs it and it is reviewed |
 | `retired` | Always answers 404 or 410 | 64 | Deny |
 
@@ -440,6 +440,7 @@ Each row is a non-browser route that a broader `browser` pattern also matches. D
 | POST | `/api/v1/resource-leases/enrollment/:nodeId/api-attest` | machine | `user:ADMIN` | Resource-lease enrollment, machine-only by instruction. |
 | GET | `/api/v1/resource-leases/enrollment/:nodeId/ardent-scope` | machine | `user:ADMIN\|OPERATOR` | Resource-lease enrollment, machine-only by instruction. |
 | POST | `/api/v1/resource-leases/enrollment/:nodeId/ardent-scope/activate` | machine | `user:ADMIN` | Resource-lease enrollment, machine-only by instruction. |
+| GET | `/api/v1/resource-leases/enrollment/:nodeId/ardent-scope/evidence` | machine | `user:ADMIN` | Resource-lease enrollment, machine-only by instruction. |
 | POST | `/api/v1/resource-leases/enrollment/:nodeId/begin` | machine | `user:ADMIN` | Resource-lease enrollment, machine-only by instruction. |
 | POST | `/api/v1/resource-leases/enrollment/:nodeId/complete` | machine | `user:ADMIN` | Resource-lease enrollment, machine-only by instruction. |
 | POST | `/api/v1/resource-leases/enrollment/:nodeId/refresh` | machine | `user:ADMIN` | Resource-lease enrollment, machine-only by instruction. |

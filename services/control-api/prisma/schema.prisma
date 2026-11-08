@@ -1998,6 +1998,8 @@ model CommandResourceLease {
   settledAt DateTime?
   settlement String?
   evidenceSha256 String?
+  /// What the owner was doing, for display (`ardent:<profile>:<action>`). Never part of the request identity.
+  label String?
   @@index([nodeId, state])
   @@index([resourceKey, state])
   @@map("command_resource_leases")

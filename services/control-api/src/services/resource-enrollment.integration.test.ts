@@ -406,6 +406,11 @@ try { const value = process.argv[2] === 'start' ? await startDashboardWork(proce
       const row = rows.find(item => item.participant === participant)!;
       return [participant, createHash('sha256').update(row.receiptJson!).digest('hex')];
     })) as { agent: string; api: string; dashboard: string };
+    // The evidence API reports exactly the digests activation checks, so nobody reads them from the database.
+    const evidence = await scoped.ardentScopeActivationEvidence(nodeId);
+    expect(evidence).toMatchObject({ nodeId, nodeFqdn, scope: 'pending', epoch: drain.epoch, barrierId: drain.barrierId,
+      schedulerSnapshotSha256: status.schedulerSnapshotSha256, receiptSha256, ready: true, blockers: [] });
+    expect(evidence.receipts.agent).toMatchObject({ sha256: receiptSha256.agent, status: 'verified' });
     const assertion = { version: 1 as const, scope: 'managed-ardent-actions-only' as const,
       excludedParticipant: 'scheduler' as const, nodeId, nodeFqdn, epoch: drain.epoch,
       barrierId: drain.barrierId!, decisionId: randomUUID(), approvalRef: 'fixture:operator',
@@ -416,6 +421,8 @@ try { const value = process.argv[2] === 'start' ? await startDashboardWork(proce
     await expect(scoped.activateArdentScope(nodeId, { ...signed, reviewSha256: 'e'.repeat(64) }))
       .rejects.toMatchObject({ code: 'ARDENT_SCOPE_EVIDENCE_INVALID' });
     expect(await scoped.activateArdentScope(nodeId, signed)).toMatchObject({ state: 'active' });
+    expect(await scoped.ardentScopeActivationEvidence(nodeId)).toMatchObject({ scope: 'active', ready: false,
+      blockers: ['the Ardent-only scope is already active'] });
     expect((await service.inspectEnrollment(nodeId)).state).toBe('draining');
     await expect(leases.admitResourceCommand(context, command())).rejects.toMatchObject({ code: 'RESOURCE_ENROLLMENT_REQUIRED' });
     await expect(leases.admitResourceCommand({ ...context, scope: 'ardent-managed-http' }, command()))

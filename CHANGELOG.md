@@ -19,6 +19,8 @@ All notable changes to this project are documented in this file. The format is b
 - A linked Ardent service identity may also submit missions, pause and resume tasks, read artifact manifests and development history, and, naming a linked person in `x-acting-subject`, run previews and record development notes (otherwise 403 `ACTING_SUBJECT_REQUIRED`).
 - A linked Ardent service identity may run `identity-save`, `skill-set` and `config-save` and read a profile's `config` when `x-acting-subject` names a linked ADMIN (otherwise 403 `ACTING_ADMIN_REQUIRED`). Its `config-save` may change only `execution.backend`, the model settings, `skills.enabled` and `artifacts.max_bytes` (`ARDENT_SERVICE_CONFIG_PATHS`); anything else answers 403 `CONFIG_PATH_FORBIDDEN`, and the audit records the changed paths with both subjects. Magnus now checks `identity-save`, `skill-set` and `config-save` bodies and targets for everyone, and passes on Ardent's stale-revision 409 as 409 `CONFLICT` and its 400 as 400 instead of 503.
 - New Agent and Enable HiveMem authenticate to HiveMem as Magnus's own Oathweave service identity: a machine client with the audience `hivemem` whose short-lived `client_credentials` tokens Magnus fetches, caches and renews itself (`MAGNUS_ARDENT_HIVEMEM_CLIENT_ID`, `_CLIENT_SECRET`, `_TOKEN_URL`, optional `_SCOPE`). With it Magnus creates the agents' workspace when it is missing (default `ardent-agents`), and checks both before an operation starts, answering 503 `HIVEMEM_IDENTITY_UNAVAILABLE` or `HIVEMEM_WORKSPACE_UNAVAILABLE` before the node changes. A static `MAGNUS_ARDENT_HIVEMEM_ENROLLMENT_TOKEN` remains the alternative without Oathweave.
+- `command-reconcile` Ardent action (ADMIN): settles an Ardent action whose outcome is unknown, after its deadline, from the node agent's own receipt, the signed ledger trace, or, only when the agent records the outcome as unknown, an ADMIN's decision (`effects_verified` or `no_effect_verified` with a reason) that the server signs with `COMMAND_RECONCILIATION_SECRET` and the node agent records under its execution lock. Every attempt is audited as `ardent.command-reconcile`. The installation views list the held `commandOwners` and whether reconciliation is configured. See [docs/ARDENT.md](docs/ARDENT.md#failed-actions-and-command-owners).
+- `GET /api/v1/resource-leases/enrollment/:nodeId/ardent-scope/evidence` (ADMIN) returns what an Ardent-only activation signs (each verified drain receipt's SHA-256, the drain barrier and the scheduler snapshot) and why activation would be refused, so no one needs database access to activate the scope.
 - New Agent sets Ardent's `artifacts.max_bytes` on Ardent 2.2.0 or later: `artifacts_max_bytes` (now 1 KiB to 64 MiB, Ardent's own bounds) or 64 MiB when it is omitted.
 
 ### Changed
@@ -33,6 +35,7 @@ All notable changes to this project are documented in this file. The format is b
 ### Migration impact
 
 - `20261108000000_ardent_agent_operations` adds an empty table for Ardent agent operations. It is fast and leaves existing rows unchanged.
+- `20261108020000_command_lease_label` adds a nullable `label` column to `command_resource_leases`. It is fast and leaves existing rows unchanged.
 
 ### Removed
 
@@ -42,6 +45,7 @@ All notable changes to this project are documented in this file. The format is b
 
 - The node agent runs Ardent owner commands in the owner's home instead of its own root-only directory, so the package check after `package-install` no longer fails on suite installs.
 - The node agent recognizes profiles that `ardent init` creates (product name `Ardent`) as running, so New Agent no longer fails at `service-start` on a standalone Ardent runtime.
+- A failed Ardent action no longer blocks the node. The node agent answered every action failure with 503, which kept its command owner unknown, so each later Ardent action and New Agent resume was refused with no way out. A failure the agent finished now settles its owner with a signed receipt (agent 422, or 424 for Ardent's own server error); only an outcome nobody knows stays unknown. Magnus names the held command in its 409 (`ARDENT_OUTCOME_UNKNOWN`, `RESOURCE_LEASE_CONFLICT`), New Agent resume explains it (`COMMAND_OWNER_UNSETTLED`), and failed actions are now audited with their outcome.
 
 ## [2.1.3] - 2026-11-07
 

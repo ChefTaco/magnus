@@ -42,15 +42,17 @@ const input = { nodeId: 'node-1', profile: 'lead', soul_md: '# Soul\n', identity
   model: { base_url: 'http://192.0.2.10:8080/v1', model: 'fixture-model' }, skills: ['grounded-answers', 'research'], hivemem: true };
 
 interface Node { profiles: Array<{ id: string; name: string; backend: 'llamacpp'; apiPort: number; running: boolean; a2aEnabled: boolean; channels: Record<string, boolean>; error: null }>;
-  config: string; identity: Record<string, string>; env: string[]; actions: string[]; failOnce: Set<string> }
+  config: string; identity: Record<string, string>; env: string[]; actions: string[]; failOnce: Set<string>; failMessage?: string }
 let node: Node;
 let ardentVersion = '2.1.2';
+let owners: Array<import('@hivemagnus/magnus-contracts').ArdentCommandOwner> = [];
 const credential = vi.fn();
 const prepare = vi.fn();
 
 beforeEach(() => {
   store.rows.clear();
   store.audit.length = 0;
+  owners = [];
   credential.mockReset();
   prepare.mockReset();
   prepare.mockResolvedValue(undefined);
@@ -71,7 +73,7 @@ beforeEach(() => {
     },
     action: async (_nodeId, profile, action, target, body) => {
       node.actions.push(target ? `${action}:${target}` : action);
-      if (node.failOnce.delete(action)) throw new Error(`${action} failed on the node`);
+      if (node.failOnce.delete(action)) throw new Error(node.failMessage ?? `${action} failed on the node`);
       const value = body as Record<string, unknown> | undefined;
       if (action === 'profile-create') node.profiles.push({ id: profile, name: profile, backend: 'llamacpp', apiPort: value!['api_port'] as number, running: false, a2aEnabled: false, channels: {}, error: null });
       if (action === 'service-start' || action === 'service-restart') node.profiles.find(item => item.id === profile)!.running = true;
@@ -86,6 +88,8 @@ beforeEach(() => {
     prepare,
     credential,
     delay: async () => undefined,
+    owners: async () => owners,
+    explain: async (_nodeId, error) => (error instanceof Error && error.message === 'outcome unknown' ? new Error('The node could not confirm the outcome of service-start on lead (command native-1).') : undefined),
   });
 });
 afterEach(() => { deploy.setArdentDeployDeps({}); });
@@ -158,6 +162,24 @@ describe('New Agent operation', () => {
     expect(credential).toHaveBeenCalledTimes(1);
     expect(store.audit).toContainEqual(expect.objectContaining({ action: 'ardent.agent.resume', actorId: 'bob' }));
     await expect(deploy.resumeArdentAgentOperation(failed.id, actor)).rejects.toMatchObject({ code: 'OPERATION_NOT_RESUMABLE' });
+  });
+
+  it('names an unknown command outcome in the failed step, and resumes only once it is reconciled', async () => {
+    node.failOnce.add('service-start');
+    node.failMessage = 'outcome unknown';
+    const stopped = await run(() => deploy.startArdentAgentDeploy(input, actor));
+    expect(stopped.status).toBe('failed');
+    expect(stopped.steps.find(step => step.name === 'service-start')!.error).toBe('The node could not confirm the outcome of service-start on lead (command native-1).');
+    owners = [{ commandId: 'native-1', state: 'unknown', label: 'ardent:lead:service-start', profile: 'lead', action: 'service-start', ardent: true,
+      acquiredAt: '2026-11-08T00:00:00.000Z', dispatchedAt: '2026-11-08T00:00:01.000Z', deadline: '2026-11-08T00:02:05.000Z', reconcilableAfter: '2026-11-08T00:03:05.000Z' }];
+    await expect(deploy.resumeArdentAgentOperation(stopped.id, actor)).rejects.toMatchObject({ status: 409, code: 'COMMAND_OWNER_UNSETTLED',
+      message: expect.stringMatching(/could not confirm the outcome of service-start on lead \(command native-1\).*reconcile it on the Ardent installations page/) });
+    owners = [{ ...owners[0]!, state: 'running' }];
+    await expect(deploy.resumeArdentAgentOperation(stopped.id, actor)).rejects.toMatchObject({ message: expect.stringMatching(/still running on the node/) });
+    expect((await deploy.getArdentAgentOperation(stopped.id)).status).toBe('failed');
+    // Reconciled: nothing holds the node, and the operation finishes from service-start.
+    owners = [];
+    expect((await run(() => deploy.resumeArdentAgentOperation(stopped.id, actor))).status).toBe('succeeded');
   });
 
   it('refuses an existing profile, a used port and a missing HiveMem setup before creating anything', async () => {

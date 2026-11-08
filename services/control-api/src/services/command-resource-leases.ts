@@ -26,7 +26,9 @@ const HELD = ['reserved', 'running', 'unknown'];
 export class ResourceLeaseConflict extends HttpError {
   constructor() { super(409, 'RESOURCE_LEASE_CONFLICT', 'Node or service has an unsettled command owner; reconcile its evidence before retrying'); }
 }
-export interface ResourceCommandContext { nodeId: string; actorId: string; baseUrl: string; scope?: 'ardent-managed-http' }
+export interface ResourceCommandContext { nodeId: string; actorId: string; baseUrl: string; scope?: 'ardent-managed-http';
+  /** What the command does, kept on the lease for display (`ardent:<profile>:<action>`). */
+  label?: string }
 export interface ResourceAdmission { leaseId: string; commandId: string; nodeId: string; nodeFqdn: string; payload: CommandRequest }
 export function resourceLeasesRequested(): boolean { return process.env['MAGNUS_RESOURCE_LEASES_ENABLED'] === 'true'; }
 /** Online with a heartbeat at most this old: the freshness admission requires. */
@@ -183,7 +185,8 @@ export async function admitResourceCommand(context: ResourceCommandContext, raw:
     const completion = await completionAuthority(tx, payload, command, node.id);
     const lease = await tx.commandResourceLease.create({ data: { id: nanoid(), nodeId: node.id, resourceKey,
       serviceUnit, commandId: payload.commandId, ownerActor: command.createdBy, directCommand,
-      requestSha256: commandRequestDigest(payload), coordinationJson, deadline: new Date(payload.coordination.expiresAt), ...completion } });
+      requestSha256: commandRequestDigest(payload), coordinationJson, deadline: new Date(payload.coordination.expiresAt), ...completion,
+      label: context.label && /^[A-Za-z0-9:._-]{1,120}$/.test(context.label) ? context.label : null } });
     return { leaseId: lease.id, commandId: payload.commandId, nodeId: node.id, nodeFqdn: node.hostname, payload };
   });
 }

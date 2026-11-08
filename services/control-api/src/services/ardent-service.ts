@@ -5,6 +5,7 @@ import { getNodeBaseUrl } from '../utils/node-url.js';
 import { getNodeManagerSecret } from '../utils/env.js';
 import { SENTINEL_NODE_IDS } from '../utils/sentinel-nodes.js';
 import { HttpError } from '../middleware/error-handler.js';
+import { ardentCommandOwners, commandReconciliationKey } from './ardent-command-owner.js';
 
 type NodeTarget = { id: string; name: string; hostname: string; ipAddress: string; port: number };
 
@@ -69,11 +70,18 @@ export async function listArdentInstallations(): Promise<ArdentFleetInstallation
   const installed = new Set(known.map(row => row.nodeId));
   // Probe the bounded inventory concurrently. Uninstalled/offline candidates
   // must not hold the entire management page beyond the dashboard proxy limit.
-  return Promise.all(nodes.map(node => inspect(node, installed.has(node.id) ? 5_000 : 1_500)));
+  return withCommandOwners(await Promise.all(nodes.map(node => inspect(node, installed.has(node.id) ? 5_000 : 1_500))));
 }
 
 export async function getArdentInstallation(id: string): Promise<ArdentFleetInstallation> {
-  return inspect(await nodeTarget(id));
+  return (await withCommandOwners([await inspect(await nodeTarget(id))]))[0]!;
+}
+
+/** Each installation with the command owners that hold its node, so a blocked node says why. */
+async function withCommandOwners(installations: ArdentFleetInstallation[]): Promise<ArdentFleetInstallation[]> {
+  const owners = await ardentCommandOwners(installations.map(item => item.nodeId));
+  const commandReconciliation = { configured: commandReconciliationKey() !== null };
+  return installations.map(item => ({ ...item, commandOwners: owners.get(item.nodeId) ?? [], commandReconciliation }));
 }
 
 export async function getArdentProfileResource(nodeId: string, profile: string, resource: string, query?: Record<string, string>): Promise<unknown> {

@@ -11,6 +11,7 @@ import { ardentPackageNames } from './ardent-packages.js';
 import { contextAdoptionInput, contextRelease, inspectContextAdoption, manageContextAdoption } from './ardent-context-adoption.js';
 import { childEnvironment } from '../utils/child-env.js';
 import { managedExecution } from '../security/managed-context.js';
+import { logger } from '../utils/logger.js';
 import { ardentDevelopmentNoteSchema, ardentMissionSubmitSchema, ardentPreviewSubmitSchema, ardentSessionOpenSchema } from '@hivemagnus/magnus-contracts';
 
 export { ardentPackageNames, DEFAULT_ARDENT_PACKAGE } from './ardent-packages.js';
@@ -393,14 +394,28 @@ export function ownerCommand(root: ArdentRoot, uid: number, args: string[], time
   options: { cwd: root.home, timeout, maxBuffer: 32 * 1024, env: childEnvironment() } };
 }
 
+/**
+ * An action failure whose effect is not known: a request that may have reached
+ * Ardent without a complete answer, or an owner command the agent had to stop.
+ * The action route answers it with 503, which keeps the managed command owner
+ * uncertain; every other failure finished, and is answered as settled.
+ */
+export class ArdentOutcomeUncertain extends Error {
+  constructor(message: string, options?: ErrorOptions) { super(message, options); this.name = 'ArdentOutcomeUncertain'; }
+}
+
 async function runAsOwner(root: ArdentRoot, args: string[], timeout = 100_000): Promise<string> {
   const accounts = await readFile('/etc/passwd', 'utf8');
   const fields = accounts.split('\n').map(line => line.split(':')).find(parts => parts[0] === root.owner);
   const uid = Number(fields?.[2]);
   if (!Number.isSafeInteger(uid) || uid <= 0) throw new Error('Ardent owner UID is unavailable');
   const command = ownerCommand(root, uid, args, timeout);
-  return new Promise<string>((resolve, reject) => execFile(command.file, command.args, command.options,
-    (error, stdout) => error ? reject(new Error(`Ardent owner command failed: ${error.code ?? 'unknown'}`)) : resolve(stdout)));
+  return new Promise<string>((resolve, reject) => execFile(command.file, command.args, command.options, (error, stdout) => {
+    if (!error) { resolve(stdout); return; }
+    // A child stopped by its timeout or output cap may have handed work on (systemd keeps a started job).
+    if (error.killed || error.signal) reject(new ArdentOutcomeUncertain(`Ardent owner command was stopped (${error.signal ?? 'killed'}) before it finished`));
+    else reject(new Error(`Ardent owner command failed: ${error.code ?? 'unknown'}`));
+  }));
 }
 
 export async function hermesTrafficConsumersDisabled(home: string): Promise<boolean> {
@@ -596,6 +611,21 @@ async function setHiveMemCredential(root: ArdentRoot, profile: string, body: unk
   return { profile, tokenEnv: ARDENT_HIVEMEM_TOKEN_ENV, configured: true, activationRequired: true };
 }
 
+function connectionRefused(error: unknown): boolean {
+  for (let current = error, depth = 0; current && typeof current === 'object' && depth < 4; current = (current as { cause?: unknown }).cause, depth++)
+    if ((current as { code?: unknown }).code === 'ECONNREFUSED') return true;
+  return false;
+}
+
+/** Ardent's own error text from a JSON error body, bounded, or nothing. */
+function upstreamMessage(body: ArrayBuffer): string {
+  try {
+    const value = JSON.parse(Buffer.from(body).toString('utf8')) as { error?: unknown };
+    const text = typeof value.error === 'string' ? value.error : (value.error as { message?: unknown } | undefined)?.message;
+    return typeof text === 'string' && text ? `: ${text.slice(0, 160)}` : '';
+  } catch { return ''; } // no-reason-needed: a non-JSON body adds no detail to the message
+}
+
 export function createArdentRoutes(resolveRoot: () => Promise<ArdentRoot> = ardentRoot): Hono {
   const routes = new Hono();
   routes.get('/state', async c => {
@@ -709,19 +739,37 @@ export function createArdentRoutes(resolveRoot: () => Promise<ArdentRoot> = arde
       if (!await probe(config.api.port, dir, config.api.token_env, input.profile)) throw new Error('Ardent management listener identity differs or is unavailable');
       const token = await managementToken(dir, config.api.token_env);
       const path = route.path(input.target);
-      const response = await fetch(`http://127.0.0.1:${config.api.port}/api/v1/${path}`, {
-        method: route.method, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body, redirect: 'error', signal: AbortSignal.timeout(input.action === 'provider-test' ? 30_000 : 15_000),
-      });
-      const result = await response.arrayBuffer();
+      let response: Response;
+      let result: ArrayBuffer;
+      try {
+        response = await fetch(`http://127.0.0.1:${config.api.port}/api/v1/${path}`, {
+          method: route.method, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body, redirect: 'error', signal: AbortSignal.timeout(input.action === 'provider-test' ? 30_000 : 15_000),
+        });
+        result = await response.arrayBuffer();
+      } catch (error: unknown) {
+        // A refused connection carried nothing. Anything later may have reached Ardent.
+        if (connectionRefused(error)) throw new Error('Ardent management listener refused the connection');
+        throw new ArdentOutcomeUncertain(`Ardent did not answer the ${input.action} request completely`, { cause: error });
+      }
       if (result.byteLength > 2 * 1024 * 1024) return c.json({ error: 'Ardent action response exceeds size limit' }, 502);
+      // Ardent answered in full, so its request is over even when it failed.
+      if (response.status >= 500) return c.json({ success: false, error: { code: 'ARDENT_ACTION_FAILED',
+        message: `Ardent answered ${input.action} with HTTP ${response.status}${upstreamMessage(result)}` } }, 424);
       // The signed managed HTTP receipt proves durable task admission, never
       // completion of the asynchronous model run. Return 200 for that bounded
       // admission so the node ledger can settle the synchronous operation.
       const status = ['task-submit', 'mission-submit', 'preview-submit'].includes(input.action) && response.status === 202 ? 200 : response.status;
       return new Response(new Uint8Array(result), { status, headers: { 'Content-Type': response.headers.get('content-type') ?? 'application/json', 'Cache-Control': 'no-store' } });
     } catch (error: unknown) {
-      return c.json({ error: error instanceof Error ? error.message.slice(0, 200) : 'Ardent action unavailable' }, 503);
+      const message = error instanceof Error ? error.message.slice(0, 200) : 'Ardent action unavailable';
+      // Context adoption keeps its own journal and recovery, so its failures stay uncertain here.
+      if (error instanceof ArdentOutcomeUncertain || input.action.startsWith('context-')) {
+        logger.warn(`Ardent ${input.action} on ${input.profile} has an unknown outcome: ${message}`);
+        return c.json({ error: message }, 503);
+      }
+      // The handler finished: answer a settled failure, so the managed command owner is released.
+      return c.json({ success: false, error: { code: 'ARDENT_ACTION_FAILED', message } }, 422);
     }
   });
   return routes;

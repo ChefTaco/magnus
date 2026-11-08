@@ -7,10 +7,11 @@ import { logAuditEvent } from '../services/audit-service.js';
 import { actingOathweaveLink, watchOathweaveStream } from '../middleware/oathweave.js';
 import { getArdentAgentOperation, resumeArdentAgentOperation, startArdentAgentDeploy, startArdentHiveMemEnable, type ArdentOperationActor } from '../services/ardent-agent-deploy.js';
 import { getArdentContextAdoption, getArdentContextRelease, getArdentInstallation, getArdentProfileResource, listArdentInstallations, performArdentAction, requireArdentStudioAgent, streamArdentProfileResource } from '../services/ardent-service.js';
-import { AgentResponseError } from '../sdk/node-api-client.js';
+import { AgentResponseError, managedCommandOf } from '../sdk/node-api-client.js';
+import { ardentOwnerBlock, reconcileArdentCommandOwner } from '../services/ardent-command-owner.js';
 import { HTTPError } from 'ky';
 import { z } from 'zod';
-import { ARDENT_STUDIO_CAPABILITY, ArdentContextAdoptionInputSchema, ardentConfigEditSchema, ardentConfigFileSchema, ardentDevelopmentNoteSchema, ardentIdentityEditSchema, ardentMissionSubmitSchema, ardentPreviewSubmitSchema, ardentSessionOpenSchema, ardentSkillEditSchema } from '@hivemagnus/magnus-contracts';
+import { ARDENT_STUDIO_CAPABILITY, ArdentCommandReconcileSchema, ArdentContextAdoptionInputSchema, ardentConfigEditSchema, ardentConfigFileSchema, ardentDevelopmentNoteSchema, ardentIdentityEditSchema, ardentMissionSubmitSchema, ardentPreviewSubmitSchema, ardentSessionOpenSchema, ardentSkillEditSchema } from '@hivemagnus/magnus-contracts';
 import { classifyServiceConfigEdit } from '../services/ardent-config-allowlist.js';
 
 export const ardentRouter = new Hono<AppVariables>();
@@ -291,7 +292,7 @@ async function checkServiceConfigEdit(nodeId: string, profile: string, body: unk
 }
 
 const Action = z.object({
-  action: z.enum(['profile-create', 'session-open', 'config-validate', 'config-save', 'peer-validate', 'peer-save', 'identity-save', 'identity-restore', 'provider-test', 'channel-test', 'peer-test', 'memory-search', 'task-submit', 'task-cancel', 'mission-submit', 'task-pause', 'task-resume', 'preview-submit', 'development-note', 'skill-set', 'service-start', 'service-stop', 'service-restart', 'package-install', 'context-stage', 'context-adopt', 'context-rollback']),
+  action: z.enum(['command-reconcile', 'profile-create', 'session-open', 'config-validate', 'config-save', 'peer-validate', 'peer-save', 'identity-save', 'identity-restore', 'provider-test', 'channel-test', 'peer-test', 'memory-search', 'task-submit', 'task-cancel', 'mission-submit', 'task-pause', 'task-resume', 'preview-submit', 'development-note', 'skill-set', 'service-start', 'service-stop', 'service-restart', 'package-install', 'context-stage', 'context-adopt', 'context-rollback']),
   target: z.string().min(1).max(128).optional(), body: z.unknown().optional(),
 }).strict();
 ardentRouter.post('/installations/:nodeId/profiles/:name/action', async c => {
@@ -302,6 +303,14 @@ ardentRouter.post('/installations/:nodeId/profiles/:name/action', async c => {
   const { action, target, body } = parsed.data;
   const service = getUser(c).service !== undefined;
   if (service && !SERVICE_ACTIONS.has(action)) throw new HttpError(403, 'FORBIDDEN', 'A service identity may only open sessions, run tasks, missions and previews, record development notes, and change identity, skills and model settings');
+  if (action === 'command-reconcile') {
+    // Node-wide, like package-install: the profile segment only satisfies the route. ADMIN people only.
+    const actor = ardentActor(c, true);
+    if (!target || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(target)) throw new HttpError(400, 'VALIDATION_ERROR', 'command-reconcile needs the command ID as target');
+    const decision = ArdentCommandReconcileSchema.safeParse(body);
+    if (!decision.success) throw new HttpError(400, 'VALIDATION_ERROR', decision.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; ').slice(0, 500));
+    return c.json({ success: true, data: await reconcileArdentCommandOwner(nodeId, target, decision.data, actor) });
+  }
   const adminAction = SERVICE_ADMIN_ACTIONS.has(action);
   const actor = ardentActor(c, adminAction, adminAction || SERVICE_SUBJECT_ACTIONS.has(action));
   if (['context-stage', 'context-adopt', 'context-rollback'].includes(action)
@@ -327,12 +336,26 @@ ardentRouter.post('/installations/:nodeId/profiles/:name/action', async c => {
       } });
     return c.json({ success: true, data: result });
   } catch (error: unknown) {
-    // The agent refused it, or Ardent did: pass the newer actions' refusals on as such.
-    const refusal = MISSION_ACTIONS.has(action) ? ardentRefusal(error) : REVISION_ACTIONS.has(action) ? revisionRefusal(error) : undefined;
-    if (refusal) throw refusal;
-    throw new HttpError(503, 'DEPENDENCY_UNAVAILABLE', error instanceof Error ? error.message.slice(0, 300) : 'Ardent action unavailable');
+    // A held command owner, or this action's own unknown outcome, blocks the node: say which and what to do.
+    const blocked = await ardentOwnerBlock(nodeId, error).catch(() => undefined);
+    const refusal = blocked ?? (MISSION_ACTIONS.has(action) ? ardentRefusal(error) : REVISION_ACTIONS.has(action) ? revisionRefusal(error) : undefined);
+    const failure = refusal ?? new HttpError(503, 'DEPENDENCY_UNAVAILABLE', actionFailure(error));
+    try {
+      await logAuditEvent({ action: `ardent.${action}`, actorId: actor.actorId, targetType: 'ardent-profile', targetId: `${nodeId}:${profile}`,
+        details: { target: target ?? null, ...actor.details, outcome: failure.code === 'ARDENT_OUTCOME_UNKNOWN' ? 'unknown' : 'failed',
+          code: failure.code, commandId: managedCommandOf(error) ?? null } });
+    } catch (auditError: unknown) {
+      console.warn(`[ardent] audit of a failed ${action} on ${nodeId}:${profile} failed: ${auditError instanceof Error ? auditError.message : String(auditError)}`);
+    }
+    throw failure;
   }
 });
+
+/** What a failed action reports: the node agent's own reason when it gave one. */
+function actionFailure(error: unknown): string {
+  if (error instanceof AgentResponseError && error.agentMessage) return `Ardent action failed: ${error.agentMessage}`.slice(0, 300);
+  return error instanceof Error ? error.message.slice(0, 300) : 'Ardent action unavailable';
+}
 
 // ── New Agent and Enable HiveMem operations ──
 

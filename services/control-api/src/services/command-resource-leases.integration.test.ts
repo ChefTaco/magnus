@@ -365,6 +365,53 @@ try { const row = await admitResourceCommand(JSON.parse(process.argv[2]), JSON.p
     expect((await db.remoteCommand.findUniqueOrThrow({ where: { id: admission.commandId } })).status).toBe('FAILED');
   });
 
+  it('settles a failed Ardent action from its signed receipt, and reconciles an unknown one only by an ADMIN decision', async () => {
+    const owners = await import('./ardent-command-owner.js');
+    const key = 'resource-lease-reconciliation-fixture-at-least-32-characters';
+    vi.stubEnv('COMMAND_RECONCILIATION_SECRET', key);
+    let commandId = '';
+    let reply: 'failed' | 'uncertain' = 'failed';
+    let stored: Record<string, unknown> | undefined;
+    vi.stubGlobal('fetch', vi.fn(async (req: Request) => {
+      if (req.url.endsWith('/ping')) return json({ features: { managedMutations: 1, commandReconciliation: 1 } });
+      if (req.url.includes('/commands/managed-http')) {
+        const value = await req.json(); commandId = value.commandId;
+        if (reply === 'uncertain') return new Response(JSON.stringify({ success: false, error: { code: 'MANAGED_MUTATION_UNCERTAIN' } }), { status: 409 });
+        const input = { ...httpIdentity(value.commandId, value.method, value.path, value.body, value.timeoutSeconds), coordination: value.coordination };
+        const response = { status: 422, body: JSON.stringify({ success: false, error: { code: 'ARDENT_ACTION_FAILED', message: 'Ardent profile did not reach running state' } }) };
+        const receipt = { ...signed(input), exitCode: 1, stdout: httpReceiptBody(value.method, value.path, response.status, response.body) };
+        receipt.signature = createHmac('sha256', secret).update(commandResultSigningPayload(receipt)).digest('hex');
+        return json({ response, receipt });
+      }
+      const row = await db.commandResourceLease.findUniqueOrThrow({ where: { commandId } });
+      const base = { commandId, requestSha256: row.requestSha256, coordination: JSON.parse(row.coordinationJson) };
+      if (req.url.endsWith('/reconcile')) { stored = await req.json(); return json({ ...base, state: 'reconciled', reconciliation: stored }); }
+      if (req.url.includes('/state')) return json({ installed: true, profiles: [] });
+      return json({ ...base, state: 'unknown' });
+    }));
+    // A failure the node agent finished settles its owner at once: the next action is admitted.
+    await expect(client().performArdentAction('ember', 'service-start')).rejects.toMatchObject({ agentStatus: 422, agentMessage: 'Ardent profile did not reach running state' });
+    const failed = await db.commandResourceLease.findUniqueOrThrow({ where: { commandId } });
+    expect(failed).toMatchObject({ state: 'released', settlement: 'signed-command-result', label: 'ardent:ember:service-start' });
+    // An unknown outcome holds the node, names itself, and refuses every other Ardent action.
+    reply = 'uncertain';
+    const error = await client().performArdentAction('ember', 'service-start').catch((caught: unknown) => caught);
+    expect(sdk.managedCommandOf(error)).toBe(commandId);
+    expect(await owners.ardentOwnerBlock(nodeId, error)).toMatchObject({ code: 'ARDENT_OUTCOME_UNKNOWN', message: expect.stringContaining(`service-start on ember (command ${commandId})`) });
+    const held = await db.commandResourceLease.findUniqueOrThrow({ where: { commandId } });
+    expect(held.state).toBe('unknown');
+    await expect(lease.admitResourceCommand(context, httpIdentity('next-' + randomUUID(), 'POST', '/ardent/action', '{}', 10))).rejects.toBeInstanceOf(lease.ResourceLeaseConflict);
+    expect((await owners.ardentCommandOwners([nodeId])).get(nodeId)).toEqual([expect.objectContaining({ commandId, state: 'unknown', action: 'service-start', profile: 'ember' })]);
+    const decision = { disposition: 'no_effect_verified' as const, reason: 'Unit inactive, no start job in the journal.' };
+    await expect(owners.reconcileArdentCommandOwner(nodeId, commandId, decision, { actorId: 'alice', details: {} }))
+      .rejects.toMatchObject({ code: 'COMMAND_IN_PROGRESS' });
+    const result = await owners.reconcileArdentCommandOwner(nodeId, commandId, decision, { actorId: 'alice', details: {} },
+      held.deadline.getTime() + 61_000);
+    expect(result).toMatchObject({ outcome: 'settled', receipt: 'unknown', settlement: 'signed-reconciliation:no_effect_verified' });
+    expect(stored).toMatchObject({ commandId, disposition: 'no_effect_verified', decisionId: result.decisionId, evidenceSha256: result.evidenceSha256 });
+    expect((await lease.admitResourceCommand(context, request()))?.leaseId).toBeTruthy();
+  });
+
   it('keeps fresh unenrolled nodes in legacy mode while rejecting fabricated canonical identities', async () => {
     await db.resourceEnrollment.delete({ where: { nodeId } });
     vi.stubEnv('MAGNUS_RESOURCE_LEASES_ENABLED', 'false');
