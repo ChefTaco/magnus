@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ARDENT_HIVEMEM_SERVICE_SCOPE, ardentHiveMemAgentId, ardentHiveMemSettings, HiveMemEnrollmentError, planArdentHiveMemCredential, prepareArdentHiveMem,
+import { ARDENT_HIVEMEM_SERVICE_SCOPE, ardentHiveMemAgentId, ardentHiveMemSettings, ardentHiveMemSupportsRenewal, HiveMemEnrollmentError, planArdentHiveMemCredential, prepareArdentHiveMem,
   requestArdentHiveMemCredential, resetArdentHiveMemTokens } from './ardent-hivemem.js';
 
 const env = { MAGNUS_ARDENT_HIVEMEM_URL: 'https://memory.example.com/api/hivemem', MAGNUS_ARDENT_HIVEMEM_ENROLLMENT_TOKEN: 'fixture-enrollment-token',
@@ -42,6 +42,29 @@ describe('HiveMem actor credential request', () => {
     expect(JSON.parse(String(init.body))).toEqual({ action: 'enroll', agent_id: plan.agentId, display_name: 'Ardent lead on node-1',
       description: 'Ardent profile managed by Magnus', scopes: ['memories:read', 'memories:write', 'sessions:read', 'sessions:write'],
       workspace_id: 'agents', expires_at: '2026-12-07T23:59:00.000Z' });
+  });
+
+  it('sends a renewal with its grace period, and detects whether HiveMem can renew', async () => {
+    const renewal = planArdentHiveMemCredential(settings, { operationId: 'op', nodeId: 'node-1', nodeName: 'node-1', profile: 'lead', action: 'renew',
+      now: Date.UTC(2026, 10, 8), graceSeconds: 86_400 });
+    expect(renewal).toMatchObject({ key: 'op:renew', action: 'renew', graceSeconds: 86_400 });
+    const fetcher = vi.fn(async () => Response.json({ ok: true, agent_id: renewal.agentId, operation_id: 'x', token: TOKEN, expires_at: renewal.expiresAt }));
+    await requestArdentHiveMemCredential(settings, renewal, fetcher as unknown as typeof fetch);
+    const [, init] = fetcher.mock.calls[0] as unknown as [URL, RequestInit];
+    expect(JSON.parse(String(init.body))).toMatchObject({ action: 'renew', grace_seconds: 86_400, expires_at: '2026-12-07T23:59:00.000Z' });
+    // Other actions carry no grace period, which HiveMem would refuse.
+    expect(JSON.parse(String((await (async () => { fetcher.mockClear(); await requestArdentHiveMemCredential(settings, plan, fetcher as unknown as typeof fetch);
+      return fetcher.mock.calls[0] as unknown as [URL, RequestInit]; })())[1].body))).not.toHaveProperty('grace_seconds');
+
+    const capabilities = (body: unknown, status = 200) => vi.fn(async () => Response.json(body, { status })) as unknown as typeof fetch;
+    const current = capabilities({ actor_credentials: 'idempotent-receipt-v1', actor_credential_renewal: 'renew-grace-v1' });
+    expect(await ardentHiveMemSupportsRenewal(settings, current)).toBe(true);
+    const [url, request] = (current as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [URL, RequestInit];
+    expect(String(url)).toBe('https://memory.example.com/api/hivemem/v1/capabilities');
+    expect(request.method).toBe('GET');
+    expect(request.body).toBeUndefined();
+    expect(await ardentHiveMemSupportsRenewal(settings, capabilities({ actor_credentials: 'idempotent-receipt-v1' }))).toBe(false);
+    await expect(ardentHiveMemSupportsRenewal(settings, capabilities({}, 503))).rejects.toMatchObject({ status: 503 });
   });
 
   it('reports HiveMem refusals by status without echoing a token', async () => {

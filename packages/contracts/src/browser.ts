@@ -3087,7 +3087,7 @@ export const magnusBrowserRoutes: readonly MagnusBrowserRoute[] = [
   { method: 'POST', path: '/ardent/agents/operations/{id}/resume', response: ardentAgentOperationAcceptedResponseSchema, roles: ADMIN_ONLY, successStatus: 202,
     note: 'Reruns a failed operation from its first unfinished step; finished steps are never rerun. 409 unless the operation failed.' },
   { method: 'POST', path: '/ardent/installations/{nodeId}/profiles/{name}/hivemem', response: ardentAgentOperationAcceptedResponseSchema, roles: ADMIN_ONLY, successStatus: 202,
-    note: 'Enable HiveMem on an existing running profile: profile-check, hivemem-enroll, config-save, service-restart, ready-probe. A profile already enrolled in HiveMem gets a rotated credential.' },
+    note: 'Enable HiveMem on an existing running profile: profile-check, hivemem-enroll, config-save, service-restart, ready-probe. A profile already enrolled in HiveMem gets a replacement credential: renewed with a fresh deadline where HiveMem supports it, otherwise rotated. Magnus then renews it before every deadline.' },
 
   // Topology
   { method: 'GET', path: '/topology', response: topologyResponseSchema, roles: ANY_ROLE, note: 'Cached for five minutes. A cache miss probes every node, which can take seconds.' },

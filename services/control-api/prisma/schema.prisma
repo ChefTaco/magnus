@@ -2101,6 +2101,31 @@ model ArdentAgentOperation {
   @@map("ardent_agent_operations")
 }
 
+/// The HiveMem credential Magnus issued an Ardent profile, which the renewal job keeps ahead of its deadline.
+/// The token itself is never stored.
+model ArdentHiveMemCredential {
+  id            String    @id @default(cuid())
+  nodeId        String
+  profile       String
+  agentId       String
+  workspaceId   String
+  issuedAt      DateTime
+  expiresAt     DateTime
+  lastRenewedAt DateTime?
+  lastAttemptAt DateTime?
+  nextAttemptAt DateTime
+  failures      Int       @default(0)
+  lastError     String?
+  renewals      Int       @default(0)
+  leaseUntil    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([nodeId, profile])
+  @@index([nextAttemptAt])
+  @@map("ardent_hivemem_credentials")
+}
+
 model ArdentScopeEnrollment {
   nodeId String @id
   nodeFqdn String
