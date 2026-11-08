@@ -10,7 +10,7 @@ moved without updating it.
 
 | Class | Meaning | Rows | At the ingress |
 |---|---|---|---|
-| `browser` | A person's console drives it with a user token | 139 | Allow the exact method and path |
+| `browser` | A person's console drives it with a user token | 144 | Allow the exact method and path |
 | `machine` | Agents, services and integrations, with their own credentials | 73 | Deny |
 | `exclude` | Reachable with a user token, but no console needs it, or it was written for a server-side caller | 142 | Deny until a feature needs it and it is reviewed |
 | `retired` | Always answers 404 or 410 | 64 | Deny |
@@ -79,6 +79,35 @@ is never tried against another verifier.
 | Anything else | | Rejected |
 
 `localUserId` becomes the audit actor, and it does not need a row in the local users table.
+
+### Linked service identities
+
+Another product can reach the Ardent routes, and only those, with an Oathweave client-credentials
+token. Link its client with role `ARDENT_SERVICE` in the same `MAGNUS_OATHWEAVE_IDENTITIES_JSON`, using
+the client ID as the subject:
+
+```json
+{"issuer": "https://identity.example.com", "subject": "ardent-studio", "localUserId": "ardent-studio", "role": "ARDENT_SERVICE"}
+```
+
+The token needs audience `magnus`, `actorType` `SERVICE_ACCOUNT`, `token_type` `access`, a subject equal
+to its `clientId`, no `sessionId`, a lifetime of at most 15 minutes and the permission `magnus:ardent`
+(grant it through Oathweave's `IAM_MACHINE_CLIENT_POLICIES`). A person's token never matches a service
+link, and a service token never matches a person's link. The audit actor is `service:ardent:<localUserId>`.
+
+A service may read `GET /api/v1/ardent/profiles`, `/installations`, `/installations/:nodeId`, the profile
+resources `status`, `profile`, `skills`, `memory/status`, `sessions`, `sessions/:id/messages`, `tasks`,
+`tasks/:id`, `tasks/:id/events`, `identity/soul` and `identity/identity`, task streams, artifacts and
+agent operations. Of the profile actions it may run `session-open`, `task-submit` and `task-cancel`.
+Everything else answers 403. `packages/contracts/src/ardent-service.ts` publishes these shapes.
+
+The service names the person it acts for in `x-acting-subject`, their Oathweave subject. That subject
+must have exactly one person link on the service's issuer; the audit then names that person and
+records the service, client and subject in its details. `POST /api/v1/ardent/agents`,
+`POST /api/v1/ardent/agents/operations/:id/resume` and `POST …/profiles/:name/hivemem` need it, and
+need that link's role to be `ADMIN`; otherwise they answer 403 `ACTING_ADMIN_REQUIRED`. An unlinked
+subject answers 403 `ACTING_SUBJECT_UNLINKED`. The ingress must forward `x-acting-subject` only from
+that service, never from a browser.
 
 `GET /api/v1/console/session` replaces the dashboard's environment checks and build-time values:
 
@@ -190,11 +219,16 @@ unless these rows change. `POST /api/v1/hermes/deploy` is retired and always ans
 | GET | `/api/v1/anomalies` | browser | `user:any` | yes |
 | GET | `/api/v1/anomalies/event/:id/correlation` | browser | `user:any` | yes |
 | GET | `/api/v1/anomalies/summary` | browser | `user:any` | yes |
+| POST | `/api/v1/ardent/agents` | browser | `user:ADMIN` | yes |
+| GET | `/api/v1/ardent/agents/operations/:id` | browser | `user:ADMIN` | yes |
+| POST | `/api/v1/ardent/agents/operations/:id/resume` | browser | `user:ADMIN` | yes |
+| GET | `/api/v1/ardent/agents/operations/:id/stream` | browser | `user:ADMIN` | yes Stream |
 | GET | `/api/v1/ardent/installations` | browser | `user:ADMIN` |  |
 | GET | `/api/v1/ardent/installations/:nodeId` | browser | `user:ADMIN` |  |
 | GET | `/api/v1/ardent/installations/:nodeId/profiles/:name/*` | browser | `user:ADMIN` |  |
 | POST | `/api/v1/ardent/installations/:nodeId/profiles/:name/action` | browser | `user:ADMIN` |  |
 | GET | `/api/v1/ardent/installations/:nodeId/profiles/:name/artifacts/:artifactId` | browser | `user:ADMIN` |  |
+| POST | `/api/v1/ardent/installations/:nodeId/profiles/:name/hivemem` | browser | `user:ADMIN` | yes |
 | GET | `/api/v1/ardent/installations/:nodeId/profiles/:name/tasks/:taskId/stream` | browser | `user:ADMIN` | yes Stream |
 | GET | `/api/v1/ardent/profiles` | browser | `user:ADMIN` |  |
 | GET | `/api/v1/assistant/conversations` | browser | `user:any` | yes |

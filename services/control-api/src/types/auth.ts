@@ -140,6 +140,11 @@ export type AuditAction =
   | 'release.coding.propose'
   | 'release.coding.review'
   | 'release.coding.resume-publication'
+  | 'ardent.agent.deploy'
+  | 'ardent.agent.resume'
+  | 'ardent.agent.step'
+  | 'ardent.agent.complete'
+  | 'ardent.hivemem.enable'
   | `ardent.${'profile-create' | 'session-open' | 'config-validate' | 'config-save' | 'peer-validate' | 'peer-save' | 'identity-save' | 'identity-restore' | 'provider-test' | 'channel-test' | 'peer-test' | 'memory-search' | 'task-submit' | 'task-cancel' | 'skill-set' | 'service-start' | 'service-stop' | 'service-restart' | 'package-install' | 'context-stage' | 'context-adopt' | 'context-rollback'}`
   | 'codex.auth.logout'
   | 'codex.auth.expired_logout'
@@ -234,6 +239,11 @@ export interface AuthTokenPayload {
   exp: number;
   /** Oathweave only: an ADMIN link and magnus:terminal. Says what the console may offer; the fleet gateway decides. */
   terminal?: boolean;
+  /**
+   * Set only for a linked Oathweave service identity (link role ARDENT_SERVICE).
+   * Its `role` is VIEWER, and authentication confines it to the Ardent bridge routes.
+   */
+  service?: { kind: 'ardent'; issuer: string; clientId: string };
 }
 
 /** Hono env type providing typed Variables across all routes and middleware. */

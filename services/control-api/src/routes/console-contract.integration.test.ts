@@ -25,6 +25,7 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('browser contract against rea
   const ruleId = `${prefix}-rule`;
   const conversationId = `${prefix}-conversation`;
   const webhookId = `${prefix}-webhook`;
+  const operationId = randomUUID();
   let home: string;
   let db: ReturnType<typeof import('../db/index.js')['getDb']>;
   let app: typeof import('../server.js')['app'];
@@ -76,6 +77,11 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('browser contract against rea
     const installation = await db.hermesInstallation.create({ data: { hostname: `${prefix}.example.com`, nodeId, metadata: '{}', rawStatus: '{}', dashboardHost: '127.0.0.1' } });
     await db.hermesProfile.create({ data: { installationId: installation.id, name: 'default', profileHome: '/opt/hermes', capabilities: '{}', envStatus: '{}', metadata: '{}' } });
     await db.role.create({ data: { id: prefix, name: prefix, description: 'Fixture role', envConfig: '{"FIXTURE_VALUE":"visible-to-any-role"}' } });
+    await db.ardentAgentOperation.create({ data: { id: operationId, kind: 'deploy', nodeId, profile: 'lead', status: 'failed', error: 'config-save: fixture',
+      requestJson: JSON.stringify({ nodeId, profile: 'lead', apiPort: 9911, soul_md: '# Soul', identity_md: '# Identity', model: { emberpath_alias: 'general' }, skills: [], hivemem: true }),
+      stepsJson: JSON.stringify([{ name: 'profile-create', status: 'succeeded', startedAt: now.toISOString(), finishedAt: now.toISOString(), receipt: { apiPort: 9911 }, error: null },
+        { name: 'config-save', status: 'failed', startedAt: now.toISOString(), finishedAt: now.toISOString(), receipt: null, error: 'fixture' }]),
+      createdBy: 'alice', completedAt: now } });
     await (await import('../services/audit-service.js')).logAuditEvent({ action: 'cron.update', actorId: 'alice', targetType: 'cron', targetId: cronId, details: { fixture: true } });
 
     await db.anomalyEvent.create({ data: { id: anomalyId, nodeId, metric: 'disk', value: 91, zScore: 3.2, mean: 40, stdDev: 5, severity: 'warning' } });
@@ -96,6 +102,7 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('browser contract against rea
   afterAll(async () => {
     if (db) {
       await db.executionRun.deleteMany({ where: { id: runId } });
+      await db.ardentAgentOperation.deleteMany({ where: { id: operationId } });
       await db.remediationRule.deleteMany({ where: { name: { startsWith: prefix } } });
       await db.notification.deleteMany({ where: { nodeName: prefix } });
       await db.aiConversation.deleteMany({ where: { id: conversationId } });
@@ -185,12 +192,14 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('browser contract against rea
     '/webhooks/{id}': `/webhooks/${webhookId}`,
     '/webhooks/{id}/deliveries': `/webhooks/${webhookId}/deliveries`,
     '/topology': '/topology',
+    '/ardent/agents/operations/{id}': `/ardent/agents/operations/${operationId}`,
   };
   const NOT_RUN_HERE = new Set([
     '/assistant/insights', // model provider
     '/events/stream', '/logs/stream', // streams
     '/ardent/installations/{nodeId}/profiles/{name}/tasks/{taskId}/stream', // stream from a live agent
     '/agents/upgrade/runs/{id}', // needs a run
+    '/ardent/agents/operations/{id}/stream', // stream
     '/files/read', '/ops/storage-evidence/{nodeId}', // live agent
     '/library/files/{fileId}', '/ops/incidents/{id}/evidence', // covered below
   ]);

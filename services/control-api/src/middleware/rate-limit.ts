@@ -28,13 +28,14 @@ function getRedis(): Redis {
  *
  * @param opts.windowMs  Time window in milliseconds (default: 60_000 = 1 minute)
  * @param opts.max       Maximum requests per window (default: 100)
+ * @param opts.serviceMax Maximum for a linked Oathweave service identity (default: max)
  * @param opts.keyPrefix Redis key prefix segment (default: 'rl')
  */
 export function rateLimitMiddleware(
-  opts: { windowMs?: number; max?: number; keyPrefix?: string; failClosed?: boolean } = {},
+  opts: { windowMs?: number; max?: number; serviceMax?: number; keyPrefix?: string; failClosed?: boolean } = {},
 ): MiddlewareHandler {
   const windowMs = opts.windowMs ?? 60_000;
-  const max = opts.max ?? 100;
+  const personMax = opts.max ?? 100;
   const prefix = opts.keyPrefix ?? 'rl';
 
   return async (c, next) => {
@@ -50,6 +51,8 @@ export function rateLimitMiddleware(
     // verified subject gets its own bucket. Anything else, including a token
     // that failed verification, stays on the peer bucket.
     const identity = subject ? `subject:${subject}` : heartbeatPeerAddress(c) || 'unknown-peer';
+    // One linked service identity carries many people's work, so it may get a larger budget.
+    const max = subject?.startsWith('service:') && opts.serviceMax !== undefined ? opts.serviceMax : personMax;
 
     const key = `${REDIS_PREFIX}${prefix}:${identity}`;
     const now = Date.now();

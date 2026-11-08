@@ -176,6 +176,13 @@ export const envSchema = z.object({
   // HiveMem (shared agent memory)
   HIVEMEM_URL: z.string().url().optional(),
   HIVEMEM_TOKEN: z.string().optional(),
+  // Ardent New Agent: per-agent HiveMem enrollment and Emberpath aliases (services/ardent-hivemem.ts)
+  MAGNUS_ARDENT_HIVEMEM_URL: z.string().url().optional(),
+  MAGNUS_ARDENT_HIVEMEM_AGENT_URL: z.string().url().optional(),
+  MAGNUS_ARDENT_HIVEMEM_ENROLLMENT_TOKEN: z.string().optional(),
+  MAGNUS_ARDENT_HIVEMEM_WORKSPACE_ID: z.string().regex(/^[a-z0-9_-]{1,100}$/).optional(),
+  MAGNUS_ARDENT_HIVEMEM_CREDENTIAL_HOURS: z.coerce.number().int().min(1).max(720).optional(),
+  MAGNUS_ARDENT_EMBERPATH_URL: z.string().url().optional(),
 
   // Managed Hermes Agent fleet configuration (all optional)
   MAGNUS_HERMES_REGISTRY_ENABLED: booleanEnvSchema,

@@ -13,7 +13,7 @@ import {
 } from '../schemas/shared-resource-lease.js';
 import { managedCronRegistrationSchema, schedulerSourceSettlementSchema } from '../schemas/managed-cron.js';
 import { legacyAdmissionRequestSchema, resourceClaimSchema } from '../security/managed-http.js';
-import { magnusObservationSchema, responseRequestSchema } from '@hivemagnus/magnus-contracts';
+import { ardentAgentDeployRequestSchema, ardentAgentOperationSchema, magnusObservationSchema, responseRequestSchema } from '@hivemagnus/magnus-contracts';
 import { maintenanceSchema } from '../services/maintenance-service.js';
 import { rolloutInputSchema } from '../services/rollout-service.js';
 import { lessonSchema } from '../services/incident-lessons.js';
@@ -2682,7 +2682,7 @@ const paths: Record<string, Record<string, unknown>> = {
   },
   '/ardent/installations': {
     get: { tags: ['Magnus Ardent'], summary: 'Inspect Ardent installations on managed nodes',
-      description: 'Admin-only node inventory. Node fetch failures remain distinct from a successful empty installation.',
+      description: 'Admin-only node inventory. Node fetch failures remain distinct from a successful empty installation. capabilities.studio is 1 when the node agent supports sessions, task streams, streamed artifacts and New Agent.',
       security: apiSecretAuth, responses: { 200: success('Ardent installation observations', { type: 'array', items: { type: 'object' } }), 401: err401, 403: err403 } },
   },
   '/ardent/installations/{nodeId}': {
@@ -2737,6 +2737,38 @@ const paths: Record<string, Record<string, unknown>> = {
           target: { type: 'string' }, body: {} }, additionalProperties: false } } } },
       responses: { 200: success('Ardent action acknowledgement'), 400: err400, 401: err401, 403: err403,
         503: { description: 'Node or Ardent action unavailable' } } },
+  },
+  '/ardent/agents': {
+    post: { tags: ['Magnus Ardent'], summary: 'Deploy a new Ardent agent (New Agent)',
+      description: 'ADMIN, or a linked Ardent service identity acting for an ADMIN named in x-acting-subject. Validates the request, resolves the API port (the first free one from 9910 when omitted) and starts an operation: profile-create, service-start, identity-soul, identity-identity, hivemem-enroll, config-save, skill-set, service-restart, ready-probe. Each step is audited and keeps a receipt; a failure stops the operation, which can be resumed. The HiveMem credential goes straight to the node and is never returned or stored.',
+      security: apiSecretAuth, requestBody: { required: true, content: { 'application/json': { schema: zod(ardentAgentDeployRequestSchema) } } },
+      responses: { 202: success('Operation started', { type: 'object', properties: { operationId: { type: 'string', format: 'uuid' } } }), 400: err400, 401: err401, 403: err403,
+        409: { description: 'Profile or port in use, another operation running, Ardent not installed, or the node agent must be upgraded' },
+        503: { description: 'Node unavailable, or HiveMem enrollment or Emberpath not configured' } } },
+  },
+  '/ardent/agents/operations/{id}': {
+    get: { tags: ['Magnus Ardent'], summary: 'Read an Ardent agent operation and its step receipts', security: apiSecretAuth,
+      parameters: [pp('id', 'Operation UUID')], responses: { 200: success('Operation', zod(ardentAgentOperationSchema)), 400: err400, 401: err401, 403: err403, 404: err404 } },
+  },
+  '/ardent/agents/operations/{id}/stream': {
+    get: { tags: ['Magnus Ardent'], summary: 'Stream an Ardent agent operation as its steps change',
+      description: 'Server-sent events: operation on connect and after each change, then done once the operation succeeds or fails. Reconnect for an operation that runs past 15 minutes.',
+      security: apiSecretAuth, parameters: [pp('id', 'Operation UUID')],
+      responses: { 200: { description: 'Operation event stream', content: { 'text/event-stream': { schema: { type: 'string' } } } }, 400: err400, 401: err401, 403: err403, 404: err404 } },
+  },
+  '/ardent/agents/operations/{id}/resume': {
+    post: { tags: ['Magnus Ardent'], summary: 'Resume a failed Ardent agent operation',
+      description: 'Reruns the first unfinished step and everything after it; finished steps are never rerun. ADMIN, or a service identity acting for an ADMIN.',
+      security: apiSecretAuth, parameters: [pp('id', 'Operation UUID')],
+      responses: { 202: success('Operation resumed', { type: 'object', properties: { operationId: { type: 'string', format: 'uuid' } } }), 400: err400, 401: err401, 403: err403, 404: err404,
+        409: { description: 'The operation did not fail, or another operation on the profile is running' } } },
+  },
+  '/ardent/installations/{nodeId}/profiles/{name}/hivemem': {
+    post: { tags: ['Magnus Ardent'], summary: 'Enable HiveMem on an existing Ardent profile',
+      description: 'Starts an operation that enrolls (or, for an agent HiveMem already knows, rotates) a per-agent HiveMem credential, writes it to the profile, sets memory.provider hivemem, restarts the profile and waits until memory reports ready. The profile must be running. ADMIN, or a service identity acting for an ADMIN.',
+      security: apiSecretAuth, parameters: [pp('nodeId', 'Managed node ID'), pp('name', 'Profile name')],
+      responses: { 202: success('Operation started', { type: 'object', properties: { operationId: { type: 'string', format: 'uuid' } } }), 400: err400, 401: err401, 403: err403,
+        409: { description: 'Another operation running, or the node agent must be upgraded' }, 503: { description: 'HiveMem enrollment not configured' } } },
   },
   '/codex/installations': {
     get: {

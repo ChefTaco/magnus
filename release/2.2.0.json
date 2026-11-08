@@ -1,0 +1,19 @@
+{
+  "summary": "Ardent agents through Magnus: sessions, unbuffered task event streams and streamed artifacts; New Agent deployment as a durable, resumable, audited operation; per-agent HiveMem credentials for new and existing profiles; and linked Oathweave service identities confined to the Ardent bridge.",
+  "breaking": false,
+  "minUpgradeFrom": "1.0.0",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [
+    { "name": "MAGNUS_ARDENT_HIVEMEM_URL", "component": "server", "secret": false, "description": "HTTPS HiveMem base URL that issues per-agent credentials for Ardent New Agent and Enable HiveMem." },
+    { "name": "MAGNUS_ARDENT_HIVEMEM_ENROLLMENT_TOKEN", "component": "server", "secret": true, "description": "HiveMem token with admin:agents that enrolls and rotates Ardent agent credentials." },
+    { "name": "MAGNUS_ARDENT_HIVEMEM_WORKSPACE_ID", "component": "server", "secret": false, "description": "Existing HiveMem workspace Ardent agents join." },
+    { "name": "MAGNUS_ARDENT_HIVEMEM_AGENT_URL", "component": "server", "secret": false, "description": "HiveMem base URL written into Ardent profile configs when agents reach HiveMem at another address." },
+    { "name": "MAGNUS_ARDENT_HIVEMEM_CREDENTIAL_HOURS", "component": "server", "secret": false, "description": "Lifetime of an Ardent agent HiveMem credential, 1 to 720 hours (default 720)." },
+    { "name": "MAGNUS_ARDENT_EMBERPATH_URL", "component": "server", "secret": false, "description": "OpenAI-compatible Emberpath base URL used for an Ardent agent's Emberpath model alias." },
+    { "name": "MAGNUS_AGENT_ARDENT_ARTIFACT_MAX_BYTES", "component": "agent", "secret": false, "description": "Largest Ardent artifact the agent streams, in bytes (default 64 MiB)." }
+  ],
+  "removedEnv": [],
+  "migrations": [
+    "20261108000000_ardent_agent_operations"
+  ]
+}

@@ -132,7 +132,7 @@ v1.use('/hermes/*', rateLimitMiddleware({ windowMs: 60_000, max: 20, keyPrefix: 
 v1.use('/hermes-registry/*', rateLimitMiddleware({ windowMs: 60_000, max: 120, keyPrefix: 'rl:hermes-registry', failClosed: true }));
 v1.use('/orchestra/*', rateLimitMiddleware({ windowMs: 60_000, max: 30, keyPrefix: 'rl:orchestra' }));
 v1.use('/codex/*', rateLimitMiddleware({ windowMs: 60_000, max: 60, keyPrefix: 'rl:codex' }));
-v1.use('/ardent/*', rateLimitMiddleware({ windowMs: 60_000, max: 60, keyPrefix: 'rl:ardent' }));
+v1.use('/ardent/*', rateLimitMiddleware({ windowMs: 60_000, max: 60, serviceMax: 1200, keyPrefix: 'rl:ardent' }));
 v1.use('/security-fusion/*', rateLimitMiddleware({ windowMs: 60_000, max: 120, keyPrefix: 'rl:security-fusion', failClosed: true }));
 
 v1.route('/nodes', nodesRouter);

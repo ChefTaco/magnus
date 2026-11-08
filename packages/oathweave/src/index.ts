@@ -11,7 +11,12 @@ import { z } from 'zod';
 /** The only resource audience Magnus services accept on Oathweave tokens. */
 export const OATHWEAVE_AUDIENCE = 'magnus';
 
-export const oathweaveRoleSchema = z.enum(['ADMIN', 'OPERATOR', 'VIEWER']);
+/**
+ * A link's role is a ceiling for a person. `ARDENT_SERVICE` instead links an
+ * Oathweave machine client (its subject is the client ID) to the Ardent bridge
+ * permission set: it never authenticates a person and never grants a role.
+ */
+export const oathweaveRoleSchema = z.enum(['ADMIN', 'OPERATOR', 'VIEWER', 'ARDENT_SERVICE']);
 
 const localUserId = z.string().min(1).max(256)
   // These identifiers name server-owned actors; a link must never impersonate one.
@@ -194,6 +199,82 @@ export function createOathweaveVerifier(
       issuedAt: payload.iat,
       expiresAt: payload.exp,
       authTime: typeof authTime === 'number' && Number.isSafeInteger(authTime) && authTime > 0 ? authTime : undefined,
+    };
+  };
+}
+
+export interface OathweaveServiceOptions {
+  issuer: string;
+  jwksUrl: string;
+  audience: string;
+}
+
+/** A verified Oathweave client-credentials token. It carries no person and no session. */
+export interface OathweaveServiceIdentity {
+  clientId: string;
+  issuer: string;
+  tokenId: string;
+  permissions: string[];
+  issuedAt: number;
+  expiresAt: number;
+}
+
+export type OathweaveServiceVerifier = (token: string) => Promise<OathweaveServiceIdentity>;
+
+/**
+ * Service-account (client_credentials) tokens of another product. They have no
+ * user session to revoke, so they are accepted only when RS256-signed by the
+ * issuer's key set, bound to this audience, issued to the client named in their
+ * subject, free of any session claim and valid for at most 15 minutes.
+ */
+export function createOathweaveServiceVerifier(
+  options: OathweaveServiceOptions,
+  overrides: { keys?: JWTVerifyGetKey; fetch?: typeof fetch; now?: () => number } = {},
+): OathweaveServiceVerifier {
+  for (const value of [options.issuer, options.jwksUrl]) {
+    if (!isOathweaveEndpoint(value)) throw new Error('Oathweave endpoints require verified HTTPS');
+  }
+  const request: typeof fetch = overrides.fetch ?? ((input, init) => fetch(input, init));
+  const now = overrides.now ?? (() => Date.now());
+  const keys = overrides.keys ?? createRemoteJWKSet(new URL(options.jwksUrl), {
+    [customFetch]: (url, init) => request(url, {
+      ...init,
+      redirect: 'error',
+      signal: AbortSignal.timeout(IDENTITY_REQUEST_TIMEOUT_MS),
+    }),
+  });
+  return async (token: string): Promise<OathweaveServiceIdentity> => {
+    const { payload } = await jwtVerify(token, keys, {
+      algorithms: ['RS256'],
+      issuer: options.issuer,
+      audience: options.audience,
+      requiredClaims: ['sub', 'iat', 'exp', 'jti'],
+      maxTokenAge: '15m',
+      currentDate: new Date(now()),
+    });
+    if (
+      payload.aud !== options.audience
+      || typeof payload.iat !== 'number'
+      || typeof payload.exp !== 'number'
+      || payload.exp <= payload.iat
+      || payload.exp - payload.iat > 900
+    ) throw new Error('Invalid service token audience or lifetime');
+    if (
+      payload['actorType'] !== 'SERVICE_ACCOUNT'
+      || payload['token_type'] !== 'access'
+      || typeof payload.sub !== 'string' || !payload.sub
+      || payload['clientId'] !== payload.sub
+      || payload['sessionId'] !== undefined
+      || typeof payload.jti !== 'string' || !payload.jti
+      || !Array.isArray(payload['permissions']) || !payload['permissions'].every((value) => typeof value === 'string')
+    ) throw new Error('Invalid service identity');
+    return {
+      clientId: payload.sub,
+      issuer: options.issuer,
+      tokenId: payload.jti,
+      permissions: payload['permissions'] as string[],
+      issuedAt: payload.iat,
+      expiresAt: payload.exp,
     };
   };
 }

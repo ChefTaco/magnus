@@ -8,6 +8,10 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Added
 
+- New Agent: `POST /api/v1/ardent/agents` creates, configures and starts an Ardent agent in one durable operation (profile, identity, model, HiveMem memory, skills, restart, readiness probe). `GET /api/v1/ardent/agents/operations/:id` returns per-step receipts, `…/stream` sends live step changes, and `…/resume` reruns a failed operation from its first unfinished step. Every step is audited. See [docs/ARDENT.md](docs/ARDENT.md).
+- Enable HiveMem: `POST /api/v1/ardent/installations/:nodeId/profiles/:name/hivemem` enrolls (or rotates) a per-agent HiveMem credential for an existing profile through HiveMem's actor-credential API. The node agent writes it to the profile's private `.env` as `ARDENT_HIVEMEM_TOKEN` (new `hivemem-credential-set` action); Magnus never stores it.
+- Linked Oathweave service identities: a client-credentials token linked with role `ARDENT_SERVICE` and holding `magnus:ardent` may use the Ardent bridge (profile reads, sessions, task submit and cancel, streams, artifacts, operations) and nothing else. It names the person it acts for in `x-acting-subject`; New Agent, resume and Enable HiveMem need that person to be a linked ADMIN. Shapes are published in `@hivemagnus/magnus-contracts/ardent-service`.
+
 - Ardent sessions and live task streams through Magnus. The `session-open` action opens or resets a keyed Ardent session, and `task-submit` accepts an optional `session_id` and prompts up to 16,000 characters. `GET /api/v1/ardent/installations/:nodeId/profiles/:name/tasks/:taskId/stream` relays the task's server-sent events from the node unbuffered; the node agent ends a stream after 60 seconds without data, and clients resume with `after` or `Last-Event-ID`.
 - Artifact downloads stream from the node instead of being buffered, up to the agent's `MAGNUS_AGENT_ARDENT_ARTIFACT_MAX_BYTES` (64 MiB by default; it was a fixed 2 MiB).
 - The node agent reports `studio: 1` in its ping features and Ardent inventory. Session and stream requests to an older agent answer 409 `AGENT_UPGRADE_REQUIRED`.
@@ -15,6 +19,15 @@ All notable changes to this project are documented in this file. The format is b
 ### Changed
 
 - Manage the latest Ardent release, 2.1.2. A new check (`npm run ardent:latest:check`, also run daily in CI) fails when Magnus pins an older Ardent than the latest published release, so every Ardent release gets a matching Magnus update.
+
+### New environment variables
+
+- Server, all optional: `MAGNUS_ARDENT_HIVEMEM_URL`, `MAGNUS_ARDENT_HIVEMEM_ENROLLMENT_TOKEN` (secret), `MAGNUS_ARDENT_HIVEMEM_WORKSPACE_ID`, `MAGNUS_ARDENT_HIVEMEM_AGENT_URL`, `MAGNUS_ARDENT_HIVEMEM_CREDENTIAL_HOURS`, `MAGNUS_ARDENT_EMBERPATH_URL`.
+- Agent, optional: `MAGNUS_AGENT_ARDENT_ARTIFACT_MAX_BYTES`.
+
+### Migration impact
+
+- `20261108000000_ardent_agent_operations` adds an empty table for Ardent agent operations. It is fast and leaves existing rows unchanged.
 
 ### Removed
 
