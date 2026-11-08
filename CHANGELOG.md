@@ -37,6 +37,11 @@ All notable changes to this project are documented in this file. The format is b
 
 - The `profile-import-hermes` Ardent action. It called an Ardent CLI command that does not exist, so it could never succeed.
 
+### Fixed
+
+- The node agent runs Ardent owner commands in the owner's home instead of its own root-only directory, so the package check after `package-install` no longer fails on suite installs.
+- The node agent recognizes profiles that `ardent init` creates (product name `Ardent`) as running, so New Agent no longer fails at `service-start` on a standalone Ardent runtime.
+
 ## [2.1.3] - 2026-11-07
 
 ### Fixed
