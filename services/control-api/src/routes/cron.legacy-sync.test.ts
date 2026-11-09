@@ -18,8 +18,10 @@ vi.mock('../utils/env.js', async original => ({ ...await original<object>(),
   getNodeManagerSecret: () => 'fixture-node-secret' }));
 vi.mock('../db/index.js', () => ({ getDb: () => ({ cronJob: {
   findUnique: async () => fixture.initial,
+  findMany: async () => [fixture.initial],
   update: async () => fixture.updated,
-} }) }));
+}, node: { findUnique: async () => ({ id: 'node-1' }) }, managedCronDefinition: { findMany: async () => [
+  { cronJobId: 'cron-1', revision: 7, enabled: false, expiresAt: new Date('2030-01-01T00:00:00Z') } ] } }) }));
 vi.mock('../services/managed-cron.js', async original => ({ ...await original<object>(),
   cronMutationMode: async () => 'legacy' }));
 vi.mock('../services/audit-service.js', async original => ({ ...await original<object>(), logAuditEvent: vi.fn() }));
@@ -45,6 +47,23 @@ async function patch(body: Record<string, unknown>) {
 }
 
 describe('legacy cron PATCH agent push', () => {
+  it('publishes only finite scheduler metadata for the console', async () => {
+    fixture.initial = job({ node: { name: 'fixture' } });
+    const token = await signUserToken({ userId: 'fixture-viewer', email: '', role: 'OPERATOR' });
+    const response = await app.request('/cron', { headers: { authorization: `Bearer ${token}` } });
+    expect(response.status).toBe(200);
+    expect((await response.json()).data[0].managed).toEqual({ revision: 7, enabled: false,
+      expiresAt: '2030-01-01T00:00:00.000Z', timezone: 'UTC' });
+  });
+  it('refuses finite scheduling on legacy nodes before creating an unbounded job', async () => {
+    const token = await signUserToken({ userId: 'fixture-operator', email: '', role: 'OPERATOR' });
+    const response = await app.request('/cron', { method: 'POST', headers: {
+      authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({
+      nodeId: 'node-1', name: 'fixture', schedule: '* * * * *', command: '/usr/bin/uptime', timeoutSeconds: 60,
+      managed: { revision: 1, timezone: 'UTC', timeoutSeconds: 60, expiresAt: Date.now() + 60000 } }) });
+    expect(response.status).toBe(409);
+    expect((await response.json()).error.code).toBe('MANAGED_CRON_ENROLLMENT_REQUIRED');
+  });
   beforeEach(() => { fixture.calls = []; });
 
   it('removes a paused job from the node instead of re-syncing it', async () => {

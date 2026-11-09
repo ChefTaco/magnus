@@ -1,6 +1,8 @@
 import type { Prisma } from '../db/generated/prisma/client.js';
 import { assertEnrollmentComplete, lockResourceNode } from './resource-enrollment.js';
 import { assertArdentScope } from './ardent-scope-enrollment.js';
+import { hasFreshOnlineHealth } from './resource-node-health.js';
+export { hasFreshOnlineHealth, RESOURCE_HEARTBEAT_FRESH_MS } from './resource-node-health.js';
 import { assertNodeAdmissionOpen } from './admission-fence.js';
 /** Finite managed-command ownership. This is coordination, never action approval.
  * Default-off until dashboard terminal and SSH lifecycle coverage is complete.
@@ -32,11 +34,6 @@ export interface ResourceCommandContext { nodeId: string; actorId: string; baseU
 export interface ResourceAdmission { leaseId: string; commandId: string; nodeId: string; nodeFqdn: string; payload: CommandRequest }
 export function resourceLeasesRequested(): boolean { return process.env['MAGNUS_RESOURCE_LEASES_ENABLED'] === 'true'; }
 /** Online with a heartbeat at most this old: the freshness admission requires. */
-export const RESOURCE_HEARTBEAT_FRESH_MS = 120_000;
-/** Read-only predicates shared with upgrade eligibility, so it cannot drift from admission. */
-export function hasFreshOnlineHealth(node: { status: string; lastHeartbeatAt: Date | null }, now = Date.now()): boolean {
-  return node.status === 'ONLINE' && Boolean(node.lastHeartbeatAt) && now - node.lastHeartbeatAt!.getTime() <= RESOURCE_HEARTBEAT_FRESH_MS;
-}
 /** Legacy unleased dispatch stays possible only while this holds AND the node has no lease history. */
 export function legacyAdmissionPossible(enrollment: { state: string } | null | undefined, leasesRequested = resourceLeasesRequested()): boolean {
   return !leasesRequested && (!enrollment || enrollment.state === 'legacy');

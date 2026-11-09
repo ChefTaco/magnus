@@ -25,18 +25,18 @@ export class TargetMismatch extends Error {}
 
 export type ParticipantRequest = (path: string, body: unknown) => Promise<Record<string, unknown>>;
 export type WorkDisposition = 'not-started' | 'remote-ended' | 'unknown';
-export interface ManagedWork { workId: string; nodeId: string; finish(disposition?: WorkDisposition): Promise<unknown> }
+export interface ManagedWork { workId: string; nodeId: string; ownerId?: string; finish(disposition?: WorkDisposition): Promise<unknown> }
 
 export function createResourceParticipant(secret: string, request: ParticipantRequest, ownerId: string = randomUUID()) {
   if (!UUID.test(ownerId)) throw new Error('Invalid gateway process incarnation');
   return {
     /** Reserve and start durable work. No SSH side effect may occur until this resolves. */
-    async begin(host: string, expectedNodeId: string, lifetimeMs: number): Promise<ManagedWork> {
+    async begin(host: string, expectedNodeId: string, lifetimeMs: number, managed = false): Promise<ManagedWork> {
       const workId = randomUUID();
       // The API allows at most an hour ahead of its own clock; leave room for clock skew.
       const deadline = Date.now() + Math.min(lifetimeMs, MAX_DEADLINE_MS);
       // Labels the effect as external, so a closed transport can never count as proof its descendants ended.
-      const operationSha256 = createHash('sha256').update(canonicalDrainJson({
+      const operationSha256 = createHash('sha256').update(managed ? JSON.stringify({ domain: 'magnus.managed-terminal-operation.v1', workId, ownerId, host: host.toLowerCase(), kind: KIND }) : canonicalDrainJson({
         domain: 'magnus.dashboard-external-session.v1', host: host.toLowerCase(), workId, ownerId, kind: KIND,
         effectBoundary: 'external-unverified',
       })).digest('hex');
@@ -67,6 +67,7 @@ export function createResourceParticipant(secret: string, request: ParticipantRe
       return {
         workId,
         nodeId: record['nodeId'],
+        ownerId,
         finish(disposition = 'unknown') {
           const evidenceSha256 = createHash('sha256').update(canonicalDrainJson({ workId, ownerId, disposition, proof: 'transport-observation-only' })).digest('hex');
           // One immutable settlement per handle. An ambiguous failure stays durable remotely.

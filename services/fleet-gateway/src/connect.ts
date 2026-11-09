@@ -6,9 +6,10 @@ import { TargetMismatch, type ManagedWork, type ResourceParticipant } from './pa
 import type { OpenRequest } from './sessions.js';
 import type { ShellChannel, ShellConnector } from './ssh.js';
 import { resolveSshTarget, lookupAddresses, type LookupAddresses } from './target.js';
+import { managedShell } from './managed-shell.js';
 
 export interface ConnectDependencies {
-  api: Pick<ControlApi, 'resolveNode'>;
+  api: Pick<ControlApi, 'resolveNode'> & Partial<Pick<ControlApi, 'participant'>>;
   knownHosts: KnownHosts;
   participant: Pick<ResourceParticipant, 'begin'>;
   shell: ShellConnector;
@@ -20,13 +21,17 @@ export function createConnect({ api, knownHosts, participant, shell, lookup = lo
     const target = await resolveSshTarget(request.nodeId, api, knownHosts, lookup);
     let work: ManagedWork;
     try {
-      work = await participant.begin(target.host, target.nodeId, lifetimeMs);
+      work = await participant.begin(target.host, target.nodeId, lifetimeMs, target.managedTerminal === true);
     } catch (error) {
       if (error instanceof TargetMismatch) throw new GatewayError('NODE_TARGET_CHANGED');
       if (error instanceof ParticipantRefused) throw new GatewayError('RESOURCE_ADMISSION_REFUSED', error.upstreamCode ?? undefined);
       throw new GatewayError('CONTROL_API_UNAVAILABLE');
     }
     try {
+      if (target.managedTerminal) {
+        if (!work.ownerId || !api.participant) throw new GatewayError('RESOURCE_ADMISSION_REFUSED');
+        return { channel: await managedShell(work.workId, work.ownerId, request.size, api.participant.bind(api)), work };
+      }
       return { channel: await shell(target, request.size), work };
     } catch (error) {
       // The connection may have reached the node, so this stays "unknown" for a reviewed reconcile.

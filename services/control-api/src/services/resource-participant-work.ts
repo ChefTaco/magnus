@@ -24,6 +24,8 @@ import {
 } from '../schemas/node-session-receipt.js';
 import { RESULT_SIGNING_PREVIOUS_SECRET, RESULT_SIGNING_SECRET } from '../utils/env.js';
 import { COMMAND_COMPLETION_REGISTRY, COMMAND_COMPLETION_REGISTRY_SHA256 } from '../security/command-completion-registry.js';
+import { isManagedTerminalWork } from './managed-terminal.js';
+import { hasFreshOnlineHealth } from './resource-node-health.js';
 export interface ReserveInput { host: string; workId: string; ownerId: string; kind: ParticipantWorkKind; operationSha256: string; deadline: number }
 export interface StartInput { ownerId: string; epoch: number; barrierId: string | null; operationSha256: string; fence: string; deadline: number; requestSha256: string; targetHost?: string }
 export interface FinishInput { ownerId: string; disposition: 'not-started' | 'remote-ended' | 'unknown'; evidenceSha256: string }
@@ -55,10 +57,16 @@ function participantWork(participant: 'api' | 'dashboard') {
       const targets = await tx.node.findMany({ where: { OR: [{ hostname: input.host.toLowerCase() }, { ipAddress: input.host.toLowerCase() }] }, select: { id: true }, take: 2 });
       if (targets.length !== 1 || targets[0]?.id !== nodeId) fail('RESOURCE_TARGET_INVALID', 'Target changed or became ambiguous');
       const history = await tx.commandResourceLease.findFirst({ where: { nodeId }, select: { id: true } });
+      const managedTerminal = participant === 'dashboard' && row?.state === 'enrolled'
+        && isManagedTerminalWork({ ...input, nodeFqdn: node.hostname });
+      if (managedTerminal && !hasFreshOnlineHealth(node)) fail('RESOURCE_TARGET_INVALID', 'Fresh online node health required');
       if (row?.state === 'draining' || ((process.env['MAGNUS_RESOURCE_LEASES_ENABLED'] === 'true' || history) && row?.state !== 'enrolled'))
         fail('RESOURCE_DRAIN_REQUIRED', 'New sessions are barred during enrollment');
       // Enrolled SSH still needs descendant settlement/supervision integration.
-      if (row?.state === 'enrolled') fail('RESOURCE_SSH_UNAVAILABLE', 'Enrolled SSH descendants require managed completion evidence');
+      if (row?.state === 'enrolled' && !managedTerminal) fail('RESOURCE_SSH_UNAVAILABLE', 'Enrolled SSH descendants require managed completion evidence');
+      if (managedTerminal && (await tx.commandResourceLease.count({ where: { nodeId, state: { in: ['reserved', 'running', 'unknown'] } } })
+        || await tx.resourceParticipantWork.count({ where: { nodeId, state: { in: ['reserved', 'running', 'unknown'] }, workId: { not: input.workId } } })))
+        fail('RESOURCE_WORK_CONFLICT', 'The node already has an active or uncertain owner');
       const existing = await tx.resourceParticipantWork.findUnique({ where: { workId: input.workId } });
       if (existing) {
         if (existing.participant !== participant || existing.nodeId !== nodeId
@@ -93,8 +101,11 @@ function participantWork(participant: 'api' | 'dashboard') {
       const targets = input.targetHost === undefined ? null : await tx.node.findMany({ where: { OR: [
         { hostname: input.targetHost.toLowerCase() }, { ipAddress: input.targetHost.toLowerCase() }] }, select: { id: true }, take: 2 });
       const admissionFenced = Boolean(await tx.admissionFence.findUnique({ where: { nodeId: node.id }, select: { nodeId: true } }));
+      const managedTerminal = participant === 'dashboard' && row?.state === 'enrolled' && isManagedTerminalWork(work);
       if (admissionFenced || (targets && (targets.length !== 1 || targets[0]?.id !== node.id))
-        || row?.state === 'draining' || row?.state === 'enrolled' || history || process.env['MAGNUS_RESOURCE_LEASES_ENABLED'] === 'true'
+        || row?.state === 'draining' || (!managedTerminal && (row?.state === 'enrolled' || history || process.env['MAGNUS_RESOURCE_LEASES_ENABLED'] === 'true'))
+        || (managedTerminal && (await tx.commandResourceLease.count({ where: { nodeId: node.id, state: { in: ['reserved', 'running', 'unknown'] } } })
+          || await tx.resourceParticipantWork.count({ where: { nodeId: node.id, workId: { not: workId }, state: { in: ['reserved', 'running', 'unknown'] } } })))
         || input.epoch !== work.epoch || input.barrierId !== work.barrierId
         || input.operationSha256 !== work.operationSha256 || input.fence !== work.fence?.toString()
         || input.deadline !== work.deadline?.getTime() || input.requestSha256 !== work.requestSha256

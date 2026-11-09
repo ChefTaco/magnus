@@ -1297,6 +1297,9 @@ export const cronListQuerySchema = z.object({
 
 // services/control-api/prisma/schema.prisma (args is a JSON-encoded string)
 export const cronJobSchema = z.object({
+  /** Public finite scheduler metadata; no specification, secrets or signed authority. */
+  managed: z.object({ revision: z.number().int().positive(), enabled: z.boolean(),
+    expiresAt: z.iso.datetime(), timezone: z.literal('UTC') }).nullable().optional(),
   id: z.string(),
   nodeId: z.string(),
   name: z.string(),

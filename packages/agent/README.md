@@ -305,3 +305,9 @@ local image ID, on matching Linux architecture. The image is never started.
 The archive contains public runtime files and licenses, a native launcher and
 SHA-256 metadata. Review privacy and sign the release matrix before publication;
 artifact construction does not authorize deployment.
+
+Managed web terminals require explicit `MAGNUS_AGENT_MANAGED_TERMINAL_USER` and
+`MAGNUS_EXECUTION_SUPERVISOR_ENABLED=true`. Use a dedicated non-root account without
+supplementary groups. Each PTY runs in a bounded systemd cgroup with a read-only host
+filesystem, private temporary files, no privilege escalation and no user-manager IPC.
+The signed receipt proves that group stopped; it does not undo external network effects.

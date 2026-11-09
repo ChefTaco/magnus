@@ -47,6 +47,7 @@ export interface SshTarget {
   address: string;
   port: number;
   fingerprints: string[];
+  managedTerminal?: boolean;
 }
 
 export type LookupAddresses = (host: string) => Promise<string[]>;
@@ -100,9 +101,10 @@ export async function resolveSshTarget(
   if (!sameHost(record.host, node.hostname) && !sameHost(record.host, node.ipAddress)) throw new GatewayError('NODE_TARGET_CHANGED');
   return {
     nodeId,
-    host: record.host,
+    host: node.managedTerminal ? node.hostname : record.host,
     address: await dialableAddress(record.host, lookup),
     port: record.port,
     fingerprints: record.keys.map((key) => key.fingerprint),
+    ...(node.managedTerminal ? { managedTerminal: true } : {}),
   };
 }

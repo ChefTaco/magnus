@@ -130,6 +130,11 @@ export function configurationErrors(): string[] {
     errors.push('MAGNUS_EXECUTION_SUPERVISOR_ENABLED=true requires MAGNUS_AGENT_PRIVILEGED=true');
   }
 
+  const terminalUser = process.env['MAGNUS_AGENT_MANAGED_TERMINAL_USER'];
+  if (terminalUser && (!/^[a-z_][a-z0-9_-]{0,31}$/.test(terminalUser) || !agentPrivileged() || !MAGNUS_EXECUTION_SUPERVISOR_ENABLED)) {
+    errors.push('MAGNUS_AGENT_MANAGED_TERMINAL_USER requires a valid restricted account and privileged execution supervision');
+  }
+
   try { ardentPackageNames(); } catch (error: unknown) {
     errors.push(error instanceof Error ? error.message : 'MAGNUS_AGENT_ARDENT_PACKAGES is invalid');
   }

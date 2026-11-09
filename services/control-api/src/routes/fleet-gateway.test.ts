@@ -4,8 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { errorHandler } from '../middleware/error-handler.js';
 import type { AppVariables } from '../types/index.js';
 
-const fixture = vi.hoisted(() => ({ findUnique: vi.fn(), audit: vi.fn() }));
-vi.mock('../db/index.js', () => ({ getDb: () => ({ node: { findUnique: fixture.findUnique } }) }));
+const fixture = vi.hoisted(() => ({ findUnique: vi.fn(), audit: vi.fn(), enrollment: vi.fn() }));
+vi.mock('../db/index.js', () => ({ getDb: () => ({ node: { findUnique: fixture.findUnique }, resourceEnrollment: { findUnique: fixture.enrollment } }) }));
 vi.mock('../services/audit-service.js', () => ({ logAuditEvent: fixture.audit }));
 
 const { fleetGatewayRouter } = await import('./fleet-gateway.js');
@@ -26,6 +26,7 @@ describe('fleet gateway machine routes', () => {
   beforeEach(() => {
     vi.stubEnv('FLEET_GATEWAY_TOKEN_SHA256', createHash('sha256').update(TOKEN).digest('hex'));
     fixture.findUnique.mockReset();
+    fixture.enrollment.mockReset().mockResolvedValue(null);
     fixture.audit.mockReset().mockResolvedValue(undefined);
   });
   afterEach(() => vi.unstubAllEnvs());
@@ -54,6 +55,16 @@ describe('fleet gateway machine routes', () => {
     expect(response.status).toBe(200);
     expect(response.headers.get('cache-control')).toBe('no-store');
     expect(await response.json()).toEqual({ success: true, data: { nodeId: 'node-1', hostname: 'node-1.example.com', ipAddress: '10.0.0.5', status: 'ONLINE' } });
+  });
+
+  it('advertises managed terminals only after protocol negotiation and completed enrollment', async () => {
+    fixture.findUnique.mockResolvedValue({ id: 'node-1', hostname: 'node-1.example.com', ipAddress: '192.0.2.10', status: 'ONLINE' });
+    fixture.enrollment.mockResolvedValue({ state: 'enrolled' });
+    const next = await post('/target', { nodeId: 'node-1', managedTerminalProtocol: 1 });
+    expect((await next.json()).data.managedTerminal).toBe(true);
+    fixture.enrollment.mockResolvedValue({ state: 'draining' });
+    expect((await (await post('/target', { nodeId: 'node-1', managedTerminalProtocol: 1 })).json()).data.managedTerminal).toBe(false);
+    expect((await (await post('/target', { nodeId: 'node-1' })).json()).data).not.toHaveProperty('managedTerminal');
   });
 
   it('answers 404 for an unknown node and refuses a malformed id or extra field', async () => {

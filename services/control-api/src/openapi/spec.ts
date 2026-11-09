@@ -1,5 +1,6 @@
 import { skillJobRequest } from '../routes/hiveskills.js';
 import { z as zSchema } from 'zod';
+import { managedTerminalActionSchema, managedTerminalAuthoritySchema, managedTerminalReceiptSchema } from '@hivemagnus/magnus-contracts';
 import { dashboardReserveSchema, dashboardStartSchema, dashboardFinishSchema, apiDrainAttestationSchema,
   schedulerBoundaryAttestationSchema } from '../services/resource-enrollment.js';
 import { ardentScopeActivationSchema } from '../services/ardent-scope-enrollment.js';
@@ -311,6 +312,8 @@ const componentSchemas: Record<string, JsonSchema> = {
   CronJob: {
     type: 'object',
     properties: {
+      managed: { type: 'object', nullable: true, properties: { revision: { type: 'integer', minimum: 1 },
+        enabled: { type: 'boolean' }, expiresAt: { type: 'string', format: 'date-time' }, timezone: { type: 'string', enum: ['UTC'] } } },
       id: { type: 'string' },
       nodeId: { type: 'string' },
       name: { type: 'string' },
@@ -1015,6 +1018,23 @@ const paths: Record<string, Record<string, unknown>> = {
       description: 'Durable enrollment coordination only; never execution approval. Responses are uncached. Participant credentials are distinct from operator and node credentials.',
       requestBody: { required: true, content: { 'application/json': { schema: zod(zSchema.object({ nodeFqdn: zSchema.string().min(1).max(253), nonce: zSchema.string().guid() }).strict()) } } },
       responses: { 200: success('Authoritative durable status'), 400: err400, 401: err401, 403: err403, 404: err404, 409: err409, 503: { description: 'Dedicated participant configuration unavailable' } } },
+  },
+  '/resource-leases/enrollment/terminal-claim': {
+    post: { tags: ['Commands'], summary: 'Node credential: consume the exact full-node terminal grant once', security: nodeTokenAuth,
+      requestBody: { required: true, content: { 'application/json': { schema: zod(zSchema.object({ authority: managedTerminalAuthoritySchema, nonce: zSchema.string().guid() }).strict()) } } },
+      responses: { 200: success('Single-use terminal authority'), 400: err400, 401: err401, 409: err409 } },
+  },
+  '/resource-leases/enrollment/terminal-receipt': {
+    post: { tags: ['Commands'], summary: 'Node credential: settle a stopped restricted terminal process group', security: nodeTokenAuth,
+      requestBody: { required: true, content: { 'application/json': { schema: zod(managedTerminalReceiptSchema) } } },
+      responses: { 200: success('Original terminal owner released'), 400: err400, 401: err401, 409: err409 } },
+  },
+  '/resource-leases/enrollment/dashboard/terminal/{workId}': {
+    post: { tags: ['Commands'], summary: 'Gateway credential: owner-bound managed terminal I/O relay', security: [{ resourceDrainKey: [] }],
+      description: 'The target and node credential come only from inventory. Terminal bytes remain in memory and are never audited or stored in receipts.',
+      parameters: [{ name: 'workId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+      requestBody: { required: true, content: { 'application/json': { schema: zod(zSchema.object({ ownerId: zSchema.string().guid(), operation: managedTerminalActionSchema }).strict()) } } },
+      responses: { 200: success('Bounded terminal bytes or lifecycle metadata'), 400: err400, 401: err401, 409: err409 } },
   },
   '/resource-leases/transfer/authority-snapshot': {
     post: { tags: ['Commands'], summary: 'Node credential: read-only lease and writer inventory', security: nodeTokenAuth,

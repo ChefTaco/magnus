@@ -28,14 +28,17 @@ const nodeId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/);
 
 /** POST /fleet-gateway/target: inventory facts for one node. The gateway applies its own host-key approval. */
 fleetGatewayRouter.post('/target', async (c) => {
-  const body = await parseBody(c, z.object({ nodeId }).strict());
+  const body = await parseBody(c, z.object({ nodeId, managedTerminalProtocol: z.literal(1).optional() }).strict());
   const node = await getDb().node.findUnique({
     where: { id: body.nodeId },
     select: { id: true, hostname: true, ipAddress: true, status: true },
   });
   if (!node) throw new HttpError(404, 'NODE_NOT_FOUND', 'Node not found');
+  const enrollment = body.managedTerminalProtocol === 1
+    ? await getDb().resourceEnrollment.findUnique({ where: { nodeId: node.id } }) : null;
   c.header('Cache-Control', 'no-store');
-  return c.json({ success: true, data: { nodeId: node.id, hostname: node.hostname, ipAddress: node.ipAddress, status: node.status } });
+  return c.json({ success: true, data: { nodeId: node.id, hostname: node.hostname, ipAddress: node.ipAddress,
+    status: node.status, ...(body.managedTerminalProtocol === 1 ? { managedTerminal: enrollment?.state === 'enrolled' } : {}) } });
 });
 
 const auditSchema = z.object({

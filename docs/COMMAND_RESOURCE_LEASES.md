@@ -187,9 +187,15 @@ Fleet gateway terminals and the Hermes dashboard proxy reserve durable work and 
 start grant before they open an SSH connection. A crash, disconnect or shell exit leaves that work
 `unknown`, because processes started in the session may still be running.
 
-On an enrolled node the agent denies, before dispatch, the operations that cannot yet prove their
+On an enrolled node the agent denies, before dispatch, operations that cannot yet prove their
 outcome: Hermes Agent lifecycle and configuration, Codex login, agent self-update,
-system updates, user management, server-side SSH deployment helpers and console terminals.
+system updates, user management and server-side SSH deployment helpers. Legacy raw SSH terminals
+remain refused. Managed terminals use an explicit restricted account and a bounded systemd PTY,
+with a single-use node claim and a signed process-group completion receipt. They cannot escalate
+privileges, write the host filesystem, or use the user-manager IPC boundary. Output stays in
+bounded memory buffers; neither input nor output enters audit records, shell history or receipts.
+A gateway disconnect alone still never releases work. Agent restart reconciles original groups,
+without replay. Missing or changed supervisor evidence retains the original owner.
 
 Codex updates have a separate finite boundary: a privileged agent with the execution supervisor
 enabled runs the complete updater and final installation inspection inside one durable systemd

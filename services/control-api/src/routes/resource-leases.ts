@@ -26,6 +26,8 @@ import { nodeSessionReceiptSchema } from '../schemas/node-session-receipt.js';
 import { transferAuthoritySnapshot } from '../services/transfer-authority-snapshot.js';
 import { assertNodeAdmissionOpen, closeNodeAdmission, inspectNodeAdmission, releaseNodeAdmission, admissionFenceRequest } from '../services/admission-fence.js';
 import { parseBody } from '../utils/validate.js';
+import { managedTerminalActionSchema, managedTerminalAuthoritySchema, managedTerminalReceiptSchema } from '@hivemagnus/magnus-contracts';
+import { claimManagedTerminal, relayManagedTerminal, settleManagedTerminal } from '../services/managed-terminal.js';
 function nodeCredential(token: string): void {
   if (!token || !NODE_MANAGER_SECRET || !verifyWithRotation('NODE_MANAGER_SECRET', NODE_MANAGER_SECRET, token))
     throw new HttpError(401, 'UNAUTHORIZED', 'Node credential required');
@@ -37,6 +39,29 @@ function workId(value: string | undefined): string {
 }
 export const resourceLeasesRouter = new Hono();
 resourceLeasesRouter.use('*', async (c, next) => { c.header('Cache-Control', 'no-store'); await next(); });
+resourceLeasesRouter.post('/enrollment/terminal-claim', async c => {
+  nodeCredential(c.req.header('x-node-token') ?? '');
+  const input = await parseBody(c, z.object({ authority: managedTerminalAuthoritySchema, nonce: z.string().guid() }).strict());
+  const data = await claimManagedTerminal(input.authority, input.nonce);
+  await logAuditEvent({ action: 'resource.terminal.claim', actorType: 'agent', actorId: 'node:' + input.authority.nodeId,
+    targetType: 'resource-participant-work', targetId: data.workId,
+    details: { nodeId: data.nodeId, ownerId: data.ownerId, epoch: data.epoch } });
+  return c.json({ success: true, data });
+});
+resourceLeasesRouter.post('/enrollment/terminal-receipt', async c => {
+  nodeCredential(c.req.header('x-node-token') ?? '');
+  const input = await parseBody(c, managedTerminalReceiptSchema);
+  const data = await settleManagedTerminal(input);
+  await logAuditEvent({ action: 'resource.terminal.complete', actorType: 'agent', actorId: 'node:' + input.nodeId,
+    targetType: 'resource-participant-work', targetId: data.workId,
+    details: { nodeId: input.nodeId, ownerId: input.ownerId, boundary: input.boundary, groupEmpty: true } });
+  return c.json({ success: true, data });
+});
+resourceLeasesRouter.post('/enrollment/dashboard/terminal/:workId', async c => {
+  verifyDashboardCredential(c.req.header('x-resource-drain-key') ?? '');
+  const input = await parseBody(c, z.object({ ownerId: z.string().guid(), operation: managedTerminalActionSchema }).strict());
+  return c.json({ success: true, data: await relayManagedTerminal(workId(c.req.param('workId')), input.ownerId, input.operation) });
+});
 resourceLeasesRouter.post('/transfer/authority-snapshot', async c => {
   nodeCredential(c.req.header('x-node-token') ?? '');
   const input = await parseBody(c, z.object({ nodeFqdn: z.string().min(1).max(253), nonce: z.string().guid() }).strict());

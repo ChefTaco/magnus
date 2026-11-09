@@ -23,6 +23,8 @@ export type AuditAction =
   | 'resource.enrollment.api-attest'
   | 'resource.enrollment.scheduler-boundary-attest'
   | 'resource.enrollment.complete'
+  | 'resource.terminal.claim'
+  | 'resource.terminal.complete'
   | 'resource.enrollment.ardent-scope.activate'
   | 'resource.admission.close'
   | 'resource.admission.release'

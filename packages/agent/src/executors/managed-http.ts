@@ -62,7 +62,7 @@ export const managedMutationGuard: MiddlewareHandler = async (c, next) => {
   // Hermes state accepts a caller-selected executable and launches inspection subprocesses.
   const executionBearingRead = path === '/hermes/state';
   if ((!executionBearingRead && ['GET', 'HEAD', 'OPTIONS'].includes(c.req.method)) || managedExecution.getStore()) return next();
-  if (path === '/commands/managed-http' || path === '/commands/enrollment-drain' || path === '/cron/enrollment-drain'
+  if (path === '/terminal/session' || path === '/commands/managed-http' || path === '/commands/enrollment-drain' || path === '/cron/enrollment-drain'
     || path === '/cron/source-reconciliation' || path === '/cron/enrollment-stage'
     || /^\/commands\/receipts\/[a-zA-Z0-9._-]+\/reconcile$/.test(path)) return next();
   const encoded = c.req.header(MANAGED_CLAIM_HEADER);

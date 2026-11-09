@@ -10,7 +10,7 @@ import { ExecutionIntent, SupervisorInput, WorkerStarted, WorkerResult, hash, pr
 import { COMMAND_COMPLETION_REGISTRY, COMMAND_COMPLETION_REGISTRY_SHA256, commandCompletionDescriptor } from '../security/command-completion-registry.js';
 export type { SupervisorInput } from './execution-supervisor-state.js';
 const exec=promisify(execFile);
-const UNIT_FIELDS=['LoadState','ActiveState','SubState','InvocationID','Description','ControlGroup','ExecMainCode','ExecMainStatus','Result','KillMode','ExitType','RemainAfterExit','Restart'];
+const UNIT_FIELDS=['LoadState','ActiveState','SubState','InvocationID','Description','ControlGroup','ExecMainCode','ExecMainStatus','Result','KillMode','ExitType','RemainAfterExit','Restart','User','Group','NoNewPrivileges','ProtectSystem','ProtectHome','PrivateTmp'];
 function unitDescription(intent:ExecutionIntent):string{return 'Magnus execution '+intent.nonce+' '+intent.requestSha256
   +(intent.completionOwner?' '+hash(JSON.stringify(intent.completionOwner)):'');}
 export interface UnitObservation { [property:string]:string }

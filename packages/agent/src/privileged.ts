@@ -7,10 +7,11 @@
 import type { MiddlewareHandler } from 'hono';
 
 export type PrivilegedFeature = 'cron' | 'users' | 'system-updates' | 'docker-group-remediation'
-  | 'hiveskills-sync' | 'ardent-management' | 'credential-renewal' | 'execution-supervisor' | 'security-response' | 'codex-update';
+  | 'hiveskills-sync' | 'ardent-management' | 'credential-renewal' | 'execution-supervisor' | 'security-response' | 'codex-update' | 'managed-terminal';
 
 /** Features that need root, with the routes or loops they cover. */
 export const PRIVILEGED_FEATURES: ReadonlyArray<{ feature: PrivilegedFeature; covers: string }> = [
+  { feature: 'managed-terminal', covers: '/api/v1/terminal/session (restricted systemd PTYs)' },
   { feature: 'hiveskills-sync', covers: 'POST /api/v1/hiveskills/sync when changing owner or running as root; own-profile non-root synchronization remains available' },
   { feature: 'cron', covers: '/api/v1/cron/* (system and managed crontab, scheduler inventory and drain)' },
   { feature: 'users', covers: '/api/v1/users/* (local account provisioning and passwords)' },

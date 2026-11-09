@@ -102,15 +102,24 @@ describe('Magnus API client', () => {
   const api = (send: ControlApiTransport) => createControlApi(send, 'gateway-token', 'drain-key');
   const node = { nodeId: 'n', hostname: 'h.example.com', ipAddress: '10.0.0.1', status: 'ONLINE' };
 
+  it('retries only the read-only target lookup against older strict APIs', async () => {
+    const calls: unknown[] = [];
+    const node = { nodeId: 'n', hostname: 'node.example.com', ipAddress: '192.0.2.10', status: 'ONLINE' };
+    const result = await api(async (_path, _credential, body) => {
+      calls.push(body); return calls.length === 1 ? { status: 400, body: {} } : { status: 200, body: { success: true, data: node } };
+    }).resolveNode('n');
+    expect(result).toEqual(node); expect(calls).toEqual([{ nodeId: 'n', managedTerminalProtocol: 1 }, { nodeId: 'n' }]);
+  });
+
   it('refuses anything but plain verified HTTPS', () => {
     expect(() => httpsTransport('http://magnus.example.com', undefined)).toThrow('HTTPS');
     expect(() => httpsTransport('https://u:p@magnus.example.com', undefined)).toThrow('HTTPS');
   });
 
-  it('uses a fixed path and the gateway credential, sending only the node id', async () => {
+  it('uses a fixed path and the gateway credential, negotiating the managed terminal protocol', async () => {
     let seen: unknown[] = [];
     await api(async (...args) => { seen = args; return { status: 200, body: { success: true, data: node } }; }).resolveNode('n');
-    expect(seen).toEqual(['/api/v1/fleet-gateway/target', { header: 'x-fleet-gateway-token', value: 'gateway-token' }, { nodeId: 'n' }]);
+    expect(seen).toEqual(['/api/v1/fleet-gateway/target', { header: 'x-fleet-gateway-token', value: 'gateway-token' }, { nodeId: 'n', managedTerminalProtocol: 1 }]);
   });
 
   it('treats 404 as unknown and everything else as unavailable, never as a target', async () => {

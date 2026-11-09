@@ -91,8 +91,14 @@ cronRouter.get('/', async (c) => {
     include: { node: { select: { name: true } } },
   });
 
+  const definitions = await db.managedCronDefinition.findMany({ where: { cronJobId: { in: jobs.map(job => job.id) } },
+    select: { cronJobId: true, revision: true, enabled: true, expiresAt: true } });
   const viewer = getUser(c).role;
-  return c.json({ success: true, data: jobs.map((job) => cronJobForRole(job, viewer)) });
+  return c.json({ success: true, data: jobs.map(job => {
+    const definition = definitions.find(value => value.cronJobId === job.id);
+    return { ...cronJobForRole(job, viewer), managed: definition ? { revision: definition.revision,
+      enabled: definition.enabled, expiresAt: definition.expiresAt.toISOString(), timezone: 'UTC' } : null };
+  }) });
 });
 
 // ── Get single cron job ──
@@ -117,6 +123,8 @@ cronRouter.post('/', requireRole('ADMIN', 'OPERATOR'), async (c) => {
   if (!node) throw new HttpError(404, 'NOT_FOUND', 'Node not found');
   const mode = await cronMutationMode(node.id);
   if (mode === 'managed' && !body.managed) managedRequired();
+  if (mode === 'legacy' && body.managed) throw new HttpError(409, 'MANAGED_CRON_ENROLLMENT_REQUIRED',
+    'Enroll the node before creating a finite managed schedule');
 
   // Claim after validation/preview/preflight so a rejected retry is not a duplicate.
   const claim = await enforceIdempotencyFromHeader(c);

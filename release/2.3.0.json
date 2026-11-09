@@ -1,0 +1,19 @@
+{
+  "summary": "Managed web terminals for fully enrolled nodes, with a restricted systemd PTY, single-use admission and signed process-group cleanup. Full enrollment continues to support node commands and managed cron without accepting raw SSH disconnects as completion evidence.",
+  "breaking": false,
+  "minUpgradeFrom": "1.0.0",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [
+    {
+      "name": "MAGNUS_AGENT_MANAGED_TERMINAL_USER",
+      "component": "agent",
+      "secret": false,
+      "description": "Dedicated non-root account without supplementary groups for restricted managed terminals. Requires privileged mode, the execution supervisor and full node enrollment; unset keeps this feature disabled."
+    }
+  ],
+  "removedEnv": [],
+  "migrations": [
+    "20261109140000_managed_terminal_claim",
+    "20261109143000_managed_terminal_claim_guard"
+  ]
+}

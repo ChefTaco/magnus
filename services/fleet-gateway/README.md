@@ -4,6 +4,18 @@ The web terminal for the Magnus browser console. A separate small service holds 
 key, so neither the browser nor the Magnus API process ever does. It speaks HTTP streaming with a
 bearer token: no WebSockets and no tickets.
 
+On a fully enrolled node, the gateway uses the agent's supervised terminal protocol through a
+fixed Control API relay. The account is explicit (`MAGNUS_AGENT_MANAGED_TERMINAL_USER`), non-root
+and has no supplementary groups. The shell runs in a time-bounded systemd cgroup, with a read-only
+host filesystem, private temporary files, no privilege escalation or user-manager IPC. Closing,
+expiry or agent shutdown stops the entire group before a signed node receipt releases ownership.
+Input, output and shell history are not persisted. A lost proof retains ownership; it never replays
+a shell. The receipt proves local process cleanup, not reversal of external network side effects.
+While a terminal owns a node, exclusive commands and managed cron wait for its verified completion.
+
+Protocol negotiation preserves older API/gateway combinations and legacy SSH terminals. The API
+still never holds the gateway's SSH key, and browsers still name only a node id and PTY size.
+
 Opening a terminal gives an authenticated browser user a shell on a fleet node, so everything here
 fails closed.
 
@@ -15,7 +27,7 @@ fails closed.
 | Authority | Exactly one account link with role `ADMIN`, and the `magnus:terminal` permission. Otherwise `403 FORBIDDEN`. |
 | Fresh verification | To open, `auth_time` within 5 minutes. Otherwise `403 {"error":"STEP_UP_REQUIRED"}`. Missing, malformed or future values count as stale. |
 | Destination | The client sends `nodeId` and PTY size. The gateway asks the API what that node is, then requires an operator-approved record naming the same host. Request bodies are strict, so a `host`, `port`, `username` or `command` is a `400`. Loopback, link-local, multicast and metadata addresses are never dialled. DNS is resolved once and the validated address is what gets dialled. |
-| Host keys | Strict pinning from an approved store the server only reads. Unknown refuses before connecting; changed refuses during the handshake. Nothing is ever learned from a connection. |
+| Host keys | Legacy SSH uses strict pinning from an approved store the server only reads. Unknown refuses before connecting; changed refuses during the handshake. Nothing is ever learned from a connection. |
 | Ownership | A session belongs to one issuer, subject and Oathweave session. Anyone else gets the same `404` as an unknown id, on every verb. |
 | Revocation | Re-checked every 5 seconds, the same cadence as event streams. With the verifier's 10-second cache, logout ends the shell within 15 seconds. Undelivered output is discarded. |
 | Time limits | Token expiry, 15 minutes without input, 60 minutes in total, and 60 seconds with no reader attached. Output does not count as activity. |

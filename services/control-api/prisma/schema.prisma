@@ -2200,6 +2200,8 @@ model ResourceParticipantWork {
   reconciliationJson String?
   nodeSessionReceiptSha256 String? @unique
   nodeSessionReceiptJson String?
+  /// A managed terminal start grant is consumed once by the target agent.
+  managedTerminalClaimedAt DateTime?
   node Node @relation(fields: [nodeId], references: [id], onDelete: Restrict)
   @@index([nodeId, participant, state])
   @@map("resource_participant_work")

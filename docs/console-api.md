@@ -11,7 +11,7 @@ moved without updating it.
 | Class | Meaning | Rows | At the ingress |
 |---|---|---|---|
 | `browser` | A person's console drives it with a user token | 144 | Allow the exact method and path |
-| `machine` | Agents, services and integrations, with their own credentials | 74 | Deny |
+| `machine` | Agents, services and integrations, with their own credentials | 77 | Deny |
 | `exclude` | Reachable with a user token, but no console needs it, or it was written for a server-side caller | 142 | Deny until a feature needs it and it is reviewed |
 | `retired` | Always answers 404 or 410 | 64 | Deny |
 
@@ -456,6 +456,9 @@ Each row is a non-browser route that a broader `browser` pattern also matches. D
 | POST | `/api/v1/resource-leases/enrollment/dashboard/work/:workId/finish` | machine | `service-secret:resource-drain` | Resource-lease enrollment, machine-only by instruction. |
 | POST | `/api/v1/resource-leases/enrollment/dashboard/work/:workId/start` | machine | `service-secret:resource-drain` | Resource-lease enrollment, machine-only by instruction. |
 | POST | `/api/v1/resource-leases/enrollment/dashboard/work/reserve` | machine | `service-secret:resource-drain` | Resource-lease enrollment, machine-only by instruction. |
+| POST | `/api/v1/resource-leases/enrollment/dashboard/terminal/:workId` | machine | `service-secret:resource-drain` | Owner-bound managed terminal relay; never public browser access. |
+| POST | `/api/v1/resource-leases/enrollment/terminal-claim` | machine | `node-token` | Consume an exact managed terminal start once. |
+| POST | `/api/v1/resource-leases/enrollment/terminal-receipt` | machine | `node-token` | Signed proof that the original restricted terminal group ended. |
 | POST | `/api/v1/resource-leases/enrollment/node-status` | machine | `node-token` | Resource-lease enrollment, machine-only by instruction. |
 | POST | `/api/v1/resource-leases/enrollment/scheduler-status` | machine | `node-token` | Resource-lease enrollment, machine-only by instruction. |
 | GET | `/api/v1/resource-leases/enrollment/work/:workId/historical` | machine | `user:ADMIN` | Resource-lease enrollment, machine-only by instruction. |

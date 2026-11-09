@@ -5,6 +5,40 @@ All notable changes to this project are documented in this file. The format is b
 [Semantic Versioning](https://semver.org/).
 
 
+## [2.3.0] - 2026-11-09
+
+### Added
+
+- Fully enrolled nodes support web terminals through an optional, explicitly configured restricted
+  account. The node agent supervises each PTY in its own systemd process group, supports resize,
+  and stops descendants before signing completion. Input and output stay in memory.
+- The fleet gateway negotiates the managed terminal protocol while preserving target lookup
+  compatibility with older servers. Node-wide commands and managed cron keep their existing
+  exclusive ownership and supervised completion requirements.
+
+- Cron list responses include public revision, enabled state and expiry metadata for finite
+  schedule management. Explicit managed schedules are refused on unenrolled legacy nodes.
+
+### Security
+
+- Terminal admission is single use and bound to the enrolled node, owner, operation, deadline and
+  fence. A disconnect cannot release node ownership; only verified node cleanup can do so.
+- Terminal processes have no privileges, a read-only host filesystem and home directories, private
+  temporary storage, and no access to local scheduling or user-manager IPC. Process cleanup does
+  not undo network side effects. Raw SSH terminal completion remains unproven on enrolled nodes.
+
+### New environment variables
+
+- `MAGNUS_AGENT_MANAGED_TERMINAL_USER`: dedicated non-root account for managed terminals.
+  Optional; requires privileged mode, the execution supervisor and full node enrollment.
+
+### Migration impact
+
+- Two additive migrations add a nullable claim timestamp and an immutable-claim constraint and
+  trigger to participant work. Existing history is retained. Enable the optional terminal account
+  only after installing the updated agent and reviewing full node enrollment.
+
+
 ## [2.2.3] - 2026-11-09
 
 ### Fixed

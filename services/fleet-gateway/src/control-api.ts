@@ -54,6 +54,7 @@ const nodeSchema = z.object({
   hostname: z.string().min(1).max(253),
   ipAddress: z.string().min(1).max(64),
   status: z.string().min(1).max(32),
+  managedTerminal: z.boolean().optional(),
 }).strict();
 
 export type NodeRecord = z.infer<typeof nodeSchema>;
@@ -102,7 +103,9 @@ export function createControlApi(send: ControlApiTransport, gatewayToken: string
 
   return {
     async resolveNode(nodeId) {
-      const response = await send('/api/v1/fleet-gateway/target', gateway, { nodeId }).catch(() => { throw unavailable(); });
+      let response = await send('/api/v1/fleet-gateway/target', gateway, { nodeId, managedTerminalProtocol: 1 }).catch(() => { throw unavailable(); });
+      // Older APIs strictly accept only nodeId. This retry is read-only, never a shell dispatch.
+      if (response.status === 400) response = await send('/api/v1/fleet-gateway/target', gateway, { nodeId }).catch(() => { throw unavailable(); });
       if (response.status === 404) return null;
       if (response.status !== 200) throw unavailable();
       const parsed = envelope.safeParse(response.body);

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+export * from './managed-terminal.js';
 
 export const dependencyHealthItemSchema = z.object({
   name: z.string(),

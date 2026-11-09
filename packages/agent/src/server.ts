@@ -7,6 +7,7 @@ import { AGENT_VERSION } from './version.js';
 import { CONTROL_API_URL, ENABLE_NODE_MANAGEMENT, NODE_MANAGER_SECRET, RESULT_SIGNING_SECRET, MAGNUS_EXECUTION_SUPERVISOR_ENABLED } from './env.js';
 import { COMMAND_COMPLETION_REGISTRY, COMMAND_COMPLETION_REGISTRY_SHA256 } from './security/command-completion-registry.js';
 import { nodeAuthMiddleware } from './middleware.js';
+import { agentPrivileged } from './privileged.js';
 import { tracingMiddleware } from './collectors/otel-middleware.js';
 import { getHeartbeatStatus } from './agent.js';
 import { ARDENT_AGENT_CAPABILITIES } from './ardent-capabilities.js';
@@ -88,6 +89,7 @@ export async function createApp(): Promise<Hono> {
         version: AGENT_VERSION,
         features: {
           nodeManagement: ENABLE_NODE_MANAGEMENT,
+          managedTerminal: ENABLE_NODE_MANAGEMENT && agentPrivileged() && MAGNUS_EXECUTION_SUPERVISOR_ENABLED && /^[a-z_][a-z0-9_-]{0,31}$/.test(process.env['MAGNUS_AGENT_MANAGED_TERMINAL_USER'] ?? '') ? 1 : 0,
           commandReceipts: ENABLE_NODE_MANAGEMENT ? 1 : 0,
           commandFencing: ENABLE_NODE_MANAGEMENT ? 1 : 0,
           managedMutations: ENABLE_NODE_MANAGEMENT ? 1 : 0,
@@ -168,6 +170,7 @@ export async function createApp(): Promise<Hono> {
         timestamp: new Date().toISOString(),
         features: {
           nodeManagement: ENABLE_NODE_MANAGEMENT,
+          managedTerminal: ENABLE_NODE_MANAGEMENT && agentPrivileged() && MAGNUS_EXECUTION_SUPERVISOR_ENABLED && /^[a-z_][a-z0-9_-]{0,31}$/.test(process.env['MAGNUS_AGENT_MANAGED_TERMINAL_USER'] ?? '') ? 1 : 0,
           commandReceipts: ENABLE_NODE_MANAGEMENT ? 1 : 0,
           commandFencing: ENABLE_NODE_MANAGEMENT ? 1 : 0,
           managedMutations: ENABLE_NODE_MANAGEMENT ? 1 : 0,
@@ -232,6 +235,8 @@ export async function createApp(): Promise<Hono> {
       ['/health/system-updates/*', 'system-updates'], ['/ardent/action', 'ardent-management']] as const)
       v1.use(path, requirePrivileged(feature));
     v1.use('*', managedMutationGuard);
+    const { managedTerminalRoutes } = await import('./executors/managed-terminal.js');
+    v1.route('/terminal', managedTerminalRoutes());
     const { storageEvidenceRoutes } = await import('./collectors/storage-evidence.js');
     v1.route('/storage-evidence', storageEvidenceRoutes);
     v1.route('/health', healthRoutes);

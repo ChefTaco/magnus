@@ -102,6 +102,8 @@ if (ENABLE_NODE_MANAGEMENT) {
 // ── Graceful shutdown ──
 async function shutdown() {
   logger.info('Shutting down agent...');
+  const { stopManagedTerminals } = await import('./executors/managed-terminal.js');
+  await stopManagedTerminals();
 
   // Drain running commands (30s timeout)
   const { drainRunningCommands } = await import('./executors/command-executor.js');
