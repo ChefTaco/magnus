@@ -1,0 +1,9 @@
+{
+  "summary": "Verified TLS endpoint selection, IP-only certificate compatibility, automatic endpoint recovery, and Ardent owner npm cache isolation.",
+  "breaking": false,
+  "minUpgradeFrom": "1.0.0",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}
