@@ -4,9 +4,14 @@ All notable changes to this project are documented in this file. The format is b
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+
+## [2.2.2] - 2026-11-09
 
 ### Fixed
+
+- Fresh node enrollment uses the agent's valid certificate FQDN without requiring an optional
+  domain suffix. DNS must still match the authenticated heartbeat's network evidence before
+  Magnus uses the name, so callbacks verify the certificate instead of failing against an IP.
 
 - Codex updates on enrolled nodes use a reviewed managed completion boundary and a durable
   systemd-supervised updater. Missing process completion evidence retains ownership instead of

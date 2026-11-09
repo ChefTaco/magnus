@@ -1,0 +1,9 @@
+{
+  "summary": "Verified agent DNS identities and managed Codex update completion. Existing recovery and enrollment requirements remain in force.",
+  "breaking": false,
+  "minUpgradeFrom": "1.0.0",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}

@@ -18,7 +18,7 @@ const DNS_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 /**
  * Derive the certificate hostname an agent should advertise from its reported
- * OS hostname and the operator-configured TLS suffix. The heartbeat handler
+ * FQDN, or from its OS hostname and the operator-configured TLS suffix. The heartbeat handler
  * still resolves this name and requires the resolved address to appear in the
  * authenticated agent's network/caller evidence before persisting it.
  */
@@ -29,7 +29,12 @@ export function deriveAgentCertificateHostname(reportedFqdn: string | null | und
       ?.trim()
       .toLowerCase()
       .replace(/^\.+|\.+$/g, '') ?? '';
-  if (!reported || !suffix || !suffix.includes('.')) return null;
+  if (!reported || isIP(reported) !== 0 || reported.length > 253 || !reported.split('.').every((label) => DNS_LABEL.test(label))) return null;
+  // A fresh agent already reports its certificate's FQDN. Requiring a suffix here
+  // replaces that name with an IP address, which cannot verify a DNS certificate.
+  // DNS must still match this authenticated heartbeat before the name is used.
+  if (!suffix) return reported.includes('.') && isIP(reported) === 0 ? reported : null;
+  if (!suffix.includes('.')) return null;
 
   const suffixLabels = suffix.split('.');
   if (!suffixLabels.every((label) => DNS_LABEL.test(label))) return null;

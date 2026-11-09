@@ -26,6 +26,15 @@ describe('node agent endpoint identity', () => {
     expect(deriveAgentCertificateHostname('Node-B.Example.Com.', '.example.com.')).toBe('node-b.example.com');
   });
 
+  it('uses the reported certificate FQDN without requiring a domain suffix', () => {
+    expect(deriveAgentCertificateHostname('Node-B.Example.Com.', undefined)).toBe('node-b.example.com');
+    expect(deriveAgentCertificateHostname('node-b.example.com', '')).toBe('node-b.example.com');
+    for (const value of ['192.0.2.10', 'node..example.com', 'https://node.example.com', '../node.example.com', '-node.example.com', 'x'.repeat(254) + '.example.com']) {
+      expect(deriveAgentCertificateHostname(value, undefined)).toBeNull();
+      expect(deriveAgentCertificateHostname(value, 'example.com')).toBeNull();
+    }
+  });
+
   it('refuses absent or malformed endpoint identity configuration', () => {
     expect(deriveAgentCertificateHostname('magnus', undefined)).toBeNull();
     expect(deriveAgentCertificateHostname('../magnus', 'example.com')).toBeNull();
