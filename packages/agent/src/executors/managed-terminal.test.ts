@@ -1,12 +1,19 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { Hono } from 'hono';
-import { managedTerminalRoutes, terminalUnit, terminalUnitProperties, terminalUnitMatches, terminalUnitRetired, terminalFailureReason, type ManagedTerminals } from './managed-terminal.js';
+import { managedTerminalRoutes, terminalMemoryExpired, terminalUnit, terminalUnitProperties, terminalUnitMatches, terminalUnitRetired, terminalFailureReason, type ManagedTerminals } from './managed-terminal.js';
 
 const authority = () => ({ workId: randomUUID(), ownerId: randomUUID(), nodeId: 'node-1', nodeFqdn: 'node-1.example.com',
   epoch: 1, barrierId: randomUUID(), operationSha256: 'a'.repeat(64), requestSha256: 'b'.repeat(64), fence: '1', deadline: Date.now() + 60000 });
 afterEach(() => vi.unstubAllEnvs());
 describe('managed terminal boundary', () => {
+  it('expires unread output after settled cleanup while retaining unacknowledged owners', () => {
+    const receipt = { terminalAt: 1000 };
+    expect(terminalMemoryExpired({ settled: true, receipt }, 301001)).toBe(true);
+    expect(terminalMemoryExpired({ settled: true, receipt }, 301000)).toBe(false);
+    for (const intent of [{}, { receipt }, { settled: false, receipt }, { settled: true }])
+      expect(terminalMemoryExpired(intent, 999999999)).toBe(false);
+  });
   it('accepts only an absent or fully unloaded unit as retired, and never logs provider content', () => {
     expect(terminalUnitRetired(null)).toBe(true);
     const retired = { ActiveState: 'inactive', SubState: 'dead', InvocationID: '', ControlGroup: '' };

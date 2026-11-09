@@ -25,6 +25,10 @@ interface Intent { authority: ManagedTerminalAuthority; user: string; uid: numbe
 interface Live { intent: Intent; child?: ChildProcessWithoutNullStreams; chunks: Buffer[]; bytes: number;
   closing?: Promise<void>; busy: boolean; pendingResize?: ManagedTerminalSize }
 
+/** Closed clients may leave unread bytes. Expire those buffers only after acknowledged cleanup. */
+export function terminalMemoryExpired(intent: { settled?: boolean; receipt?: { terminalAt: number } }, now = Date.now()): boolean {
+  return intent.settled === true && intent.receipt !== undefined && now - intent.receipt.terminalAt > 300000;
+}
 export function terminalUnit(authority: ManagedTerminalAuthority): string { return 'magnus-terminal-' + sha(authority.workId) + '.service'; }
 export function terminalUnitProperties(user: string, deadline: number, ptyFile: string): string[] {
   if (!/^[a-z_][a-z0-9_-]{0,31}$/.test(user) || deadline <= Date.now()
@@ -110,7 +114,7 @@ export class ManagedTerminals {
         await this.finish(live).catch(() => { logger.warn('Managed terminal recovery held', { reason: 'completion-unverified' }); });
       }
       this.timer = setInterval(() => { for (const live of this.live.values()) {
-        if (live.intent.settled && live.bytes === 0 && live.intent.receipt && Date.now() - live.intent.receipt.terminalAt > 300000) {
+        if (terminalMemoryExpired(live.intent)) {
           this.live.delete(live.intent.authority.workId); continue;
         }
         if (live.busy || live.intent.settled) continue;
