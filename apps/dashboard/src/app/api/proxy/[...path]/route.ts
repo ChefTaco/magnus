@@ -144,6 +144,8 @@ async function proxyHandler(
       const action = value && typeof value === 'object' && 'action' in value ? value.action : null;
       timeoutMs = action === 'package-install' ? 610_000 : typeof action === 'string' && action.startsWith('service-') ? 120_000 : 50_000;
     }
+    if (req.method === 'POST' && /^codex\/installations\/[A-Za-z0-9_-]{1,128}\/update$/.test(apiPath))
+      timeoutMs = 910_000;
     const upstream = await controlApiFetch(targetUrl, init, timeoutMs ? { timeoutMs } : undefined);
     if (upstream.status >= 300 && upstream.status < 400) {
       return NextResponse.json(

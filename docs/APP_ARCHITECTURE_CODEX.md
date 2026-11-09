@@ -68,6 +68,12 @@ resolved during the check, pins the update to the prefix that owns the detected
 and other user-managed installations in their existing Node tree instead of
 accidentally targeting the system-wide npm prefix.
 
+On enrolled nodes, updates use the managed resource lease and a matching node-agent completion
+descriptor. `MAGNUS_AGENT_PRIVILEGED=true` and `MAGNUS_EXECUTION_SUPERVISOR_ENABLED=true` are
+required. The complete update and final App Server inspection run inside one durable systemd
+cgroup; Magnus returns success only after verifying that every process in that group has ended.
+An uncertain outcome keeps the original owner for reconciliation and is never automatically retried.
+
 ## Device authorization flow
 
 Selecting **Generate Device Code** opens an in-memory, node-local App Server

@@ -355,7 +355,7 @@ class DashboardApiClient {
     installation: (nodeId: string, refreshLatest = false) =>
       this.get<CodexInstallation>(`codex/installations/${nodeId}`, { refreshLatest: refreshLatest ? 'true' : undefined }),
     update: (nodeId: string) =>
-      this.post<CodexInstallation>(`codex/installations/${nodeId}/update`),
+      this.client.post(`codex/installations/${nodeId}/update`, { timeout: 920_000, retry: 0 }).json<ApiResponse<CodexInstallation>>(),
     logout: (nodeId: string) =>
       this.post<CodexInstallation>(`codex/installations/${nodeId}/logout`),
     startDeviceAuth: (nodeId: string) =>

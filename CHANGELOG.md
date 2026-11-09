@@ -8,6 +8,9 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Fixed
 
+- Codex updates on enrolled nodes use a reviewed managed completion boundary and a durable
+  systemd-supervised updater. Missing process completion evidence retains ownership instead of
+  allowing replay; both the server and node agent require the updated descriptor.
 - Codex Agents Overview offers per-node CLI updates, reports failures, and refreshes the installed
   version and fleet counts after an update.
 - Fleet Map gives tied gateway subnets separate positions instead of stacking their hosts at the

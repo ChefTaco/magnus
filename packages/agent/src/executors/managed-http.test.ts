@@ -62,6 +62,27 @@ beforeEach(async () => {
 afterEach(async () => { await rm(root, { recursive: true, force: true }); await rm(barrierRoot, { recursive: true, force: true }); });
 
 describe('managed native mutation execution boundary', () => {
+  it('holds Codex update ownership until its supervised handler finishes and refuses raw or repeated updates', async () => {
+    let release: () => void = () => {};
+    const finished = new Promise<void>(resolve => { release = resolve; });
+    let started: () => void = () => {};
+    const entered = new Promise<void>(resolve => { started = resolve; });
+    app.post('/api/v1/codex/update', async c => { started(); await finished; return c.json({ success: true, data: { version: '0.166.0' } }); });
+    const input = request('codex-update-fixture', '', '/codex/update');
+    const pending = send(input);
+    await entered;
+    expect((await fixture.ledger.receipt(input.commandId))?.state).toBe('running');
+    expect((await app.request('/api/v1/codex/update', { method: 'POST', headers: { 'x-node-token': 'fixture-node-key' } })).status).toBe(409);
+    release();
+    const response = await pending;
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(verifyCommandResult(body.data.receipt, key)).toBe(true);
+    expect(body.data.receipt.stdout).toBe(httpReceiptBody('POST', '/codex/update', 200, body.data.response.body));
+    expect((await fixture.ledger.receipt(input.commandId))?.state).toBe('completed');
+    expect((await send(input)).status).toBe(409);
+  });
+
   it('accepts only an exact Ardent scoped claim after sticky enrollment', async () => {
     app.post('/api/v1/ardent/action', () => execute());
     await fixture.ledger.observeManagedEnrollment({ nodeId: 'fixture', nodeFqdn: 'fixture.lab' });
@@ -190,7 +211,7 @@ describe('managed native mutation execution boundary', () => {
     await send(request());
     const response = await app.request('/api/v1/hermes/state?hermesBin=/tmp/custom-program', { headers: { 'x-node-token': 'fixture-node-key' } });
     expect(response.status).toBe(409);
-    for (const path of ['/hermes/install', '/hermes/update', '/hermes/configure', '/codex/update', '/health/system-updates/enable', '/cron/sync'])
+    for (const path of ['/hermes/install', '/hermes/update', '/hermes/configure', '/codex/device-auth', '/health/system-updates/enable', '/cron/sync'])
       expect((await send(request('denied', '{}', path))).status).toBe(409);
     expect(execute).toHaveBeenCalledTimes(1);
   });

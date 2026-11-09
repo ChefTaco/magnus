@@ -25,6 +25,8 @@ export const NATIVE_COMPLETION_REGISTRY = {
       completionMode: 'buffered-synchronous-http', timeoutCeilingSeconds: 3600, resourceClassifier: 'node-scheduler' },
     { id: 'ardent-action', method: 'POST', pathMatcher: { kind: 'exact', path: '/ardent/action' },
       completionMode: 'buffered-synchronous-http', timeoutCeilingSeconds: 900, resourceClassifier: 'node-ardent' },
+    { id: 'codex-update', method: 'POST', pathMatcher: { kind: 'exact', path: '/codex/update' },
+      completionMode: 'buffered-synchronous-http', timeoutCeilingSeconds: 900, resourceClassifier: 'node-filesystem' },
     { id: 'agent-self-upgrade', method: 'POST', pathMatcher: { kind: 'exact', path: '/agent-upgrade' },
       completionMode: 'buffered-synchronous-http', timeoutCeilingSeconds: 900, resourceClassifier: 'node-filesystem' },
   ],
@@ -57,6 +59,7 @@ export function knownNativeCompletionIdentity(version: number | null, sha256: st
   if (version !== 1 || !descriptorId) return false;
   const descriptor = NATIVE_COMPLETION_REGISTRY.descriptors.find(item => item.id === descriptorId);
   if (!descriptor) return false;
-  return sha256 === NATIVE_COMPLETION_REGISTRY_SHA256 || (descriptorId !== 'hiveskills-sync' && sha256 === 'e1303b169387f536c257e686eb95a29c1ff9b09e26fc38ac0d71d6c0daf9eb55') || (descriptorId !== 'security-response' && descriptorId !== 'hiveskills-sync'
+  if (descriptorId === 'codex-update') return sha256 === NATIVE_COMPLETION_REGISTRY_SHA256;
+  return sha256 === '7d438cf05cf3d5b62fa9806dcb9f13af805a0a966ca6a4ef5907f86b5070c88b' || sha256 === NATIVE_COMPLETION_REGISTRY_SHA256 || (descriptorId !== 'hiveskills-sync' && sha256 === 'e1303b169387f536c257e686eb95a29c1ff9b09e26fc38ac0d71d6c0daf9eb55') || (descriptorId !== 'security-response' && descriptorId !== 'hiveskills-sync'
     && sha256 === 'b0f05a1eac40dba262ec5ff0cc0de8d2b7c9f119a6a2d7ed3a00d94dcb6b1d3d');
 }

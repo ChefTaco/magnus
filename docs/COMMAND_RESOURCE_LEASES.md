@@ -188,8 +188,15 @@ start grant before they open an SSH connection. A crash, disconnect or shell exi
 `unknown`, because processes started in the session may still be running.
 
 On an enrolled node the agent denies, before dispatch, the operations that cannot yet prove their
-outcome: Hermes Agent lifecycle and configuration, Codex update and login, agent self-update,
+outcome: Hermes Agent lifecycle and configuration, Codex login, agent self-update,
 system updates, user management, server-side SSH deployment helpers and console terminals.
+
+Codex updates have a separate finite boundary: a privileged agent with the execution supervisor
+enabled runs the complete updater and final installation inspection inside one durable systemd
+cgroup. The native HTTP receipt is issued only after the supervisor verifies that the group is
+empty. Missing or uncertain completion evidence retains ownership and never causes automatic replay.
+Both the server and node agent need the Codex update descriptor; older agents refuse it before
+execution. Historical registry hashes remain valid only for their original descriptors.
 
 ### Execution supervisor
 

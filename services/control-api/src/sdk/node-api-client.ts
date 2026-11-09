@@ -827,7 +827,7 @@ export class NodeApiClient {
   }
 
   async updateCodex(): Promise<ApiResponse<CodexNodeState>> {
-    return this.mutate('POST', 'codex/update', undefined, 11 * 60_000);
+    return this.mutate('POST', 'codex/update', undefined, 15 * 60_000);
   }
 
   async logoutCodex(): Promise<ApiResponse<CodexNodeState>> {

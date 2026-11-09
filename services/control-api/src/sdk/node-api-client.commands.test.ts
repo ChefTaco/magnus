@@ -35,6 +35,31 @@ function serve(response: unknown, capability = 1) {
 }
 afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); mocks.admit.mockResolvedValue(null); });
 
+it('dispatches enrolled Codex updates through the exact managed HTTP claim and settles only its signed response', async () => {
+  mocks.admit.mockImplementation(async (_context, identity) => ({
+    leaseId: 'codex-lease', commandId: identity.commandId, nodeId: 'fixture', nodeFqdn: 'node-1.example.com',
+    payload: { ...identity, coordination: input().coordination },
+  }));
+  const fetch = vi.fn(async (request: Request) => {
+    if (request.url.endsWith('/ping')) return new Response(JSON.stringify({ success: true, data: { features: { managedMutations: 1 } } }));
+    expect(request.url).toBe('http://node.invalid/api/v1/commands/managed-http');
+    const body = await request.json();
+    expect(body).toMatchObject({ method: 'POST', path: '/codex/update', body: '', timeoutSeconds: 900,
+      claim: { leaseId: 'codex-lease', nodeId: 'fixture', nodeFqdn: 'node-1.example.com' } });
+    const response = { status: 200, body: JSON.stringify({ success: true, data: { version: '0.166.0' } }) };
+    const identity = { ...httpIdentity(body.commandId, 'POST', '/codex/update', '', 900), coordination: body.coordination };
+    const unsigned = { commandId: body.commandId, exitCode: 0,
+      stdout: httpReceiptBody('POST', '/codex/update', 200, response.body), stderr: '', durationMs: 1, truncated: false,
+      coordination: { ...body.coordination, requestSha256: agentDigest(identity) } };
+    return new Response(JSON.stringify({ success: true, data: { response, receipt: { ...unsigned, signature: signCommandResult(unsigned, secret) } } }));
+  });
+  vi.stubGlobal('fetch', fetch);
+  expect((await client().updateCodex()).data.version).toBe('0.166.0');
+  expect(mocks.mark).toHaveBeenCalledTimes(1);
+  expect(mocks.settle).toHaveBeenCalledTimes(1);
+  expect(fetch).toHaveBeenCalledTimes(2);
+});
+
 describe('credential-bearing native mutations', () => {
   const password = 'fixture-password';
   const calls: Array<[string, (c: NodeApiClient) => Promise<unknown>, object]> = [

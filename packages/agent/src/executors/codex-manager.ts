@@ -7,6 +7,8 @@ import { dirname, join } from 'node:path';
 import { Hono, type Context } from 'hono';
 import { childEnvironment } from '../utils/child-env.js';
 import { armChildTimeout } from '../utils/child-timeout.js';
+import { requirePrivileged } from '../privileged.js';
+import { runCodexUpdateWorker } from './codex-update-process.js';
 
 const CODEX_PACKAGE = '@openai/codex';
 const DEVICE_LOGIN_TTL_MS = 15 * 60_000;
@@ -641,49 +643,60 @@ export async function updateCodex(): Promise<CodexNodeState> {
   if (updateInFlight) return updateInFlight;
   updateInFlight = (async () => {
     const target = await resolveTarget();
-    if (!target.bin) throw new Error('Codex CLI is not installed');
-    if (!codexUpdateSupported(target.provenance)) throw new Error(`Codex installation is read-only (${target.provenance})`);
-    if (target.provenance === 'standalone') {
-      const result = await runForTarget(target, target.bin, ['update'], 10 * 60_000);
-      if (result.code !== 0) throw new Error(`Codex update failed: ${safeMessage(result.stderr || result.stdout)}`);
-      latestVersionCache = null;
-      const after = await resolveTarget();
-      if (after.bin !== target.bin || after.provenance !== target.provenance) throw new Error('Codex update changed executable ownership');
-      return collectCodexState(true);
-    }
-    const latest = await latestCodexVersion(true, target);
-    if (!latest) throw new Error('Could not resolve the latest Codex CLI version');
-    const runAsRoot = target.bin === '/usr/bin/codex' || target.bin === '/usr/local/bin/codex';
-    const installTarget = runAsRoot ? { ...target, user: 'root', home: '/root', codexHome: '/root/.codex' } : target;
-    const siblingNpm = join(dirname(target.bin), 'npm');
-    const npmBin = await executableByUser(installTarget.user, siblingNpm)
-      ? siblingNpm
-      : await exists('/usr/bin/npm') ? '/usr/bin/npm' : '/usr/local/bin/npm';
-    const npmPrefix = codexNpmInstallPrefix(target.bin);
-    if (!npmPrefix) {
-      throw new Error(`Codex update is not supported for installation path ${target.bin}`);
-    }
-    const npmCache = join(tmpdir(), `magnus-codex-npm-cache-${installTarget.user}`);
-    // magnus-agent runs with UMask=0077. npm's global package must remain
-    // executable by the unprivileged Codex account, so set a bounded standard
-    // install umask only for this child process.
-    const result = await runForTarget(
-      installTarget,
-      '/bin/sh',
-      [
-        '-c', 'umask 022; PATH="$1:$PATH"; export PATH; shift; exec "$@"',
-        'magnus-codex-update', dirname(target.bin), npmBin,
-        'install', '--global', '--prefix', npmPrefix, `${CODEX_PACKAGE}@${latest}`, '--cache', npmCache,
-      ],
-      10 * 60_000,
-    );
-    if (result.code !== 0) throw new Error(`Codex update failed: ${safeMessage(result.stderr || result.stdout)}`);
-    const after = await resolveTarget();
-    if (after.bin !== target.bin || after.provenance !== target.provenance) throw new Error('Codex update changed executable ownership');
-    latestVersionCache = { value: latest, at: Date.now() };
-    return collectCodexState();
+    const output = await runCodexUpdateWorker(target);
+    const state = JSON.parse(output) as CodexNodeState;
+    if (!state.installed || typeof state.version !== 'string' || state.codexBin !== target.bin || state.user !== target.user)
+      throw new Error('Codex update worker returned an invalid installation state');
+    latestVersionCache = null;
+    return state;
   })().finally(() => { updateInFlight = null; });
   return updateInFlight;
+}
+
+/** Internal worker entry point. The HTTP route always uses the supervised wrapper. */
+export async function updateCodexInProcess(): Promise<CodexNodeState> {
+  const target = await resolveTarget();
+  if (!target.bin) throw new Error('Codex CLI is not installed');
+  if (!codexUpdateSupported(target.provenance)) throw new Error(`Codex installation is read-only (${target.provenance})`);
+  if (target.provenance === 'standalone') {
+    const result = await runForTarget(target, target.bin, ['update'], 10 * 60_000);
+    if (result.code !== 0) throw new Error(`Codex update failed: ${safeMessage(result.stderr || result.stdout)}`);
+    latestVersionCache = null;
+    const after = await resolveTarget();
+    if (after.bin !== target.bin || after.provenance !== target.provenance) throw new Error('Codex update changed executable ownership');
+    return collectCodexState(true);
+  }
+  const latest = await latestCodexVersion(true, target);
+  if (!latest) throw new Error('Could not resolve the latest Codex CLI version');
+  const runAsRoot = target.bin === '/usr/bin/codex' || target.bin === '/usr/local/bin/codex';
+  const installTarget = runAsRoot ? { ...target, user: 'root', home: '/root', codexHome: '/root/.codex' } : target;
+  const siblingNpm = join(dirname(target.bin), 'npm');
+  const npmBin = await executableByUser(installTarget.user, siblingNpm)
+    ? siblingNpm
+    : await exists('/usr/bin/npm') ? '/usr/bin/npm' : '/usr/local/bin/npm';
+  const npmPrefix = codexNpmInstallPrefix(target.bin);
+  if (!npmPrefix) {
+    throw new Error(`Codex update is not supported for installation path ${target.bin}`);
+  }
+  const npmCache = join(tmpdir(), `magnus-codex-npm-cache-${installTarget.user}`);
+  // magnus-agent runs with UMask=0077. npm's global package must remain
+  // executable by the unprivileged Codex account, so set a bounded standard
+  // install umask only for this child process.
+  const result = await runForTarget(
+    installTarget,
+    '/bin/sh',
+    [
+      '-c', 'umask 022; PATH="$1:$PATH"; export PATH; shift; exec "$@"',
+      'magnus-codex-update', dirname(target.bin), npmBin,
+      'install', '--global', '--prefix', npmPrefix, `${CODEX_PACKAGE}@${latest}`, '--cache', npmCache,
+    ],
+    10 * 60_000,
+  );
+  if (result.code !== 0) throw new Error(`Codex update failed: ${safeMessage(result.stderr || result.stdout)}`);
+  const after = await resolveTarget();
+  if (after.bin !== target.bin || after.provenance !== target.provenance) throw new Error('Codex update changed executable ownership');
+  latestVersionCache = { value: latest, at: Date.now() };
+  return collectCodexState();
 }
 
 export async function logoutCodex(): Promise<CodexNodeState> {
@@ -778,7 +791,10 @@ codexRoutes.get('/state', async (c) => {
   catch (error) { return errorResponse(c, error); }
 });
 
-codexRoutes.post('/update', async (c) => {
+codexRoutes.post('/update', requirePrivileged('codex-update'), async (c) => {
+  if (process.env['MAGNUS_EXECUTION_SUPERVISOR_ENABLED'] !== 'true')
+    return c.json({ success: false, error: { code: 'CODEX_UPDATE_SUPERVISOR_REQUIRED',
+      message: 'Codex updates require MAGNUS_EXECUTION_SUPERVISOR_ENABLED=true; no update started' } }, 409);
   try { return c.json({ success: true, data: await updateCodex() }); }
   catch (error) { return errorResponse(c, error); }
 });

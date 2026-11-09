@@ -7,7 +7,7 @@
 import type { MiddlewareHandler } from 'hono';
 
 export type PrivilegedFeature = 'cron' | 'users' | 'system-updates' | 'docker-group-remediation'
-  | 'hiveskills-sync' | 'ardent-management' | 'credential-renewal' | 'execution-supervisor' | 'security-response';
+  | 'hiveskills-sync' | 'ardent-management' | 'credential-renewal' | 'execution-supervisor' | 'security-response' | 'codex-update';
 
 /** Features that need root, with the routes or loops they cover. */
 export const PRIVILEGED_FEATURES: ReadonlyArray<{ feature: PrivilegedFeature; covers: string }> = [
@@ -20,6 +20,7 @@ export const PRIVILEGED_FEATURES: ReadonlyArray<{ feature: PrivilegedFeature; co
   { feature: 'credential-renewal', covers: 'background HiveMem token and listener certificate renewal' },
   { feature: 'security-response', covers: 'POST /api/v1/security-response (explicit opt-in and root-owned containment helper)' },
   { feature: 'execution-supervisor', covers: 'MAGNUS_EXECUTION_SUPERVISOR_ENABLED (transient systemd units for commands)' },
+  { feature: 'codex-update', covers: 'POST /api/v1/codex/update (supervised Codex CLI installation)' },
 ];
 
 /** Read on every call so tests and `check` see the current environment. */

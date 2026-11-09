@@ -58,4 +58,15 @@ describe('proxy body rejection before upstream effects', () => {
     expect(upstream.fetch).toHaveBeenCalledWith('https://control.example/api/v1/commands',
       expect.objectContaining({ method: 'POST', body: '{}' }), undefined);
   });
+
+  it.each([
+    ['codex/installations/node-1/update', { timeoutMs: 910_000 }],
+    ['codex/installations/node-1/logout', undefined],
+    ['codex/installations/node-1/update/extra', undefined],
+  ])('uses a bounded longer deadline only for the exact Codex updater: %s', async (path, timeout) => {
+    const body = new ReadableStream<Uint8Array>({ start(controller) { controller.close(); } });
+    expect((await POST(request(body), { params: Promise.resolve({ path: path.split('/') }) })).status).toBe(200);
+    expect(upstream.fetch).toHaveBeenCalledWith(`https://control.example/api/v1/${path}`,
+      expect.objectContaining({ method: 'POST' }), timeout);
+  });
 });

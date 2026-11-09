@@ -17,9 +17,9 @@ describe('native HTTP wire compatibility', () => {
   it('shares the exact versioned native completion registry and digest', () => {
     expect(controlRegistry.NATIVE_COMPLETION_REGISTRY).toEqual(nodeRegistry.NATIVE_COMPLETION_REGISTRY);
     expect(controlRegistry.NATIVE_COMPLETION_REGISTRY_SHA256).toBe(nodeRegistry.NATIVE_COMPLETION_REGISTRY_SHA256);
-    expect(controlRegistry.NATIVE_COMPLETION_REGISTRY_SHA256).toBe('7d438cf05cf3d5b62fa9806dcb9f13af805a0a966ca6a4ef5907f86b5070c88b');
+    expect(controlRegistry.NATIVE_COMPLETION_REGISTRY_SHA256).toBe('c248ac35d858536199a2426069aa8dfab6e858a4668abbec93a166907cd053ed');
     expect(controlRegistry.NATIVE_COMPLETION_REGISTRY.version).toBe(1);
-    expect(controlRegistry.NATIVE_COMPLETION_REGISTRY.descriptors).toHaveLength(11);
+    expect(controlRegistry.NATIVE_COMPLETION_REGISTRY.descriptors).toHaveLength(12);
     // Agent self-upgrade is the one lifecycle mutation in the registry: exact version and integrity, launcher-confirmed.
     expect(controlRegistry.nativeCompletionDescriptor('POST', '/agent-upgrade')).toMatchObject({ id: 'agent-self-upgrade', resourceClassifier: 'node-filesystem' });
   });
@@ -38,14 +38,14 @@ describe('native HTTP wire compatibility', () => {
       ['DELETE', '/skills/example', 'node-skill-catalog'], ['POST', '/cron/managed-sync', 'node-scheduler'],
       ['POST', '/cron/managed-activate', 'node-scheduler'], ['POST', '/cron/managed-revoke', 'node-scheduler'],
       ['DELETE', '/cron/example', 'node-scheduler'],
-      ['POST', '/ardent/action', 'node-ardent'],
+      ['POST', '/ardent/action', 'node-ardent'], ['POST', '/codex/update', 'node-filesystem'],
     ] as const;
     for (const [method, path, resourceClassifier] of allowed) {
       const controlDescriptor = controlRegistry.nativeCompletionDescriptor(method, path);
       const nodeDescriptor = nodeRegistry.nativeCompletionDescriptor(method, path);
       expect(controlDescriptor).toEqual(nodeDescriptor);
       expect(controlDescriptor).toMatchObject({ completionMode: 'buffered-synchronous-http',
-        timeoutCeilingSeconds: path === '/ardent/action' ? 900 : 3600, resourceClassifier });
+        timeoutCeilingSeconds: ['/ardent/action', '/codex/update'].includes(path) ? 900 : 3600, resourceClassifier });
       expect(controlRegistry.nativeCompletionResourceKey(controlDescriptor!, 'fixture')).toBe(
         path === '/ardent/action' ? 'node:fixture:ardent' : 'node:fixture');
       expect(nodeRegistry.nativeCompletionResourceKey(nodeDescriptor!, 'fixture')).toBe(
@@ -53,7 +53,7 @@ describe('native HTTP wire compatibility', () => {
     }
   });
   it('keeps lifecycle, login, raw recurring work and detached handlers outside the registry', () => {
-    const denied = ['/update', '/self-update', '/codex/update', '/codex/device-auth', '/cron/sync', '/cron/example',
+    const denied = ['/update', '/self-update', '/codex/device-auth', '/cron/sync', '/cron/example',
       '/ai-schedules', '/hermes/install', '/hermes/update', '/hermes/configure', '/hermes/uninstall',
       '/deploy', '/rollouts', '/quick-command', '/terminal', '/commands/execute'];
     for (const path of denied) expect(controlRegistry.nativeCompletionDescriptor('POST', path), path).toBeUndefined();
@@ -86,4 +86,14 @@ it('retains exact legacy native settlement without expanding its authority', () 
   expect(controlRegistry.knownNativeCompletionIdentity(1, legacy, 'file-write')).toBe(true);
   expect(controlRegistry.knownNativeCompletionIdentity(1, legacy, 'security-response')).toBe(false);
   expect(controlRegistry.knownNativeCompletionIdentity(1, '0'.repeat(64), 'file-write')).toBe(false);
+});
+
+it('preserves existing native settlements without granting Codex authority to historical registries', () => {
+  for (const digest of ['7d438cf05cf3d5b62fa9806dcb9f13af805a0a966ca6a4ef5907f86b5070c88b',
+    'e1303b169387f536c257e686eb95a29c1ff9b09e26fc38ac0d71d6c0daf9eb55',
+    'b0f05a1eac40dba262ec5ff0cc0de8d2b7c9f119a6a2d7ed3a00d94dcb6b1d3d']) {
+    expect(controlRegistry.knownNativeCompletionIdentity(1, digest, 'file-write')).toBe(true);
+    expect(controlRegistry.knownNativeCompletionIdentity(1, digest, 'codex-update')).toBe(false);
+  }
+  expect(controlRegistry.knownNativeCompletionIdentity(1, controlRegistry.NATIVE_COMPLETION_REGISTRY_SHA256, 'codex-update')).toBe(true);
 });
