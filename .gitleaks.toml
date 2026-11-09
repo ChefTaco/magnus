@@ -1,0 +1,270 @@
+title = "Repository secret scanning"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Reviewed synthetic test value; exact value and file only."
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^apps/dashboard/src/lib/magnus\-ui\-cli\.test\.ts$''']
+regexes = ['''^fixture\-api\-secret\-0123456789abcdef$''']
+
+[[allowlists]]
+description = "Reviewed synthetic test value; exact value and file only."
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^packages/agent/src/executors/scheduler\-drain\.test\.ts$''']
+regexes = ['''^scheduler\-drain\-result\-fixture\-at\-least\-32$''']
+
+[[allowlists]]
+description = "Reviewed synthetic test value; exact value and file only."
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^packages/agent/src/security/command\-result\-signature\.test\.ts$''']
+regexes = ['''^result\-signing\-test\-secret\-is\-at\-least\-32\-characters$''']
+
+[[allowlists]]
+description = "Reviewed synthetic test value; exact value and file only."
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^packages/agent/src/server\.test\.ts$''']
+regexes = ['''^independent\-test\-reconciliation\-key\-at\-least\-32\-characters$''']
+
+[[allowlists]]
+description = "Reviewed synthetic test value; exact value and file only."
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^packages/agent/src/server\.test\.ts$''']
+regexes = ['''^test\-result\-signing\-key\-at\-least\-32\-characters$''']
+
+[[allowlists]]
+description = "Reviewed synthetic test value; exact value and file only."
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^services/control\-api/src/middleware/auth\.test\.ts$''']
+regexes = ['''^0f4d5aacf86dd715e56be17a14e52b2fa242743fe655dc45796d225375f9e28d$''']
+
+[[allowlists]]
+description = "Reviewed synthetic test value; exact value and file only."
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^services/control\-api/src/middleware/auth\.test\.ts$''']
+regexes = ['''^3e0960eb2af58be43271b68f35ea5188db47d3d44c032511479567f14f1f83e3$''']
+
+[[allowlists]]
+description = "Reviewed synthetic test value; exact value and file only."
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^services/control\-api/src/middleware/auth\.test\.ts$''']
+regexes = ['''^5673efb18fe4af55edc214a9c3aa3f85e7a0aa5463fce31f9f676e2c4d274811$''']
+
+[[allowlists]]
+description = "Reviewed synthetic test value; exact value and file only."
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^services/control\-api/src/middleware/auth\.test\.ts$''']
+regexes = ['''^73e86e19f711fbe8e48db9aacbbf5ade8abe82b21127e05a67586bb2b3135fe7$''']
+
+[[allowlists]]
+description = "Reviewed synthetic test value; exact value and file only."
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^services/control\-api/src/routes/console\-followups\.integration\.test\.ts$''']
+regexes = ['''^fixture\-followups\-api\-secret\-at\-least\-32$''']
+
+[[allowlists]]
+description = "Reviewed synthetic test value; exact value and file only."
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^services/control\-api/src/routes/console\-followups\.integration\.test\.ts$''']
+regexes = ['''^fixture\-followups\-jwt\-secret\-at\-least\-32$''']
+
+[[allowlists]]
+description = "Reviewed synthetic test value; exact value and file only."
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^services/control\-api/src/routes/console\-followups\.integration\.test\.ts$''']
+regexes = ['''^fixture\-followups\-rotation\-at\-least\-32$''']
+
+[[allowlists]]
+description = "Reviewed synthetic test value; exact value and file only."
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^services/control\-api/src/routes/console\-secret\-sweep\.integration\.test\.ts$''']
+regexes = ['''^fixture\-secret\-sweep\-api\-secret\-at\-least\-32$''']
+
+[[allowlists]]
+description = "Reviewed synthetic test value; exact value and file only."
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^services/control\-api/src/routes/console\-secret\-sweep\.integration\.test\.ts$''']
+regexes = ['''^fixture\-secret\-sweep\-jwt\-secret\-at\-least\-32$''']
+
+[[allowlists]]
+description = "Reviewed synthetic test value; exact value and file only."
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^services/control\-api/src/routes/console\-secret\-sweep\.integration\.test\.ts$''']
+regexes = ['''^fixture\-secret\-sweep\-rotation\-at\-least\-32$''']
+
+[[allowlists]]
+description = "Reviewed synthetic test value; exact value and file only."
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^services/control\-api/src/routes/cron\.legacy\-sync\.test\.ts$''']
+regexes = ['''^cron\-route\-api\-fixture\-at\-least\-32\-characters\-long$''']
+
+[[allowlists]]
+description = "Reviewed synthetic test value; exact value and file only."
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^services/control\-api/src/routes/cron\.legacy\-sync\.test\.ts$''']
+regexes = ['''^cron\-route\-jwt\-fixture\-at\-least\-32\-characters\-long$''']
+
+[[allowlists]]
+description = "Reviewed synthetic test value; exact value and file only."
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^services/control\-api/src/routes/dependencies\.test\.ts$''']
+regexes = ['''^isolated\-api\-fixture\-secret\-at\-least\-32$''']
+
+[[allowlists]]
+description = "Reviewed synthetic test value; exact value and file only."
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^services/control\-api/src/routes/dependencies\.test\.ts$''']
+regexes = ['''^isolated\-jwt\-fixture\-secret\-at\-least\-32$''']
+
+[[allowlists]]
+description = "Reviewed synthetic test value; exact value and file only."
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^services/control\-api/src/routes/engineering\-assurance\-auth\.test\.ts$''']
+regexes = ['''^5673efb18fe4af55edc214a9c3aa3f85e7a0aa5463fce31f9f676e2c4d274811$''']
+
+[[allowlists]]
+description = "Reviewed synthetic test value; exact value and file only."
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^services/control\-api/src/routes/hermes\-secrets\.test\.ts$''']
+regexes = ['''^hermes\-secrets\-api\-fixture\-at\-least\-32\-characters$''']
+
+[[allowlists]]
+description = "Reviewed synthetic test value; exact value and file only."
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^services/control\-api/src/routes/hermes\-secrets\.test\.ts$''']
+regexes = ['''^hermes\-secrets\-jwt\-fixture\-at\-least\-32\-characters$''']
+
+[[allowlists]]
+description = "Reviewed synthetic test value; exact value and file only."
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^services/control\-api/src/routes/security\-fusion\-approval\-boundary\.test\.ts$''']
+regexes = ['''^isolated\-api\-fixture\-secret\-at\-least\-32$''']
+
+[[allowlists]]
+description = "Reviewed synthetic test value; exact value and file only."
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^services/control\-api/src/routes/security\-fusion\-approval\-boundary\.test\.ts$''']
+regexes = ['''^isolated\-jwt\-fixture\-secret\-at\-least\-32$''']
+
+[[allowlists]]
+description = "Reviewed synthetic test value; exact value and file only."
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^services/control\-api/src/routes/team\-approvals\.test\.ts$''']
+regexes = ['''^isolated\-api\-fixture\-secret\-at\-least\-32$''']
+
+[[allowlists]]
+description = "Reviewed synthetic test value; exact value and file only."
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^services/control\-api/src/routes/team\-approvals\.test\.ts$''']
+regexes = ['''^isolated\-jwt\-fixture\-secret\-at\-least\-32$''']
+
+[[allowlists]]
+description = "Reviewed synthetic test value; exact value and file only."
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^services/control\-api/src/security/command\-result\-signature\.test\.ts$''']
+regexes = ['''^result\-signing\-test\-secret\-is\-at\-least\-32\-characters$''']
+
+[[allowlists]]
+description = "Reviewed synthetic test value; exact value and file only."
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^services/control\-api/src/services/ardent\-agent\-deploy\.test\.ts$''']
+regexes = ['''^eyJhbGciOiJIUzI1NiJ9\.eyJmaXh0dXJlIjp0cnVlfQ\.fixture\-signature\-value$''']
+
+[[allowlists]]
+description = "Reviewed synthetic test value; exact value and file only."
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^services/control\-api/src/services/ardent\-command\-owner\.test\.ts$''']
+regexes = ['''^fixture\-api\-secret\-0123456789\-0123456789$''']
+
+[[allowlists]]
+description = "Reviewed synthetic test value; exact value and file only."
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^services/control\-api/src/services/ardent\-command\-owner\.test\.ts$''']
+regexes = ['''^fixture\-result\-signing\-secret\-0123456789$''']
+
+[[allowlists]]
+description = "Reviewed synthetic test value; exact value and file only."
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^services/control\-api/src/services/ardent\-hivemem\-renewal\.test\.ts$''']
+regexes = ['''^eyJhbGciOiJIUzI1NiJ9\.eyJmaXh0dXJlIjp0cnVlfQ\.fixture\-signature\-value$''']
+
+[[allowlists]]
+description = "Reviewed synthetic test value; exact value and file only."
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^services/control\-api/src/services/ardent\-hivemem\.test\.ts$''']
+regexes = ['''^eyJhbGciOiJIUzI1NiJ9\.eyJzdWIiOiJmaXh0dXJlIn0\.fixture\-signature\-value$''']
+
+[[allowlists]]
+description = "Reviewed synthetic test value; exact value and file only."
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^services/control\-api/src/services/ardent\-hivemem\.test\.ts$''']
+regexes = ['''^eyJhbGciOiJSUzI1NiJ9\.eyJzdWIiOiJmaXh0dXJlLWNsaWVudCJ9\.fixture\-service\-signature$''']
+
+[[allowlists]]
+description = "Reviewed synthetic test value; exact value and file only."
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^services/control\-api/src/services/managed\-cron\.integration\.test\.ts$''']
+regexes = ['''^scheduler\-reconciliation\-fixture\-at\-least\-32\-characters$''']
+
+[[allowlists]]
+description = "Reviewed synthetic test value; exact value and file only."
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^services/control\-api/src/services/managed\-cron\.integration\.test\.ts$''']
+regexes = ['''^scheduler\-rotation\-fixture\-at\-least\-32\-characters$''']
+
+[[allowlists]]
+description = "Reviewed synthetic test value; exact value and file only."
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^services/control\-api/src/services/resource\-enrollment\.integration\.test\.ts$''']
+regexes = ['''^enrollment\-result\-fixture\-at\-least\-32\-characters$''']
+
+[[allowlists]]
+description = "Reviewed synthetic test value; exact value and file only."
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^services/control\-api/src/services/resource\-enrollment\.integration\.test\.ts$''']
+regexes = ['''^enrollment\-rotation\-fixture\-at\-least\-32\-characters$''']
+
+[[allowlists]]
+description = "Reviewed synthetic test value; exact value and file only."
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^services/fleet\-gateway/src/config\.test\.ts$''']
+regexes = ['''^fixture\-drain\-secret\-distinct\-at\-least\-32$''']
