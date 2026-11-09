@@ -1,8 +1,8 @@
+import { execFileSync } from 'node:child_process';
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { utils } from 'ssh2';
 import { loadConfig } from './config.js';
 import { createControlApi, httpsTransport, ParticipantRefused, type ControlApiTransport } from './control-api.js';
 import { GatewayError } from './errors.js';
@@ -71,7 +71,8 @@ describe('SSH identity', () => {
   const keyFile = (mode: number) => {
     directory = mkdtempSync(join(tmpdir(), 'fleet-gateway-key-'));
     const file = join(directory, 'key');
-    writeFileSync(file, utils.generateKeyPairSync('ed25519').private);
+    // ssh2 key generation strips leading zero public-key bytes, occasionally making an invalid key.
+    execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-C', 'fixture', '-f', file]);
     chmodSync(file, mode);
     return file;
   };

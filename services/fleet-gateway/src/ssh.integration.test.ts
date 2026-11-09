@@ -11,7 +11,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { serve, type ServerType } from '@hono/node-server';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { utils } from 'ssh2';
 import { OATHWEAVE_STREAM_RECHECK_MS } from '@hivemagnus/magnus-oathweave';
 import { BOB, identityService, LINKS, mint, ORIGIN, type TokenOptions } from '../test/support.js';
 import { createApp } from './app.js';
@@ -74,10 +73,10 @@ beforeAll(async () => {
   docker('run', '-d', '--rm', '--name', NAME, IMAGE);
   address = docker('inspect', '-f', '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}', NAME);
 
-  const keys = utils.generateKeyPairSync('ed25519');
   const keyPath = join(directory, 'gateway-key');
-  writeFileSync(keyPath, keys.private, { mode: 0o400 });
-  writeFileSync(join(directory, 'authorized_keys'), `${keys.public}\n`);
+  execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-C', 'fixture', '-f', keyPath]);
+  chmodSync(keyPath, 0o400);
+  writeFileSync(join(directory, 'authorized_keys'), readFileSync(keyPath + '.pub'));
   docker('cp', join(directory, 'authorized_keys'), `${NAME}:/home/${USER}/.ssh/authorized_keys`);
   docker('exec', NAME, 'sh', '-c', `chown -R ${USER}:${USER} /home/${USER}/.ssh && chmod 700 /home/${USER}/.ssh && chmod 600 /home/${USER}/.ssh/authorized_keys`);
   await waitForSshd();
