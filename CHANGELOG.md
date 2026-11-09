@@ -5,6 +5,12 @@ All notable changes to this project are documented in this file. The format is b
 [Semantic Versioning](https://semver.org/).
 
 
+## [2.3.2] - 2026-11-09
+
+### Fixed
+
+- Show managed cron last-run status and execution history from the canonical occurrence ledger, including runs completed before an upgrade. Uncertain runs retain a pending result; only matching signed scheduler completions expose output and exit codes. Legacy cron history is preserved.
+
 ## [2.3.1] - 2026-11-09
 
 ### Fixed

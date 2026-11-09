@@ -16,6 +16,7 @@ import { enforceIdempotencyFromHeader } from '../utils/idempotency.js';
 import { NodeApiClient } from '../sdk/index.js';
 import { getNodeBaseUrl } from '../utils/node-url.js';
 import { getNodeManagerSecret } from '../utils/env.js';
+import { readManagedCronHistory } from '../services/managed-cron-history.js';
 
 export const cronRouter = new Hono<AppVariables>();
 cronRouter.route('/managed-occurrences', managedCronRouter);
@@ -93,10 +94,12 @@ cronRouter.get('/', async (c) => {
 
   const definitions = await db.managedCronDefinition.findMany({ where: { cronJobId: { in: jobs.map(job => job.id) } },
     select: { cronJobId: true, revision: true, enabled: true, expiresAt: true } });
+  const history = await readManagedCronHistory(jobs.filter(job => definitions.some(value => value.cronJobId === job.id)));
   const viewer = getUser(c).role;
   return c.json({ success: true, data: jobs.map(job => {
     const definition = definitions.find(value => value.cronJobId === job.id);
-    return { ...cronJobForRole(job, viewer), managed: definition ? { revision: definition.revision,
+    const latest = history.get(job.id)?.[0];
+    return { ...cronJobForRole(job, viewer), ...(latest ? { lastRunAt: latest.startedAt, lastRunExitCode: latest.exitCode } : {}), managed: definition ? { revision: definition.revision,
       enabled: definition.enabled, expiresAt: definition.expiresAt.toISOString(), timezone: 'UTC' } : null };
   }) });
 });
@@ -109,7 +112,13 @@ cronRouter.get('/:cronId', async (c) => {
     include: { executions: { orderBy: { startedAt: 'desc' }, take: 10 } },
   });
   if (!job) throw new HttpError(404, 'NOT_FOUND', 'Cron job not found');
-  return c.json({ success: true, data: cronJobForRole(job, getUser(c).role) });
+  const definition = await db.managedCronDefinition.findUnique({ where: { cronJobId: job.id }, select: { cronJobId: true } });
+  const managedExecutions = definition ? (await readManagedCronHistory([job], true)).get(job.id) ?? [] : [];
+  const executions = [...managedExecutions, ...job.executions]
+    .sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime() || b.id.localeCompare(a.id)).slice(0, 10);
+  const latest = managedExecutions[0];
+  return c.json({ success: true, data: cronJobForRole({ ...job, executions,
+    ...(latest ? { lastRunAt: latest.startedAt, lastRunExitCode: latest.exitCode } : {}) }, getUser(c).role) });
 });
 
 // ── Create cron job ──

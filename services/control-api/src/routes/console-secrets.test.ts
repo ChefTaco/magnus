@@ -48,7 +48,7 @@ vi.mock('../db/index.js', () => ({ getDb: () => ({
     create: async ({ data }: { data: Record<string, unknown> }) => ({ ...fixture.node, ...data, id: 'node-new' }),
     update: async ({ data }: { data: Record<string, unknown> }) => ({ ...fixture.node, ...data }),
   },
-  managedCronDefinition: { findMany: async () => [] },
+  managedCronDefinition: { findMany: async () => [], findUnique: async () => null },
   agent: { create: async () => ({}) },
 }) }));
 

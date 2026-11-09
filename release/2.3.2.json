@@ -1,0 +1,9 @@
+{
+  "summary": "Show verified managed cron results and existing execution history in cron responses.",
+  "breaking": false,
+  "minUpgradeFrom": "1.0.0",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}

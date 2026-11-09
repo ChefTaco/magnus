@@ -370,6 +370,16 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('managed scheduler PostgreSQL
     expect((await service.settleCronOccurrence({ nodeFqdn: input.nodeFqdn, occurrenceId: input.occurrenceId, result })).state).toBe('completed');
     expect((await service.settleCronOccurrence({ nodeFqdn: input.nodeFqdn, occurrenceId: input.occurrenceId, result })).state).toBe('completed');
     await expect(service.admitCronOccurrence(input)).rejects.toThrow('already claimed');
+    const { readManagedCronHistory } = await import('./managed-cron-history.js');
+    // Earlier settled runs become visible immediately, including after a pause.
+    await db.cronJob.update({ where: { id: ids[0]! }, data: { status: 'PAUSED' } });
+    const identities = [{ id: ids[0]!, nodeId: ids[0]! }, { id: ids[1]!, nodeId: ids[1]! }];
+    const history = await readManagedCronHistory(identities);
+    expect(history.get(ids[0]!)?.[0]).toMatchObject({ id: input.occurrenceId, cronJobId: ids[0], nodeId: ids[0],
+      exitCode: 0, stdout: 'fixture-ok', durationMs: 1 });
+    expect(history.has(ids[1]!)).toBe(false);
+    expect((await readManagedCronHistory([identities[0]!], true)).get(ids[0]!)).toEqual(history.get(ids[0]!));
+    expect(await db.cronJobExecution.count({ where: { cronJobId: ids[0]! } })).toBe(0);
     expect((await db.commandResourceLease.findUniqueOrThrow({ where: { commandId: stored.id } })).state).toBe('released');
   });
 });
