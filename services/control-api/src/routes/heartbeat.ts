@@ -31,6 +31,8 @@ import {
   deriveAgentCertificateHostname,
   selectAgentEndpointHostname,
   verifyAgentCertificateHostname,
+  verifyAgentTlsHostname,
+  repairAgentAddress,
 } from '../utils/node-url.js';
 import { heartbeatPeerAddress } from '../utils/heartbeat-peer.js';
 import { authMiddleware } from '../middleware/auth.js';
@@ -231,7 +233,7 @@ async function recordNodeSecretFingerprint(nodeId: string, observedFingerprint: 
 
 interface ResolvedNode {
   nodeId: string;
-  existing: { id: string; name: string; ipAddress: string; hostname: string; status: string } | null;
+  existing: { id: string; name: string; ipAddress: string; hostname: string; status: string; port: number } | null;
 }
 
 /**
@@ -265,7 +267,7 @@ async function resolveNodeByFqdn(fqdn: string | null, callerIp: string, candidat
           { name: shortName },
         ],
       },
-      select: { id: true, name: true, ipAddress: true, hostname: true, status: true },
+      select: { id: true, name: true, ipAddress: true, hostname: true, status: true, port: true },
       orderBy: { updatedAt: 'desc' },
     });
     if (byHostname) {
@@ -279,7 +281,7 @@ async function resolveNodeByFqdn(fqdn: string | null, callerIp: string, candidat
 
     const byIp = await db.node.findFirst({
       where: { ipAddress: ip },
-      select: { id: true, name: true, ipAddress: true, hostname: true, status: true },
+      select: { id: true, name: true, ipAddress: true, hostname: true, status: true, port: true },
     });
     if (byIp) {
       return { nodeId: byIp.id, existing: byIp };
@@ -291,7 +293,7 @@ async function resolveNodeByFqdn(fqdn: string | null, callerIp: string, candidat
   if (isLocal && !fqdn) {
     let devNode = await db.node.findUnique({
       where: { name: DEV_NODE_NAME },
-      select: { id: true, name: true, ipAddress: true, hostname: true, status: true },
+      select: { id: true, name: true, ipAddress: true, hostname: true, status: true, port: true },
     });
 
     if (!devNode) {
@@ -308,7 +310,7 @@ async function resolveNodeByFqdn(fqdn: string | null, callerIp: string, candidat
           token: `local-${id}`,
           status: 'ONLINE',
         },
-        select: { id: true, name: true, ipAddress: true, hostname: true, status: true },
+        select: { id: true, name: true, ipAddress: true, hostname: true, status: true, port: true },
       });
       await db.agent.create({
         data: { nodeId: id, version: 'dev', status: 'RUNNING', capabilities: '[]' },
@@ -344,6 +346,7 @@ heartbeatRouter.post('/', async (c) => {
   const fqdnResolvedIp = fqdn ? await tryResolveFqdnToIp(fqdn) : null;
   const preferredNodeIp = selectPreferredNodeIp({ callerIp, healthNetworkIps, fqdnResolvedIp });
   const ipCandidates = uniqueNonEmpty([callerIp, ...healthNetworkIps, fqdnResolvedIp ?? '']);
+  let resolved = await resolveNodeByFqdn(fqdn, callerIp, ipCandidates);
   const agentCertificateHostname = deriveAgentCertificateHostname(
     fqdn,
     process.env['AGENT_TLS_DOMAIN_SUFFIX'],
@@ -351,13 +354,14 @@ heartbeatRouter.post('/', async (c) => {
   const agentCertificateIp = agentCertificateHostname
     ? await tryResolveCertificateHostnameToIp(agentCertificateHostname)
     : null;
-  const verifiedAgentCertificateHostname = verifyAgentCertificateHostname(
+  const dnsVerifiedHostname = verifyAgentCertificateHostname(
     agentCertificateHostname,
     agentCertificateIp,
     ipCandidates,
   );
-
-  let resolved = await resolveNodeByFqdn(fqdn, callerIp, ipCandidates);
+  const verifiedAgentCertificateHostname = dnsVerifiedHostname && agentCertificateIp
+    && await verifyAgentTlsHostname(dnsVerifiedHostname, agentCertificateIp, resolved?.existing?.port ?? 4100)
+    ? dnsVerifiedHostname : null;
 
   // ── Auto-register unknown agents ──────────────────────────────────────────
   // Token is valid but node isn't in our DB — create a record automatically.
@@ -382,7 +386,7 @@ heartbeatRouter.post('/', async (c) => {
           status: 'ONLINE',
           lastHeartbeatAt: new Date(),
         },
-        select: { id: true, name: true, ipAddress: true, hostname: true, status: true },
+        select: { id: true, name: true, ipAddress: true, hostname: true, status: true, port: true },
       });
       await db.agent.create({
         data: {
@@ -398,7 +402,7 @@ heartbeatRouter.post('/', async (c) => {
       // Name collision (unique constraint) — find the existing node
       const existing = await db.node.findUnique({
         where: { name: nodeName },
-        select: { id: true, name: true, ipAddress: true, hostname: true, status: true },
+        select: { id: true, name: true, ipAddress: true, hostname: true, status: true, port: true },
       });
       if (existing) {
         resolved = { nodeId: existing.id, existing };
@@ -443,8 +447,7 @@ heartbeatRouter.post('/', async (c) => {
 
   const repairedAgentAddress =
     existing && existing.name !== DEV_NODE_NAME
-      ? verifiedAgentCertificateHostname ??
-        (shouldRepairNodeIp(existing.ipAddress) ? preferredNodeIp : null)
+      ? repairAgentAddress(existing.ipAddress, verifiedAgentCertificateHostname, preferredNodeIp, dnsVerifiedHostname)
       : null;
 
   // Update node heartbeat

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -12,6 +12,7 @@ const dirs: string[] = [];
 const servers: Server[] = [];
 const originalPackages = process.env['MAGNUS_AGENT_ARDENT_PACKAGES'];
 afterEach(async () => {
+  vi.unstubAllEnvs();
   if (originalPackages === undefined) delete process.env['MAGNUS_AGENT_ARDENT_PACKAGES']; else process.env['MAGNUS_AGENT_ARDENT_PACKAGES'] = originalPackages;
   for (const server of servers.splice(0)) await new Promise<void>(resolve => server.close(() => resolve()));
   for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true });
@@ -41,12 +42,18 @@ describe('node-local Ardent inventory and management boundary', () => {
     expect(await verifiedInstalledArdentPackage(install, staged)).toBe(false);
   });
   it('runs owner commands in the owner home, not the root-only agent directory', () => {
+    vi.stubEnv('npm_config_cache', '/opt/magnus-agent/.npm');
+    vi.stubEnv('NPM_CONFIG_CACHE', '/root/.npm');
+    vi.stubEnv('NODE_MANAGER_SECRET', 'obviously-fake-owner-environment-secret');
     const root = { owner: 'ardent', home: '/var/lib/ardent', root: '/var/lib/ardent/.ardent', install: '/var/lib/ardent/.local/share/ardent' };
     const command = ownerCommand(root, 1001, ['/usr/bin/node', '-e', 'process.exit(0)'], 10_000);
     expect(command.file).toBe('/usr/sbin/runuser');
     expect(command.args.slice(0, 6)).toEqual(['-u', 'ardent', '--', '/usr/bin/env', 'XDG_RUNTIME_DIR=/run/user/1001', 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1001/bus']);
     expect(command.args.slice(6)).toEqual(['/usr/bin/node', '-e', 'process.exit(0)']);
     expect(command.options).toMatchObject({ cwd: '/var/lib/ardent', timeout: 10_000, maxBuffer: 32 * 1024 });
+    expect(command.options.env).toMatchObject({ HOME: root.home, USER: root.owner, LOGNAME: root.owner,
+      npm_config_cache: '/var/lib/ardent/.npm', NPM_CONFIG_CACHE: '/var/lib/ardent/.npm' });
+    expect(command.options.env.NODE_MANAGER_SECRET).toBeUndefined();
   });
   it('permits restart beside Hermes only when all Hermes traffic consumers are explicitly disabled', async () => {
     const home = await mkdtemp(join(tmpdir(), 'magnus-ardent-handover-'));

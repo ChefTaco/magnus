@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file. The format is b
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- A reported DNS endpoint is selected only after a verified TLS handshake on the heartbeat's
+  observed address. IP-only certificates retain their IP endpoint, and an endpoint selected by
+  2.2.2 can recover without a database edit. The handshake sends no node credential.
+- Ardent owner commands use that account's home and npm cache instead of inheriting the root
+  management service's cache path, fixing package installation on fresh hosts.
+
 
 ## [2.2.2] - 2026-11-09
 

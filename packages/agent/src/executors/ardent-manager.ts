@@ -393,7 +393,10 @@ export function ownerCommand(root: ArdentRoot, uid: number, args: string[], time
   const bus = `/run/user/${uid}/bus`;
   return { file: '/usr/sbin/runuser', args: ['-u', root.owner, '--', '/usr/bin/env',
     `XDG_RUNTIME_DIR=/run/user/${uid}`, `DBUS_SESSION_BUS_ADDRESS=unix:path=${bus}`, ...args],
-  options: { cwd: root.home, timeout, maxBuffer: 32 * 1024, env: childEnvironment() } };
+  options: { cwd: root.home, timeout, maxBuffer: 32 * 1024, env: childEnvironment({
+    HOME: root.home, USER: root.owner, LOGNAME: root.owner,
+    npm_config_cache: join(root.home, '.npm'), NPM_CONFIG_CACHE: join(root.home, '.npm'),
+  }) } };
 }
 
 /**

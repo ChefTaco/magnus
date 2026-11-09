@@ -1,5 +1,6 @@
-import { normalizeIpAddress } from './ip.js';
+import { normalizeIpAddress, isLoopbackOrUnroutableIp } from './ip.js';
 import { isIP } from 'node:net';
+import { connect, type ConnectionOptions, type TLSSocket } from 'node:tls';
 
 /**
  * Build the base URL for a node-manager agent.
@@ -53,6 +54,38 @@ export function verifyAgentCertificateHostname(certificateHostname: string | nul
   const resolved = normalizeIpAddress(resolvedAddress);
   const observed = new Set(heartbeatAddresses.map((value) => normalizeIpAddress(value)));
   return resolved && observed.has(resolved) ? certificateHostname : null;
+}
+
+/** Verify the declared DNS identity against the listener before selecting it for callbacks.
+ * Connect only to the address already bound to this heartbeat. No credential or HTTP request is sent.
+ */
+export function verifyAgentTlsHostname(hostname: string, address: string, port: number,
+  options: { ca?: ConnectionOptions['ca']; timeoutMs?: number } = {}): Promise<boolean> {
+  if (!hostname || isIP(address) === 0 || !Number.isInteger(port) || port < 1 || port > 65535) return Promise.resolve(false);
+  return new Promise(resolve => {
+    let complete = false;
+    let socket: TLSSocket;
+    try {
+      socket = connect({ host: address, port, servername: hostname, rejectUnauthorized: true,
+        ...(options.ca ? { ca: options.ca } : {}) });
+    } catch { resolve(false); return; }
+    const timer = setTimeout(() => finish(false), options.timeoutMs ?? 2000);
+    function finish(verified: boolean) {
+      if (complete) return;
+      complete = true;
+      clearTimeout(timer);
+      socket.destroy();
+      resolve(verified);
+    }
+    socket.once('secureConnect', () => finish(socket.authorized));
+    socket.once('error', () => finish(false));
+    socket.once('close', () => finish(false));
+  });
+}
+
+/** Repair a formerly selected DNS endpoint too, so an IP-only certificate can recover. */
+export function repairAgentAddress(current: string, verifiedHostname: string | null, preferredIp: string | null, rejectedHostname: string | null): string | null {
+  return verifiedHostname ?? (isLoopbackOrUnroutableIp(current) || (rejectedHostname !== null && current === rejectedHostname) ? preferredIp : null);
 }
 
 /** Keep inventory hostname aligned with the endpoint identity actually verified by TLS. */
