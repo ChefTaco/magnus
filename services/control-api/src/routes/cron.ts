@@ -2,7 +2,7 @@ import { managedCronRouter } from './managed-cron.js';
 import { canStageLegacyCronForEnrollment, cronMutationMode, finalizeManagedCronRevocation, installManagedCron, registerManagedCron,
   reconcileForeignSchedulerSource, revokeManagedCron, stageLegacyCronForEnrollment,
   updateAndRegisterManagedCron } from '../services/managed-cron.js';
-import { managedCronRegistrationSchema, schedulerSourceSettlementSchema, type ManagedCronIdentity } from '../schemas/managed-cron.js';
+import { managedCronSchema, managedCronRegistrationSchema, schedulerSourceSettlementSchema, type ManagedCronIdentity } from '../schemas/managed-cron.js';
 import { Hono } from 'hono';
 import type { AppVariables } from '../types/index.js';
 import { cronJobForRole, mergeEnvironmentEdit, nodeForRole } from '../services/secret-views.js';
@@ -125,6 +125,15 @@ cronRouter.post('/', requireRole('ADMIN', 'OPERATOR'), async (c) => {
   if (mode === 'managed' && !body.managed) managedRequired();
   if (mode === 'legacy' && body.managed) throw new HttpError(409, 'MANAGED_CRON_ENROLLMENT_REQUIRED',
     'Enroll the node before creating a finite managed schedule');
+
+  if (mode === 'managed') {
+    const checked = managedCronSchema.safeParse({ nodeFqdn: node.hostname, name: body.name,
+      revision: body.managed!.revision, timezone: body.managed!.timezone, expiresAt: body.managed!.expiresAt,
+      schedule: body.schedule, command: body.command, args: body.args, environment: body.environment,
+      workingDirectory: body.workingDirectory ?? undefined, timeoutSeconds: body.timeoutSeconds });
+    if (!checked.success || body.managed!.timeoutSeconds !== body.timeoutSeconds || body.managed!.expiresAt <= Date.now())
+      throw new HttpError(400, 'INVALID_MANAGED_CRON', 'Review the finite UTC schedule, job name, timeout and future expiry');
+  }
 
   // Claim after validation/preview/preflight so a rejected retry is not a duplicate.
   const claim = await enforceIdempotencyFromHeader(c);

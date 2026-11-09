@@ -4,6 +4,7 @@ import { errorHandler } from '../middleware/error-handler.js';
 
 const fixture = vi.hoisted(() => ({
   calls: [] as string[],
+  mode: 'legacy' as 'legacy' | 'managed',
   initial: {} as Record<string, unknown>,
   updated: {} as Record<string, unknown>,
 }));
@@ -20,10 +21,10 @@ vi.mock('../db/index.js', () => ({ getDb: () => ({ cronJob: {
   findUnique: async () => fixture.initial,
   findMany: async () => [fixture.initial],
   update: async () => fixture.updated,
-}, node: { findUnique: async () => ({ id: 'node-1' }) }, managedCronDefinition: { findMany: async () => [
+}, node: { findUnique: async () => ({ id: 'node-1', hostname: 'node-1.example.com' }) }, managedCronDefinition: { findMany: async () => [
   { cronJobId: 'cron-1', revision: 7, enabled: false, expiresAt: new Date('2030-01-01T00:00:00Z') } ] } }) }));
 vi.mock('../services/managed-cron.js', async original => ({ ...await original<object>(),
-  cronMutationMode: async () => 'legacy' }));
+  cronMutationMode: async () => fixture.mode }));
 vi.mock('../services/audit-service.js', async original => ({ ...await original<object>(), logAuditEvent: vi.fn() }));
 vi.mock('../sdk/index.js', () => ({ NodeApiClient: class {
   async syncCronJob(job: { name: string }) { fixture.calls.push(`sync:${job.name}`); }
@@ -55,6 +56,19 @@ describe('legacy cron PATCH agent push', () => {
     expect((await response.json()).data[0].managed).toEqual({ revision: 7, enabled: false,
       expiresAt: '2030-01-01T00:00:00.000Z', timezone: 'UTC' });
   });
+  it('validates finite schedules before creating a job or consuming idempotency', async () => {
+    fixture.mode = 'managed';
+    const token = await signUserToken({ userId: 'fixture-operator', email: '', role: 'OPERATOR' });
+    const valid = { nodeId: 'node-1', name: 'fixture', schedule: '* * * * *', command: '/usr/bin/uptime', timeoutSeconds: 60,
+      managed: { revision: 1, timezone: 'UTC', timeoutSeconds: 60, expiresAt: Date.now() + 60000 } };
+    for (const patch of [{ schedule: 'not cron' }, { name: '[AI] invalid' }, { timeoutSeconds: 61 },
+      { managed: { ...valid.managed, expiresAt: 1 } }]) {
+      const response = await app.request('/cron', { method: 'POST', headers: {
+        authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ ...valid, ...patch }) });
+      expect(response.status).toBe(400);
+      expect((await response.json()).error.code).toBe('INVALID_MANAGED_CRON');
+    }
+  });
   it('refuses finite scheduling on legacy nodes before creating an unbounded job', async () => {
     const token = await signUserToken({ userId: 'fixture-operator', email: '', role: 'OPERATOR' });
     const response = await app.request('/cron', { method: 'POST', headers: {
@@ -64,7 +78,7 @@ describe('legacy cron PATCH agent push', () => {
     expect(response.status).toBe(409);
     expect((await response.json()).error.code).toBe('MANAGED_CRON_ENROLLMENT_REQUIRED');
   });
-  beforeEach(() => { fixture.calls = []; });
+  beforeEach(() => { fixture.calls = []; fixture.mode = 'legacy'; });
 
   it('removes a paused job from the node instead of re-syncing it', async () => {
     fixture.initial = job({}); fixture.updated = job({ status: 'PAUSED' });
