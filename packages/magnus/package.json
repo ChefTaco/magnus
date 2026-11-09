@@ -1,6 +1,6 @@
 {
   "name": "@hivemagnus/magnus",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "description": "Install, upgrade and roll back a Magnus server and console with one command: `npx @hivemagnus/magnus init`, then `magnus upgrade`. Pins exact, tested component versions, backs up PostgreSQL before every migration and reverts automatically when the new version fails its health check.",
   "keywords": [
     "magnus",
@@ -47,7 +47,7 @@
     "clean": "node -e \"const fs=require('node:fs');fs.rmSync('dist',{recursive:true,force:true});fs.rmSync('tsconfig.tsbuildinfo',{force:true})\""
   },
   "dependencies": {
-    "@hivemagnus/magnus-contracts": "2.3.0"
+    "@hivemagnus/magnus-contracts": "2.3.1"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
@@ -56,47 +56,29 @@
   },
   "magnusRelease": {
     "schema": 1,
-    "version": "2.3.0",
+    "version": "2.3.1",
     "engines": {
       "node": "^24.22.1 || ^26.13.0"
     },
     "components": {
-      "@hivemagnus/magnus-server": "2.3.0",
-      "@hivemagnus/magnus-ui": "2.3.0",
-      "@hivemagnus/magnus-contracts": "2.3.0",
-      "@hivemagnus/magnus-agent": "2.3.0"
+      "@hivemagnus/magnus-server": "2.3.1",
+      "@hivemagnus/magnus-ui": "2.3.1",
+      "@hivemagnus/magnus-contracts": "2.3.1",
+      "@hivemagnus/magnus-agent": "2.3.1"
     },
     "breaking": false,
     "minUpgradeFrom": "1.0.0",
     "engineProtocol": 2,
     "newRequiredEnv": [],
-    "newOptionalEnv": [
-      {
-        "name": "MAGNUS_AGENT_MANAGED_TERMINAL_USER",
-        "component": "agent",
-        "secret": false,
-        "description": "Dedicated non-root account without supplementary groups for restricted managed terminals. Requires privileged mode, the execution supervisor and full node enrollment; unset keeps this feature disabled."
-      }
-    ],
+    "newOptionalEnv": [],
     "removedEnv": [],
-    "migrations": [
-      {
-        "name": "20261109140000_managed_terminal_claim",
-        "impact": "fast",
-        "note": ""
-      },
-      {
-        "name": "20261109143000_managed_terminal_claim_guard",
-        "impact": "fast",
-        "note": ""
-      }
-    ],
+    "migrations": [],
     "agent": {
       "selfUpgradeProtocol": 1,
       "minLauncher": 1
     },
-    "summary": "Managed web terminals for fully enrolled nodes, with a restricted systemd PTY, single-use admission and signed process-group cleanup. Full enrollment continues to support node commands and managed cron without accepting raw SSH disconnects as completion evidence.",
-    "notesUrl": "https://github.com/ChefTaco/magnus/releases/tag/v2.3.0",
+    "summary": "Fix the standalone native agent contracts checksum and verify final package bytes before publication.",
+    "notesUrl": "https://github.com/ChefTaco/magnus/releases/tag/v2.3.1",
     "allowScripts": {
       "@prisma/engines": true,
       "argon2": true,

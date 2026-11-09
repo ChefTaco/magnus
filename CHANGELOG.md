@@ -5,6 +5,13 @@ All notable changes to this project are documented in this file. The format is b
 [Semantic Versioning](https://semver.org/).
 
 
+## [2.3.1] - 2026-11-09
+
+### Fixed
+
+- Native agent installations now pin the final built contracts package even when contracts change
+  after a version bump. Package checks reject a stale contracts checksum before publication.
+
 ## [2.3.0] - 2026-11-09
 
 ### Added

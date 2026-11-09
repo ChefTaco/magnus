@@ -1,0 +1,9 @@
+{
+  "summary": "Fix the standalone native agent contracts checksum and verify final package bytes before publication.",
+  "breaking": false,
+  "minUpgradeFrom": "1.0.0",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}

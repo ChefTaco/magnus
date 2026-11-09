@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { refreshAgentLock } from './refresh-agent-lock.mjs';
+import { assertAgentContractsIntegrity, refreshAgentLock } from './refresh-agent-lock.mjs';
 
 const repo = resolve(import.meta.dirname, '..');
 function fixture(t) {
@@ -57,5 +57,21 @@ test('a release bump pins the exact locally built contracts bytes before registr
   assert.equal(entry.version, '9.9.9');
   assert.match(entry.resolved, /magnus-contracts-9\.9\.9\.tgz$/);
   assert.match(entry.integrity, /^sha512-[A-Za-z0-9+/]{86}==$/);
+  assert.equal(refreshAgentLock(root), false);
+});
+
+
+test('same-version contract rebuilds refresh the lock and publication rejects stale bytes', t => {
+  const root = fixture(t);
+  const directory = join(root, 'packages/contracts/dist');
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(join(directory, 'index.js'), 'export const example = 1;\n');
+  assert.equal(refreshAgentLock(root), true);
+  assert.doesNotThrow(() => assertAgentContractsIntegrity(root));
+  assert.equal(refreshAgentLock(root), false);
+  writeFileSync(join(directory, 'index.js'), 'export const example = 2;\n');
+  assert.throws(() => assertAgentContractsIntegrity(root), /does not pin the contracts tarball/);
+  assert.equal(refreshAgentLock(root), true);
+  assert.doesNotThrow(() => assertAgentContractsIntegrity(root));
   assert.equal(refreshAgentLock(root), false);
 });
