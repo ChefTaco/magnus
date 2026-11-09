@@ -1,5 +1,5 @@
 {
-  "summary": "Show verified managed cron results and existing execution history in cron responses.",
+  "summary": "Fix restricted terminal PTY traversal under service umasks and show verified managed cron execution history.",
   "breaking": false,
   "minUpgradeFrom": "1.0.0",
   "newRequiredEnv": [],

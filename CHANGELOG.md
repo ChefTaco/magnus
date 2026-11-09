@@ -9,6 +9,7 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Fixed
 
+- Preserve PTY marker traversal under a native service's restrictive umask, so restricted web terminals can resize without exposing their journals or granting directory writes.
 - Show managed cron last-run status and execution history from the canonical occurrence ledger, including runs completed before an upgrade. Uncertain runs retain a pending result; only matching signed scheduler completions expose output and exit codes. Legacy cron history is preserved.
 
 ## [2.3.1] - 2026-11-09

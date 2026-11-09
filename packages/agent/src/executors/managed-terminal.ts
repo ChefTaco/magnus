@@ -3,7 +3,7 @@ import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child
 import { promisify } from 'node:util';
 import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { chown, lstat, mkdir, open, readFile, readdir } from 'node:fs/promises';
+import { chmod, chown, lstat, mkdir, open, readFile, readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { Hono } from 'hono';
 import { managedTerminalActionSchema, managedTerminalAuthoritySchema, managedTerminalReceiptPayload,
@@ -193,7 +193,11 @@ export class ManagedTerminals {
       await privateDirectory(this.directory(authority)); await this.save(intent);
       const runtime = '/run/magnus-terminals'; await mkdir(runtime, { recursive: true, mode: 0o711 });
       const parent = await lstat(runtime); if (!parent.isDirectory() || parent.isSymbolicLink() || parent.uid !== 0 || parent.mode & 0o022) throw new Error('Unsafe terminal runtime');
+      // mkdir's mode is masked by the daemon's UMask=0077. The restricted owner
+      // needs traversal to its single writable marker, never directory writes/listing.
+      await chmod(runtime, 0o711);
       const directory = join(runtime, sha(authority.workId)); await mkdir(directory, { mode: 0o711 });
+      await chmod(directory, 0o711);
       const ptyFile = join(directory, 'pty'); const file = await open(ptyFile, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
       await file.close(); await chown(ptyFile, this.uid, Number((await exec('/usr/bin/id', ['-g', this.user], { env: CLEAN_ENV })).stdout.trim()));
       const command = '/usr/bin/tty > ' + ptyFile + '; exec /usr/bin/env -i PATH=/usr/bin:/bin HOME=/tmp HISTFILE=/dev/null HISTSIZE=0 HISTFILESIZE=0 TERM=xterm-256color USER=' + this.user + ' LOGNAME=' + this.user + ' /bin/bash --noprofile --norc';

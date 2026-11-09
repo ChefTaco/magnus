@@ -77,7 +77,7 @@
       "selfUpgradeProtocol": 1,
       "minLauncher": 1
     },
-    "summary": "Show verified managed cron results and existing execution history in cron responses.",
+    "summary": "Fix restricted terminal PTY traversal under service umasks and show verified managed cron execution history.",
     "notesUrl": "https://github.com/ChefTaco/magnus/releases/tag/v2.3.2",
     "allowScripts": {
       "@prisma/engines": true,
