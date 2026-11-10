@@ -63,3 +63,9 @@ pinned suite runtime. Only `/usr/bin/node` and `/usr/local/bin/node` are accepte
 for an explicitly reviewed image. Preparation and source-reader entry commands
 use that value; the validation profile must name an executable present in its
 immutable image. Missing runtime paths fail rather than selecting another tool.
+
+A scanner-only model failure returns a bounded error frame without provider
+response data. Compatible scanner images retain the affected file as failed
+analysis and report partial coverage, preserving other examined files. Source
+reading and preparation cannot ask for model access. A closed scanner input
+terminates the child and still follows independent worker cleanup.

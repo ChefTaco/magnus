@@ -10,6 +10,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Added
 
+- Preserve partial scanner analysis when the approved model broker fails, and handle closed scanner input without losing cleanup ownership.
+
 - Bind isolated preparation/source entry commands to an explicitly reviewed Node path compatible with the suite runtime.
 
 - Retain native Embermend supervisor bindings and adopt exact successful worker completion after API-process loss without replay; incomplete or detached-work evidence retains ownership.

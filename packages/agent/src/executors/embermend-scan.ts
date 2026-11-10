@@ -90,6 +90,7 @@ export async function scanRepository(raw: unknown, config: ScanWorkerConfig, mod
     // Make the read-only checkout readable by the container's non-root user.
     // Only this disposable source tree is shared; no home, socket or credentials.
     const exited = new Promise<number | null>((resolve, reject) => { child.once('error', reject); child.once('close', resolve); });
+    let stdinClosed = false; child.stdin.on('error', () => { stdinClosed = true; child.kill('SIGKILL'); });
     let stderrBytes = 0; child.stderr.on('data', (value: Buffer) => { stderrBytes += value.length; if (stderrBytes > 65536) child.kill('SIGKILL'); });
     const timer = setTimeout(() => child.kill('SIGKILL'), Math.max(1, Date.parse(request.deadline) - Date.now()));
     child.stdin.write(JSON.stringify(preparation ? { request: raw, validationArgv } : source ? { request: raw } : { request: raw, modelRef: config.model.ref, localModel: config.model.local }) + '\n');
@@ -102,11 +103,18 @@ export async function scanRepository(raw: unknown, config: ScanWorkerConfig, mod
         if (mode !== 'scan') throw new Error('Source reading or validation cannot request model access');
         const base = new URL(config.model.baseUrl.endsWith('/') ? config.model.baseUrl : config.model.baseUrl + '/');
         if (base.username || base.password || base.search || base.hash) throw new Error('Credential-free configured model URL required');
-        const reply = await modelFetch(new URL('chat/completions', base), { ...(modelAgent ? { dispatcher: modelAgent } : {}), method: 'POST', redirect: 'error', signal: AbortSignal.timeout(Math.min(120000, Math.max(1, Date.parse(request.deadline) - Date.now()))), headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify(scanModelBody(config.model, request, message.system, message.content)) });
-        if (!reply.ok || Number(reply.headers.get('content-length')) > 1024 * 1024) throw new Error('Configured model unavailable');
-        const parsed = z.object({ model: z.literal(config.model.model), choices: z.array(z.object({ finish_reason: z.literal('stop'), message: z.object({ content: z.string().max(1000000), tool_calls: z.undefined().optional() }) })).length(1) }).parse(await boundedJson(reply, 1024 * 1024));
-        const choice = parsed.choices[0]; if (!choice) throw new Error('Missing model completion');
-        child.stdin.write(JSON.stringify({ id: message.id, result: JSON.parse(choice.message.content) }) + '\n');
+        try {
+          const reply = await modelFetch(new URL('chat/completions', base), { ...(modelAgent ? { dispatcher: modelAgent } : {}), method: 'POST', redirect: 'error', signal: AbortSignal.timeout(Math.min(120000, Math.max(1, Date.parse(request.deadline) - Date.now()))), headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify(scanModelBody(config.model, request, message.system, message.content)) });
+          if (!reply.ok || Number(reply.headers.get('content-length')) > 1024 * 1024) { await reply.body?.cancel(); throw new Error('Configured model unavailable'); }
+          const parsed = z.object({ model: z.literal(config.model.model), choices: z.array(z.object({ finish_reason: z.literal('stop'), message: z.object({ content: z.string().max(1000000), tool_calls: z.undefined().optional() }) })).length(1) }).parse(await boundedJson(reply, 1024 * 1024));
+          const choice = parsed.choices[0]; if (!choice) throw new Error('Missing model completion');
+          child.stdin.write(JSON.stringify({ id: message.id, result: JSON.parse(choice.message.content) }) + '\n');
+        } catch {
+          // A provider failure is a failed analysis for this file, not clean
+          // coverage and not an opportunity to select a different model.
+          if (!stdinClosed && child.stdin.writable && child.exitCode === null && child.signalCode === null)
+            child.stdin.write(JSON.stringify({ id: message.id, error: 'MODEL_BROKER_UNAVAILABLE' }) + '\n');
+        }
       }
       const code = await exited; if (code !== 0 || result === undefined) throw new Error('Scanner did not produce a complete terminal result'); return result;
     } finally { clearTimeout(timer); child.stdin.destroy(); if (child.exitCode === null) { child.kill('SIGKILL'); await exited.catch(() => undefined); } }
