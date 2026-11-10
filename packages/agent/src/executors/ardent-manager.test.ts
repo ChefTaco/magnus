@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, mkdir, readFile, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { gzipSync } from 'node:zlib';
-import { ardentArtifactMaxBytes, ardentPackageNames, ardentUserUnit, createArdentRoutes, hermesTrafficConsumersDisabled, installSkill, ownerCommand, readArdentState, relayBody, SkillInstallRefused, verifiedInstalledArdentPackage, writeProfileCredential } from './ardent-manager.js';
+import { ardentArtifactMaxBytes, ardentPackageNames, ardentUserUnit, createArdentRoutes, hermesTrafficConsumersDisabled, installSkill, ownerCommand, packageTreeDigest, promoteArdentPackage, readArdentState, relayBody, SkillInstallRefused, verifiedInstalledArdentPackage, withArdentLifecycle, writeProfileCredential } from './ardent-manager.js';
 
 const dirs: string[] = [];
 const servers: Server[] = [];
@@ -16,6 +16,87 @@ afterEach(async () => {
   if (originalPackages === undefined) delete process.env['MAGNUS_AGENT_ARDENT_PACKAGES']; else process.env['MAGNUS_AGENT_ARDENT_PACKAGES'] = originalPackages;
   for (const server of servers.splice(0)) await new Promise<void>(resolve => server.close(() => resolve()));
   for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true });
+});
+
+describe('Ardent package checkpoint rotation', () => {
+  const name = '@hivemagnus/ardent';
+  async function fixture(prefix: string, version: string) {
+    const root = join(prefix, 'node_modules', name);
+    await mkdir(join(root, 'dist'), { recursive: true });
+    await writeFile(join(root, 'package.json'), JSON.stringify({ name, version }));
+    await writeFile(join(root, 'dist/cli.js'), 'export {};\n');
+    const staged = { name, version, sha256: createHash('sha256').update(version).digest('hex') };
+    await writeFile(join(prefix, 'package-receipt.json'), JSON.stringify({
+      schemaVersion: 1, ...staged, packageTreeSha256: await packageTreeDigest(root),
+    }));
+    return staged;
+  }
+  async function setup() {
+    const home = await mkdtemp(join(tmpdir(), 'magnus-ardent-checkpoints-'));
+    dirs.push(home);
+    const install = join(home, 'ardent');
+    const previous = `${install}.previous`;
+    const stage = join(home, 'stage');
+    const older = await fixture(previous, '1.0.0');
+    const current = await fixture(install, '1.0.1');
+    const staged = await fixture(stage, '1.0.2');
+    return { home, install, previous, stage, older, current, staged };
+  }
+  it('keeps earlier checkpoint bytes and ownership across consecutive updates', async () => {
+    const { home, install, previous, stage, older, current, staged } = await setup();
+    const before = await lstat(previous);
+    const receipt = await readFile(join(previous, 'package-receipt.json'));
+    expect(await promoteArdentPackage(install, stage, staged)).toEqual({ previousAvailable: true, olderCheckpointRetained: true });
+    expect(await verifiedInstalledArdentPackage(install, staged)).toBe(true);
+    expect(await verifiedInstalledArdentPackage(previous, current)).toBe(true);
+    const [archived] = (await readdir(home)).filter(entry => entry.startsWith('ardent.previous.'));
+    expect(archived).toBeDefined();
+    const retained = join(home, archived!);
+    expect(await verifiedInstalledArdentPackage(retained, older)).toBe(true);
+    expect(await readFile(join(retained, 'package-receipt.json'))).toEqual(receipt);
+    expect(await lstat(retained)).toMatchObject({ ino: before.ino, uid: before.uid, gid: before.gid, mode: before.mode });
+    const next = await fixture(stage, '1.0.3');
+    await promoteArdentPackage(install, stage, next);
+    expect(await verifiedInstalledArdentPackage(install, next)).toBe(true);
+    expect(await verifiedInstalledArdentPackage(previous, staged)).toBe(true);
+    expect(await verifiedInstalledArdentPackage(retained, older)).toBe(true);
+    expect((await readdir(home)).filter(entry => entry.startsWith('ardent.previous.'))).toHaveLength(2);
+  });
+  it.each(['missing-active', 'modified-active', 'modified-checkpoint', 'symlink-checkpoint'])('refuses %s without moving either package', async damage => {
+    const { home, install, previous, stage, current, staged } = await setup();
+    if (damage === 'missing-active') await rm(install, { recursive: true });
+    if (damage === 'modified-active') await writeFile(join(install, 'node_modules', name, 'dist/cli.js'), 'changed');
+    if (damage === 'modified-checkpoint') await writeFile(join(previous, 'node_modules', name, 'dist/cli.js'), 'changed');
+    if (damage === 'symlink-checkpoint') {
+      await rename(previous, join(home, 'retained'));
+      await symlink(join(home, 'retained'), previous);
+    }
+    const before = await readdir(home);
+    await expect(promoteArdentPackage(install, stage, staged)).rejects.toThrow(/unsafe|cannot be verified/);
+    expect(await readdir(home)).toEqual(before);
+    expect(await verifiedInstalledArdentPackage(stage, staged)).toBe(true);
+    if (damage === 'modified-checkpoint' || damage === 'symlink-checkpoint')
+      expect(await verifiedInstalledArdentPackage(install, current)).toBe(true);
+  });
+  it('restores both checkpoints if a promoted candidate fails final verification', async () => {
+    const { home, install, previous, stage, current, older, staged } = await setup();
+    await expect(promoteArdentPackage(install, stage, staged, async (from, to) => {
+      await rename(from, to);
+      if (from === stage) await writeFile(join(to, 'node_modules', name, 'dist/cli.js'), 'changed during promotion');
+    })).rejects.toThrow('Installed Ardent package differs');
+    expect(await verifiedInstalledArdentPackage(install, current)).toBe(true);
+    expect(await verifiedInstalledArdentPackage(previous, older)).toBe(true);
+    expect((await readdir(home)).filter(entry => entry.startsWith('ardent.previous.'))).toHaveLength(0);
+  });
+  it('refuses a concurrent lifecycle action until the first settles', async () => {
+    const install = '/opt/example/ardent';
+    const held = Promise.withResolvers<void>();
+    const first = withArdentLifecycle(install, () => held.promise);
+    try {
+      await expect(withArdentLifecycle(install, async () => true)).rejects.toThrow('action is in progress');
+    } finally { held.resolve(); await first; }
+    await expect(withArdentLifecycle(install, async () => true)).resolves.toBe(true);
+  });
 });
 
 describe('node-local Ardent inventory and management boundary', () => {

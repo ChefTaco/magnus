@@ -166,18 +166,67 @@ export async function packageTreeDigest(packageRoot: string): Promise<string> {
   return createHash('sha256').update(entries.sort().join('')).digest('hex');
 }
 
-export async function verifiedInstalledArdentPackage(install: string, staged: { name?: string; version: string; sha256: string }): Promise<boolean> {
-  const receiptPath = join(install, 'package-receipt.json');
-  const metadata = await lstat(receiptPath).catch((error: unknown) => {
+async function optionalStat(path: string) {
+  return lstat(path).catch((error: unknown) => {
     if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return undefined;
     throw error;
   });
-  if (!metadata) return false;
+}
+
+async function verifiedPackageReceipt(install: string): Promise<z.infer<typeof installedPackageReceipt> | null> {
+  const directory = await optionalStat(install);
+  if (!directory) return null;
+  if (!directory.isDirectory() || directory.isSymbolicLink()) throw new Error('Ardent installation path is unsafe');
+  const receiptPath = join(install, 'package-receipt.json');
+  const metadata = await optionalStat(receiptPath);
+  if (!metadata) return null;
   if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > 4096) throw new Error('Installed Ardent package receipt is unsafe');
   const receipt = installedPackageReceipt.safeParse(JSON.parse(await readFile(receiptPath, 'utf8')) as unknown);
-  if (!receipt.success || receipt.data.version !== staged.version || receipt.data.sha256 !== staged.sha256) return false;
-  if (staged.name !== undefined && receipt.data.name !== staged.name) return false;
-  return await packageTreeDigest(packageDir(install, receipt.data.name)) === receipt.data.packageTreeSha256;
+  if (!receipt.success) return null;
+  const root = packageDir(install, receipt.data.name);
+  const expected = packageDir(await realpath(install), receipt.data.name);
+  if (await realpath(root) !== expected) throw new Error('Installed Ardent package path is unsafe');
+  if (await packageTreeDigest(root) !== receipt.data.packageTreeSha256) return null;
+  const manifest = packageVersion.safeParse(JSON.parse(await readFile(join(root, 'package.json'), 'utf8')) as unknown);
+  if (!manifest.success || manifest.data.name !== receipt.data.name || manifest.data.version !== receipt.data.version) return null;
+  return receipt.data;
+}
+
+export async function verifiedInstalledArdentPackage(install: string, staged: { name?: string; version: string; sha256: string }): Promise<boolean> {
+  const receipt = await verifiedPackageReceipt(install);
+  return receipt !== null && receipt.version === staged.version && receipt.sha256 === staged.sha256
+    && (staged.name === undefined || receipt.name === staged.name);
+}
+
+/** Publish a verified candidate without overwriting any earlier checkpoint. */
+export async function promoteArdentPackage(
+  install: string, stage: string, staged: { name: string; version: string; sha256: string },
+  move: (from: string, to: string) => Promise<void> = rename,
+): Promise<{ previousAvailable: boolean; olderCheckpointRetained: boolean }> {
+  if (!await verifiedInstalledArdentPackage(stage, staged)) throw new Error('Candidate Ardent package differs from its verified receipt');
+  const previous = `${install}.previous`;
+  const active = await optionalStat(install);
+  if (active && (!active.isDirectory() || active.isSymbolicLink())) throw new Error('Ardent installation path is unsafe');
+  const older = await optionalStat(previous);
+  if (older && (!active || !await verifiedPackageReceipt(install) || !await verifiedPackageReceipt(previous))) {
+    throw new Error('Ardent package checkpoint or active receipt cannot be verified; retain both for recovery');
+  }
+  const archive = older ? `${previous}.${randomUUID()}` : null;
+  let archived = false;
+  let movedPrior = false;
+  let installed = false;
+  try {
+    if (archive) { await move(previous, archive); archived = true; }
+    if (active) { await move(install, previous); movedPrior = true; }
+    await move(stage, install); installed = true;
+    if (!await verifiedInstalledArdentPackage(install, staged)) throw new Error('Installed Ardent package differs from its verified receipt');
+    return { previousAvailable: movedPrior, olderCheckpointRetained: archived };
+  } catch (error: unknown) {
+    if (installed) await move(install, stage);
+    if (movedPrior) await move(previous, install);
+    if (archived && archive) await move(archive, previous);
+    throw error;
+  }
 }
 
 export async function readArdentState(target?: ArdentRoot): Promise<object> {
@@ -506,40 +555,37 @@ async function serviceAction(root: ArdentRoot, profile: string, action: 'service
   return { service: unit, profile, running };
 }
 
+async function assertArdentPackageQuiescent(root: ArdentRoot): Promise<void> {
+  if (await optionalStat(join(root.install, 'context-adoption.json')))
+    throw new Error('Resolve the context adoption before replacing the entire Ardent runtime');
+  for (const profile of await safeProfiles(root.root)) {
+    const { config, dir } = await profileConfig(root.root, profile);
+    if (await probe(config.api.port, dir, config.api.token_env, profile))
+      throw new Error(`Ardent profile ${profile} is running; stop it before updating the package`);
+    if (await optionalStat(join(dir, 'state/gateway.lock')))
+      throw new Error(`Ardent profile ${profile} has an execution lock; inspect it before package installation`);
+  }
+}
+
+const ardentLifecycleOperations = new Set<string>();
+export async function withArdentLifecycle<T>(install: string, operation: () => Promise<T>): Promise<T> {
+  if (ardentLifecycleOperations.has(install)) throw new Error('Another Ardent package or service action is in progress');
+  ardentLifecycleOperations.add(install);
+  try { return await operation(); }
+  finally { ardentLifecycleOperations.delete(install); }
+}
+
 async function installPackage(root: ArdentRoot): Promise<object> {
   if (process.getuid?.() !== 0) throw new Error('Ardent package installation requires a root node manager');
-  if (await lstat(join(root.install, 'context-adoption.json')).then(() => true, error => { if (error.code === 'ENOENT') return false; throw error; }))
-    throw new Error('Resolve the context adoption before replacing the entire Ardent runtime');
   const staged = await stagedPackage();
   if (!staged) throw new Error('No verified Ardent package is staged with this node agent release');
-  const before = await readArdentState(root) as { version: string | null; profiles: Array<{ id: string; running: boolean }> };
-  if (before.version === staged.version && await verifiedInstalledArdentPackage(root.install, staged))
+  if (await verifiedInstalledArdentPackage(root.install, staged))
     return { installed: true, version: staged.version, changed: false };
-  for (const profile of before.profiles) {
-    if (profile.running) throw new Error(`Ardent profile ${profile.id} is running; stop it before updating the package`);
-    const lock = join(root.root, 'profiles', profile.id, 'state/gateway.lock');
-    const lockInfo = await lstat(lock).catch((error: unknown) => {
-      if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return undefined;
-      throw error;
-    });
-    if (lockInfo) throw new Error(`Ardent profile ${profile.id} has an execution lock; inspect it before package installation`);
-  }
+  await assertArdentPackageQuiescent(root);
   const archive = process.env['ARDENT_STAGED_PACKAGE'] ?? '/opt/magnus-agent/ardent-package.tgz';
   const stage = join(dirname(root.install), `.ardent-install-${randomUUID()}`);
-  const previous = `${root.install}.previous`;
-  if (!within(root.home, stage) || !within(root.home, previous)) throw new Error('Ardent install staging path escapes owner home');
-  const priorInfo = await lstat(root.install).catch((error: unknown) => {
-    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return undefined;
-    throw error;
-  });
-  if (priorInfo && (priorInfo.isSymbolicLink() || !priorInfo.isDirectory())) throw new Error('Ardent installation path is unsafe');
-  if (priorInfo && await lstat(previous).then(() => true).catch((error: unknown) => {
-    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return false;
-    throw error;
-  })) throw new Error('Previous Ardent package checkpoint must be resolved before another update');
+  if (!within(root.home, stage) || !within(root.home, `${root.install}.previous`)) throw new Error('Ardent install staging path escapes owner home');
   await runAsOwner(root, ['/usr/bin/mkdir', '-p', stage], 10_000);
-  let movedPrior = false;
-  let installed = false;
   try {
     await runAsOwner(root, ['/usr/bin/npm', 'install', '--prefix', stage, '--omit=dev', '--no-audit', '--no-fund', '--no-save', '--ignore-scripts', archive], 9 * 60_000);
     const packageFile = join(packageDir(stage, staged.name), 'package.json');
@@ -549,20 +595,16 @@ async function installPackage(root: ArdentRoot): Promise<object> {
     const packageTreeSha256 = await packageTreeDigest(packageDir(stage, staged.name));
     await writeFile(join(stage, 'package-receipt.json'), `${JSON.stringify({
       schemaVersion: 1, name: staged.name, version: staged.version, sha256: staged.sha256, packageTreeSha256,
-    })}\n`, { mode: 0o644 });
-    if (priorInfo) { await rename(root.install, previous); movedPrior = true; }
-    await rename(stage, root.install); installed = true;
-    const after = await readArdentState(root) as { version: string | null };
-    if (after.version !== staged.version) throw new Error('Installed Ardent package version differs from the verified staged artifact');
-    if (!await verifiedInstalledArdentPackage(root.install, staged)) throw new Error('Installed Ardent package differs from its verified receipt');
-    return { installed: true, version: after.version, changed: true, previousAvailable: movedPrior };
-  } catch (error: unknown) {
-    if (movedPrior) {
-      if (installed) await rename(root.install, stage);
-      await rename(previous, root.install);
-    }
-    throw error;
-  } finally { await rm(stage, { recursive: true, force: true }); }
+    })}\n`, { mode: 0o644, flag: 'wx' });
+    await assertArdentPackageQuiescent(root);
+    if (!within(await realpath(root.home), await realpath(dirname(root.install))))
+      throw new Error('Ardent package directory escapes the owner home');
+    const checkpoints = await promoteArdentPackage(root.install, stage, staged, async (from, to) => {
+      await runAsOwner(root, ['/usr/bin/mv', '-T', '--no-clobber', '--', from, to], 10_000);
+      if (await optionalStat(from) || !await optionalStat(to)) throw new Error('Ardent package move did not complete');
+    });
+    return { installed: true, version: staged.version, changed: true, ...checkpoints };
+  } finally { await runAsOwner(root, ['/usr/bin/rm', '-rf', '--', stage], 10_000); }
 }
 
 async function createProfile(root: ArdentRoot, profile: string, body: unknown): Promise<object> {
@@ -851,7 +893,8 @@ export function createArdentRoutes(resolveRoot: () => Promise<ArdentRoot> = arde
         if (!managedExecution.getStore()) return c.json({ error: 'Context adoption requires a signed managed resource claim' }, 409);
         if (!contextAdoptionInput.safeParse(input.body).success) return c.json({ error: 'Context adoption requires exact release, source and policy pins' }, 400);
         await profileConfig(root.root, input.profile);
-        return c.json(await manageContextAdoption(root, input.profile, input.action, input.body, {
+        const action = input.action;
+        return c.json(await withArdentLifecycle(root.install, () => manageContextAdoption(root, input.profile, action, input.body, {
           packageName: async () => { const name = await installedPackageName(root.install); if (!name) throw new Error('Ardent runtime is absent'); return name; },
           treeDigest: packageTreeDigest, profiles: () => safeProfiles(root.root),
           service: action => serviceAction(root, input.profile, action, true),
@@ -863,14 +906,15 @@ export function createArdentRoutes(resolveRoot: () => Promise<ArdentRoot> = arde
             if (!info.isFile() || info.isSymbolicLink() || await readFile(path, 'utf8') !== ardentUserUnit(root, input.profile, name))
               throw new Error('Existing Ardent service does not match the reviewed managed unit');
           }
-        }));
+        })));
       }
-      if (input.action === 'package-install') return c.json(await installPackage(root));
-      if (input.action === 'profile-create') return c.json(await createProfile(root, input.profile, input.body));
+      if (input.action === 'package-install') return c.json(await withArdentLifecycle(root.install, () => installPackage(root)));
+      if (input.action === 'profile-create') return c.json(await withArdentLifecycle(root.install, () => createProfile(root, input.profile, input.body)));
       if (input.action === 'hivemem-credential-set') return c.json(await setHiveMemCredential(root, input.profile, input.body));
       if (input.action === 'skill-install') return c.json(await installSkill(root, input.profile, input.body));
       if (input.action === 'service-start' || input.action === 'service-stop' || input.action === 'service-restart') {
-        return c.json(await serviceAction(root, input.profile, input.action));
+        const action = input.action;
+        return c.json(await withArdentLifecycle(root.install, () => serviceAction(root, input.profile, action)));
       }
       const { config, dir } = await profileConfig(root.root, input.profile);
       if (!await probe(config.api.port, dir, config.api.token_env, input.profile)) throw new Error('Ardent management listener identity differs or is unavailable');
