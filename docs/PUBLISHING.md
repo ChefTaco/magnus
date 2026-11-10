@@ -157,8 +157,15 @@ For a version-only release bump, the agent build refreshes the contracts entry f
 built contracts tarball, whose bytes the workflow publishes before the agent. This works before
 the new contracts version exists on npm; commit the refreshed lock with the release. External
 dependency changes require a deliberate lock regeneration and review.
+Generate that graph from the agent's actual standalone manifest in a directory outside the
+workspace. Do not copy root-only overrides into the temporary manifest: npm validates development
+dependencies even when installing with `--omit=dev`, and those overrides do not ship with the agent.
 A workspace lock with symlinks is not a substitute. Do not reuse a previous version's shrinkwrap
 when bumping the release. Build and pack the agent, extract the archive into a disposable directory,
 and verify `npm ci --omit=dev --ignore-scripts --registry=https://registry.npmjs.org/` there.
+`npm run check:packs` automates this install using the actual agent tarball. Before publication it
+redirects only the exact contracts tarball URL to loopback after checking its version and SHA-512
+integrity; it preserves the package manifest and the rest of the locked graph. Both supported Node
+CI jobs and the publication workflow run this gate through `npm run verify`.
 Hive's controller refuses older unlocked tarballs; publish a new agent version and pin its tarball
 integrity in a newly signed suite manifest. Existing published packages and images are immutable.
