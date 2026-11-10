@@ -46,9 +46,9 @@ const keyPath = process.env['TLS_KEY_PATH']
 const listener = resolveListenerSecurity({
   nodeEnv: process.env['NODE_ENV'] ?? 'development',
   allowInsecureHttp: (process.env['ALLOW_INSECURE_HTTP'] ?? 'false').toLowerCase() === 'true',
-  bindHost: process.env['NODE_MANAGER_BIND_HOST'],
-  certPath,
-  keyPath,
+  ...(process.env['NODE_MANAGER_BIND_HOST'] === undefined ? {} : { bindHost: process.env['NODE_MANAGER_BIND_HOST'] }),
+  ...(certPath === undefined ? {} : { certPath }),
+  ...(keyPath === undefined ? {} : { keyPath }),
   pathExists: existsSync,
 });
 

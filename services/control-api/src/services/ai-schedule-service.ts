@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 /**
  * ai-schedule-service.ts — Scheduled AI Operations.
  *
@@ -129,12 +130,7 @@ export async function executeDueOps(): Promise<number> {
 
   for (const op of dueOps) {
     try {
-      const result = await chat({
-        message: op.prompt,
-        type: op.type as 'chat' | 'analysis',
-        nodeId: op.nodeId ?? undefined,
-        createdBy: `scheduler:${op.id}`,
-      });
+      const result = await chat({ message: op.prompt, type: op.type as 'chat' | 'analysis', ...optional("nodeId", op.nodeId ?? undefined), createdBy: `scheduler:${op.id}` });
 
       const nextRunAt = parseCronToNextRun(op.cronExpr);
 

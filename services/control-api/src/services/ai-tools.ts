@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 /**
  * ai-tools.ts — Tool system for the AI Fleet Operations Assistant.
  *
@@ -640,13 +641,7 @@ registerTool('execCommand', async (args) => {
       timeout: (timeoutSeconds + 5) * 1_000,
     });
 
-    const rawResponse = await client.executeCommand({
-      commandId,
-      command,
-      args: argsArr,
-      workingDirectory,
-      timeoutSeconds,
-    });
+    const rawResponse = await client.executeCommand({ commandId, command, args: argsArr, ...optional("workingDirectory", workingDirectory), timeoutSeconds });
 
     const result = rawResponse.data;
 
@@ -822,7 +817,7 @@ registerTool('getAuditLog', async (args) => {
   const action = args['action'] ? String(args['action']) : undefined;
   const limit = Math.min(Number(args['limit'] ?? 25), 100);
 
-  const result = await queryAuditEvents({ date, action, pageSize: limit });
+  const result = await queryAuditEvents({ ...optional("date", date), ...optional("action", action), pageSize: limit });
   return {
     date: date ?? new Date().toISOString().slice(0, 10),
     total: result.total,
@@ -1027,7 +1022,7 @@ registerTool('correlateAnomalies', async (args) => {
 registerTool('getAnomalyTimeline', async (args) => {
   const hours = Number(args['hours'] ?? 24);
   const nodeId = args['nodeId'] ? String(args['nodeId']) : undefined;
-  return getAnomalyTimeline({ hours, nodeId });
+  return getAnomalyTimeline({ hours, ...optional("nodeId", nodeId) });
 });
 
 // ── Skill Authoring Tools ──
@@ -1483,15 +1478,7 @@ registerTool('transformData', async (args) => {
     | 'sum'
     | 'average';
 
-  const entry = transformScratchpadData({
-    conversationId,
-    sourceName,
-    operation,
-    outputName: args['outputName'] ? String(args['outputName']) : undefined,
-    field: args['field'] ? String(args['field']) : undefined,
-    value: args['value'],
-    order: args['order'] === 'desc' ? 'desc' : 'asc',
-  });
+  const entry = transformScratchpadData({ conversationId, sourceName, operation, ...optional("outputName", args['outputName'] ? String(args['outputName']) : undefined), ...optional("field", args['field'] ? String(args['field']) : undefined), value: args['value'], order: args['order'] === 'desc' ? 'desc' : 'asc' });
 
   return {
     transformed: true,

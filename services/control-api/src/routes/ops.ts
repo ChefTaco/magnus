@@ -1,3 +1,5 @@
+import { z } from 'zod';
+import { optional } from '../utils/optional.js';
 import { applicationProbeContractDigest, getApplicationProbeCollectorStatus } from '../services/application-probes.js';
 import { lessonSchema, publishLesson, lessonSuggestions, supersedeLesson } from '../services/incident-lessons.js';
 import { exportIncidentEvidence } from '../services/incident-evidence.js';
@@ -206,8 +208,7 @@ opsRouter.post('/engineering/forecast-assessment', requireRole('ADMIN', 'OPERATO
       ...(probe.queuePath ? [{ sourceKey: 'worker-queue', method: 'GET' as const, path: probe.queuePath }] : []),
     ] } : undefined;
   const evidenceWindowComplete = snapshots.length <= 10_000 && metricSamples.length <= 10_000 && cronExecutionsInWindow.length <= 10_000;
-  return c.json({ success: true, data: assessForecast(catalog, body, { healthSnapshots: snapshots.slice(0, 10_000),
-    metricSamples: metricSamples.slice(0, 10_000), cronExecutions, probeContract }, evidenceWindowComplete, now) });
+  return c.json({ success: true, data: assessForecast(catalog, body, { healthSnapshots: snapshots.slice(0, 10_000), metricSamples: metricSamples.slice(0, 10_000), cronExecutions, ...optional("probeContract", probeContract) }, evidenceWindowComplete, now) });
 });
 opsRouter.post('/engineering/restore-assessment', requireRole('ADMIN', 'OPERATOR'), async c => {
   const body = await parseBody(c, restoreAssessmentSchema);
@@ -236,7 +237,7 @@ opsRouter.post('/maintenance', requireRole('ADMIN', 'OPERATOR'), async c => {
   return c.json({ success: true, data: window }, 201);
 });
 opsRouter.post('/maintenance/:id/cancel', requireRole('ADMIN', 'OPERATOR'), async c => {
-  const window = await getDb().maintenanceWindow.update({ where: { id: c.req.param('id') }, data: { cancelledAt: new Date() } });
+  const window = await getDb().maintenanceWindow.update({ where: { id: z.string().min(1).parse(c.req.param('id')) }, data: { cancelledAt: new Date() } });
   await logAuditEvent({ action: 'maintenance.cancel', actorId: getUser(c).userId, targetType: 'maintenance', targetId: window.id, details: {} });
   return c.json({ success: true, data: window });
 });

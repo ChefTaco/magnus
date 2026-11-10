@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { getDb } from '../db/index.js';
@@ -171,7 +172,7 @@ export async function publishRevision(input: { kind: RegistryKind; slug: string;
       sha256: hash, artifactJson: serialized, metadataJson: JSON.stringify({ ...input.metadata,
         consentRequiresPreinstalledTarget: active ? (JSON.parse(active.metadataJson) as Record<string, unknown>)['consentRequiresPreinstalledTarget'] === true : false,
         admissionReason: scan ?? (conflicts ? 'base-revision-conflict' : undefined) }),
-      sourceHost: input.sourceHost, publishedBy: input.publishedBy, status } });
+      ...optional("sourceHost", input.sourceHost), publishedBy: input.publishedBy, status } });
     return { revision, duplicate: false };
   });
 }

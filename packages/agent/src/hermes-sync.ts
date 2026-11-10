@@ -66,7 +66,7 @@ function runHermes(bin: string, home: string, args: string[], timeoutMs = 30_000
 async function request<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
   const { controlApiFetch } = await import('./tls.js');
   const response = await controlApiFetch(new URL(path, api), { method, headers: { 'x-hermes-registry-token': token,
-    ...(body === undefined ? {} : { 'content-type': 'application/json' }) }, body: body === undefined ? undefined : JSON.stringify(body),
+    ...(body === undefined ? {} : { 'content-type': 'application/json' }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     signal: AbortSignal.timeout(30_000) });
   if (!response.ok) throw new Error(`Registry ${method} ${path} failed (${response.status})`);
   const parsed = await response.json() as { success: boolean; data: T };

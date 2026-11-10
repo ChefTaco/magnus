@@ -126,7 +126,7 @@ export class LlamaCppProvider implements LlmProvider {
         } catch {
           args = {};
         }
-        return [{ id: tc.id, name, arguments: args }];
+        return [{ ...(tc.id === undefined ? {} : { id: tc.id }), name, arguments: args }];
       });
 
       return {

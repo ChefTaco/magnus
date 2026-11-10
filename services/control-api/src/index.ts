@@ -1,3 +1,4 @@
+import { optional } from './utils/optional.js';
 import { config } from 'dotenv';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -22,6 +23,7 @@ const { securityFusionMode, startSecurityExporter, stopSecurityExporter } = awai
 const { featureFlags } = await import('./config/features.js');
 const { serve } = await import('@hono/node-server');
 const { app } = await import('./server.js');
+const { startEmbermendDispatcher, stopEmbermendDispatcher } = await import('./routes/embermend.js');
 const { parseRouteAliases, withRouteAliases } = await import('./config/route-aliases.js');
 const handler = withRouteAliases(app.fetch, parseRouteAliases(process.env['MAGNUS_ROUTE_ALIASES_JSON']));
 const { startRolloutReconciler, stopRolloutReconciler } = await import('./services/rollout-service.js');
@@ -70,6 +72,7 @@ function startBackgroundServices(listenPort: number): void {
 
   startSecurityExporter();
   startCommandWorker();
+  startEmbermendDispatcher();
   startRolloutReconciler();
   startWebhookWorker();
   startCodexFleetMonitor();
@@ -93,14 +96,7 @@ const keyPath = process.env['TLS_KEY_PATH']
   ? resolve(repoRoot, process.env['TLS_KEY_PATH'])
   : undefined;
 
-const listener = resolveListenerSecurity({
-  nodeEnv: process.env['NODE_ENV'] ?? 'development',
-  allowInsecureHttp: (process.env['ALLOW_INSECURE_HTTP'] ?? 'false').toLowerCase() === 'true',
-  bindHost: process.env['CONTROL_API_BIND_HOST'],
-  certPath,
-  keyPath,
-  pathExists: existsSync,
-});
+const listener = resolveListenerSecurity({ nodeEnv: process.env['NODE_ENV'] ?? 'development', allowInsecureHttp: (process.env['ALLOW_INSECURE_HTTP'] ?? 'false').toLowerCase() === 'true', ...optional("bindHost", process.env['CONTROL_API_BIND_HOST']), ...optional("certPath", certPath), ...optional("keyPath", keyPath), pathExists: existsSync });
 
 const server = listener.useTls
   ? serve(
@@ -139,6 +135,7 @@ async function shutdown(signal: string) {
   let exitCode = 0;
   try {
     await Promise.race([(async () => {
+      stopEmbermendDispatcher();
       stopRolloutReconciler();
       stopNodeIssueMonitor();
       stopUpgradeReadinessMonitor();

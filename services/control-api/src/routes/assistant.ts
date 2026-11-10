@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 /**
  * assistant.ts — Routes for the AI Fleet Operations Assistant.
  *
@@ -104,32 +105,14 @@ assistantRouter.post('/chat', requireRole('ADMIN', 'OPERATOR'), async (c) => {
   if (body.conversationId) await requireConversation(c, body.conversationId);
 
   const user = c.get('user');
-  const result = await chat({
-    message: body.message,
-    conversationId: body.conversationId,
-    nodeId: body.nodeId,
-    controllerContext,
-    type: 'chat',
-    createdBy: user?.email ?? user?.userId ?? 'unknown',
-    userInfo: user ? { email: user.email, role: user.role, username: user.userId } : undefined,
-    replMode: body.replMode,
-    thinkingMode: body.thinkingMode,
-    maxToolRounds: body.maxToolRounds,
-    attachments: body.attachments,
-  });
+  const result = await chat({ message: body.message, ...optional("conversationId", body.conversationId), ...optional("nodeId", body.nodeId), ...optional("controllerContext", controllerContext), type: 'chat', createdBy: user?.email ?? user?.userId ?? 'unknown', ...optional("userInfo", user ? { email: user.email, role: user.role, username: user.userId } : undefined), ...optional("replMode", body.replMode), ...optional("thinkingMode", body.thinkingMode), ...optional("maxToolRounds", body.maxToolRounds), ...optional("attachments", body.attachments) });
 
   return c.json({ success: true, data: result });
 });
 
 // ── List conversations ──
 assistantRouter.get('/conversations', async (c) => {
-  const result = await listConversations({
-    type: c.req.query('type'),
-    status: c.req.query('status') ?? 'active',
-    page: parseInt(c.req.query('page') ?? '1', 10),
-    pageSize: parseInt(c.req.query('pageSize') ?? '20', 10),
-    owners: ownersOf(c),
-  });
+  const result = await listConversations({ ...optional("type", c.req.query('type')), status: c.req.query('status') ?? 'active', page: parseInt(c.req.query('page') ?? '1', 10), pageSize: parseInt(c.req.query('pageSize') ?? '20', 10), owners: ownersOf(c) });
   return c.json({ success: true, data: result });
 });
 
@@ -153,10 +136,7 @@ assistantRouter.post('/conversations/:id/fork', requireRole('ADMIN', 'OPERATOR')
   const user = c.get('user');
 
   try {
-    const fork = await forkConversation(id, {
-      fromMessageId: body.fromMessageId,
-      createdBy: user?.email ?? user?.userId ?? 'unknown',
-    });
+    const fork = await forkConversation(id, { ...optional("fromMessageId", body.fromMessageId), createdBy: user?.email ?? user?.userId ?? 'unknown' });
     return c.json({ success: true, data: fork });
   } catch (err) {
     if (err instanceof Error && err.message.includes('not found')) {
@@ -173,9 +153,7 @@ assistantRouter.post('/conversations/:id/share', requireRole('ADMIN', 'OPERATOR'
   const user = c.get('user');
 
   try {
-    const share = await createConversationShare(id, user?.email ?? user?.userId ?? 'unknown', {
-      ttlHours: body.ttlHours,
-    });
+    const share = await createConversationShare(id, user?.email ?? user?.userId ?? 'unknown', { ...optional("ttlHours", body.ttlHours) });
     return c.json({ success: true, data: share });
   } catch (err) {
     if (err instanceof Error && err.message.includes('not found')) {
@@ -349,19 +327,7 @@ assistantRouter.post('/chat/stream', requireRole('ADMIN', 'OPERATOR'), async (c)
 
   return streamSSE(c, async (stream) => {
     try {
-      await chatStream({
-        message: body.message,
-        conversationId: body.conversationId,
-        nodeId: body.nodeId,
-        controllerContext,
-        type: 'chat',
-        createdBy: user?.email ?? user?.userId ?? 'unknown',
-        userInfo: user ? { email: user.email, role: user.role, username: user.userId } : undefined,
-        replMode: body.replMode,
-        thinkingMode: body.thinkingMode,
-        maxToolRounds: body.maxToolRounds,
-        attachments: body.attachments,
-      }, async (event) => {
+      await chatStream({ message: body.message, ...optional("conversationId", body.conversationId), ...optional("nodeId", body.nodeId), ...optional("controllerContext", controllerContext), type: 'chat', createdBy: user?.email ?? user?.userId ?? 'unknown', ...optional("userInfo", user ? { email: user.email, role: user.role, username: user.userId } : undefined), ...optional("replMode", body.replMode), ...optional("thinkingMode", body.thinkingMode), ...optional("maxToolRounds", body.maxToolRounds), ...optional("attachments", body.attachments) }, async (event) => {
         await stream.writeSSE({
           event: event.event,
           data: JSON.stringify(event.data),
@@ -562,13 +528,13 @@ assistantRouter.patch('/model-profiles', requireRole('ADMIN'), async (c) => {
   }>>();
   const profilesArray = Object.entries(body).map(([taskType, p]) => ({
     taskType,
-    provider: p.provider,
+    ...optional("provider", p.provider),
     model: p.model,
-    fallbacks: Array.isArray(p.fallbacks) ? p.fallbacks : undefined,
+    ...optional("fallbacks", Array.isArray(p.fallbacks) ? p.fallbacks : undefined),
     temperature: p.temperature ?? 0.3,
     maxTokens: p.maxTokens ?? 4096,
-    maxToolRounds: p.maxToolRounds,
-    thinkingMode: p.thinkingMode,
+    ...optional("maxToolRounds", p.maxToolRounds),
+    ...optional("thinkingMode", p.thinkingMode),
   }));
   await updateModelProfiles(profilesArray);
   const profiles = await getModelProfiles();

@@ -1,3 +1,4 @@
+// Parsed optional wire fields may be undefined; signing still omits them identically.
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 
 export interface SignableCommandResult {
@@ -7,8 +8,8 @@ export interface SignableCommandResult {
   stderr: string;
   durationMs: number;
   truncated: boolean;
-  coordination?: { version: 1; resourceKey: string; fence: string; expiresAt: number; requestSha256: string };
-  completion?: { registryVersion:1; registrySha256:string; descriptorId:string };
+  coordination?: { version: 1; resourceKey: string; fence: string; expiresAt: number; requestSha256: string } | undefined;
+  completion?: { registryVersion:1; registrySha256:string; descriptorId:string } | undefined;
 }
 
 export function commandResultSigningPayload(result: SignableCommandResult): string {
@@ -46,7 +47,7 @@ export interface CommandReconciliationAssertion {
   nodeFqdn: string;
   commandId: string;
   requestSha256: string;
-  coordination?: { version: 1; resourceKey: string; fence: string; expiresAt: number };
+  coordination?: { version: 1; resourceKey: string; fence: string; expiresAt: number } | undefined;
   disposition: 'effects_verified' | 'no_effect_verified';
   evidenceSha256: string;
   approvalRef: string;

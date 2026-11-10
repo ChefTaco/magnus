@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 import { withApiSshOwnership } from './managed-ssh-admission.js';
 import { Client } from 'ssh2';
 import { existsSync, readFileSync } from 'node:fs';
@@ -83,7 +84,7 @@ export function resolveDeploySshCredentials(): SshCredentials {
     throw new Error('SSH_PRIVATE_KEY_PATH or SSH_PASSWORD must be set in the server environment');
   }
 
-  return { username, password, privateKey };
+  return { username, password, ...(privateKey === undefined ? {} : { privateKey }) };
 }
 
 export function execRemote(
@@ -150,7 +151,7 @@ export async function runRemoteCommand(
     conn.on('ready', () => {
       void (async () => {
         try {
-          const result = await execRemote(conn, command, { maxOutputBytes: opts.maxOutputBytes });
+          const result = await execRemote(conn, command, { ...optional("maxOutputBytes", opts.maxOutputBytes) });
           finish(() => resolvePromise(result));
         } catch (err) {
           finish(() => reject(err));

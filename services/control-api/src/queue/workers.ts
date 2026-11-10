@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 import { ResourceLeaseConflict } from '../services/command-resource-leases.js';
 import { recordMonitorPulse } from '../services/monitor-pulse.js';
 import { Queue, Worker, type Job } from 'bullmq';
@@ -183,15 +184,7 @@ export function startCommandWorker(): Worker<CommandJobPayload> {
         if (commandRecord.executionDeadline && commandRecord.executionDeadline.getTime() <= Date.now())
           throw new Error('Approved command deadline expired before dispatch');
         await validateRemediationCommandForDispatch(commandRecord);
-        const response = await client.executeCommand({
-          commandId,
-          command,
-          args,
-          workingDirectory: commandRecord.workingDirectory ?? undefined,
-          environment,
-          timeoutSeconds: commandRecord.timeoutSeconds,
-          ...(coordination ? { coordination } : {}),
-        });
+        const response = await client.executeCommand({ commandId, command, args, ...optional("workingDirectory", commandRecord.workingDirectory ?? undefined), ...optional("environment", environment), timeoutSeconds: commandRecord.timeoutSeconds, ...(coordination ? { coordination } : {}) });
 
         const rawResult = response.data;
 
@@ -277,15 +270,7 @@ export function startCommandWorker(): Worker<CommandJobPayload> {
           where: { id: nodeId },
           select: { name: true },
         }).catch(() => null) : null;
-        await createNotification({
-          type: 'command.failed',
-          severity: 'warning',
-          title: `Command failed on ${node?.name ?? 'unknown'}`,
-          message: `"${command} ${args.join(' ')}" failed: ${errMsg}`,
-          nodeId: nodeId ?? undefined,
-          nodeName: node?.name ?? null,
-          sourceRef: commandId,
-        });
+        await createNotification({ type: 'command.failed', severity: 'warning', title: `Command failed on ${node?.name ?? 'unknown'}`, message: `"${command} ${args.join(' ')}" failed: ${errMsg}`, ...optional("nodeId", nodeId ?? undefined), nodeName: node?.name ?? null, sourceRef: commandId });
 
         throw err;
       }

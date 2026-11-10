@@ -243,6 +243,7 @@ export async function createApp(): Promise<Hono> {
     v1.route('/commands', commandRoutes);
     const { securityResponseRoutes } = await import('./executors/security-response.js');
     v1.route('/security-response', securityResponseRoutes);
+    v1.route('/embermend', (await import('./executors/embermend.js')).embermendRoutes);
     const { enrollmentDrainRoutes } = await import('./executors/enrollment-drain.js');
     v1.route('/commands', enrollmentDrainRoutes);
     v1.route('/cron', cronRoutes);

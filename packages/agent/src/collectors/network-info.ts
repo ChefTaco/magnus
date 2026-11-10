@@ -79,7 +79,7 @@ function getListeningPorts(): ListeningPort[] {
         }
       }
 
-      ports.push({ port, protocol: 'tcp', process, pid });
+      ports.push({ port, protocol: 'tcp', process, ...(pid === undefined ? {} : { pid }) });
     }
 
     // Dedupe by port

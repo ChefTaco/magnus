@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file. The format is b
 [Semantic Versioning](https://semver.org/).
 
 
+
+## Unreleased
+
+### Added
+
+- Optional constrained Embermend product bridge with durable operation identities, signed result references, reviewed host actions and isolated source workers. Native reboot continuation and complete product acceptance remain release prerequisites.
+- Exact TypeScript 6.0.3 with `strict`, `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes` in the affected contracts, agent and server workspaces; absent optional boundary values are omitted.
+
+### New environment variables
+
+- `MAGNUS_EMBERMEND_GRANTS_JSON` (server, secret): dedicated product credentials and exact target, environment and action grants; absent disables the bridge.
+- `MAGNUS_EMBERMEND_CONFIG` (agent): canonical root-controlled resource and worker configuration; absent disables reviewed remediation capabilities.
+
+
 ## [2.3.4] - 2026-11-10
 
 ### Fixed

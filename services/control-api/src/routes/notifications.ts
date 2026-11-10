@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import type { AppVariables } from '../types/index.js';
@@ -32,7 +33,7 @@ notificationsRouter.get('/', async (c) => {
     nodeId: c.req.query('nodeId') ?? undefined,
   };
 
-  const result = await listNotifications(params);
+  const result = await listNotifications({ "page": params.page, "pageSize": params.pageSize, ...optional("isRead", params.isRead), ...optional("severity", params.severity), ...optional("type", params.type), ...optional("nodeId", params.nodeId) });
   return c.json({ success: true, data: result });
 });
 

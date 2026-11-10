@@ -11,7 +11,7 @@ moved without updating it.
 | Class | Meaning | Rows | At the ingress |
 |---|---|---|---|
 | `browser` | A person's console drives it with a user token | 144 | Allow the exact method and path |
-| `machine` | Agents, services and integrations, with their own credentials | 77 | Deny |
+| `machine` | Agents, services and integrations, with their own credentials | 80 | Deny |
 | `exclude` | Reachable with a user token, but no console needs it, or it was written for a server-side caller | 142 | Deny until a feature needs it and it is reviewed |
 | `retired` | Always answers 404 or 410 | 64 | Deny |
 
@@ -389,6 +389,10 @@ unless these rows change. `POST /api/v1/hermes/deploy` is retired and always ans
 | GET | `/api/v1/webhooks/:id/deliveries` | browser | `user:ADMIN` | yes |
 | POST | `/api/v1/webhooks/:id/deliveries/:deliveryId/redeliver` | browser | `user:ADMIN` | yes |
 | POST | `/api/v1/webhooks/:id/test` | browser | `user:ADMIN` | yes |
+
+| GET | `/api/v1/embermend/capabilities` | machine | `service-secret:embermend` | Exact product target and action grants; no node credentials or general administration. |
+| GET | `/api/v1/embermend/operations/:id` | machine | `service-secret:embermend` | Original signed receipt and retained ownership; no replay. |
+| POST | `/api/v1/embermend/operations` | machine | `service-secret:embermend` | Durable asynchronous managed admission; target environment and action versions are bounded. |
 
 ## Explicit denies
 

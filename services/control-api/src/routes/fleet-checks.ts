@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 import { Hono } from 'hono';
 import type { AppVariables } from '../types/index.js';
 import { authMiddleware } from '../middleware/auth.js';
@@ -14,7 +15,7 @@ fleetChecksRouter.use('*', authMiddleware);
 fleetChecksRouter.get('/runs', async (c) => {
   const limit = Number(c.req.query('limit') ?? '20');
   const kind = c.req.query('kind') || undefined;
-  const result = await listFleetCheckRuns({ limit, kind });
+  const result = await listFleetCheckRuns({ limit, ...optional("kind", kind) });
   return c.json({ success: true, data: result });
 });
 

@@ -5,7 +5,7 @@ import { createServer, type Server } from 'node:net';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { aggregateSchedulerBlockers, boundedSchedulerRead, boundedTimerInlineSources, discoverSchedulerSources, parseSchedulerAccounts,
-  hermesRuntimeCommand, schedulerContentDigest, schedulerMembersDigest, stableServiceProperties, stableTimerUnitList } from './scheduler-discovery.js';
+  emptyTimerUnitFiles, hermesRuntimeCommand, schedulerContentDigest, schedulerMembersDigest, stableServiceProperties, stableTimerUnitList } from './scheduler-discovery.js';
 import { schedulerInventory } from './scheduler-inventory.js';
 import { ManagedScheduler } from './managed-scheduler.js';
 let root: string; let servers: Server[];
@@ -14,6 +14,12 @@ afterEach(async () => { for (const server of servers) await new Promise<void>(re
 const quiet = async () => '';
 function options() { return { accounts: [], run: quiet, procRoot: join(root, 'proc'), globalUserUnits: [], runtimeRoot: join(root, 'run') }; }
 describe('native and user scheduler discovery', () => {
+  it("accepts only systemctl's empty filtered timer result with no failure diagnostics", () => {
+    const args = ['list-unit-files', '--type=timer', '--state=enabled,enabled-runtime', '--plain', '--no-legend', '--no-pager'];
+    expect(emptyTimerUnitFiles('/usr/bin/systemctl', args, { code: 1, stdout: '', stderr: '', killed: false, signal: null })).toBe(true);
+    for (const result of [{ code: 1, stdout: '', stderr: 'Failed to connect to bus' }, { code: 1, stdout: 'unexpected', stderr: '' }, { code: 2, stdout: '', stderr: '' }, { code: 1, stdout: '', stderr: '', killed: true }]) expect(emptyTimerUnitFiles('/usr/bin/systemctl', args, result)).toBe(false);
+    expect(emptyTimerUnitFiles('/usr/bin/systemctl', ['show'], { code: 1, stdout: '', stderr: '' })).toBe(false);
+  });
   it('denies a FIFO swapped in as a scheduler source without waiting for a writer', async () => {
     const path = join(root, 'swapped-source'); await writeFile(path, 'original');
     await rm(path); execFileSync('/usr/bin/mkfifo', [path]);

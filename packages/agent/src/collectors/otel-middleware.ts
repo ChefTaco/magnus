@@ -13,8 +13,7 @@ export async function tracingMiddleware(c: Context, next: Next): Promise<void | 
 
   const span = startSpan(`${c.req.method} ${c.req.path}`, {
     kind: 'server',
-    parentTraceId: incoming?.traceId,
-    parentSpanId: incoming?.spanId,
+    ...(incoming ? { parentTraceId: incoming.traceId, parentSpanId: incoming.spanId } : {}),
     attributes: {
       'http.method': c.req.method,
       'http.url': c.req.path,

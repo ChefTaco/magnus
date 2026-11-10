@@ -1,3 +1,4 @@
+import { optional } from '../../utils/optional.js';
 import { AnthropicProvider } from './anthropic.js';
 import { OllamaProvider } from './ollama.js';
 import { OpenAiCompatibleProvider } from './openai-compatible.js';
@@ -7,23 +8,12 @@ import type { LlmProvider, LlmProviderHealth, ProviderId } from './types.js';
 const providers: Record<ProviderId, LlmProvider> = {
   ollama: new OllamaProvider(),
   llamacpp: new LlamaCppProvider(),
-  openai: new OpenAiCompatibleProvider({
-    id: 'openai',
-    name: 'OpenAI-compatible',
-    baseUrl: process.env['OPENAI_API_URL'] ?? 'https://api.openai.com/v1',
-    apiKey: process.env['OPENAI_API_KEY'],
-  }),
+  openai: new OpenAiCompatibleProvider({ id: 'openai', name: 'OpenAI-compatible', baseUrl: process.env['OPENAI_API_URL'] ?? 'https://api.openai.com/v1', ...optional("apiKey", process.env['OPENAI_API_KEY']) }),
   anthropic: new AnthropicProvider(),
-  openrouter: new OpenAiCompatibleProvider({
-    id: 'openrouter',
-    name: 'OpenRouter',
-    baseUrl: process.env['OPENROUTER_API_URL'] ?? 'https://openrouter.ai/api/v1',
-    apiKey: process.env['OPENROUTER_API_KEY'],
-    defaultHeaders: {
+  openrouter: new OpenAiCompatibleProvider({ id: 'openrouter', name: 'OpenRouter', baseUrl: process.env['OPENROUTER_API_URL'] ?? 'https://openrouter.ai/api/v1', ...optional("apiKey", process.env['OPENROUTER_API_KEY']), defaultHeaders: {
       'HTTP-Referer': process.env['OPENROUTER_HTTP_REFERER'] ?? 'https://magnus.local',
       'X-Title': process.env['OPENROUTER_APP_NAME'] ?? 'Magnus AI',
-    },
-  }),
+    } }),
 };
 
 let providerHealthCache: { fetchedAt: number; statuses: LlmProviderHealth[] } | null = null;

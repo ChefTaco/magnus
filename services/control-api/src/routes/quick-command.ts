@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 import { Hono } from 'hono';
 import type { AppVariables } from '../types/index.js';
 import { nanoid } from 'nanoid';
@@ -46,13 +47,7 @@ quickCommandRouter.post(
         timeout: (timeoutSeconds + 5) * 1_000,
       });
 
-      const rawResponse = await client.executeCommand({
-        commandId,
-        command: body.command,
-        args: body.args ?? [],
-        workingDirectory: body.workingDirectory,
-        timeoutSeconds,
-      });
+      const rawResponse = await client.executeCommand({ commandId, command: body.command, args: body.args ?? [], ...optional("workingDirectory", body.workingDirectory), timeoutSeconds });
 
       // Validate response shape from node-manager
       const parsed = safeParse(rawResponse, quickCommandResponseSchema);

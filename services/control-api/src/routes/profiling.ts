@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { Hono } from 'hono'
 import type { AppVariables } from '../types/index.js'
 import { authMiddleware, requireRole } from '../middleware/auth.js'
@@ -15,7 +16,7 @@ profilingRouter.use('*', authMiddleware)
  */
 profilingRouter.get('/:nodeId', requireRole('ADMIN', 'OPERATOR'), async (c) => {
   const db = getDb()
-  const node = await db.node.findUnique({ where: { id: c.req.param('nodeId') } })
+  const node = await db.node.findUnique({ where: { id: z.string().min(1).parse(c.req.param('nodeId')) } })
   if (!node) throw new HttpError(404, 'NOT_FOUND', 'Node not found')
 
   const type = c.req.query('type') // heap, cpu, process, or undefined for full

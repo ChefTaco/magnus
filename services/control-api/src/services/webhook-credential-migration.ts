@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 import {
   decryptWebhookCredential,
   encryptWebhookCredential,
@@ -81,7 +82,7 @@ function planMigration(rows: readonly WebhookCredentialRow[]): MigrationPlan[] {
     validateHeaders(headersPlaintext);
     return {
       id: endpoint.id,
-      urlPlaintext: endpoint.url ? (isEncryptedWebhookCredential(endpoint.url) ? decryptWebhookCredential(endpoint.url, endpoint.id, 'url') : endpoint.url) : undefined,
+      ...optional("urlPlaintext", endpoint.url ? (isEncryptedWebhookCredential(endpoint.url) ? decryptWebhookCredential(endpoint.url, endpoint.id, 'url') : endpoint.url) : undefined),
       migrateUrl: Boolean(endpoint.url && !isEncryptedWebhookCredential(endpoint.url)),
       secretPlaintext,
       headersPlaintext,

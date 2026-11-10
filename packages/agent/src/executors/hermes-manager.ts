@@ -317,7 +317,7 @@ async function runHermes(
   stdin?: string,
 ): Promise<CommandResult> {
   const resolved = target(options);
-  return run(resolved.bin, args, { env: { HERMES_HOME: resolved.home, COLUMNS: '240' }, timeoutMs, stdin });
+  return run(resolved.bin, args, { env: { HERMES_HOME: resolved.home, COLUMNS: '240' }, timeoutMs, ...(stdin === undefined ? {} : { stdin }) });
 }
 
 async function collectHermesSkills(options: { hermesHome: string; hermesBin: string }): Promise<HermesSkillState[]> {

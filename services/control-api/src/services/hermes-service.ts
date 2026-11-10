@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 import { observedDashboardEndpoint } from './hermes-dashboard-endpoint.js';
 import type {
   HermesInstallation,
@@ -75,7 +76,7 @@ function toInstallation(row: any): HermesInstallation {
     lastSyncedAt: toIso(row.lastSyncedAt),
     metadata: parseJsonObject(row.metadata),
     rawStatus,
-    configuration: reportedConfiguration ? { ...reportedConfiguration, hiveMemToken: currentToken } : null,
+    configuration: reportedConfiguration ? { ...reportedConfiguration, ...optional("hiveMemToken", currentToken) } : null,
     createdAt: toIso(row.createdAt) ?? new Date().toISOString(),
     updatedAt: toIso(row.updatedAt) ?? new Date().toISOString(),
     profiles: row.profiles?.map(toProfile),
@@ -104,14 +105,14 @@ function toProfile(row: any): HermesProfile {
     lastSyncedAt: toIso(row.lastSyncedAt),
     createdAt: toIso(row.createdAt) ?? new Date().toISOString(),
     updatedAt: toIso(row.updatedAt) ?? new Date().toISOString(),
-    installation: row.installation
+    ...optional("installation", row.installation
       ? {
           id: row.installation.id,
           hostname: row.installation.hostname,
           displayName: row.installation.displayName ?? null,
           status: row.installation.status,
         }
-      : undefined,
+      : undefined),
   };
 }
 
@@ -412,7 +413,7 @@ async function upsertInstallationFromDetection(params: {
       hostname: params.target.hostname,
       sshPort: params.target.sshPort,
       displayName: params.target.displayName,
-      installMode: params.installMode ?? 'existing',
+      ...optional("installMode", params.installMode ?? 'existing'),
       hermesHome: detection.hermesHome,
       hermesBin: detection.hermesBin,
       version: detection.version,
@@ -432,7 +433,7 @@ async function upsertInstallationFromDetection(params: {
       nodeId: params.target.nodeId,
       sshPort: params.target.sshPort,
       displayName: params.target.displayName,
-      installMode: params.installMode ?? undefined,
+      ...optional("installMode", params.installMode ?? undefined),
       hermesBin: detection.hermesBin,
       version: detection.version,
       status: detection.status,
@@ -571,11 +572,7 @@ export async function recordManagedHermesState(nodeId: string, state: HermesNode
 }
 
 export async function listHermesProfiles(installationId?: string): Promise<HermesProfile[]> {
-  const rows = await getDb().hermesProfile.findMany({
-    where: installationId ? { installationId } : undefined,
-    orderBy: { updatedAt: 'desc' },
-    include: { installation: true },
-  });
+  const rows = await getDb().hermesProfile.findMany({ ...optional("where", installationId ? { installationId } : undefined), orderBy: { updatedAt: 'desc' }, include: { installation: true } });
   return rows.map(toProfile);
 }
 

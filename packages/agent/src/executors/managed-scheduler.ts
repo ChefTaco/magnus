@@ -51,7 +51,7 @@ export interface SchedulerOccurrence {
   version: 1; occurrenceId: string; jobId: string; revision: number; specSha256: string;
   scheduledAt: number; deadline: number; command: CommandIdentity; requestSha256: string;
   state: 'admitting' | 'running' | 'unknown' | 'completed' | 'not-started';
-  admission?: Record<string, unknown>; result?: CommandReceiptResult; settlementPending: boolean;
+  admission?: Record<string, unknown> | undefined; result?: CommandReceiptResult | undefined; settlementPending: boolean;
 }
 const occurrenceSchema = z.object({
   version: z.literal(1), occurrenceId: z.string().regex(/^[a-f0-9]{64}$/), jobId: z.string().regex(/^[a-f0-9]{64}$/),

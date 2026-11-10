@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 /** `magnus-server agents upgrade`: the console's "Upgrade agents" action from a shell, and `agents doctor`, its check. */
 import { upgradeRemedy } from '@hivemagnus/magnus-contracts';
 import { UsageError } from './args.js';
@@ -205,7 +206,7 @@ export async function commandAgents(args: readonly string[]): Promise<number> {
     }
     const deps = service.defaultDeps();
     if (options.doctor) {
-      const report = await service.checkUpgrade({ version: options.to, integrity: options.integrity, nodeIds, heal: options.heal ?? false, deps, allowRetryReverted: options.retryReverted });
+      const report = await service.checkUpgrade({ ...optional("version", options.to), ...optional("integrity", options.integrity), ...optional("nodeIds", nodeIds), heal: options.heal ?? false, deps, ...optional("allowRetryReverted", options.retryReverted) });
       for (const line of doctorLines(report)) console.log(line);
       return report.blocked ? 1 : 0;
     }
@@ -221,11 +222,10 @@ export async function commandAgents(args: readonly string[]): Promise<number> {
     };
     let started: Awaited<ReturnType<Service['startUpgradeRun']>>;
     if (options.retry) {
-      started = await service.retryUpgradeRun(options.retry, { actorId: 'system:magnus-server-cli', deps, canaryNodeId,
-        allowRetryReverted: options.retryReverted, allowPrerelease: options.allowPrerelease, acknowledgeSuspicion: options.acknowledgeSuspicion, ...(options.maxFailures ? { maxFailures: options.maxFailures } : {}) });
+      started = await service.retryUpgradeRun(options.retry, { actorId: 'system:magnus-server-cli', deps, ...optional("canaryNodeId", canaryNodeId), ...optional("allowRetryReverted", options.retryReverted), ...optional("allowPrerelease", options.allowPrerelease), ...optional("acknowledgeSuspicion", options.acknowledgeSuspicion), ...(options.maxFailures ? { maxFailures: options.maxFailures } : {}) });
       console.log(`Retrying run ${options.retry} as ${started.run.id}: ${started.run.nodes.length} agent(s) to ${started.run.version}`);
     } else {
-      const release = await service.resolveAgentRelease({ version: options.to, integrity: options.integrity });
+      const release = await service.resolveAgentRelease({ ...optional("version", options.to), ...optional("integrity", options.integrity) });
       console.log(`magnus-agent ${release.version} (${release.integrity.slice(0, 19)}…)`);
       const showCandidates = (candidates: Awaited<ReturnType<Service['listUpgradeCandidates']>>) => {
         for (const candidate of candidates) {
@@ -233,7 +233,7 @@ export async function commandAgents(args: readonly string[]): Promise<number> {
         }
       };
       if (options.dryRun) {
-        const report = await service.checkUpgrade({ version: release.version, integrity: release.integrity, nodeIds, deps, everyOnlineNode: false, allowRetryReverted: options.retryReverted });
+        const report = await service.checkUpgrade({ version: release.version, integrity: release.integrity, ...optional("nodeIds", nodeIds), deps, everyOnlineNode: false, ...optional("allowRetryReverted", options.retryReverted) });
         showCandidates(report.nodes);
         for (const node of report.nodes) {
           if (!node.eligible && node.code && !upgradeRemedy(node.code).informational) console.log(`    ${node.name}: ${node.code}: ${node.remedy}`);
@@ -243,11 +243,10 @@ export async function commandAgents(args: readonly string[]): Promise<number> {
         return 0;
       }
       try {
-        started = await service.startUpgradeRun({ version: release.version, integrity: release.integrity, nodeIds, canaryNodeId, allowPrerelease: options.allowPrerelease,
-          allowRetryReverted: options.retryReverted, actorId: 'system:magnus-server-cli', deps, ...(options.maxFailures ? { maxFailures: options.maxFailures } : {}) });
+        started = await service.startUpgradeRun({ version: release.version, integrity: release.integrity, ...optional("nodeIds", nodeIds), ...optional("canaryNodeId", canaryNodeId), ...optional("allowPrerelease", options.allowPrerelease), ...optional("allowRetryReverted", options.retryReverted), actorId: 'system:magnus-server-cli', deps, ...(options.maxFailures ? { maxFailures: options.maxFailures } : {}) });
       } catch (error) {
         if ((error as { code?: unknown }).code !== 'NO_ELIGIBLE_AGENTS') throw error;
-        const candidates = await service.listUpgradeCandidates(release.version, nodeIds, { allowRetryReverted: options.retryReverted });
+        const candidates = await service.listUpgradeCandidates(release.version, nodeIds, { ...optional("allowRetryReverted", options.retryReverted) });
         showCandidates(candidates);
         console.log('Nothing to upgrade.');
         return candidates.some(candidate => candidate.reason !== 'already on this version') ? 1 : 0;

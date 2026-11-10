@@ -1,6 +1,7 @@
 // ─── Auth and Audit ───
 
 export type AuditAction =
+  | 'embermend.dispatch'
   | 'terminal.session.open'
   | 'terminal.session.close'
   | 'terminal.session.refuse'

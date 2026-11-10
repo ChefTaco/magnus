@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 import { NodeApiClient } from '../sdk/node-api-client.js';
 import { getNodeBaseUrl } from '../utils/node-url.js';
 import { getNodeManagerSecret } from '../utils/env.js';
@@ -125,7 +126,7 @@ commandsRouter.post('/', requireRole('ADMIN', 'OPERATOR'), async (c) => {
           status: 'QUEUED',
           riskLevel: body.riskLevel ?? 'medium',
           idempotencyKey: `${idempotencyKey}:${node.id}`,
-          correlationId: c.get('traceId') as string | undefined,
+          ...optional("correlationId", c.get('traceId') as string | undefined),
           createdBy: user.userId,
         },
       });
