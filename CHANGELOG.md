@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file. The format is b
 [Semantic Versioning](https://semver.org/).
 
 
+## [2.3.5] - 2026-11-10
+
+### Security
+
+- Pin Ardent 3.0.0, which replaces the affected embedded SQLite library with SQLite 3.54.1. Native installation uses bundled Node-API binaries without dependency install scripts or a compiler.
+- Run server, fleet gateway and standalone dashboard containers on the pinned patched Node 26 runtime. Pair the server's maintained PostgreSQL 18 backup and restore clients.
+
+### Changed
+
+- Keep context upgrades offline by bundling the reviewed SQLite driver and Linux x64/arm64 binaries inside the protected candidate package. Legacy bundle validation and rollback remain supported; the new payload fits existing size limits.
+
 ## [2.3.4] - 2026-11-10
 
 ### Fixed

@@ -46,6 +46,35 @@ describe('context-only adoption boundary', () => {
       (value: ReturnType<typeof bundle>) => { value.files = value.files.filter(file => file.path !== 'emberfold/dist/compat.js'); }
     ]) { const value = bundle(); change(value); expect(() => validateContextBundle(value)).toThrow(); }
   });
+  it('admits only the pinned complete offline storage bundle for both supported architectures', () => {
+    const modern = () => {
+      const value = { ...bundle(), schema_version: 2 };
+      for (const path of ['ardent/sqlite.js', 'sqlite/package.json', 'sqlite/LICENSE', 'sqlite/dist/index.mjs',
+        'sqlite/prebuilds/linux-x64/@photostructure+sqlite.glibc.node', 'sqlite/prebuilds/linux-arm64/@photostructure+sqlite.glibc.node',
+        'sqlite-loader/package.json', 'sqlite-loader/LICENSE', 'sqlite-loader/index.js', 'sqlite-loader/node-gyp-build.js']) {
+        const text = path === 'sqlite/package.json' ? JSON.stringify({ name: '@photostructure/sqlite', version: '3.3.1' })
+          : path === 'sqlite-loader/package.json' ? JSON.stringify({ name: 'node-gyp-build', version: '4.8.4' }) : 'synthetic pinned artifact';
+        value.files.push({ path, content: Buffer.from(text).toString('base64'), sha256: createHash('sha256').update(text).digest('hex') });
+      }
+      return value;
+    };
+    expect(validateContextBundle(modern()).schema_version).toBe(2);
+    const legacyHeader = modern(); legacyHeader.schema_version = 1;
+    expect(() => validateContextBundle(legacyHeader)).toThrow('Legacy context payload');
+    for (const missing of ['ardent/sqlite.js', 'sqlite/LICENSE', 'sqlite/prebuilds/linux-arm64/@photostructure+sqlite.glibc.node', 'sqlite-loader/index.js']) {
+      const value = modern(); value.files = value.files.filter(file => file.path !== missing);
+      expect(() => validateContextBundle(value)).toThrow('incomplete');
+    }
+    for (const path of ['sqlite/prebuilds/linux-x64/arbitrary.node', 'sqlite-loader/bin.js', 'sqlite/../escape.js']) {
+      const value = modern(); value.files.find(file => file.path === 'sqlite/LICENSE')!.path = path;
+      expect(() => validateContextBundle(value)).toThrow();
+    }
+    const wrongVersion = modern();
+    const manifest = wrongVersion.files.find(file => file.path === 'sqlite/package.json')!;
+    const text = JSON.stringify({ name: '@photostructure/sqlite', version: '0.0.0' });
+    manifest.content = Buffer.from(text).toString('base64'); manifest.sha256 = createHash('sha256').update(text).digest('hex');
+    expect(() => validateContextBundle(wrongVersion)).toThrow();
+  });
   it('accepts only revision-bound data, never commands, provider credentials or URLs', () => {
     const input = { release_id: '11111111-1111-4111-8111-111111111111', expected_bundle_sha256: 'a'.repeat(64),
       expected_base_sha256: 'b'.repeat(64), expected_policy_sha256: 'c'.repeat(64), expected_config_sha256: 'd'.repeat(64) };
