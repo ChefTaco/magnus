@@ -6,6 +6,7 @@
 import { readFileSync } from 'node:fs';
 import { request as httpsRequest, createServer as createHttpsServer, type Server as HttpsServer } from 'node:https';
 import { isIP } from 'node:net';
+import { checkServerIdentity } from 'node:tls';
 import { parseArgs } from 'node:util';
 import { serve } from '@hono/node-server';
 import { createOathweaveVerifier, OATHWEAVE_AUDIENCE, OATHWEAVE_STREAM_RECHECK_MS } from '@hivemagnus/magnus-oathweave';
@@ -96,10 +97,14 @@ async function check(): Promise<void> {
 function healthcheck(): Promise<void> {
   const port = Number(process.env['FLEET_GATEWAY_PORT'] ?? 4310);
   const caPath = process.env['NODE_EXTRA_CA_CERTS'] ?? process.env['TLS_CERT_PATH'];
+  const identity = process.env['FLEET_GATEWAY_TLS_NAME'] ?? 'localhost';
   return new Promise((resolve, reject) => {
     const request = httpsRequest({
       host: '127.0.0.1', port, path: '/health', method: 'GET', timeout: 4_000,
-      servername: process.env['FLEET_GATEWAY_TLS_NAME'] ?? 'localhost',
+      // SNI requires a DNS name; still verify an IP product's certificate SAN.
+      ...(isIP(identity) === 0 ? { servername: identity } : {
+        servername: '', checkServerIdentity: (_hostname, certificate) => checkServerIdentity(identity, certificate),
+      }),
       ...(caPath ? { ca: readFileSync(caPath) } : {}),
     }, (response) => {
       response.resume();

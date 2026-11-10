@@ -5,6 +5,12 @@ All notable changes to this project are documented in this file. The format is b
 [Semantic Versioning](https://semver.org/).
 
 
+## [2.3.6] - 2026-11-10
+
+### Fixed
+
+- Keep the terminal gateway health check working with IP product endpoints on Node 26. IP SAN verification remains enforced without sending an IP address as TLS SNI. Real built-CLI TLS tests cover DNS and IP success, certificate mismatches and an untrusted CA.
+
 ## [2.3.5] - 2026-11-10
 
 ### Security
