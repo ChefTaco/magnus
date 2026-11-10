@@ -69,17 +69,17 @@ export async function executeHostAction(request: EmbermendOperation, config: Emb
     if (action.class !== 'host-change') throw new Error('Host change effect required');
     const input = z.object({ resourceId: z.string(), permitRootLogin: z.enum(['no', 'prohibit-password']), passwordAuthentication: z.boolean(), beforeDigest: z.string(), managementProbeId: z.string() }).strict().parse(params);
     const resource = config.resources[input.resourceId]; if (!resource || resource.kind !== 'ssh' || resource.managementProbeId !== input.managementProbeId) throw new Error('SSH resource and management-path binding required');
-    // Normalize the SSH enable/disable policy flag before recording its state.
-    const passwordAuthenticationEnabled = input.passwordAuthentication === true;
+    // Normalize the boolean PasswordAuthentication setting for state receipts.
+    const sshAuthEnabled = input.passwordAuthentication === true;
     const before = await fileState(resource.path); if (before.digest !== input.beforeDigest) throw new Error('SSH configuration changed');
-    const content = `# Managed by a reviewed Magnus security action\nPermitRootLogin ${input.permitRootLogin}\nPasswordAuthentication ${passwordAuthenticationEnabled ? 'yes' : 'no'}\n`;
+    const content = `# Managed by a reviewed Magnus security action\nPermitRootLogin ${input.permitRootLogin}\nPasswordAuthentication ${sshAuthEnabled ? 'yes' : 'no'}\n`;
     await rememberRecovery(request, { resourceId: input.resourceId, kind: 'file', path: resource.path, content: before.content, mode: before.mode });
     await atomicFile(resource.path, content, 0o600);
     try {
       await command('/usr/sbin/sshd', ['-t']); const effective = await command('/usr/sbin/sshd', ['-T']);
-      if (!effective.includes(`permitrootlogin ${input.permitRootLogin === 'prohibit-password' ? 'without-password' : 'no'}\n`) || !effective.includes(`passwordauthentication ${passwordAuthenticationEnabled ? 'yes' : 'no'}\n`)) throw new Error('Effective SSH policy differs from requested policy');
+      if (!effective.includes(`permitrootlogin ${input.permitRootLogin === 'prohibit-password' ? 'without-password' : 'no'}\n`) || !effective.includes(`passwordauthentication ${sshAuthEnabled ? 'yes' : 'no'}\n`)) throw new Error('Effective SSH policy differs from requested policy');
       await command('/usr/bin/systemctl', ['reload', 'ssh.service']);
-      return { resourceId: input.resourceId, permitRootLogin: input.permitRootLogin, passwordAuthentication: passwordAuthenticationEnabled, securityCheckPassed: true, managementPath: 'Magnus HTTPS agent remains the authorized management path; SSH access itself is not inferred' };
+      return { resourceId: input.resourceId, permitRootLogin: input.permitRootLogin, passwordAuthentication: sshAuthEnabled, securityCheckPassed: true, managementPath: 'Magnus HTTPS agent remains the authorized management path; SSH access itself is not inferred' };
     } catch (error) {
       if (before.content === null) { await unlink(resource.path); await syncDirectory(dirname(resource.path)); } else await atomicFile(resource.path, before.content, before.mode);
       throw error;
