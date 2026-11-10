@@ -173,7 +173,9 @@ integrity in a newly signed suite manifest. Existing published packages and imag
 ## Patched container runtime
 
 Version 2.3.5 pins the maintained Node 26 runtime for the API, fleet gateway and
-standalone dashboard. The server carries matching PostgreSQL 18 `pg_dump` and
+standalone dashboard and container agent. The server carries matching PostgreSQL 18 `pg_dump` and
 `pg_restore`; use that pair for recovery because older restore clients may reject
 newer archive headers. Native Ardent 3 installs use packaged Node-API binaries
 without lifecycle scripts or a C++ toolchain.
+
+Every release image is built, executed as a non-root user and scanned on both supported architectures before publication. HIGH/CRITICAL findings fail the gate even when no fix is available; raw reports remain attached to the workflow.
