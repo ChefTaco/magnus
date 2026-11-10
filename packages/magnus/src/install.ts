@@ -199,7 +199,7 @@ export async function pendingMigrations(io: Io, project: Project, version: strin
 }
 
 /** Native modules the server and console load at startup, checked before anything changes. */
-const NATIVE_MODULES = ['argon2', 'better-sqlite3', 'ssh2', 'sharp'];
+const NATIVE_MODULES = ['argon2', 'better-sqlite3', '@photostructure/sqlite', 'ssh2', 'sharp'];
 
 /**
  * Before the backup: the new version starts on this Node.js (`--version`
@@ -216,7 +216,7 @@ const req = createRequire(process.argv[1] + '/');
 const failed = [];
 for (const name of ${JSON.stringify(NATIVE_MODULES)}) {
   let path; try { path = req.resolve(name); } catch { continue; }
-  try { const mod = await import(path); if (name === 'better-sqlite3') new mod.default(':memory:').close(); } catch (error) { failed.push(name + ': ' + String(error && error.message || error).split('\\n')[0]); }
+  try { const mod = await import(path); if (name === 'better-sqlite3') new mod.default(':memory:').close(); if (name === '@photostructure/sqlite') { const db=new (mod.DatabaseSync ?? mod.default.DatabaseSync)(':memory:'); if(db.prepare('SELECT sqlite_version() AS version').get().version!=='3.54.1')throw Error('Unverified embedded SQLite'); db.close(); } } catch (error) { failed.push(name + ': ' + String(error && error.message || error).split('\\n')[0]); }
 }
 if (failed.length) { console.error(failed.join('\\n')); process.exit(1); }`;
   const roots = [join(project.versionDir(version), 'node_modules', '@hivemagnus', 'magnus-server'),

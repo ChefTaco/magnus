@@ -9,6 +9,7 @@
 # `npm install @hivemagnus/magnus-ui` would, so the image runs the published
 # artifact. apps/dashboard/Dockerfile.dockerignore limits the build context.
 
+ARG RUNTIME_IMAGE=ghcr.io/cheftaco/hive-node-runtime:26.13.0-1@sha256:48948514bce59a27f8ee2a3eabaea0a04cbfa87e087297a52f8501c0d465c84f
 ARG NODE_IMAGE=node:24.22.1-bookworm-slim@sha256:be8204d4bd327363357f532187b752ff62759c31bedf98e9e18fc08c9cbd605c
 
 # JavaScript builds and packs are platform independent: build once on the runner.
@@ -30,7 +31,7 @@ RUN mkdir -p /packages \
   && (cd packages/contracts && npm pack --ignore-scripts --pack-destination /packages) \
   && ls -l /packages
 
-FROM ${NODE_IMAGE} AS runtime
+FROM ${NODE_IMAGE} AS runtime-dependencies
 ARG MAGNUS_VERSION=0.0.0-local
 LABEL org.opencontainers.image.title="magnus-ui" \
       org.opencontainers.image.description="Magnus web console" \
@@ -58,13 +59,20 @@ RUN node -e ' \
   && chmod 0755 /usr/local/bin/magnus-ui-entrypoint \
   && install -d -o node -g node -m 0700 /var/lib/magnus-ui
 
-# Nothing in this image runs a package manager at runtime: drop npm, npx, corepack, yarn and apt
-# (their bundled dependencies carry fixable CVEs). dpkg and its database stay, so scanners still
-# see the OS packages.
-RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /usr/local/bin/npm /usr/local/bin/npx \
-      /usr/local/bin/corepack /opt/yarn-* /usr/local/bin/yarn /usr/local/bin/yarnpkg \
-  && dpkg --purge --force-remove-protected --force-remove-essential apt libapt-pkg6.0 \
-  && rm -rf /etc/apt /var/lib/apt /var/cache/apt /var/log/apt
+# Runtime carries only the packed product and its patched shared libraries.
+FROM ${RUNTIME_IMAGE} AS runtime
+USER root
+ARG MAGNUS_VERSION=0.0.0-local
+LABEL org.opencontainers.image.title="magnus-ui" \
+      org.opencontainers.image.description="Magnus web console" \
+      org.opencontainers.image.source="https://github.com/ChefTaco/magnus" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.version="${MAGNUS_VERSION}"
+WORKDIR /opt/magnus-ui
+COPY --from=runtime-dependencies --chown=node:node /opt/magnus-ui/ /opt/magnus-ui/
+COPY --from=runtime-dependencies --chmod=0755 /usr/local/bin/magnus-ui-entrypoint /usr/local/bin/magnus-ui-entrypoint
+RUN mkdir -p /var/lib/magnus-ui && chown -R node:node /var/lib/magnus-ui && chmod 0700 /var/lib/magnus-ui
+RUN node -e "const req=require('node:module').createRequire(process.cwd()+'/node_modules/@hivemagnus/magnus-ui/package.json'); if(typeof req('ssh2').Client!=='function')throw Error('SSH runtime failed');(async()=>{const argon=req('argon2'); const hash=await argon.hash('synthetic proof',{memoryCost:8192,timeCost:1}); if(!await argon.verify(hash,'synthetic proof'))throw Error('Native password hashing failed')})().catch(e=>{console.error(e.message);process.exitCode=1})"
 
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { embermendOperationSchema, embermendCanonical } from '@hivemagnus/magnus-contracts/embermend';
+import { CONTROL_API_VERSION } from '../config/index.js';
 import type { AppVariables } from '../types/index.js';
 import { getDb } from '../db/index.js';
 import { NodeApiClient } from '../sdk/node-api-client.js';
@@ -73,7 +74,7 @@ embermendRouter.get('/capabilities', async c => {
     if (node.agent) agents.push({ id: agentId, kind: 'management-agent', label: 'Magnus management agent', scope: { installationId: grant.productInstallationId, applicationIds: [], targetIds: [logicalId] }, provenance: { source: 'magnus', assurance: 'established', evidenceIds: [], observedAt: new Date().toISOString() }, magnusInstallationId: grant.installationId, magnusAgentId: node.agent.id, targetIds: [logicalId], capabilities: supported.map(action => 'embermend:' + action), version: node.agent.version, lifecycle: node.status === 'ONLINE' ? 'active' : 'offline' });
     targets.push({ id: logicalId, kind: 'target', label: node.name, scope: { installationId: grant.productInstallationId, applicationIds: [], targetIds: [logicalId] }, provenance: { source: 'magnus', assurance: 'established', evidenceIds: [], observedAt: new Date().toISOString() }, magnusInstallationId: grant.installationId, magnusTargetId: node.id, agentId, environment: binding.environment, targetKind: capability?.data.targetKind ?? 'host', enrollment: enrollment?.state ?? 'legacy', platform: capability?.data.platform ?? 'unsupported', capabilities: supported.map(action => 'embermend:' + action), lastSeenAt: node.lastHeartbeatAt?.toISOString() ?? new Date(0).toISOString(), parentHostId: null, workloadId: null, instanceId: null, executionNamespace: 'host', lifecycle: node.status === 'ONLINE' ? 'active' : 'offline' });
   }
-  return c.json({ protocol: 1, installationId: grant.installationId, serviceVersion: '2.3.4', actions: [...actions], targets, agents, observedAt: new Date().toISOString() });
+  return c.json({ protocol: 1, installationId: grant.installationId, serviceVersion: CONTROL_API_VERSION, actions: [...actions], targets, agents, observedAt: new Date().toISOString() });
 });
 embermendRouter.get('/operations/:id', async c => new Response(JSON.stringify(await observed(authorize(c.req.header('authorization')), c.req.param('id'))), { headers: { 'content-type': 'application/json' } }));
 embermendRouter.post('/operations', async c => {

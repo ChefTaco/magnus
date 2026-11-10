@@ -169,3 +169,11 @@ integrity; it preserves the package manifest and the rest of the locked graph. B
 CI jobs and the publication workflow run this gate through `npm run verify`.
 Hive's controller refuses older unlocked tarballs; publish a new agent version and pin its tarball
 integrity in a newly signed suite manifest. Existing published packages and images are immutable.
+
+## Patched container runtime
+
+Version 2.3.5 pins the maintained Node 26 runtime for the API, fleet gateway and
+standalone dashboard. The server carries matching PostgreSQL 18 `pg_dump` and
+`pg_restore`; use that pair for recovery because older restore clients may reject
+newer archive headers. Native Ardent 3 installs use packaged Node-API binaries
+without lifecycle scripts or a C++ toolchain.

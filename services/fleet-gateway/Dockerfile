@@ -17,6 +17,7 @@
 #     --mount type=bind,src=<key>,dst=/run/secrets/fleet-gateway-ssh-key,readonly \
 #     --mount type=bind,src=<tls>,dst=/run/tls,readonly ...
 
+ARG RUNTIME_IMAGE=ghcr.io/cheftaco/hive-node-runtime:26.13.0-1@sha256:48948514bce59a27f8ee2a3eabaea0a04cbfa87e087297a52f8501c0d465c84f
 ARG NODE_IMAGE=node:24.22.1-bookworm-slim@sha256:be8204d4bd327363357f532187b752ff62759c31bedf98e9e18fc08c9cbd605c
 
 # ─── Stage 1: build the workspace packages and pack the gateway ──────────────
@@ -33,7 +34,7 @@ RUN mkdir -p /packages \
   && ls -l /packages
 
 # ─── Stage 2: runtime ────────────────────────────────────────────────────────
-FROM ${NODE_IMAGE} AS runtime
+FROM ${NODE_IMAGE} AS runtime-dependencies
 ARG MAGNUS_VERSION=0.0.0-local
 LABEL org.opencontainers.image.title="magnus-fleet-gateway" \
       org.opencontainers.image.description="Magnus fleet gateway: holds the restricted SSH key and carries the web terminal" \
@@ -57,13 +58,19 @@ RUN node -e ' \
   && rm -rf /tmp/packages /root/.npm \
   && install -d -o node -g node -m 0700 /var/lib/fleet-gateway /var/lib/fleet-gateway/known-hosts
 
-# Nothing in this image runs a package manager at runtime: drop npm, npx, corepack, yarn and apt
-# (their bundled dependencies carry fixable CVEs). dpkg and its database stay, so scanners still
-# see the OS packages.
-RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /usr/local/bin/npm /usr/local/bin/npx \
-      /usr/local/bin/corepack /opt/yarn-* /usr/local/bin/yarn /usr/local/bin/yarnpkg \
-  && dpkg --purge --force-remove-protected --force-remove-essential apt libapt-pkg6.0 \
-  && rm -rf /etc/apt /var/lib/apt /var/cache/apt /var/log/apt
+# Runtime carries only the packed product and its patched shared libraries.
+FROM ${RUNTIME_IMAGE} AS runtime
+USER root
+ARG MAGNUS_VERSION=0.0.0-local
+LABEL org.opencontainers.image.title="magnus-fleet-gateway" \
+      org.opencontainers.image.description="Magnus fleet gateway: holds the restricted SSH key and carries the web terminal" \
+      org.opencontainers.image.source="https://github.com/ChefTaco/magnus" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.version="${MAGNUS_VERSION}"
+WORKDIR /opt/magnus-fleet-gateway
+COPY --from=runtime-dependencies --chown=node:node /opt/magnus-fleet-gateway/ /opt/magnus-fleet-gateway/
+RUN mkdir -p /var/lib/fleet-gateway /var/lib/fleet-gateway/known-hosts && chown -R node:node /var/lib/fleet-gateway /var/lib/fleet-gateway/known-hosts && chmod 0700 /var/lib/fleet-gateway
+RUN node -e "const req=require('node:module').createRequire(process.cwd()+'/node_modules/@hivemagnus/magnus-fleet-gateway/package.json'); if(typeof req('ssh2').Client!=='function')throw Error('SSH runtime failed');"
 
 ENV NODE_ENV=production \
     FLEET_GATEWAY_PORT=4310 \

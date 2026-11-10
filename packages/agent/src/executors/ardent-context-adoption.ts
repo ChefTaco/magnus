@@ -10,8 +10,8 @@ import { managedExecution } from '../security/managed-context.js';
 const sha = z.string().regex(/^[a-f0-9]{64}$/);
 const hash = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex');
 export const contextAdoptionInput = ArdentContextAdoptionInputSchema;
-const bundleSchema = z.object({ schema_version: z.literal(1), engine_version: z.literal('0.1.0'), validator_version: z.literal('4.6.7'),
-  files: z.array(z.object({ path: z.string().regex(/^(?:ardent\/(?:context|context-checkpoints|context-maintenance)\.js|emberfold\/(?:package\.json|LICENSE|NOTICE|README\.md|dist\/[A-Za-z0-9._-]+)|zod\/(?:package\.json|index\.js|LICENSE|v4\/[A-Za-z0-9_./-]+\.js))$/),
+const bundleSchema = z.object({ schema_version: z.union([z.literal(1), z.literal(2)]), engine_version: z.literal('0.1.0'), validator_version: z.literal('4.6.7'),
+  files: z.array(z.object({ path: z.string().regex(/^(?:ardent\/(?:context|context-checkpoints|context-maintenance|sqlite)\.js|sqlite\/(?:package\.json|LICENSE|dist\/(?:index\.(?:mjs|cjs)|chunk-[A-Z0-9]+\.mjs)|prebuilds\/linux-(?:x64|arm64)\/@photostructure\+sqlite\.glibc\.node)|sqlite-loader\/(?:package\.json|LICENSE|index\.js|node-gyp-build\.js|optional\.js)|emberfold\/(?:package\.json|LICENSE|NOTICE|README\.md|dist\/[A-Za-z0-9._-]+)|zod\/(?:package\.json|index\.js|LICENSE|v4\/[A-Za-z0-9_./-]+\.js))$/),
     sha256: sha, content: z.string().max(4 * 1024 * 1024) }).strict()).min(10).max(1000) }).strict();
 export type ContextBundle = z.infer<typeof bundleSchema>;
 export type AdoptionRoot = { owner: string; home: string; root: string; install: string };
@@ -86,6 +86,20 @@ export function validateContextBundle(input: unknown): ContextBundle {
     z.object({ name: z.literal(name), version: z.literal(version), type: z.literal('module') })
       .parse(JSON.parse(Buffer.from(bundle.files.find(file => file.path === path)!.content, 'base64').toString('utf8')) as unknown);
   }
+  const nativeFiles = bundle.files.filter(file => file.path === 'ardent/sqlite.js' || file.path.startsWith('sqlite'));
+  if (bundle.schema_version === 1 && nativeFiles.length) throw new Error('Legacy context payload cannot contain a new native runtime');
+  if (bundle.schema_version === 2) {
+    for (const path of ['ardent/sqlite.js', 'sqlite/package.json', 'sqlite/LICENSE', 'sqlite/dist/index.mjs',
+      'sqlite/prebuilds/linux-x64/@photostructure+sqlite.glibc.node', 'sqlite/prebuilds/linux-arm64/@photostructure+sqlite.glibc.node',
+      'sqlite-loader/package.json', 'sqlite-loader/LICENSE', 'sqlite-loader/index.js', 'sqlite-loader/node-gyp-build.js']) {
+      if (!names.has(path)) throw new Error('Patched context storage payload is incomplete');
+    }
+    for (const [path, name, version] of [['sqlite/package.json', '@photostructure/sqlite', '3.3.1'],
+      ['sqlite-loader/package.json', 'node-gyp-build', '4.8.4']] as const) {
+      z.object({ name: z.literal(name), version: z.literal(version) })
+        .parse(JSON.parse(Buffer.from(bundle.files.find(file => file.path === path)!.content, 'base64').toString('utf8')) as unknown);
+    }
+  }
   return bundle;
 }
 
@@ -143,7 +157,7 @@ async function ownerProcess(root: AdoptionRoot, command: string, args: string[],
 
 const materialize = `import{mkdir,readFile,writeFile,lstat}from'node:fs/promises';import{join}from'node:path';
 let input='';for await(const chunk of process.stdin)input+=chunk;const{directory,name,bundle,verify_only}=JSON.parse(input);
-for(const file of bundle.files){const parts=file.path.split('/');const group=parts.shift();let base=group==='ardent'?join(directory,'node_modules',name,'dist'):group==='emberfold'?join(directory,'node_modules/@hivemagnus/emberfold'):join(directory,'node_modules/@hivemagnus/emberfold/node_modules/zod');
+for(const file of bundle.files){const parts=file.path.split('/');const group=parts.shift();let base=group==='ardent'?join(directory,'node_modules',name,'dist'):group==='emberfold'?join(directory,'node_modules/@hivemagnus/emberfold'):group==='sqlite'?join(directory,'node_modules',name,'dist/context-sqlite'):group==='sqlite-loader'?join(directory,'node_modules',name,'dist/context-sqlite/node_modules/node-gyp-build'):join(directory,'node_modules/@hivemagnus/emberfold/node_modules/zod');
 const path=join(base,...parts);const parents=path.split('/');let current='/';for(const part of parents.slice(1,-1)){current=join(current,part);if(!verify_only)await mkdir(current,{recursive:true,mode:448});const info=await lstat(current);if(info.isSymbolicLink()||!info.isDirectory())throw Error('Unsafe candidate path');}
 const info=await lstat(path).catch(error=>{if(error.code==='ENOENT')return null;throw error});if(info?.isSymbolicLink())throw Error('Unsafe candidate file');const bytes=Buffer.from(file.content,'base64');if(verify_only){if(!bytes.equals(await readFile(path)))throw Error('Candidate payload differs');}else await writeFile(path,bytes,{mode:420});}
 if(verify_only)process.exit(0);
