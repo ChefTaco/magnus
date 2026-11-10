@@ -14,6 +14,7 @@
 # same artifact that is published to npm.
 # Services/control-api/Dockerfile.dockerignore limits what the context sends.
 
+ARG RUNTIME_IMAGE=ghcr.io/cheftaco/hive-node-runtime:26.13.0-1@sha256:48948514bce59a27f8ee2a3eabaea0a04cbfa87e087297a52f8501c0d465c84f
 ARG NODE_IMAGE=node:24.22.1-bookworm-slim@sha256:be8204d4bd327363357f532187b752ff62759c31bedf98e9e18fc08c9cbd605c
 
 # ─── Stage 1: build and pack the workspace packages ──────────────────────────
@@ -42,7 +43,7 @@ RUN mkdir -p /packages \
   && ls -l /packages
 
 # ─── Stage 2: runtime ────────────────────────────────────────────────────────
-FROM ${NODE_IMAGE} AS runtime
+FROM ${NODE_IMAGE} AS runtime-dependencies
 ARG MAGNUS_VERSION=0.0.0-local
 ARG POSTGRES_CLIENT_MAJOR=17
 LABEL org.opencontainers.image.title="magnus-server" \
@@ -50,16 +51,9 @@ LABEL org.opencontainers.image.title="magnus-server" \
       org.opencontainers.image.source="https://github.com/ChefTaco/magnus" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.version="${MAGNUS_VERSION}"
-# pg_dump from the PostgreSQL project's repository, matching the bundled
-# PostgreSQL major: startup auto-migrate dumps the database before migrating.
+# Native addons are built here; maintained database clients enter only the final stage.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends openssl ca-certificates curl gnupg python3 make g++ \
-  && . /etc/os-release \
-  && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o /usr/share/keyrings/postgresql.gpg \
-  && echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
-  && apt-get update \
-  && apt-get install -y --no-install-recommends "postgresql-client-${POSTGRES_CLIENT_MAJOR}" \
-  && apt-get purge -y --auto-remove curl gnupg \
+  && apt-get install -y --no-install-recommends openssl ca-certificates python3 make g++ \
   && rm -rf /var/lib/apt/lists/*
 WORKDIR /opt/magnus-server
 COPY --from=builder /packages/ /tmp/packages/
@@ -91,13 +85,23 @@ RUN node -e ' \
 # Images upgrade by pull: apply pending migrations at startup, after a dump into
 # $MAGNUS_HOME/backups (slow or one-way migrations still need
 # MAGNUS_AUTO_MIGRATE_ALLOW_SLOW=true). Set MAGNUS_AUTO_MIGRATE=false to migrate by hand.
-# Nothing in this image runs a package manager at runtime: drop npm, npx, corepack, yarn and apt
-# (their bundled dependencies carry fixable CVEs). dpkg and its database stay, so scanners still
-# see the OS packages.
-RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /usr/local/bin/npm /usr/local/bin/npx \
-      /usr/local/bin/corepack /opt/yarn-* /usr/local/bin/yarn /usr/local/bin/yarnpkg \
-  && dpkg --purge --force-remove-protected --force-remove-essential apt libapt-pkg6.0 \
-  && rm -rf /etc/apt /var/lib/apt /var/cache/apt /var/log/apt
+# Runtime carries only the packed product and its patched shared libraries.
+FROM ${RUNTIME_IMAGE} AS runtime
+USER root
+ARG MAGNUS_VERSION=0.0.0-local
+LABEL org.opencontainers.image.title="magnus-server" \
+      org.opencontainers.image.description="Magnus server: fleet control plane API" \
+      org.opencontainers.image.source="https://github.com/ChefTaco/magnus" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.version="${MAGNUS_VERSION}"
+# PostgreSQL 18 clients can back up 17/18; pg_restore stays paired.
+RUN apk add --no-cache postgresql-18-client-base
+WORKDIR /opt/magnus-server
+COPY --from=runtime-dependencies --chown=node:node /opt/magnus-server/ /opt/magnus-server/
+COPY --from=runtime-dependencies --chmod=0755 /usr/local/bin/magnus-server-entrypoint /usr/local/bin/magnus-server-entrypoint
+RUN mkdir -p /var/lib/magnus /var/lib/magnus-cert && chown -R node:node /var/lib/magnus /var/lib/magnus-cert && chmod 0700 /var/lib/magnus
+RUN /usr/libexec/postgresql18/pg_dump --version && /usr/libexec/postgresql18/pg_restore --version
+RUN node -e "const req=require('node:module').createRequire(process.cwd()+'/node_modules/@hivemagnus/magnus-server/package.json'); if(typeof req('ssh2').Client!=='function')throw Error('SSH runtime failed');(async()=>{const argon=req('argon2'); const hash=await argon.hash('synthetic proof',{memoryCost:8192,timeCost:1}); if(!await argon.verify(hash,'synthetic proof'))throw Error('Native password hashing failed')})().catch(e=>{console.error(e.message);process.exitCode=1})"
 
 ENV NODE_ENV=production \
     MAGNUS_HOME=/var/lib/magnus \
@@ -105,7 +109,7 @@ ENV NODE_ENV=production \
     MAGNUS_AUTO_MIGRATE_BACKUP=true \
     CONTROL_API_PORT=4000 \
     CONTROL_API_BIND_HOST=0.0.0.0 \
-    PATH=/opt/magnus-server/node_modules/.bin:$PATH
+    PATH=/usr/libexec/postgresql18:/opt/magnus-server/node_modules/.bin:$PATH
 USER node
 VOLUME ["/var/lib/magnus"]
 EXPOSE 4000

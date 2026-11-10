@@ -56,6 +56,12 @@ Ardent coordination fence; it does not create an Ardent-only enrollment.
    the synthetic example. Staging leaves the live runtime unchanged, copies it
    as the owner, and overlays only context modules and pinned engine dependencies.
    The bundled adapter is built from the release sources, never stale `dist`.
+   Schema 2 also carries the pinned SQLite 3.54.1 driver and Linux glibc x64/arm64
+   Node-API binaries inside the candidate package. Staging remains offline, the
+   complete candidate tree is hashed, and the payload stays within existing size
+   limits. Schema 1 remains readable for legacy bundles. A context overlay does
+   not patch unrelated code in the retained base runtime; use the full Ardent
+   upgrade for product-wide security updates.
 3. Require a verified signed receipt and `prepared`. Acceptance uses an isolated
    SQLite fixture and the owner's configured Codex provider with tools disabled:
    real compaction, continuation using the primary model, exact source recovery,

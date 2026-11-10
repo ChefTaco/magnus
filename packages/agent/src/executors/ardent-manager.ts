@@ -541,11 +541,11 @@ async function installPackage(root: ArdentRoot): Promise<object> {
   let movedPrior = false;
   let installed = false;
   try {
-    await runAsOwner(root, ['/usr/bin/npm', 'install', '--prefix', stage, '--omit=dev', '--no-audit', '--no-fund', '--no-save', archive], 9 * 60_000);
+    await runAsOwner(root, ['/usr/bin/npm', 'install', '--prefix', stage, '--omit=dev', '--no-audit', '--no-fund', '--no-save', '--ignore-scripts', archive], 9 * 60_000);
     const packageFile = join(packageDir(stage, staged.name), 'package.json');
     const candidate = packageVersion.parse(JSON.parse(await readFile(packageFile, 'utf8')) as unknown);
     if (candidate.name !== staged.name || candidate.version !== staged.version) throw new Error('Staged Ardent package name or version differs');
-    await runAsOwner(root, ['/usr/bin/node', '-e', "const Database=require(process.argv[1]);new Database(':memory:').close()", join(stage, 'node_modules/better-sqlite3')], 10_000);
+    await runAsOwner(root, ['/usr/bin/node', '-e', "const {DatabaseSync}=require(process.argv[1]);const db=new DatabaseSync(':memory:');if(db.prepare('SELECT sqlite_version() AS version').get().version!=='3.54.1')throw Error('Unverified embedded SQLite');db.close()", join(stage, 'node_modules/@photostructure/sqlite')], 10_000);
     const packageTreeSha256 = await packageTreeDigest(packageDir(stage, staged.name));
     await writeFile(join(stage, 'package-receipt.json'), `${JSON.stringify({
       schemaVersion: 1, name: staged.name, version: staged.version, sha256: staged.sha256, packageTreeSha256,

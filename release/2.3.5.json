@@ -1,0 +1,5 @@
+{
+  "summary": "Replace affected embedded SQLite and container runtime libraries while preserving offline context recovery.",
+  "breaking": false,
+  "migrations": []
+}
