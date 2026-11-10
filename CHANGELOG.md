@@ -5,6 +5,13 @@ All notable changes to this project are documented in this file. The format is b
 [Semantic Versioning](https://semver.org/).
 
 
+## [Unreleased]
+
+### Changed
+
+- Refresh dashboard, queue and test dependencies and explicitly approve the updated
+  native install scripts.
+
 ## [2.3.2] - 2026-11-09
 
 ### Fixed
