@@ -30,8 +30,7 @@ Worker readiness, private repository access and hostile-repository acceptance
 still require complete release proof.
 
 The prospective 2.4.0 release notes own the additive operation migration. This
-source change does not publish a compatible release. Reboot continuation, native
-crash adoption, complete cancellation and combined product acceptance remain
+source change does not publish a compatible release. Reboot continuation, integrated crash-adoption fault injection, complete cancellation and combined product acceptance remain
 required before releasing the full remediation contract. See Embermend's
 acceptance ledger for the product completion boundary.
 
@@ -45,3 +44,11 @@ not classify its backend as local. Direct approved local-model transport remains
 supported. Completion model identity, terminal status and absence of tool calls
 are checked before results return to the scanner. No CLI harness is added to
 the node agent. See Embermend's inference guide for broker installation and pins.
+
+Before dispatch, the Embermend handler now retains its original outer request,
+lease fence and inner supervisor identity in protected durable state. Receipt
+reads can adopt an exact successful terminal report after API-process loss
+without replaying its worker. Missing, mismatched or truncated evidence keeps
+ownership unknown; rootless work additionally requires container and workspace
+mount absence. This supports same-operation observation after restart. It does
+not infer completion across an unproven reboot or authorize another mutation.

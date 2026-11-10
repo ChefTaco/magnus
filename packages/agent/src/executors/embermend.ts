@@ -8,6 +8,8 @@ import { z } from 'zod';
 import { embermendOperationSchema, embermendCanonical, embermendResultPointerSchema } from '@hivemagnus/magnus-contracts/embermend';
 import { requirePrivileged } from '../privileged.js';
 import { managedExecution } from '../security/managed-context.js';
+import { retainEmbermendExecution } from './embermend-execution.js';
+import type { SupervisorInput } from './execution-supervisor-state.js';
 import { ExecutionSupervisor } from './execution-supervisor.js';
 import { loadEmbermendConfig } from './embermend-config.js';
 import { logger } from '../utils/logger.js';
@@ -41,7 +43,9 @@ embermendRoutes.post('/action', requirePrivileged('embermend'), async c => {
   const commandId = 'embermend-' + createHash('sha256').update(context.commandId + ':' + context.requestSha256).digest('hex');
   const agentCgroup = await readFile('/proc/self/cgroup', 'utf8');
   const agentUnit = agentCgroup.split('/').find(part => part.trim().endsWith('.service'))?.trim() ?? '';
-  const observation = await new ExecutionSupervisor().run({ commandId, command: quote('/usr/bin/node'), args: [quote(worker)], timeoutSeconds: 780, coordination: context.coordination, environment: { EMBERMEND_AGENT_UNIT: agentUnit, EMBERMEND_REQUEST: JSON.stringify(request), MAGNUS_EMBERMEND_CONFIG: process.env['MAGNUS_EMBERMEND_CONFIG'] ?? '', NODE_MANAGER_PORT: process.env['NODE_MANAGER_PORT'] ?? '4100', AGENT_INSTALL_DIR: process.env['AGENT_INSTALL_DIR'] ?? process.cwd() } });
+  const input: SupervisorInput = { commandId, command: quote('/usr/bin/node'), args: [quote(worker)], timeoutSeconds: 780, coordination: context.coordination, environment: { EMBERMEND_AGENT_UNIT: agentUnit, EMBERMEND_REQUEST: JSON.stringify(request), MAGNUS_EMBERMEND_CONFIG: process.env['MAGNUS_EMBERMEND_CONFIG'] ?? '', NODE_MANAGER_PORT: process.env['NODE_MANAGER_PORT'] ?? '4100', AGENT_INSTALL_DIR: process.env['AGENT_INSTALL_DIR'] ?? process.cwd() } };
+  await retainEmbermendExecution(context, request, input);
+  const observation = await new ExecutionSupervisor().run(input);
   if (['repository-scan.v1', 'repository-prepare.v1', 'repository-source.v1'].includes(request.action.version)) {
     const inner = z.object({ request: z.object({ operationId: z.string().optional(), id: z.string().optional() }).passthrough() }).passthrough().parse(request.action.parameters).request;
     const id = inner.operationId ?? inner.id;

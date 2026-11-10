@@ -10,6 +10,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Added
 
+- Retain native Embermend supervisor bindings and adopt exact successful worker completion after API-process loss without replay; incomplete or detached-work evidence retains ownership.
+
 - Forward admitted scanner operation and source-policy context to an optional Embermend-owned inference broker, with exact provider identity and verified transport.
 
 - Optional constrained Embermend product bridge with durable operation identities, signed result references, reviewed host actions and isolated source workers. Native reboot continuation and complete product acceptance remain release prerequisites.
