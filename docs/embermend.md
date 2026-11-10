@@ -52,3 +52,8 @@ without replaying its worker. Missing, mismatched or truncated evidence keeps
 ownership unknown; rootless work additionally requires container and workspace
 mount absence. This supports same-operation observation after restart. It does
 not infer completion across an unproven reboot or authorize another mutation.
+
+A scanner broker using a private HTTPS CA can set optional `model.caFile`. The
+node validates a canonical root-controlled regular CA file within a fixed byte
+budget and uses it only for that model connection with certificate verification
+enabled. The CA and broker token stay outside the repository container.

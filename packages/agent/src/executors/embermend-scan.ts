@@ -1,3 +1,4 @@
+import { Agent, fetch as modelFetch } from 'undici';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createInterface } from 'node:readline';
@@ -8,10 +9,10 @@ import { z } from 'zod';
 import { rootControlled } from './embermend-files.js';
 
 const exec = promisify(execFile);
-async function boundedJson(response: Response, maximum: number): Promise<unknown> {
+async function boundedJson(response: { ok: boolean; body: { getReader(): { read(): Promise<{ done?: boolean; value?: unknown }>; cancel(): Promise<void> } } | null }, maximum: number): Promise<unknown> {
   if (!response.ok || !response.body) throw new Error('Remote broker unavailable');
   const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let size = 0;
-  try { for (;;) { const row = await reader.read(); if (row.done) break; size += row.value.length; if (size > maximum) throw new Error('Remote broker response exceeded budget'); chunks.push(row.value); } }
+  try { for (;;) { const row = await reader.read(); if (row.done) break; const value = z.instanceof(Uint8Array).parse(row.value); size += value.length; if (size > maximum) throw new Error('Remote broker response exceeded budget'); chunks.push(value); } }
   finally { await reader.cancel().catch(() => undefined); }
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
@@ -21,7 +22,7 @@ export const scanWorkerConfigSchema = z.object({
   scannerImage: z.string().regex(/^(?:sha256:[a-f0-9]{64}|.+@sha256:[a-f0-9]{64})$/),
   validationProfiles: z.record(z.string(), z.array(z.string().max(1000)).min(1).max(64)).default({}),
   repositories: z.record(z.string(), z.object({ providerId: z.string(), cloneUrl: z.url().refine(value => /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\.git$/.test(value)) }).strict()),
-  model: z.object({ baseUrl: z.url(), model: z.string(), ref: z.string(), local: z.boolean(), embermendBroker: z.boolean().default(false), tokenFile: z.string().startsWith('/') }).strict(),
+  model: z.object({ baseUrl: z.url(), model: z.string(), ref: z.string(), local: z.boolean(), embermendBroker: z.boolean().default(false), caFile: z.string().startsWith('/').optional(), tokenFile: z.string().startsWith('/') }).strict(),
 }).strict().superRefine((value, context) => { const url = new URL(value.model.baseUrl); if (url.username || url.password || url.search || url.hash || !(url.protocol === 'https:' || url.protocol === 'http:' && (value.model.local || value.model.embermendBroker && ['127.0.0.1', '[::1]'].includes(url.hostname)))) context.addIssue({ code: 'custom', message: 'Approved local HTTP model or verified HTTPS required' }); if (value.model.embermendBroker && value.model.model !== value.model.ref) context.addIssue({ code: 'custom', message: 'Broker model must equal its authorized provider reference' }); });
 export type ScanWorkerConfig = z.infer<typeof scanWorkerConfigSchema>;
 export async function workerContainerGone(config: ScanWorkerConfig, operationId: string): Promise<boolean> {
@@ -48,7 +49,7 @@ export async function scanRepository(raw: unknown, config: ScanWorkerConfig, mod
   const identityUrl = new URL(repository.cloneUrl);
   const identity = await fetch('https://api.github.com/repos' + identityUrl.pathname.replace(/\.git$/, ''), { redirect: 'error', signal: AbortSignal.timeout(10000), headers: { accept: 'application/vnd.github+json' } });
   if (!identity.ok || String(z.object({ id: z.number().int().positive() }).parse(await boundedJson(identity, 65536)).id) !== repository.providerId) throw new Error('Repository identity or access changed');
-  let token = '';
+  let token = ''; let modelAgent: Agent | undefined;
   if (mode === 'scan') { await rootControlled(config.model.tokenFile); if ((await lstat(config.model.tokenFile)).mode & 0o077 || (await lstat(config.model.tokenFile)).size > 8192) throw new Error('Protected model credential file required'); token = (await readFile(config.model.tokenFile, 'utf8')).trim(); }
   const owner = (await exec('/usr/bin/id', ['-u', config.user], { env: { PATH: '/usr/bin:/bin' } })).stdout.trim();
   if (owner !== String(config.uid) || config.uid === 0) throw new Error('Dedicated non-root worker identity required');
@@ -61,6 +62,7 @@ export async function scanRepository(raw: unknown, config: ScanWorkerConfig, mod
   const environment = { PATH: '/usr/bin:/bin', HOME: config.home, XDG_RUNTIME_DIR: `/run/user/${config.uid}`, DOCKER_HOST: `unix:///run/user/${config.uid}/docker.sock`, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0' };
   const userCommand = async (binary: string, args: string[]): Promise<string> => (await exec('/usr/sbin/runuser', ['-u', config.user, '--', binary, ...args], { env: environment, timeout: 180000, maxBuffer: 1024 * 1024 })).stdout;
   try {
+  if (mode === 'scan' && config.model.caFile) { await rootControlled(config.model.caFile); const info = await lstat(config.model.caFile); if (!info.isFile() || info.nlink !== 1 || info.size > 1024 * 1024) throw new Error('Bounded root-controlled model CA required'); modelAgent = new Agent({ connect: { rejectUnauthorized: true, ca: await readFile(config.model.caFile) } }); }
     await exec('/usr/bin/mount', ['-t', 'tmpfs', '-o', `size=${config.workspaceMiB}m,nodev,nosuid,noexec,mode=0755,uid=${config.uid},gid=${config.uid}`, 'embermend-worker', workspace], { env: { PATH: '/usr/bin:/bin' }, timeout: 10000, maxBuffer: 8192 }); mounted = true;
     const info = z.object({ SecurityOptions: z.array(z.string()) }).parse(JSON.parse(await userCommand('/usr/bin/docker', ['info', '--format', '{{json .}}'])));
     if (!info.SecurityOptions.some(value => value.includes('rootless'))) throw new Error('Rootless worker daemon required');
@@ -99,7 +101,7 @@ export async function scanRepository(raw: unknown, config: ScanWorkerConfig, mod
         if (mode !== 'scan') throw new Error('Source reading or validation cannot request model access');
         const base = new URL(config.model.baseUrl.endsWith('/') ? config.model.baseUrl : config.model.baseUrl + '/');
         if (base.username || base.password || base.search || base.hash) throw new Error('Credential-free configured model URL required');
-        const reply = await fetch(new URL('chat/completions', base), { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(Math.min(120000, Math.max(1, Date.parse(request.deadline) - Date.now()))), headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify(scanModelBody(config.model, request, message.system, message.content)) });
+        const reply = await modelFetch(new URL('chat/completions', base), { ...(modelAgent ? { dispatcher: modelAgent } : {}), method: 'POST', redirect: 'error', signal: AbortSignal.timeout(Math.min(120000, Math.max(1, Date.parse(request.deadline) - Date.now()))), headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify(scanModelBody(config.model, request, message.system, message.content)) });
         if (!reply.ok || Number(reply.headers.get('content-length')) > 1024 * 1024) throw new Error('Configured model unavailable');
         const parsed = z.object({ model: z.literal(config.model.model), choices: z.array(z.object({ finish_reason: z.literal('stop'), message: z.object({ content: z.string().max(1000000), tool_calls: z.undefined().optional() }) })).length(1) }).parse(await boundedJson(reply, 1024 * 1024));
         const choice = parsed.choices[0]; if (!choice) throw new Error('Missing model completion');
@@ -108,11 +110,13 @@ export async function scanRepository(raw: unknown, config: ScanWorkerConfig, mod
       const code = await exited; if (code !== 0 || result === undefined) throw new Error('Scanner did not produce a complete terminal result'); return result;
     } finally { clearTimeout(timer); child.stdin.destroy(); if (child.exitCode === null) { child.kill('SIGKILL'); await exited.catch(() => undefined); } }
   } finally {
+    try {
     await userCommand('/usr/bin/docker', ['rm', '--force', containerName]).catch(() => undefined);
     let retained: string;
     try { retained = await userCommand('/usr/bin/docker', ['ps', '--all', '--filter', `name=^${containerName}$`, '--format', '{{.ID}}']); } catch { throw new Error('WORKER_CLEANUP_UNCERTAIN'); }
     if (retained.trim()) throw new Error('WORKER_CLEANUP_UNCERTAIN');
     if (mounted) { try { await exec('/usr/bin/umount', [workspace], { env: { PATH: '/usr/bin:/bin' }, timeout: 10000, maxBuffer: 8192 }); } catch { throw new Error('WORKER_CLEANUP_UNCERTAIN'); } }
     await rm(workspace, { recursive: true, force: true });
+    } finally { await modelAgent?.close(); }
   }
 }
