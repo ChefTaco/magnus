@@ -1,9 +1,11 @@
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { createServer } from 'node:https';
+import type { AddressInfo } from 'node:net';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { approveNewNode } from './known-hosts.js';
 
 /** The built CLI under real Node, because vitest's module loading hides CommonJS import errors. */
@@ -53,5 +55,44 @@ describe('built CLI', () => {
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
+  });
+});
+
+
+describe('built healthcheck TLS identity', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'fleet-gateway-health-'));
+  const key = join(directory, 'server.key'), certificate = join(directory, 'server.crt');
+  const foreignCertificate = join(directory, 'foreign.crt');
+  execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', certificate, '-days', '1', '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost,IP:192.0.2.42'], { stdio: 'ignore' });
+  execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', join(directory, 'foreign.key'), '-out', foreignCertificate, '-days', '1', '-subj', '/CN=foreign.example.com'], { stdio: 'ignore' });
+  const server = createServer({ key: readFileSync(key), cert: readFileSync(certificate) }, (_request, response) => response.end('healthy'));
+  let port: number;
+  beforeAll(async () => {
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    port = (server.address() as AddressInfo).port;
+  });
+  afterAll(async () => {
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    rmSync(directory, { recursive: true, force: true });
+  });
+  async function health(identity: string, ca = certificate): Promise<number | null> {
+    const child = spawn(process.execPath, [CLI, 'healthcheck'], {
+      env: { PATH: process.env['PATH'], FLEET_GATEWAY_PORT: String(port), FLEET_GATEWAY_TLS_NAME: identity, TLS_CERT_PATH: ca },
+      stdio: 'ignore',
+    });
+    return new Promise((resolve, reject) => { child.once('error', reject); child.once('exit', resolve); });
+  }
+  for (const identity of ['localhost', '192.0.2.42']) {
+    it(`accepts a trusted ${identity} certificate over loopback`, async () => {
+      expect(await health(identity)).toBe(0);
+    });
+  }
+  for (const identity of ['wrong.example.com', '192.0.2.43']) {
+    it(`refuses a certificate that does not match ${identity}`, async () => {
+      expect(await health(identity)).toBe(1);
+    });
+  }
+  it('refuses an untrusted CA for an IP identity', async () => {
+    expect(await health('192.0.2.42', foreignCertificate)).toBe(1);
   });
 });

@@ -24,12 +24,20 @@ All notable changes to this project are documented in this file. The format is b
 - `MAGNUS_EMBERMEND_GRANTS_JSON` (server, secret): dedicated product credentials and exact target, environment and action grants; absent disables the bridge.
 - `MAGNUS_EMBERMEND_CONFIG` (agent): canonical root-controlled resource and worker configuration; absent disables reviewed remediation capabilities.
 
+## [2.3.6] - 2026-11-10
+
+### Fixed
+
+- Keep the terminal gateway health check working with IP product endpoints on Node 26. IP SAN verification remains enforced without sending an IP address as TLS SNI. Real built-CLI TLS tests cover DNS and IP success, certificate mismatches and an untrusted CA.
+
 ## [2.3.5] - 2026-11-10
 
 ### Security
 
 - Pin Ardent 3.0.0, which replaces the affected embedded SQLite library with SQLite 3.54.1. Native installation uses bundled Node-API binaries without dependency install scripts or a compiler.
-- Run server, fleet gateway and standalone dashboard containers on the pinned patched Node 26 runtime. Pair the server's maintained PostgreSQL 18 backup and restore clients.
+- Run server, fleet gateway, standalone dashboard and container-agent images on the pinned patched Node 26 runtime. Pair the server's maintained PostgreSQL 18 backup and restore clients.
+
+- Require unfiltered HIGH/CRITICAL scans and non-root execution checks on both image architectures before publication, retaining reports on failure.
 
 ### Changed
 

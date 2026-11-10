@@ -140,6 +140,34 @@ jobs:
             type=semver,pattern={{major}}.{{minor}},value=v${{ steps.release.outputs.version }}
             type=semver,pattern={{major}},value=v${{ steps.release.outputs.version }}
 
+      - name: Build, execute and scan both architectures before publication
+        env:
+          DOCKERFILE: ${{ matrix.image.dockerfile }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          IMAGE_REPORT_DIR: ${{ runner.temp }}/image-security-${{ matrix.image.name }}
+          TRIVY_CACHE_DIR: ${{ runner.temp }}/trivy-cache-${{ matrix.image.name }}
+        run: |
+          mkdir -p "$IMAGE_REPORT_DIR" "$TRIVY_CACHE_DIR"
+          for arch in amd64 arm64; do
+            docker buildx build --load --platform "linux/$arch" --build-arg "MAGNUS_VERSION=$RELEASE_VERSION" \
+              -f "$DOCKERFILE" -t "magnus-runtime-check:$arch" .
+            docker run --rm --platform "linux/$arch" --read-only --user 1000:1000 --cap-drop ALL \
+              --security-opt no-new-privileges:true --entrypoint node "magnus-runtime-check:$arch" -e \
+              'if(process.getuid()!==1000 || !["x64","arm64"].includes(process.arch) || !process.versions.node.startsWith("26."))throw Error("Unexpected runtime"); const db=new (require("node:sqlite").DatabaseSync)(":memory:"); const v=db.prepare("select sqlite_version() v").get().v.split(".").map(Number); if(!(v[0]>3 || v[0]===3 && v[1]>=54))throw Error("Affected embedded SQLite"); db.close();'
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+              -v "$TRIVY_CACHE_DIR:/root/.cache/trivy" -v "$IMAGE_REPORT_DIR:/reports" \
+              aquasec/trivy@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e image \
+              --image-src docker --platform "linux/$arch" --scanners vuln --severity HIGH,CRITICAL \
+              --format json --output "/reports/$arch.json" --exit-code 1 "magnus-runtime-check:$arch"
+          done
+      - name: Retain unfiltered security reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: image-security-${{ matrix.image.name }}
+          path: ${{ runner.temp }}/image-security-${{ matrix.image.name }}
+          if-no-files-found: ignore
+
       - name: Build and push
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
