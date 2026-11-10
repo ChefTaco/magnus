@@ -5,6 +5,14 @@ All notable changes to this project are documented in this file. The format is b
 [Semantic Versioning](https://semver.org/).
 
 
+## [2.3.4] - 2026-11-10
+
+### Fixed
+
+- Repair the standalone agent shrinkwrap: a repository-only override had pinned a development dependency below its parent's requirement, causing `npm ci --omit=dev` to refuse the 2.3.3 package. Installers retained the previous agent on failure.
+- Check the actual packed agent with isolated `npm ci --omit=dev --ignore-scripts` before publication and on both supported Node versions. Candidate contracts are served from loopback with their exact packed integrity, so the check also works before publication.
+
+
 ## [2.3.3] - 2026-11-10
 
 ### Changed

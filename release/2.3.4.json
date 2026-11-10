@@ -1,0 +1,9 @@
+{
+  "summary": "Repair the standalone agent dependency lock and require a clean packaged-agent installation before publication.",
+  "breaking": false,
+  "minUpgradeFrom": "1.0.0",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}

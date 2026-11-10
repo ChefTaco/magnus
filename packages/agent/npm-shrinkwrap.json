@@ -1,15 +1,15 @@
 {
   "name": "@hivemagnus/magnus-agent",
-  "version": "2.3.3",
+  "version": "2.3.4",
   "lockfileVersion": 3,
   "requires": true,
   "packages": {
     "": {
       "name": "@hivemagnus/magnus-agent",
-      "version": "2.3.3",
+      "version": "2.3.4",
       "license": "Apache-2.0",
       "dependencies": {
-        "@hivemagnus/magnus-contracts": "2.3.3",
+        "@hivemagnus/magnus-contracts": "2.3.4",
         "@hono/node-server": "^2.1.6",
         "dotenv": "^18.0.9",
         "hono": "^4.13.16",
@@ -627,9 +627,9 @@
       }
     },
     "node_modules/@hivemagnus/magnus-contracts": {
-      "version": "2.3.3",
-      "resolved": "https://registry.npmjs.org/@hivemagnus/magnus-contracts/-/magnus-contracts-2.3.3.tgz",
-      "integrity": "sha512-ZfrQWxew8/LS0GxTLm9occrPa4anL0X2G5DzQaVNm8i3Dc/Gc/w9Rsk0SOZhtXJKYc2i5M294qdPT4AwmEqFVQ==",
+      "version": "2.3.4",
+      "resolved": "https://registry.npmjs.org/@hivemagnus/magnus-contracts/-/magnus-contracts-2.3.4.tgz",
+      "integrity": "sha512-gRUY64qHEaEu8knnMXwtxEjEiOM8AK+1uM2KBQcouhZK8Sl6/7Uz9PzlGJNwOTWQRjfkHc7kF0PvxQQgQWGGSg==",
       "license": "Apache-2.0",
       "dependencies": {
         "openapi-fetch": "^0.17.0",
@@ -2846,9 +2846,9 @@
       }
     },
     "node_modules/postcss/node_modules/nanoid": {
-      "version": "3.3.18",
-      "resolved": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.18.tgz",
-      "integrity": "sha512-DTg4MJbGMWkfi6VZFdNt2/caMbQy4Ou+Op/hJQvGEWcnVfoA1QA+xzRKAzw9jD6+GVOOeYr/mIcuDSdug6F6+w==",
+      "version": "3.3.20",
+      "resolved": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.20.tgz",
+      "integrity": "sha512-uKdg2G3GNCKQn9byYOpxbGqrT2fGO5KRt5J/8b3pok8rT6qxGWF6hxMyJiEYtAf+FVyYuD9hRaDqX5uPFYJ4ZQ==",
       "dev": true,
       "funding": [
         {
