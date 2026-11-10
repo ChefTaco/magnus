@@ -57,3 +57,9 @@ A scanner broker using a private HTTPS CA can set optional `model.caFile`. The
 node validates a canonical root-controlled regular CA file within a fixed byte
 budget and uses it only for that model connection with certificate verification
 enabled. The CA and broker token stay outside the repository container.
+
+The worker `nodeExecutable` defaults to `/usr/bin/node`, as provided by the
+pinned suite runtime. Only `/usr/bin/node` and `/usr/local/bin/node` are accepted
+for an explicitly reviewed image. Preparation and source-reader entry commands
+use that value; the validation profile must name an executable present in its
+immutable image. Missing runtime paths fail rather than selecting another tool.

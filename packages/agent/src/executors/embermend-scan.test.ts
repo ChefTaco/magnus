@@ -3,6 +3,11 @@ import { scanWorkerConfigSchema, scanModelBody } from './embermend-scan.js';
 const worker = { user: 'worker', uid: 1000, home: '/opt/worker', workspaceRoot: '/opt/workspaces', scannerImage: 'sha256:' + 'a'.repeat(64), repositories: {}, model: { baseUrl: 'https://inference.example.com/v1', model: 'fixture-provider', ref: 'fixture-provider', local: false, embermendBroker: true, tokenFile: '/opt/worker-broker.token' } };
 const request = { repositoryId: 'fixture-repo', providerId: '12345', commit: 'a'.repeat(40), operationId: 'fixture-scan', deadline: '2026-12-01T00:00:00Z', sourcePolicy: { providerRef: 'fixture-provider', allowRemoteModel: true } };
 describe('managed scanner inference forwarding', () => {
+  it('pins reviewed runtime executable paths and refuses a repository-selected executable', () => {
+    expect(scanWorkerConfigSchema.parse(worker).nodeExecutable).toBe('/usr/bin/node');
+    expect(scanWorkerConfigSchema.safeParse({ ...worker, nodeExecutable: '/source/node' }).success).toBe(false);
+    expect(scanWorkerConfigSchema.parse({ ...worker, nodeExecutable: '/usr/local/bin/node' }).nodeExecutable).toBe('/usr/local/bin/node');
+  });
   it('binds broker context to admitted operation and source policy', () => {
     const model = scanWorkerConfigSchema.parse(worker).model;
     expect(scanModelBody(model, request, 'system', 'source')).toMatchObject({ model: 'fixture-provider', embermend_context: { providerRef: 'fixture-provider', operationId: 'fixture-scan', allowRemoteModel: true } });

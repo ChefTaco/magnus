@@ -19,6 +19,7 @@ async function boundedJson(response: { ok: boolean; body: { getReader(): { read(
 export const scanWorkerConfigSchema = z.object({
   user: z.string().regex(/^[a-z_][a-z0-9_-]{0,31}$/), uid: z.number().int().positive(), home: z.string().regex(/^\/[a-zA-Z0-9_./-]+$/), workspaceRoot: z.string().regex(/^\/[a-zA-Z0-9_./-]+$/),
   workspaceMiB: z.number().int().min(32).max(2048).default(512),
+  nodeExecutable: z.enum(['/usr/bin/node', '/usr/local/bin/node']).default('/usr/bin/node'),
   scannerImage: z.string().regex(/^(?:sha256:[a-f0-9]{64}|.+@sha256:[a-f0-9]{64})$/),
   validationProfiles: z.record(z.string(), z.array(z.string().max(1000)).min(1).max(64)).default({}),
   repositories: z.record(z.string(), z.object({ providerId: z.string(), cloneUrl: z.url().refine(value => /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\.git$/.test(value)) }).strict()),
@@ -85,7 +86,7 @@ export async function scanRepository(raw: unknown, config: ScanWorkerConfig, mod
     const validationArgv = preparation ? config.validationProfiles[preparation.validationProfileId] : undefined;
     if (preparation && !validationArgv) throw new Error('Reviewed validation profile required');
     const entry = preparation ? '/app/packages/scanner/dist/preparation-cli.js' : source ? '/app/packages/scanner/dist/source-cli.js' : null;
-    const child = spawn('/usr/sbin/runuser', ['-u', config.user, '--', '/usr/bin/docker', 'run', '--name', containerName, '--rm', '--interactive', '--network=none', '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges', '--pids-limit=64', '--memory=1g', '--cpus=1', preparation ? '--user=0:0' : '--user=1000:1000', ...(entry ? ['--entrypoint=/usr/local/bin/node'] : []), '--mount', `type=bind,source=${workspace},target=/source${preparation ? '' : ',readonly'}`, '--tmpfs', '/tmp:rw,noexec,nosuid,size=64m', config.scannerImage, ...(entry ? [entry] : [])], { env: environment, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn('/usr/sbin/runuser', ['-u', config.user, '--', '/usr/bin/docker', 'run', '--name', containerName, '--rm', '--interactive', '--network=none', '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges', '--pids-limit=64', '--memory=1g', '--cpus=1', preparation ? '--user=0:0' : '--user=1000:1000', ...(entry ? [`--entrypoint=${config.nodeExecutable}`] : []), '--mount', `type=bind,source=${workspace},target=/source${preparation ? '' : ',readonly'}`, '--tmpfs', '/tmp:rw,noexec,nosuid,size=64m', config.scannerImage, ...(entry ? [entry] : [])], { env: environment, stdio: ['pipe', 'pipe', 'pipe'] });
     // Make the read-only checkout readable by the container's non-root user.
     // Only this disposable source tree is shared; no home, socket or credentials.
     const exited = new Promise<number | null>((resolve, reject) => { child.once('error', reject); child.once('close', resolve); });
