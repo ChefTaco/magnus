@@ -1,6 +1,7 @@
 import { constants } from 'node:fs';
-import { open, lstat, realpath } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { open } from 'node:fs/promises';
+import { rootControlled } from './embermend-files.js';
+export { rootControlled } from './embermend-files.js';
 import { z } from 'zod';
 import { scanWorkerConfigSchema } from './embermend-scan.js';
 
@@ -19,14 +20,6 @@ export const embermendNodeConfigSchema = z.object({
   worker: scanWorkerConfigSchema.optional(),
 }).strict();
 export type EmbermendNodeConfig = z.infer<typeof embermendNodeConfigSchema>;
-export async function rootControlled(path: string): Promise<void> {
-  if (!path.startsWith('/') || await realpath(path) !== path) throw new Error('Root-controlled canonical path required');
-  for (let cursor = path;; cursor = dirname(cursor)) {
-    const stat = await lstat(cursor);
-    if (stat.isSymbolicLink() || stat.uid !== 0 || stat.mode & 0o022) throw new Error('Root-controlled non-writable path required');
-    if (cursor === '/') break;
-  }
-}
 export async function loadEmbermendConfig(path = process.env['MAGNUS_EMBERMEND_CONFIG'] ?? ''): Promise<EmbermendNodeConfig> {
   if (!path) throw new Error('Embermend node capability is not configured'); await rootControlled(path);
   const fd = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);

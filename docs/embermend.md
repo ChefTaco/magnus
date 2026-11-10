@@ -34,3 +34,14 @@ source change does not publish a compatible release. Reboot continuation, native
 crash adoption, complete cancellation and combined product acceptance remain
 required before releasing the full remediation contract. See Embermend's
 acceptance ledger for the product completion boundary.
+
+The worker model configuration optionally sets `embermendBroker: true` for an
+Embermend-owned inference broker. Both `model` and `ref` then select the exact
+approved provider reference. The worker forwards the original operation ID and
+source-disclosure policy outside the sandbox; repository output cannot supply
+that context. Cloud-backed CLI providers require `local: false` and an admitted
+remote-source grant. HTTPS is required across hosts; loopback broker HTTP does
+not classify its backend as local. Direct approved local-model transport remains
+supported. Completion model identity, terminal status and absence of tool calls
+are checked before results return to the scanner. No CLI harness is added to
+the node agent. See Embermend's inference guide for broker installation and pins.

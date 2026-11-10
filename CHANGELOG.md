@@ -10,6 +10,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Added
 
+- Forward admitted scanner operation and source-policy context to an optional Embermend-owned inference broker, with exact provider identity and verified transport.
+
 - Optional constrained Embermend product bridge with durable operation identities, signed result references, reviewed host actions and isolated source workers. Native reboot continuation and complete product acceptance remain release prerequisites.
 - Exact TypeScript 6.0.3 with `strict`, `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes` in the affected contracts, agent and server workspaces; absent optional boundary values are omitted.
 

@@ -5,7 +5,7 @@ import { mkdir, chmod, rm, readFile, realpath, lstat, readdir } from 'node:fs/pr
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { rootControlled } from './embermend-config.js';
+import { rootControlled } from './embermend-files.js';
 
 const exec = promisify(execFile);
 async function boundedJson(response: Response, maximum: number): Promise<unknown> {
@@ -21,8 +21,8 @@ export const scanWorkerConfigSchema = z.object({
   scannerImage: z.string().regex(/^(?:sha256:[a-f0-9]{64}|.+@sha256:[a-f0-9]{64})$/),
   validationProfiles: z.record(z.string(), z.array(z.string().max(1000)).min(1).max(64)).default({}),
   repositories: z.record(z.string(), z.object({ providerId: z.string(), cloneUrl: z.url().refine(value => /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\.git$/.test(value)) }).strict()),
-  model: z.object({ baseUrl: z.url(), model: z.string(), ref: z.string(), local: z.boolean(), tokenFile: z.string().startsWith('/') }).strict(),
-}).strict().superRefine((value, context) => { const url = new URL(value.model.baseUrl); if (url.username || url.password || url.search || url.hash || !(url.protocol === 'https:' || url.protocol === 'http:' && value.model.local)) context.addIssue({ code: 'custom', message: 'Approved local HTTP model or verified HTTPS required' }); });
+  model: z.object({ baseUrl: z.url(), model: z.string(), ref: z.string(), local: z.boolean(), embermendBroker: z.boolean().default(false), tokenFile: z.string().startsWith('/') }).strict(),
+}).strict().superRefine((value, context) => { const url = new URL(value.model.baseUrl); if (url.username || url.password || url.search || url.hash || !(url.protocol === 'https:' || url.protocol === 'http:' && (value.model.local || value.model.embermendBroker && ['127.0.0.1', '[::1]'].includes(url.hostname)))) context.addIssue({ code: 'custom', message: 'Approved local HTTP model or verified HTTPS required' }); if (value.model.embermendBroker && value.model.model !== value.model.ref) context.addIssue({ code: 'custom', message: 'Broker model must equal its authorized provider reference' }); });
 export type ScanWorkerConfig = z.infer<typeof scanWorkerConfigSchema>;
 export async function workerContainerGone(config: ScanWorkerConfig, operationId: string): Promise<boolean> {
   const name = 'embermend-scan-' + createHash('sha256').update(operationId).digest('hex');
@@ -33,12 +33,18 @@ export async function workerContainerGone(config: ScanWorkerConfig, operationId:
     return result.stdout.trim() === '' && !mounts.split('\n').some(line => line.split(' ')[4] === workspace);
   } catch { return false; }
 }
-const requestSchema = z.object({ repositoryId: z.string(), providerId: z.string(), commit: z.string().regex(/^[a-f0-9]{40,64}$/), operationId: z.string(), deadline: z.iso.datetime({ offset: true }), sourcePolicy: z.object({ allowRemoteModel: z.boolean() }).passthrough() }).passthrough();
+const requestSchema = z.object({ repositoryId: z.string(), providerId: z.string(), commit: z.string().regex(/^[a-f0-9]{40,64}$/), operationId: z.string(), deadline: z.iso.datetime({ offset: true }), sourcePolicy: z.object({ allowRemoteModel: z.boolean(), providerRef: z.string().min(1) }).passthrough() }).passthrough();
+// Context comes from the admitted operation, never from repository stdout.
+export function scanModelBody(model: ScanWorkerConfig['model'], raw: unknown, system: string, content: string): unknown {
+  const request = requestSchema.parse(raw);
+  if (request.sourcePolicy.providerRef !== model.ref || !model.local && !request.sourcePolicy.allowRemoteModel) throw new Error('Model source-access policy denied');
+  return { model: model.model, temperature: 0, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: system }, { role: 'user', content }], ...(model.embermendBroker ? { embermend_context: { providerRef: model.ref, operationId: request.operationId, allowRemoteModel: request.sourcePolicy.allowRemoteModel } } : {}) };
+}
 export async function scanRepository(raw: unknown, config: ScanWorkerConfig, mode: 'scan' | 'prepare' | 'source' = 'scan'): Promise<unknown> {
   const preparation = mode === 'prepare' ? z.object({ id: z.string(), repositoryId: z.string(), providerId: z.string(), baseCommit: z.string(), deadline: z.string(), validationProfileId: z.string() }).passthrough().parse(raw) : null;
   const source = mode === 'source' ? z.object({ id: z.string(), repositoryId: z.string(), providerId: z.string(), commit: z.string(), deadline: z.string() }).passthrough().parse(raw) : null;
-  const request = preparation ? requestSchema.parse({ ...preparation, commit: preparation.baseCommit, operationId: preparation.id, sourcePolicy: { allowRemoteModel: false } }) : source ? requestSchema.parse({ ...source, operationId: source.id, sourcePolicy: { allowRemoteModel: false } }) : requestSchema.parse(raw); const repository = config.repositories[request.repositoryId];
-  if (!repository || repository.providerId !== request.providerId || mode === 'scan' && (!config.model.local && !request.sourcePolicy.allowRemoteModel)) throw new Error('Repository or model source-access policy denied');
+  const request = preparation ? requestSchema.parse({ ...preparation, commit: preparation.baseCommit, operationId: preparation.id, sourcePolicy: { allowRemoteModel: false, providerRef: config.model.ref } }) : source ? requestSchema.parse({ ...source, operationId: source.id, sourcePolicy: { allowRemoteModel: false, providerRef: config.model.ref } }) : requestSchema.parse(raw); const repository = config.repositories[request.repositoryId];
+  if (!repository || repository.providerId !== request.providerId || mode === 'scan' && (request.sourcePolicy.providerRef !== config.model.ref || !config.model.local && !request.sourcePolicy.allowRemoteModel)) throw new Error('Repository or model source-access policy denied');
   const identityUrl = new URL(repository.cloneUrl);
   const identity = await fetch('https://api.github.com/repos' + identityUrl.pathname.replace(/\.git$/, ''), { redirect: 'error', signal: AbortSignal.timeout(10000), headers: { accept: 'application/vnd.github+json' } });
   if (!identity.ok || String(z.object({ id: z.number().int().positive() }).parse(await boundedJson(identity, 65536)).id) !== repository.providerId) throw new Error('Repository identity or access changed');
@@ -93,9 +99,9 @@ export async function scanRepository(raw: unknown, config: ScanWorkerConfig, mod
         if (mode !== 'scan') throw new Error('Source reading or validation cannot request model access');
         const base = new URL(config.model.baseUrl.endsWith('/') ? config.model.baseUrl : config.model.baseUrl + '/');
         if (base.username || base.password || base.search || base.hash) throw new Error('Credential-free configured model URL required');
-        const reply = await fetch(new URL('chat/completions', base), { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(Math.min(120000, Math.max(1, Date.parse(request.deadline) - Date.now()))), headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ model: config.model.model, temperature: 0, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: message.system }, { role: 'user', content: message.content }] }) });
+        const reply = await fetch(new URL('chat/completions', base), { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(Math.min(120000, Math.max(1, Date.parse(request.deadline) - Date.now()))), headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify(scanModelBody(config.model, request, message.system, message.content)) });
         if (!reply.ok || Number(reply.headers.get('content-length')) > 1024 * 1024) throw new Error('Configured model unavailable');
-        const parsed = z.object({ choices: z.array(z.object({ finish_reason: z.literal('stop'), message: z.object({ content: z.string().max(1000000) }) })).min(1) }).parse(await boundedJson(reply, 1024 * 1024));
+        const parsed = z.object({ model: z.literal(config.model.model), choices: z.array(z.object({ finish_reason: z.literal('stop'), message: z.object({ content: z.string().max(1000000), tool_calls: z.undefined().optional() }) })).length(1) }).parse(await boundedJson(reply, 1024 * 1024));
         const choice = parsed.choices[0]; if (!choice) throw new Error('Missing model completion');
         child.stdin.write(JSON.stringify({ id: message.id, result: JSON.parse(choice.message.content) }) + '\n');
       }
