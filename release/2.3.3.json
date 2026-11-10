@@ -1,0 +1,9 @@
+{
+  "summary": "Refresh service and console dependencies and track Ardent 2.3.1 with the released DOCX codec.",
+  "breaking": false,
+  "minUpgradeFrom": "1.0.0",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}

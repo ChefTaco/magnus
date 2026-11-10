@@ -5,9 +5,11 @@ All notable changes to this project are documented in this file. The format is b
 [Semantic Versioning](https://semver.org/).
 
 
-## [Unreleased]
+## [2.3.3] - 2026-11-10
 
 ### Changed
+
+- Track Ardent 2.3.1 and its released DOCX codec, with the same management API.
 
 - Refresh dashboard, queue and test dependencies and explicitly approve the updated
   native install scripts.
