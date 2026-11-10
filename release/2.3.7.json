@@ -1,0 +1,5 @@
+{
+  "summary": "Keep earlier Ardent checkpoints while applying successive verified package updates.",
+  "breaking": false,
+  "migrations": []
+}
