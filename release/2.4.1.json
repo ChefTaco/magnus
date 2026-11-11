@@ -1,0 +1,5 @@
+{
+  "summary": "Track the runtime fix for bounded chunked extension ingress while preserving reviewed extension bundles.",
+  "breaking": false,
+  "migrations": []
+}
