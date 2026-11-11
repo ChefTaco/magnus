@@ -1,6 +1,6 @@
 {
   "name": "@hivemagnus/magnus-fleet-gateway",
-  "version": "2.4.2",
+  "version": "2.4.3",
   "private": true,
   "description": "Magnus fleet gateway: the separate service that holds the restricted SSH key and carries the browser web terminal over HTTP streaming.",
   "keywords": [
@@ -46,7 +46,7 @@
     "test:ssh": "npm run build && vitest run --config vitest.integration.config.ts"
   },
   "dependencies": {
-    "@hivemagnus/magnus-oathweave": "2.4.2",
+    "@hivemagnus/magnus-oathweave": "2.4.3",
     "@hono/node-server": "^2.1.6",
     "hono": "4.13.18",
     "jose": "^6.2.13",
