@@ -19,6 +19,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Configure bounded authenticated package downloads
+        run: bash scripts/ci-apt-setup.test.sh && sudo env GITHUB_ACTIONS=true bash scripts/ci-apt-setup.sh
       - name: Install ripgrep
         run: sudo apt-get update -qq && sudo apt-get install -y ripgrep
       - run: bash scripts/scan-secrets.sh
@@ -62,6 +64,8 @@ jobs:
       UI_TEST_REDIS_URL: redis://127.0.0.1:55449
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Configure bounded authenticated package downloads
+        run: bash scripts/ci-apt-setup.test.sh && sudo env GITHUB_ACTIONS=true bash scripts/ci-apt-setup.sh
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node-version }}
@@ -148,6 +152,8 @@ jobs:
       MAGNUS_PG_DUMP: /usr/lib/postgresql/17/bin/pg_dump
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Configure bounded authenticated package downloads
+        run: bash scripts/ci-apt-setup.test.sh && sudo env GITHUB_ACTIONS=true bash scripts/ci-apt-setup.sh
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node-version }}
@@ -178,6 +184,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Configure bounded authenticated package downloads
+        run: bash scripts/ci-apt-setup.test.sh && sudo env GITHUB_ACTIONS=true bash scripts/ci-apt-setup.sh
       - name: Build the server, console and agent images
         run: |
           version=$(node -p 'require("./package.json").version')

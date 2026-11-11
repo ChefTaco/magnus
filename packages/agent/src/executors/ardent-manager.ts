@@ -18,6 +18,7 @@ import {
   ardentSessionOpenSchema, ardentSkillInstallNodeSchema, ardentSkillReceiptSchema, checkArdentSkillArchive, type ArdentSkillInstallResult,
 } from '@hivemagnus/magnus-contracts';
 import { ARDENT_AGENT_CAPABILITIES } from '../ardent-capabilities.js';
+import { ARDENT_EXTENSION_MANIFEST, assertArdentPluginsRetained, readArdentExtensionBundle, validateArdentExtensionLock } from './ardent-extensions.js';
 export { ardentPackageNames, DEFAULT_ARDENT_PACKAGE } from './ardent-packages.js';
 
 // What this agent's Ardent bridge supports; the ping route reports the same level.
@@ -30,6 +31,7 @@ const configSummary = z.object({
   api: z.object({ host: z.string(), port: z.number().int().min(1).max(65535), token_env: z.string().regex(/^[A-Z][A-Z0-9_]*$/) }).passthrough(),
   a2a: z.object({ enabled: z.boolean() }).passthrough(),
   channels: z.record(z.string().regex(/^[a-z][a-z0-9_-]{0,31}$/), z.object({ enabled: z.boolean() }).passthrough()).default({}),
+  plugins: z.array(z.string().min(1).max(500)).max(32).default([]),
 }).passthrough();
 const acceptedPackageName = z.string().refine(name => ardentPackageNames().includes(name), 'Ardent package name is not accepted by MAGNUS_AGENT_ARDENT_PACKAGES');
 const packageVersion = z.object({ name: acceptedPackageName, version: z.string() });
@@ -37,6 +39,7 @@ const installedPackageReceipt = z.object({
   schemaVersion: z.literal(1), name: acceptedPackageName,
   version: z.string(), sha256: z.string().regex(/^[a-f0-9]{64}$/),
   packageTreeSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  extensionBundleSha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
 }).strict();
 /** Package directory of an accepted Ardent package name inside an install prefix. */
 function packageDir(install: string, name: string): string {
@@ -189,6 +192,7 @@ async function verifiedPackageReceipt(install: string): Promise<z.infer<typeof i
   if (await packageTreeDigest(root) !== receipt.data.packageTreeSha256) return null;
   const manifest = packageVersion.safeParse(JSON.parse(await readFile(join(root, 'package.json'), 'utf8')) as unknown);
   if (!manifest.success || manifest.data.name !== receipt.data.name || manifest.data.version !== receipt.data.version) return null;
+  await readArdentExtensionBundle(install, directory.uid, receipt.data.extensionBundleSha256, packageTreeDigest);
   return receipt.data;
 }
 
@@ -582,12 +586,35 @@ async function installPackage(root: ArdentRoot): Promise<object> {
   if (await verifiedInstalledArdentPackage(root.install, staged))
     return { installed: true, version: staged.version, changed: false };
   await assertArdentPackageQuiescent(root);
+  const current = await verifiedPackageReceipt(root.install);
+  const owner = await lstat(root.home);
+  const extensions = await readArdentExtensionBundle(root.install, owner.uid, current?.extensionBundleSha256, packageTreeDigest);
+  for (const profile of await safeProfiles(root.root)) assertArdentPluginsRetained((await profileConfig(root.root, profile)).config.plugins, extensions);
   const archive = process.env['ARDENT_STAGED_PACKAGE'] ?? '/opt/magnus-agent/ardent-package.tgz';
   const stage = join(dirname(root.install), `.ardent-install-${randomUUID()}`);
   if (!within(root.home, stage) || !within(root.home, `${root.install}.previous`)) throw new Error('Ardent install staging path escapes owner home');
-  await runAsOwner(root, ['/usr/bin/mkdir', '-p', stage], 10_000);
+  await runAsOwner(root, ['/usr/bin/mkdir', '-m', '700', '--', stage], 10_000);
   try {
-    await runAsOwner(root, ['/usr/bin/npm', 'install', '--prefix', stage, '--omit=dev', '--no-audit', '--no-fund', '--no-save', '--ignore-scripts', archive], 9 * 60_000);
+    if (extensions) {
+      await runAsOwner(root, ['/usr/bin/cp', '--no-clobber', '--', archive, join(stage, 'core-package.tgz')], 10_000);
+      const core = await readFile(join(stage, 'core-package.tgz'));
+      if (createHash('sha256').update(core).digest('hex') !== staged.sha256) throw new Error('Copied Ardent archive differs from the staged release');
+      const dependencies: Record<string, string> = { [staged.name]: 'file:./core-package.tgz' };
+      for (const extension of extensions.manifest.packages) {
+        await runAsOwner(root, ['/usr/bin/cp', '--no-clobber', '--', join(root.install, extension.archive), join(stage, extension.archive)], 10_000);
+        dependencies[extension.name] = `file:./${extension.archive}`;
+      }
+      const write = "require('fs').writeFileSync(process.argv[1],process.argv[2],{mode:0o600,flag:'wx'})";
+      await runAsOwner(root, ['/usr/bin/node', '-e', write, join(stage, 'package.json'), `${JSON.stringify({ name: 'ardent-managed-runtime', private: true, dependencies })}\n`], 10_000);
+      await runAsOwner(root, ['/usr/bin/node', '-e', write, join(stage, ARDENT_EXTENSION_MANIFEST), extensions.text], 10_000);
+      await runAsOwner(root, ['/usr/bin/npm', 'install', '--prefix', stage, '--omit=dev', '--no-audit', '--no-fund', '--ignore-scripts', '--strict-peer-deps', '--registry=https://registry.npmjs.org'], 9 * 60_000);
+      validateArdentExtensionLock(JSON.parse(await readFile(join(stage, 'package-lock.json'), 'utf8')) as unknown,
+        { name: staged.name, version: staged.version, integrity: `sha512-${createHash('sha512').update(core).digest('base64')}` }, extensions);
+      await runAsOwner(root, ['/usr/bin/npm', 'audit', '--prefix', stage, '--omit=dev', '--audit-level=high'], 60_000);
+      await readArdentExtensionBundle(stage, owner.uid, extensions.sha256, packageTreeDigest);
+    } else {
+      await runAsOwner(root, ['/usr/bin/npm', 'install', '--prefix', stage, '--omit=dev', '--no-audit', '--no-fund', '--no-save', '--ignore-scripts', archive], 9 * 60_000);
+    }
     const packageFile = join(packageDir(stage, staged.name), 'package.json');
     const candidate = packageVersion.parse(JSON.parse(await readFile(packageFile, 'utf8')) as unknown);
     if (candidate.name !== staged.name || candidate.version !== staged.version) throw new Error('Staged Ardent package name or version differs');
@@ -595,6 +622,7 @@ async function installPackage(root: ArdentRoot): Promise<object> {
     const packageTreeSha256 = await packageTreeDigest(packageDir(stage, staged.name));
     await writeFile(join(stage, 'package-receipt.json'), `${JSON.stringify({
       schemaVersion: 1, name: staged.name, version: staged.version, sha256: staged.sha256, packageTreeSha256,
+      ...(extensions ? { extensionBundleSha256: extensions.sha256 } : {}),
     })}\n`, { mode: 0o644, flag: 'wx' });
     await assertArdentPackageQuiescent(root);
     if (!within(await realpath(root.home), await realpath(dirname(root.install))))

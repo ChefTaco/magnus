@@ -5,10 +5,11 @@ All notable changes to this project are documented in this file. The format is b
 [Semantic Versioning](https://semver.org/).
 
 
-
 ## Unreleased
 
 ### Added
+
+- Require exact previous-boot logind shutdown proof before adopting an Embermend reboot. A cancelled schedule followed by an unrelated boot, missing journal or mismatched trusted event retains uncertainty and ownership.
 
 - Include bounded userspace package mapping evidence in configured Embermend package inventory, with stable process/file identities, explicit partial coverage and scoped limitations.
 - Add opt-in, operation-bound Ubuntu reboot continuation using acknowledged systemd scheduling and subsequent-boot evidence. Retain uncertainty across lost replies and agent restarts.
@@ -25,14 +26,41 @@ All notable changes to this project are documented in this file. The format is b
 - Optional constrained Embermend product bridge with durable operation identities, signed result references, reviewed host actions and isolated source workers. Native reboot continuation and complete product acceptance remain release prerequisites.
 - Exact TypeScript 6.0.3 with `strict`, `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes` in the affected contracts, agent and server workspaces; absent optional boundary values are omitted.
 
-### Fixed
-
-- Refresh dispatched command status and selected output automatically. Opening a result while work is queued no longer needs another click or a failed result request; failed reads retry without dispatching work again.
-
 ### New environment variables
 
 - `MAGNUS_EMBERMEND_GRANTS_JSON` (server, secret): dedicated product credentials and exact target, environment and action grants; absent disables the bridge.
 - `MAGNUS_EMBERMEND_CONFIG` (agent): canonical root-controlled resource and worker configuration; absent disables reviewed remediation capabilities.
+
+## [2.4.2] - 2026-11-11
+
+### Fixed
+
+- Use the registered absolute uptime diagnostic and its verified 60-second budget in the quick action and manual dispatch. Retain the existing budget for other commands and explain operator outcome review.
+- Explain the stop, update and start sequence for Ardent package maintenance without changing runtime safety guards.
+
+**New environment variables:** None.
+
+**Migration impact:** No datastore migrations.
+
+
+## [2.4.1] - 2026-11-11
+
+### Fixed
+
+- Track Ardent 3.1.1 so reviewed extensions can retain supported chunked workflow capacity while management and independent ingress keep separate bounded budgets. Authentication, body bounds and native extension receipts remain enforced.
+
+**New environment variables:** None.
+
+**Migration impact:** No datastore migrations.
+
+## [2.4.0] - 2026-11-11
+
+### Changed
+
+- Track Ardent 3.1.0 and its owner-bound workflow, scheduler, channel, ingress and recovery extension hooks.
+- Retain reviewed, receipt-bound extension archives through native package upgrades. Refuse configured plugins without a retained bundle, altered archives, a second runtime peer or untrusted dependency origins.
+- Refresh dispatched command status and selected output automatically. Opening a result while work is queued no longer needs another click or a failed result request; failed reads retry without dispatching work again.
+
 
 ## [2.3.7] - 2026-11-10
 

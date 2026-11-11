@@ -1,12 +1,5 @@
 {
-  "summary": "Add the optional constrained Embermend product bridge and reviewed remediation capabilities after acceptance.",
+  "summary": "Retain reviewed Ardent extension packages through managed runtime upgrades and track the owner-bound plugin API.",
   "breaking": false,
-  "minUpgradeFrom": "2.3.4",
-  "newRequiredEnv": [],
-  "newOptionalEnv": [
-    { "name": "MAGNUS_EMBERMEND_GRANTS_JSON", "component": "server", "secret": true, "description": "Dedicated hashed product credentials and exact installation, target, environment and action grants." },
-    { "name": "MAGNUS_EMBERMEND_CONFIG", "component": "agent", "secret": false, "description": "Canonical root-controlled node resource and worker capability configuration." }
-  ],
-  "removedEnv": [],
-  "migrations": ["20261110123000_embermend_operations"]
+  "migrations": []
 }

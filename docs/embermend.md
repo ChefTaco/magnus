@@ -76,11 +76,22 @@ Reboot is opt-in in the protected node configuration through `reboot` with a
 The request binds the current inventory `bootId`. The reviewed handler schedules
 one reboot a minute ahead and durably retains systemd's exact mode, time and
 operation marker acknowledgement. It does not release ownership on acceptance.
-Only a different kernel boot within the scheduled continuation window can adopt
-the original operation; a same-boot agent restart, absent acknowledgement, changed
-request or late unrelated boot stays unknown. Receipt observation never schedules
+Adoption requires both a different kernel boot within the scheduled continuation
+window and the previous boot's trusted logind shutdown event naming the exact
+operation marker. The event binds root UID, executable, unit, transport, boot,
+reboot mode and bounded shutdown time. Missing, ambiguous or unreadable persistent
+journal evidence keeps ownership unknown. A cancelled schedule followed by an
+unrelated reboot cannot complete the original operation. Same-boot agent restarts,
+absent acknowledgements, changed requests and late boots also stay unknown. Receipt observation never schedules
 another reboot, including after the original admission deadline. Operational
 application health remains a separate verification.
+
+Product job cancellation records intent and prevents further product dispatch.
+It does not cancel an already accepted native shutdown, stop its owner or release
+its lease. Observation may subsequently record the actual original reboot while
+preserving the product cancellation flag and deadline. Cancelling or replacing a
+host schedule is a separate owner intervention; its missing original shutdown
+proof must remain visible. No automatic reboot retry is permitted.
 
 Compose rollout uses a digest-qualified image and `--no-build --no-deps`, with a
 bounded wait. Independent configuration inventory reports actual container IDs,

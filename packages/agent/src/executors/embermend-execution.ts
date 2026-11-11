@@ -33,7 +33,7 @@ export async function recoverEmbermendResponse(commandId: string, requestSha256:
       await privateDirectory(resultRoot); await writeJson(resultRoot, resultKey + '.json', { success: true, data: observed });
     }
     const result = embermendNativeResultSchema.parse(retained ?? await readJson<unknown>(resultRoot, resultKey + '.json'));
-    if (!result.success || result.data['rebootCompleted'] !== true || result.data['beforeBootId'] !== observed['beforeBootId'] || result.data['afterBootId'] !== observed['afterBootId'] || result.data['scheduleDigest'] !== observed['scheduleDigest']) throw new Error('Retained reboot result differs');
+    if (!result.success || result.data['rebootCompleted'] !== true || result.data['beforeBootId'] !== observed['beforeBootId'] || result.data['afterBootId'] !== observed['afterBootId'] || result.data['scheduleDigest'] !== observed['scheduleDigest'] || result.data['shutdownProofDigest'] !== observed['shutdownProofDigest']) throw new Error('Retained reboot result differs');
     const pointer = embermendResultPointerSchema.parse({ success: true, data: { resultKey, resultDigest: digest(result) } });
     return { status: 200, body: JSON.stringify(pointer), durationMs: 0 };
   }

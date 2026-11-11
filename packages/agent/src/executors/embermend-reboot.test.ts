@@ -2,7 +2,8 @@ import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { embermendOperationSchema } from '@hivemagnus/magnus-contracts/embermend';
+import { createHash } from 'node:crypto';
+import { embermendOperationSchema, embermendCanonical } from '@hivemagnus/magnus-contracts/embermend';
 import { requestReboot, observeReboot, RebootOutcomeUnknown, type RebootSystem } from './embermend-reboot.js';
 const before = '11111111-1111-4111-8111-111111111111'; const after = '22222222-2222-4222-8222-222222222222';
 const config = { version: 1 as const, resources: {}, securityPackages: [], reboot: { managementProbeId: 'fixture-probe', continuationWindowSeconds: 300 } };
@@ -13,8 +14,9 @@ function fixture() {
   let now = Date.now(); const requestedAt = now; let currentBoot = before; let schedule: string | null = null; let uptime = 0;
   const request = embermendOperationSchema.parse({ operationId: 'fixture-reboot', planId: 'fixture-plan', planRevision: 1, planDigest: 'a'.repeat(64), installationId: 'fixture-installation', authorizationRef: 'fixture-decision', expiresAt: new Date(now + 30000).toISOString(), action: { id: 'fixture-action', version: 'reboot.v1', class: 'reboot', targetId: 'fixture-node', targetKind: 'host', requiredCapabilities: ['embermend:reboot.v1'], parameters: { beforeBootId: before, managementProbeId: 'fixture-probe' }, preconditions: { environment: 'lab' }, dependsOn: [], verificationIds: [], recovery: 'Separately authorized intervention', expectedRevision: null, patchDigest: null, disruption: 'reboot' } });
   const scheduleCall = vi.fn(async (marker: string) => { schedule = `USEC=${(now + 60000) * 1000 + 123}\nMODE=reboot\nWALL_MESSAGE=${marker}\n`; });
-  const host: RebootSystem = { now: () => now, bootId: async () => currentBoot, uptime: async () => uptime, scheduled: async () => schedule, schedule: scheduleCall };
-  return { request, host, scheduleCall, setBoot: (id: string, offset = 60000, up = 10) => { currentBoot = id; now = requestedAt + offset + up * 1000; uptime = up; }, scheduled: (value: string | null) => { schedule = value; } };
+  const shutdown = { MESSAGE: 'System is rebooting (Magnus-Embermend-' + createHash('sha256').update(embermendCanonical(request)).digest('hex') + ').', MESSAGE_ID: '98268866d1d54a499c4e98921d93bc40', SHUTDOWN: 'reboot', _UID: '0', _COMM: 'systemd-logind', _EXE: '/usr/lib/systemd/systemd-logind', _SYSTEMD_UNIT: 'systemd-logind.service', _TRANSPORT: 'journal', _BOOT_ID: before.replaceAll('-', ''), __REALTIME_TIMESTAMP: String((requestedAt + 60000) * 1000) };
+  const host: RebootSystem = { now: () => now, bootId: async () => currentBoot, uptime: async () => uptime, scheduled: async () => schedule, schedule: scheduleCall, shutdownJournal: async () => JSON.stringify(shutdown) };
+  return { request, host, shutdown, scheduleCall, setBoot: (id: string, offset = 60000, up = 10) => { currentBoot = id; now = requestedAt + offset + up * 1000; uptime = up; }, scheduled: (value: string | null) => { schedule = value; } };
 }
 describe('acknowledged original reboot continuation', () => {
   it('keeps same-boot restarts and duplicate delivery unknown without scheduling again', async () => {
@@ -46,5 +48,29 @@ describe('acknowledged original reboot continuation', () => {
     const x = fixture(); await expect(requestReboot(x.request, config, x.host)).rejects.toBeInstanceOf(RebootOutcomeUnknown); x.setBoot(after);
     await expect(observeReboot({ ...x.request, planDigest: 'b'.repeat(64) }, config, x.host)).rejects.toThrow('identity');
     await expect(observeReboot(x.request, { ...config, reboot: { ...config.reboot, managementProbeId: 'changed' } }, x.host)).rejects.toThrow('policy');
+  });
+  it('does not adopt a cancelled schedule followed by an unrelated boot inside its old window', async () => {
+    const x = fixture();
+    Object.assign(x.host, { shutdownJournal: async () => JSON.stringify({ MESSAGE: 'System is rebooting (unrelated operator action).', SHUTDOWN: 'reboot' }) });
+    await expect(requestReboot(x.request, config, x.host)).rejects.toBeInstanceOf(RebootOutcomeUnknown);
+    x.scheduled(null); x.setBoot(after);
+    expect(await observeReboot(x.request, config, x.host)).toBeUndefined();
+    expect(x.scheduleCall).toHaveBeenCalledTimes(1);
+  });
+  it.each(['missing', 'unreadable', 'malformed', 'oversized', 'ambiguous', 'wrong-boot', 'wrong-marker', 'nonroot', 'wrong-executable', 'wrong-unit', 'wrong-transport', 'poweroff', 'early-shutdown', 'late-shutdown', 'unsafe-time'])('keeps ownership unknown for %s shutdown proof', async mode => {
+    const x = fixture(); await expect(requestReboot(x.request, config, x.host)).rejects.toBeInstanceOf(RebootOutcomeUnknown); x.setBoot(after);
+    const row = { ...x.shutdown };
+    if (mode === 'wrong-boot') row._BOOT_ID = after.replaceAll('-', '');
+    if (mode === 'wrong-marker') row.MESSAGE = 'System is rebooting (another-operation).';
+    if (mode === 'nonroot') row._UID = '1000';
+    if (mode === 'wrong-executable') row._EXE = '/usr/bin/fixture';
+    if (mode === 'wrong-unit') row._SYSTEMD_UNIT = 'fixture.service';
+    if (mode === 'wrong-transport') row._TRANSPORT = 'stdout';
+    if (mode === 'poweroff') row.SHUTDOWN = 'poweroff';
+    if (mode === 'early-shutdown') row.__REALTIME_TIMESTAMP = String(Number(row.__REALTIME_TIMESTAMP) - 10000000);
+    if (mode === 'late-shutdown') row.__REALTIME_TIMESTAMP = String(Number(row.__REALTIME_TIMESTAMP) + 10000000);
+    if (mode === 'unsafe-time') row.__REALTIME_TIMESTAMP = '99999999999999999999';
+    x.host.shutdownJournal = async () => { if (mode === 'unreadable') throw new Error('private fixture error'); return mode === 'missing' ? '' : mode === 'malformed' ? '{' : mode === 'oversized' ? 'a'.repeat(65537) : mode === 'ambiguous' ? JSON.stringify(row) + '\n' + JSON.stringify(row) : JSON.stringify(row); };
+    expect(await observeReboot(x.request, config, x.host)).toBeUndefined(); expect(x.scheduleCall).toHaveBeenCalledTimes(1);
   });
 });
