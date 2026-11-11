@@ -14,8 +14,9 @@ configuration. The node independently bounds file paths, modes, services, SSH
 settings, protected firewall ports, Compose resources, security packages, scanner
 images and worker/model access. Product parameters cannot introduce shell code.
 
-The native capability endpoint advertises implemented actions only. Unsupported
-reboot, build and publication requests remain blockers. Resource operations use
+The native capability endpoint advertises configured, implemented actions only.
+Missing reboot policy, worker prerequisites, build or publication support remain
+explicit blockers. Resource operations use
 the supervised HTTP boundary. A retained small result digest binds the signed
 completion to a separately retrieved bounded report. A queued product operation
 is durable before native dispatch. Lost replies retain the original operation
@@ -29,8 +30,12 @@ Credentialed model calls and bounded GitHub reads are brokered outside that code
 Worker readiness, private repository access and hostile-repository acceptance
 still require complete release proof.
 
-The prospective 2.4.0 release notes own the additive operation migration. This
-source change does not publish a compatible release. Reboot continuation, integrated crash-adoption fault injection, complete cancellation and combined product acceptance remain
+The prospective 2.5.0 release notes own the additive operation migration.
+Published 2.4.x release metadata stays unchanged; its version alone does not
+establish this optional bridge. Hive requires an explicit protocol declaration
+in the signed release. This source change does not publish a compatible release.
+Bounded native reboot/cancellation and crash-adoption cases have actual disposable
+proof; the complete native fault matrix and combined product acceptance remain
 required before releasing the full remediation contract. See Embermend's
 acceptance ledger for the product completion boundary.
 
@@ -85,6 +90,11 @@ unrelated reboot cannot complete the original operation. Same-boot agent restart
 absent acknowledgements, changed requests and late boots also stay unknown. Receipt observation never schedules
 another reboot, including after the original admission deadline. Operational
 application health remains a separate verification.
+
+The shutdown reader uses bounded, selected-field JSON from
+[journalctl](https://www.freedesktop.org/software/systemd/man/255/journalctl.html).
+Raw journal messages, unrelated process details and infrastructure fields are not
+returned in the public receipt; it retains the validated shutdown proof digest.
 
 Product job cancellation records intent and prevents further product dispatch.
 It does not cancel an already accepted native shutdown, stop its owner or release
