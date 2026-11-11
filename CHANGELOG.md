@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file. The format is b
 [Semantic Versioning](https://semver.org/).
 
 
+## [2.4.1] - 2026-11-11
+
+### Fixed
+
+- Track Ardent 3.1.1 so reviewed extensions can retain supported chunked workflow capacity while management and independent ingress keep separate bounded budgets. Authentication, body bounds and native extension receipts remain enforced.
+
+**New environment variables:** None.
+
+**Migration impact:** No datastore migrations.
+
 ## [2.4.0] - 2026-11-11
 
 ### Changed
