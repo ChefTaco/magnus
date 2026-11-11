@@ -25,6 +25,10 @@ All notable changes to this project are documented in this file. The format is b
 - Optional constrained Embermend product bridge with durable operation identities, signed result references, reviewed host actions and isolated source workers. Native reboot continuation and complete product acceptance remain release prerequisites.
 - Exact TypeScript 6.0.3 with `strict`, `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes` in the affected contracts, agent and server workspaces; absent optional boundary values are omitted.
 
+### Fixed
+
+- Refresh dispatched command status and selected output automatically. Opening a result while work is queued no longer needs another click or a failed result request; failed reads retry without dispatching work again.
+
 ### New environment variables
 
 - `MAGNUS_EMBERMEND_GRANTS_JSON` (server, secret): dedicated product credentials and exact target, environment and action grants; absent disables the bridge.
