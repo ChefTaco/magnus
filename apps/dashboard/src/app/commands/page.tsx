@@ -1,11 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge, statusVariant } from '@/components/ui/badge';
 import { NodeSelector } from '@/components/ui/node-selector';
 import { api } from '@/lib/api-client';
+import { commandOutput, watchCommandResults, type CommandObservation } from '@/lib/command-results';
 import {
   Play,
   Loader2,
@@ -105,12 +106,33 @@ export default function CommandsPage(): React.ReactElement {
   const [results, setResults] = useState<Array<{ id: string; nodeId: string; status: string }>>([]);
   const [running, setRunning] = useState(false);
   const [output, setOutput] = useState<string | null>(null);
+  const [selectedCommandId, setSelectedCommandId] = useState<string | null>(null);
+  const [observations, setObservations] = useState<Record<string, CommandObservation>>({});
+  const [resultErrors, setResultErrors] = useState<Record<string, string>>({});
   const [preview, setPreview] = useState<Array<{ id: string; name: string; status: string; stale: boolean; allowed: boolean }> | null>(null);
+  const commandIds = results.map(result => result.id).join(',');
+  useEffect(() => watchCommandResults(commandIds ? commandIds.split(',') : [],
+    async id => {
+      const response = await api.commands.get(id);
+      if (!response.success || !response.data) throw new Error('Command status is unavailable');
+      return response.data;
+    },
+    command => {
+      setObservations(previous => ({ ...previous, [command.id]: command }));
+      setResultErrors(previous => { const next = { ...previous }; delete next[command.id]; return next; });
+      setResults(previous => previous.map(row => row.id === command.id ? { ...row, status: command.status } : row));
+    },
+    id => setResultErrors(previous => ({ ...previous, [id]: 'Result refresh failed; retrying…' })),
+  ), [commandIds]);
+  const visibleOutput = selectedCommandId
+    ? [commandOutput(observations[selectedCommandId]), resultErrors[selectedCommandId]].filter(Boolean).join('\n\n')
+    : output;
 
   const dispatch = async (): Promise<void> => {
     if (!command.trim() || selectedNodeIds.length === 0) return;
     setRunning(true);
     setOutput(null);
+    setSelectedCommandId(null);
 
     try {
       const idempotencyKey = `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -135,6 +157,7 @@ export default function CommandsPage(): React.ReactElement {
     setRunning(true);
     setPreview(null);
     setOutput(null);
+    setSelectedCommandId(null);
     try {
       const idempotencyKey = `dry-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const res = await api.commands.dispatch(
@@ -150,15 +173,7 @@ export default function CommandsPage(): React.ReactElement {
     }
   };
 
-  const fetchResult = async (commandId: string): Promise<void> => {
-    try {
-      const res = await api.commands.result(commandId);
-      const data = res.data as { stdout: string; stderr: string; exitCode: number };
-      setOutput(`Exit: ${data.exitCode}\n\n--- stdout ---\n${data.stdout}\n--- stderr ---\n${data.stderr}`);
-    } catch {
-      setOutput('Result not yet available');
-    }
-  };
+  const fetchResult = (commandId: string): void => { setSelectedCommandId(commandId); };
 
   return (
     <PageTransition className="space-y-6">
@@ -278,11 +293,11 @@ export default function CommandsPage(): React.ReactElement {
       )}
 
       {/* Output */}
-      {output && (
+      {visibleOutput && (
         <PageItem>
         <Card title="Output">
           <pre className="max-h-96 overflow-auto rounded border border-border bg-bg p-4 text-[11px] leading-relaxed text-primary/90">
-            {output}
+            {visibleOutput}
           </pre>
         </Card>
         </PageItem>
