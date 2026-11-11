@@ -1,0 +1,5 @@
+{
+  "summary": "Align the uptime quick action with its registered completion policy and clarify profile package maintenance.",
+  "breaking": false,
+  "migrations": []
+}

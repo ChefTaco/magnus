@@ -24,6 +24,7 @@ export function PackageControls({ item, refresh }: { item: ArdentFleetInstallati
   }
   return <div className="mt-4 border-t border-border/50 pt-3 text-xs">
     <div className="flex flex-wrap items-center gap-2"><span className="text-text-muted">Release package</span><span className="font-mono text-text">{staged?.version ?? 'not staged'}</span>{staged && item.version !== staged.version && <Button size="sm" disabled={busy || !item.reachable} onClick={() => void install()}>{busy ? 'Installing…' : item.installed ? 'Update package' : 'Install package'}</Button>}</div>
+    {staged && item.version !== staged.version && <p className="mt-2 text-text-muted">Stop this node’s profiles before updating. Review unfinished work first; start the profiles again after the package is verified.</p>}
     {item.stagedPackageError && <p role="alert" className="mt-2 text-danger">{item.stagedPackageError}</p>}
     {feedback && <p role="status" className="mt-2 text-success">{feedback}</p>}{error && <p role="alert" className="mt-2 text-danger">{error}</p>}
   </div>;
