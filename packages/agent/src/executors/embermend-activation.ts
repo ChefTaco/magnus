@@ -102,7 +102,7 @@ export async function packageActivation(input: readonly string[], host: Activati
     processesExamined++;
     for (const line of maps.split('\n').filter(Boolean)) {
       if (outOfTime()) break outer;
-      const match = /^[\da-f]{1,16}-[\da-f]{1,16}\s+[r-][w-][x-][ps]\s+[\da-f]{1,16}\s+([\da-f]{1,8}):([\da-f]{1,8})\s+(\d{1,20})(?:\s+(.+))?$/.exec(line);
+      const match = /^[\da-f]{1,16}-[\da-f]{1,16}\s+[r-][w-][x-][ps]\s+[\da-f]{1,16}\s+([\da-f]{1,8}):([\da-f]{1,8})\s+(\d{1,20})(?:\s+(.*))?$/.exec(line);
       if (!match) { fail(`PROCESS_MAP_FORMAT:${pid}`); continue; }
       const [, major, minor, inode, rawPath] = match; if (!major || !minor || !inode || !rawPath?.startsWith('/')) continue;
       const deleted = rawPath.endsWith(' (deleted)');

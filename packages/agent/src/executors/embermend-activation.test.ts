@@ -14,6 +14,10 @@ describe('bounded userspace package mapping evidence', () => {
     expect(result.requestedPackages).toEqual(['fixture-library']); expect(result.packages[0]?.consumers).toEqual([{ pid: 42, processStartTicks: '100', path, mappedDevice: '8:1', mappedInode: '22', installedDevice: '8:1', installedInode: '22', state: 'current' }]);
     expect(result.scope).toContain('not kernel, firmware, cached interpreted code');
   });
+  it('accepts actual anonymous map rows whose empty pathname is one trailing space', async () => {
+    const host = fixture(); host.maps = async () => mapping() + '77fe7c111000-77fe7c114000 rw-p 00000000 00:00 0 \n' + '77fe7c111000-77fe7c114000 rw-p 00000000 00:00 0\n';
+    const result = await packageActivation(['fixture-library'], host); expect(result.coverage).toBe('complete'); expect(result.packages[0]?.consumers).toHaveLength(1);
+  });
   it.each([mapping('21', ' (deleted)'), mapping('21'), mapping('22', '', '08:02')])('detects old/deleted mappings and inode/device changes', async maps => {
     const host = fixture(); host.maps = async () => maps;
     const result = await packageActivation(['fixture-library'], host); expect(result.coverage).toBe('complete'); expect(result.state).toBe('stale-mappings-observed'); expect(result.packages[0]?.consumers[0]?.state).toBe('stale');
