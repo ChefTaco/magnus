@@ -5,6 +5,14 @@ All notable changes to this project are documented in this file. The format is b
 [Semantic Versioning](https://semver.org/).
 
 
+## Unreleased
+
+- Require patched Node.js 24.22.3 or 26.13.1 in runtime engines, builds, CI and container images, including the shared runtime.
+- Upgrade Hono to 4.13.18 across the server, fleet gateway and agent to address tiny-chunk request memory exhaustion (GHSA-39q9-qp46-w8xg); test body aggregation and oversized requests before handlers run.
+- Return the generic API body-limit rejection as HTTP 413 instead of discarding the response and raising an internal error.
+- Enforce the packaged Node.js security minimum before native agent start and service installation, and report the same range in configuration and authenticated health checks while keeping diagnostic commands available.
+
+
 ## [2.4.2] - 2026-11-11
 
 ### Fixed

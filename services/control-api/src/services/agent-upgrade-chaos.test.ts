@@ -63,7 +63,7 @@ function fleet(agents: Record<string, Agent>) {
     const agent = agents[id]!;
     if (agent.metadata !== undefined) return agent.metadata;
     return JSON.stringify({ agentSelfUpgrade: { protocol: 1, launcherProtocol: 1, layout: 'versioned', enabled: true, reason: null, upgrade: { state: 'idle', from: null, to: '1.1.7' },
-      nodeVersion: 'v24.22.1', observedAt: new Date(clock).toISOString(), ...(agent.marker ? { managedEnrollment: agent.marker } : {}) } });
+      nodeVersion: 'v24.22.3', observedAt: new Date(clock).toISOString(), ...(agent.marker ? { managedEnrollment: agent.marker } : {}) } });
   };
   const rows = () => Object.keys(agents).map(id => ({ id, name: id, hostname: hostname(id), status: agents[id]!.status ?? 'ONLINE', lastHeartbeatAt: new Date(), metadata: metadata(id),
     agent: { version: '1.1.7' }, resourceEnrollment: agents[id]!.enrollment === undefined ? { state: 'enrolled', nodeFqdn: hostname(id), startedAt: new Date(0), updatedAt: new Date(0) } : agents[id]!.enrollment, admissionFence: null }));

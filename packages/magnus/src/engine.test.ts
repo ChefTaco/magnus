@@ -17,7 +17,7 @@ import { upgrade, UpgradeError, type UpgradeOptions } from './upgrade.js';
 const manifest = (version: string, extra: Record<string, unknown> = {}) => ({
   schema: 1,
   version,
-  engines: { node: '^24.22.1 || ^26.13.0' },
+  engines: { node: '^24.22.3 || ^26.13.1' },
   components: {
     '@hivemagnus/magnus-server': version,
     '@hivemagnus/magnus-ui': version,
@@ -115,7 +115,7 @@ function makeHost(project: Project, versions: Record<string, unknown>, packument
         return ok();
       }
       host.calls.push(`${command} ${args.join(' ')}`);
-      if (args[0] === '--version' && (command === process.execPath || command.endsWith('/node'))) return ok('v24.22.1');
+      if (args[0] === '--version' && (command === process.execPath || command.endsWith('/node'))) return ok('v24.22.3');
       if (args.includes('-e')) return ok();
       if (command === 'pg_dump' && args[0] === '--version') return ok('pg_dump (PostgreSQL) 17.4');
       if (args.includes('install') && options.cwd) fakeServerInstall(options.cwd);
@@ -139,7 +139,7 @@ function makeHost(project: Project, versions: Record<string, unknown>, packument
     probe: async () => (host.serves.version && host.failHealthFor.has(host.serves.version) ? 503 : 200),
     freeBytes: () => host.free,
     env: { XDG_CONFIG_HOME: join(project.dir, 'xdg') },
-    nodeVersion: 'v24.22.1',
+    nodeVersion: 'v24.22.3',
     isRoot: false,
     uid: process.getuid?.() ?? null,
     platform: 'linux',
@@ -337,8 +337,8 @@ describe('magnus upgrade', () => {
 
   it('checks the Node.js the services run, not the one running magnus', async () => {
     const project = makeProject();
-    const host = makeHost(project, registry(manifest('1.1.0', { engines: { node: '^26.13.0' } })));
-    await expect(upgrade(host.io, options(project))).rejects.toThrow(/needs Node\.js \^26\.13\.0; the services run .*--node/);
+    const host = makeHost(project, registry(manifest('1.1.0', { engines: { node: '^26.13.1' } })));
+    await expect(upgrade(host.io, options(project))).rejects.toThrow(/needs Node\.js \^26\.13\.1; the services run .*--node/);
     mkdirSync(project.path('units'));
     writeFileSync(project.path('units', 'magnus-server.service'), serverUnit({ project, nodePath: '/opt/node-22/bin/node', afterUnits: [] }));
     const fresh = Project.load(project.dir);

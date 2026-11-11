@@ -15,7 +15,7 @@ keeps an append-only audit log. The dashboard is its main client.
 | Area | Choice |
 | --- | --- |
 | Framework | Hono v4 on `@hono/node-server` |
-| Runtime | Node.js `^24.22.1 \|\| ^26.13.0`, ESM |
+| Runtime | Node.js `^24.22.3 \|\| ^26.13.1`, ESM |
 | Language | TypeScript strict mode, NodeNext imports with `.js` extensions |
 | ORM | Prisma 7 on PostgreSQL with the `pg` adapter; client generated into `src/db/generated` and compiled into `dist` |
 | Queue | BullMQ on Redis |

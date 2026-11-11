@@ -14,7 +14,7 @@ management, and Security Fusion.
 
 ## Requirements
 
-- Node.js `^24.22.1 || ^26.13.0`
+- Node.js `^24.22.3 || ^26.13.1`
 - PostgreSQL 15 or later
 - Redis 7 or later
 - A TLS certificate for production (cleartext HTTP is a loopback-only development opt-in)

@@ -197,7 +197,7 @@ describe('staging an upgrade', () => {
     writeFileSync(join(dir, 'staging', '0.9.9', 'leftover'), '');
     const { source, integrity } = tarball(dir, '1.1.0');
     const calls: Call[] = [];
-    const result = await stageUpgrade({ request: request('1.1.0', integrity), version: '1.0.3', nodeVersion: '24.22.1',
+    const result = await stageUpgrade({ request: request('1.1.0', integrity), version: '1.0.3', nodeVersion: '24.22.3',
       env: launcherEnv(dir, { MAGNUS_AGENT_UPGRADE_SOURCE_DIR: source, ...secrets }), run: fakeNpm(calls, '1.1.0') });
     expect(result).toMatchObject({ from: '1.0.3', to: '1.1.0' });
     expect(readlinkSync(join(dir, 'current'))).toBe(join('versions', '1.1.0'));
@@ -256,7 +256,7 @@ describe('staging an upgrade', () => {
     const env = launcherEnv(dir, { MAGNUS_AGENT_UPGRADE_SOURCE_DIR: source });
     await expect(stageUpgrade({ request: request('1.1.0', integrity, 'a'), version: '1.0.3', nodeVersion: '22.1.0', env, run: fakeNpm([], '1.1.0') }))
       .rejects.toMatchObject({ code: 'SELF_UPGRADE_ENGINE', status: 422, message: expect.stringMatching(/requires Node\.js .* runs 22\.1\.0/) });
-    await expect(stageUpgrade({ request: request('1.1.0', integrity, 'b'), version: '1.0.3', nodeVersion: '24.22.1', env,
+    await expect(stageUpgrade({ request: request('1.1.0', integrity, 'b'), version: '1.0.3', nodeVersion: '24.22.3', env,
       run: fakeNpm([], '1.1.0', { manifest: { magnusAgent: { minLauncher: 5 } } }) }))
       .rejects.toMatchObject({ code: 'SELF_UPGRADE_LAUNCHER', status: 422, message: expect.stringMatching(/launcher protocol 5; this node runs 1/) });
     expect(readlinkSync(join(dir, 'current'))).toBe(join('versions', '1.0.3'));
@@ -268,12 +268,12 @@ describe('staging an upgrade', () => {
     const dir = versionedInstall();
     const { source, integrity } = tarball(dir, '1.1.0');
     const env = launcherEnv(dir, { MAGNUS_AGENT_UPGRADE_SOURCE_DIR: source });
-    await expect(stageUpgrade({ request: request('1.1.0', integrity, 'a'), version: '1.0.3', nodeVersion: '24.22.1', env,
+    await expect(stageUpgrade({ request: request('1.1.0', integrity, 'a'), version: '1.0.3', nodeVersion: '24.22.3', env,
       run: fakeNpm([], '1.1.0', { hook: args => (args[0] === 'install' ? { code: 143, timedOut: true } : undefined) }) }))
       .rejects.toMatchObject({ code: 'SELF_UPGRADE_TIMEOUT', message: expect.stringMatching(/npm install did not finish/) });
     expect(existsSync(join(dir, 'staging', '1.1.0'))).toBe(false);
     expect(readlinkSync(join(dir, 'current'))).toBe(join('versions', '1.0.3'));
-    await expect(stageUpgrade({ request: request('1.1.0', integrity, 'b'), version: '1.0.3', nodeVersion: '24.22.1', env, run: fakeNpm([], '1.1.0') }))
+    await expect(stageUpgrade({ request: request('1.1.0', integrity, 'b'), version: '1.0.3', nodeVersion: '24.22.3', env, run: fakeNpm([], '1.1.0') }))
       .resolves.toMatchObject({ to: '1.1.0' });
   });
 
@@ -283,7 +283,7 @@ describe('staging an upgrade', () => {
     let clock = 0;
     const calls: Call[] = [];
     const slow: Runner = async (command, args, options) => { clock += 7 * minute; return fakeNpm(calls, '1.1.0')(command, args, options); };
-    await expect(stageUpgrade({ request: request('1.1.0', integrity), version: '1.0.3', nodeVersion: '24.22.1', clock: () => clock,
+    await expect(stageUpgrade({ request: request('1.1.0', integrity), version: '1.0.3', nodeVersion: '24.22.3', clock: () => clock,
       env: launcherEnv(dir, { MAGNUS_AGENT_UPGRADE_SOURCE_DIR: source }), run: slow }))
       .rejects.toMatchObject({ code: 'SELF_UPGRADE_TIMEOUT', message: expect.stringMatching(/budget before the installed agent/) });
     expect(calls[0]!.timeoutMs).toBeLessThanOrEqual(STAGE_BUDGET_MS);
@@ -294,7 +294,7 @@ describe('staging an upgrade', () => {
     const { source, integrity } = tarball(dir, '1.1.0');
     // A non-empty directory where the temporary link goes makes the switch fail.
     mkdirSync(join(dir, `current.${process.pid}.tmp`, 'blocker'), { recursive: true });
-    await expect(stageUpgrade({ request: request('1.1.0', integrity), version: '1.0.3', nodeVersion: '24.22.1',
+    await expect(stageUpgrade({ request: request('1.1.0', integrity), version: '1.0.3', nodeVersion: '24.22.3',
       env: launcherEnv(dir, { MAGNUS_AGENT_UPGRADE_SOURCE_DIR: source }), run: fakeNpm([], '1.1.0') }))
       .rejects.toMatchObject({ code: 'SELF_UPGRADE_FAILED', message: expect.stringMatching(/switching \.\/current/) });
     expect(readUpgradeState(dir)).toMatchObject({ state: 'failed', to: '1.1.0' });

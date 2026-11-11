@@ -4,8 +4,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 
-const { values } = parseArgs({ options: { image: { type: 'string', default: 'node:24.22.1-bookworm-slim' } } });
-if (!/^node:(?:24\.22\.1|26\.13\.0)-bookworm-slim$/.test(values.image)) throw new Error('Use a supported pinned Node image');
+const { values } = parseArgs({ options: { image: { type: 'string', default: 'node:24.22.3-bookworm-slim' } } });
+if (!/^node:(?:24\.22\.3|26\.13\.1)-bookworm-slim$/.test(values.image)) throw new Error('Use a supported pinned Node image');
 const root = resolve(import.meta.dirname, '..');
 const temporary = await mkdtemp(join(tmpdir(), 'magnus-context-container-'));
 try {

@@ -111,8 +111,8 @@ recovery must preserve source data, unknown effects and the retained runtime.
 run the offline container acceptance on both supported Node lines:
 
 ```bash
-npm run ardent:context:integration -- --image node:24.22.1-bookworm-slim
-npm run ardent:context:integration -- --image node:26.13.0-bookworm-slim
+npm run ardent:context:integration -- --image node:24.22.3-bookworm-slim
+npm run ardent:context:integration -- --image node:26.13.1-bookworm-slim
 ```
 
 This installs the published pre-Emberfold Ardent 1.1.2 into a disposable container,

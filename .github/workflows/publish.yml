@@ -56,7 +56,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24.22.1
+          node-version: 24.22.3
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
 
@@ -78,7 +78,7 @@ jobs:
           npm --workspace @hivemagnus/magnus-server run db:generate
           npm run audit:production
           npm run verify
-          npm run ardent:context:integration -- --image node:24.22.1-bookworm-slim
+          npm run ardent:context:integration -- --image node:24.22.3-bookworm-slim
 
       - name: Publish
         env:
@@ -153,7 +153,7 @@ jobs:
               -f "$DOCKERFILE" -t "magnus-runtime-check:$arch" .
             docker run --rm --platform "linux/$arch" --read-only --user 1000:1000 --cap-drop ALL \
               --security-opt no-new-privileges:true --entrypoint node "magnus-runtime-check:$arch" -e \
-              'if(process.getuid()!==1000 || !["x64","arm64"].includes(process.arch) || !process.versions.node.startsWith("26."))throw Error("Unexpected runtime"); const db=new (require("node:sqlite").DatabaseSync)(":memory:"); const v=db.prepare("select sqlite_version() v").get().v.split(".").map(Number); if(!(v[0]>3 || v[0]===3 && v[1]>=54))throw Error("Affected embedded SQLite"); db.close();'
+              'const [major,minor,patch]=process.versions.node.split(".").map(Number); if(process.getuid()!==1000 || !["x64","arm64"].includes(process.arch) || major!==26 || minor<13 || minor===13 && patch<1)throw Error("Unexpected or unpatched runtime"); const db=new (require("node:sqlite").DatabaseSync)(":memory:"); const v=db.prepare("select sqlite_version() v").get().v.split(".").map(Number); if(!(v[0]>3 || v[0]===3 && v[1]>=54))throw Error("Affected embedded SQLite"); db.close();'
             docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
               -v "$TRIVY_CACHE_DIR:/root/.cache/trivy" -v "$IMAGE_REPORT_DIR:/reports" \
               aquasec/trivy@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e image \

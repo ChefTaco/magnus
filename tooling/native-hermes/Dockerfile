@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 FROM ghcr.io/astral-sh/uv:0.11.6-python3.13-trixie@sha256:b3c543b6c4f23a5f2df22866bd7857e5d304b67a564f4feab6ac22044dde719b AS uv
-FROM node:24.22.1-slim@sha256:55fb5f5a527ea2c5c4a95f963e48ef90aa38c7b346054fdc8ee9957a2b55d205 AS sqlite
+FROM node:24.22.3-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54 AS sqlite
 # Same fixed SQLite source and digest as the reviewed public Hermes Dockerfile.
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential ca-certificates curl && rm -rf /var/lib/apt/lists/*
 RUN curl --proto '=https' --tlsv1.2 -fsSL --retry 3 https://sqlite.org/2026/sqlite-autoconf-3530400.tar.gz -o /tmp/sqlite.tar.gz && \
@@ -8,7 +8,7 @@ RUN curl --proto '=https' --tlsv1.2 -fsSL --retry 3 https://sqlite.org/2026/sqli
     tar -xf /tmp/sqlite.tar.gz -C /tmp && cd /tmp/sqlite-autoconf-3530400 && \
     CFLAGS='-fPIC -O2 -DSQLITE_ENABLE_FTS5 -DSQLITE_ENABLE_RTREE -DSQLITE_ENABLE_COLUMN_METADATA -DSQLITE_ENABLE_UNLOCK_NOTIFY -DSQLITE_THREADSAFE=1' ./configure --prefix=/opt/sqlite-fixed --enable-static && \
     make -j2 && make install
-FROM node:24.22.1-slim@sha256:55fb5f5a527ea2c5c4a95f963e48ef90aa38c7b346054fdc8ee9957a2b55d205 AS python
+FROM node:24.22.3-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54 AS python
 COPY --from=uv /usr/local/bin/uv /usr/local/bin/uv
 ENV UV_PYTHON_INSTALL_DIR=/opt/hermes-native/python UV_PYTHON_PREFERENCE=only-managed UV_LINK_MODE=copy UV_NO_BUILD=1
 WORKDIR /opt/hermes-native
@@ -30,7 +30,7 @@ RUN curl --proto '=https' --tlsv1.2 -fsSL --retry 3 https://www.python.org/ftp/p
       -o "$pyroot/lib/python3.13/lib-dynload/_sqlite3$suffix" && \
     mkdir -p "$pyroot/lib/python3.13/site-packages" && cp /tmp/sqlite-loader.py "$pyroot/lib/python3.13/site-packages/sitecustomize.py" && \
     "$pyroot/bin/python3.13" -I -c 'import sqlite3,_sqlite3,sys; print(_sqlite3.__file__,sqlite3.sqlite_version,flush=True); assert sqlite3.sqlite_version_info >= (3,51,3); db=sqlite3.connect(":memory:");db.execute("CREATE VIRTUAL TABLE docs USING fts5(content, tokenize=trigram)");print(sqlite3.sqlite_version)'
-FROM node:24.22.1-slim@sha256:55fb5f5a527ea2c5c4a95f963e48ef90aa38c7b346054fdc8ee9957a2b55d205 AS runtime
+FROM node:24.22.3-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54 AS runtime
 COPY --from=uv /usr/local/bin/uv /usr/local/bin/uv
 COPY --from=python_sqlite /opt/hermes-native/python /opt/hermes-native/python
 ENV UV_PYTHON_INSTALL_DIR=/opt/hermes-native/python UV_PYTHON_PREFERENCE=only-managed UV_LINK_MODE=copy UV_NO_BUILD=1

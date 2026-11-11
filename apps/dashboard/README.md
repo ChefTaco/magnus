@@ -12,7 +12,7 @@ Magnus Control API (`@hivemagnus/magnus-server`) and Redis.
 
 ## Requirements
 
-- Node.js `^24.22.1` or `^26.13.0`
+- Node.js `^24.22.3` or `^26.13.1`
 - A reachable Magnus Control API and its `API_SECRET`
 - Redis (login throttling fails closed without it)
 - A TLS certificate and key, unless you terminate TLS in front of the UI
