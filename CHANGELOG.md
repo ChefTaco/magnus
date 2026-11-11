@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file. The format is b
 [Semantic Versioning](https://semver.org/).
 
 
+## [2.4.2] - 2026-11-11
+
+### Fixed
+
+- Use the registered absolute uptime diagnostic and its verified 60-second budget in the quick action and manual dispatch. Retain the existing budget for other commands and explain operator outcome review.
+- Explain the stop, update and start sequence for Ardent package maintenance without changing runtime safety guards.
+
+**New environment variables:** None.
+
+**Migration impact:** No datastore migrations.
+
+
 ## [2.4.1] - 2026-11-11
 
 ### Fixed

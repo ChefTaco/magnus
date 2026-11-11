@@ -7,6 +7,7 @@ import { Badge, statusVariant } from '@/components/ui/badge';
 import { NodeSelector } from '@/components/ui/node-selector';
 import { api } from '@/lib/api-client';
 import { commandOutput, watchCommandResults, type CommandObservation } from '@/lib/command-results';
+import { commandExecutionBudget, UPTIME_DIAGNOSTIC } from '@/lib/command-presets';
 import {
   Play,
   Loader2,
@@ -79,7 +80,7 @@ const QUICK_ACTIONS: QuickAction[] = [
   },
   {
     label: 'Uptime & Load',
-    command: 'uptime && cat /proc/loadavg',
+    command: UPTIME_DIAGNOSTIC.command,
     icon: <Clock className="h-3.5 w-3.5" />,
     description: 'Show system uptime and CPU load averages',
   },
@@ -138,7 +139,7 @@ export default function CommandsPage(): React.ReactElement {
       const idempotencyKey = `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
       const res = await api.commands.dispatch(
-        { nodeIds: selectedNodeIds, command, args: [], timeoutSeconds: 300, idempotencyKey },
+        { nodeIds: selectedNodeIds, command, args: [], timeoutSeconds: commandExecutionBudget(command), idempotencyKey },
         idempotencyKey,
       );
 
@@ -161,7 +162,7 @@ export default function CommandsPage(): React.ReactElement {
     try {
       const idempotencyKey = `dry-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const res = await api.commands.dispatch(
-        { nodeIds: selectedNodeIds, command, args: [], timeoutSeconds: 300, idempotencyKey, dryRun: true },
+        { nodeIds: selectedNodeIds, command, args: [], timeoutSeconds: commandExecutionBudget(command), idempotencyKey, dryRun: true },
         idempotencyKey,
       );
       const data = res.data as unknown as { targets: Array<{ id: string; name: string; status: string; stale: boolean; allowed: boolean }> };
@@ -233,6 +234,8 @@ export default function CommandsPage(): React.ReactElement {
               className="w-full rounded border border-border bg-bg px-3 py-2 text-xs outline-none focus:border-primary focus:shadow-[0_0_8px_var(--color-glow)] transition-all"
             />
           </div>
+
+          <p className="text-xs text-text-muted">Execution budget: {commandExecutionBudget(command)} seconds. Commands can start work that outlives them. An operator may need to verify the outcome before this node accepts more work.</p>
 
           <div className="flex flex-wrap gap-2">
             <Button variant="secondary" onClick={() => void dryRun()} disabled={running || !command.trim() || selectedNodeIds.length === 0}>
