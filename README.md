@@ -58,7 +58,7 @@ for registry setup and release verification.
 
 ## Requirements
 
-- Node.js 24 (`>=24.22.1`) or 26 (`>=26.13.0`).
+- Node.js 24 (`>=24.22.3`) or 26 (`>=26.13.1`).
 - PostgreSQL 17 (15 or later works) and Redis 7 for the server. Redis is also used by the console
   for login throttling.
 - Linux with systemd for the agent.

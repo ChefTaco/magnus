@@ -36,7 +36,7 @@
     ".env.example"
   ],
   "engines": {
-    "node": "^24.22.1 || ^26.13.0"
+    "node": "^24.22.3 || ^26.13.1"
   },
   "scripts": {
     "build": "node -e \"const fs=require('node:fs');fs.rmSync('dist',{recursive:true,force:true});fs.rmSync('tsconfig.tsbuildinfo',{force:true})\" && tsc --build && node ../../packages/oathweave/scripts/link-into-consumer.mjs",
@@ -48,7 +48,7 @@
   "dependencies": {
     "@hivemagnus/magnus-oathweave": "2.4.2",
     "@hono/node-server": "^2.1.6",
-    "hono": "4.13.16",
+    "hono": "4.13.18",
     "jose": "^6.2.13",
     "ssh2": "^1.17.0",
     "zod": "^4.6.7"

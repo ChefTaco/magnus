@@ -16,6 +16,10 @@ vi.mock('./env.js', () => ({
   MAGNUS_EXECUTION_SUPERVISOR_ENABLED: true,
   validateSecrets: vi.fn(),
 }));
+vi.mock('./tls.js', async original => ({
+  ...await original<object>(),
+  controlApiFetch: vi.fn(async () => new Response('fixture healthy')),
+}));
 
 // Mock heavy node-management route modules to keep tests fast
 vi.mock('./collectors/health-routes.js', () => {
@@ -108,6 +112,24 @@ describe('server', () => {
   it('returns 401 for the detailed health check without a node token', async () => {
     const res = await app.request('/api/v1/health/check');
     expect(res.status).toBe(401);
+  });
+
+  it.each([
+    ['24.22.2', 'fail'], ['26.13.0', 'fail'], ['24.22.3', 'pass'], ['26.13.1', 'pass'],
+  ])('reports the packaged Node security minimum in detailed health for %s', async (version, status) => {
+    const processVersion = Object.getOwnPropertyDescriptor(process, 'version')!;
+    const nodeVersion = Object.getOwnPropertyDescriptor(process.versions, 'node')!;
+    try {
+      Object.defineProperty(process, 'version', { ...processVersion, value: `v${version}` });
+      Object.defineProperty(process.versions, 'node', { ...nodeVersion, value: version });
+      const response = await app.request('/api/v1/health/check', { headers: { 'x-node-token': 'test-node-secret' } });
+      expect(response.status).toBe(200);
+      const body = await response.json() as { data: { checks: Array<{ name: string; status: string }> } };
+      expect(body.data.checks.find(check => check.name === 'node-version')?.status).toBe(status);
+    } finally {
+      Object.defineProperty(process, 'version', processVersion);
+      Object.defineProperty(process.versions, 'node', nodeVersion);
+    }
   });
 
   it('keeps retained mutation inventory behind node authentication', async () => {

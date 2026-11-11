@@ -15,7 +15,7 @@ and ships to npm as a prebuilt standalone server with the `magnus-ui` CLI.
 | Area | Choice |
 | --- | --- |
 | Framework | Next.js 16 App Router, React 19, standalone output |
-| Runtime | Node.js `^24.22.1 \|\| ^26.13.0` |
+| Runtime | Node.js `^24.22.3 \|\| ^26.13.1` |
 | Language | TypeScript strict mode |
 | Styling | Tailwind CSS v4 with the theme tokens in `src/app/globals.css` |
 | Tests | Vitest (`src/**/*.test.ts(x)`), Playwright (`tests/`) |

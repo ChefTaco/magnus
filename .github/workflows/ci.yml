@@ -35,7 +35,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node-version: [24.22.1, 26.13.0]
+        node-version: [24.22.3, 26.13.1]
     services:
       postgres:
         image: postgres:17
@@ -122,7 +122,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node-version: [24.22.1, 26.13.0]
+        node-version: [24.22.3, 26.13.1]
     services:
       postgres:
         image: postgres:17

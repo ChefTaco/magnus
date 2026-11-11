@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { AGENT_VERSION } from './version.js';
+import { nodeRuntimeCheck } from './node-runtime.js';
 import { CONTROL_API_URL, ENABLE_NODE_MANAGEMENT, NODE_MANAGER_SECRET, RESULT_SIGNING_SECRET, MAGNUS_EXECUTION_SUPERVISOR_ENABLED } from './env.js';
 import { COMMAND_COMPLETION_REGISTRY, COMMAND_COMPLETION_REGISTRY_SHA256 } from './security/command-completion-registry.js';
 import { nodeAuthMiddleware } from './middleware.js';
@@ -129,11 +130,7 @@ export async function createApp(): Promise<Hono> {
       message: fsOk ? 'writable' : 'read-only or inaccessible',
     });
 
-    checks.push({
-      name: 'node-version',
-      status: Number(process.versions.node.split('.')[0]) >= 22 ? 'pass' : 'fail',
-      message: process.version,
-    });
+    checks.push(nodeRuntimeCheck());
 
     checks.push(await commandCheck('systemd', 'systemctl', ['--version']));
     checks.push(await hermesCliCheck());
