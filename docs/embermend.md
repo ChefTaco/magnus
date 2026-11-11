@@ -86,3 +86,25 @@ Compose rollout uses a digest-qualified image and `--no-build --no-deps`, with a
 bounded wait. Independent configuration inventory reports actual container IDs,
 image identities, service/project labels, running state and Docker health. A
 successful rollout receipt does not establish independent security verification.
+
+Package inventory on nodes with configured `securityPackages` includes bounded
+`packageActivation` evidence using `userspace-package-mappings.v1`. It compares
+dpkg-owned canonical file device/inode identities with live process mappings,
+retains process start ticks to detect PID replacement, and reports stale or
+deleted mappings. It reads neither process arguments nor environment variables.
+Installed package manifests are checked again before the observation completes.
+
+The response declares requested packages, examined files/processes, failures and
+its bounds: 32 packages, 4096 package paths, 8192 processes, 256 consumer records,
+64 KiB of consumer evidence and a five-second inspection budget. Missing access,
+new processes, changed package identities, unowned deleted mappings, unsupported
+formats and truncation retain partial coverage. Package inventory propagates
+that partial status. A disappearing process is recorded separately.
+
+This method covers mappings of installed package files. Kernel and firmware
+activation, cached interpreted code, effective configuration and external
+consumers require their own capabilities and verification. The aggregate result
+is named `no-stale-mappings-observed`, `stale-mappings-observed` or `unknown`;
+operator verification must match that declared scope to the affected component.
+Successful installation and absence of a vendor advisory remain independent of
+the effective running state. Complete integrated acceptance remains pending.

@@ -14,6 +14,7 @@ import { executeHostAction, hostResourceObservations, rememberRecovery } from '.
 import { requestReboot, RebootOutcomeUnknown } from './embermend-reboot.js';
 import { assessImageVulnerabilities } from './embermend-trivy.js';
 import { assessUbuntuOval } from './embermend-oval.js';
+import { packageActivation } from './embermend-activation.js';
 
 const exec = promisify(execFile);
 const hash = (value: unknown): string => createHash('sha256').update(embermendCanonical(value)).digest('hex');
@@ -74,7 +75,13 @@ export async function executeEmbermend(request: EmbermendOperation, config: Embe
     const result: Record<string, z.infer<ReturnType<typeof z.json>>> = { magnus: { boundary: 'supervised-http-v1', protocol: 1 }, failures, platform: 'ubuntu-24.04', observedAt: new Date().toISOString(), sections: parameters.sections, bootId: (await readFile('/proc/sys/kernel/random/boot_id', 'utf8')).trim(), coverage: 'complete' };
     for (const section of parameters.sections) {
       try {
-      if (section === 'packages') result[section] = await command('/usr/bin/dpkg-query', ['-W', '-f=${binary:Package}\t${Version}\n']);
+      if (section === 'packages') {
+        result[section] = await command('/usr/bin/dpkg-query', ['-W', '-f=${binary:Package}\t${Version}\n']);
+        if (config.securityPackages.length) {
+          const activation = await packageActivation(config.securityPackages); result['packageActivation'] = z.json().parse(activation);
+          if (activation.coverage !== 'complete') { failures.push({ section, reason: 'PACKAGE_MAPPING_COVERAGE_PARTIAL' }); result['coverage'] = 'partial'; }
+        }
+      }
       else if (section === 'services') result[section] = await command('/usr/bin/systemctl', ['list-unit-files', '--type=service', '--no-pager', '--no-legend']);
       else if (section === 'listeners') result[section] = await command('/usr/bin/ss', ['-H', '-lntu']);
       else if (section === 'docker') {

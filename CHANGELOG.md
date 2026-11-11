@@ -10,6 +10,7 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Added
 
+- Include bounded userspace package mapping evidence in configured Embermend package inventory, with stable process/file identities, explicit partial coverage and scoped limitations.
 - Add opt-in, operation-bound Ubuntu reboot continuation using acknowledged systemd scheduling and subsequent-boot evidence. Retain uncertainty across lost replies and agent restarts.
 - Bound Compose rollout to one reviewed service and immutable image, with independent current container and health inventory.
 
