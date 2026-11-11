@@ -1,0 +1,5 @@
+{
+  "summary": "Retain reviewed Ardent extension packages through managed runtime upgrades and track the owner-bound plugin API.",
+  "breaking": false,
+  "migrations": []
+}

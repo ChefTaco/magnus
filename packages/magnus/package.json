@@ -1,6 +1,6 @@
 {
   "name": "@hivemagnus/magnus",
-  "version": "2.3.7",
+  "version": "2.4.0",
   "description": "Install, upgrade and roll back a Magnus server and console with one command: `npx @hivemagnus/magnus init`, then `magnus upgrade`. Pins exact, tested component versions, backs up PostgreSQL before every migration and reverts automatically when the new version fails its health check.",
   "keywords": [
     "magnus",
@@ -47,7 +47,7 @@
     "clean": "node -e \"const fs=require('node:fs');fs.rmSync('dist',{recursive:true,force:true});fs.rmSync('tsconfig.tsbuildinfo',{force:true})\""
   },
   "dependencies": {
-    "@hivemagnus/magnus-contracts": "2.3.7"
+    "@hivemagnus/magnus-contracts": "2.4.0"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
@@ -56,15 +56,15 @@
   },
   "magnusRelease": {
     "schema": 1,
-    "version": "2.3.7",
+    "version": "2.4.0",
     "engines": {
       "node": "^24.22.1 || ^26.13.0"
     },
     "components": {
-      "@hivemagnus/magnus-server": "2.3.7",
-      "@hivemagnus/magnus-ui": "2.3.7",
-      "@hivemagnus/magnus-contracts": "2.3.7",
-      "@hivemagnus/magnus-agent": "2.3.7"
+      "@hivemagnus/magnus-server": "2.4.0",
+      "@hivemagnus/magnus-ui": "2.4.0",
+      "@hivemagnus/magnus-contracts": "2.4.0",
+      "@hivemagnus/magnus-agent": "2.4.0"
     },
     "breaking": false,
     "minUpgradeFrom": "1.0.0",
@@ -77,8 +77,8 @@
       "selfUpgradeProtocol": 1,
       "minLauncher": 1
     },
-    "summary": "Keep earlier Ardent checkpoints while applying successive verified package updates.",
-    "notesUrl": "https://github.com/ChefTaco/magnus/releases/tag/v2.3.7",
+    "summary": "Retain reviewed Ardent extension packages through managed runtime upgrades and track the owner-bound plugin API.",
+    "notesUrl": "https://github.com/ChefTaco/magnus/releases/tag/v2.4.0",
     "allowScripts": {
       "@prisma/engines": true,
       "argon2": true,

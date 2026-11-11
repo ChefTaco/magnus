@@ -5,9 +5,14 @@ All notable changes to this project are documented in this file. The format is b
 [Semantic Versioning](https://semver.org/).
 
 
-## Unreleased
+## [2.4.0] - 2026-11-11
 
+### Changed
+
+- Track Ardent 3.1.0 and its owner-bound workflow, scheduler, channel, ingress and recovery extension hooks.
+- Retain reviewed, receipt-bound extension archives through native package upgrades. Refuse configured plugins without a retained bundle, altered archives, a second runtime peer or untrusted dependency origins.
 - Refresh dispatched command status and selected output automatically. Opening a result while work is queued no longer needs another click or a failed result request; failed reads retry without dispatching work again.
+
 
 ## [2.3.7] - 2026-11-10
 
