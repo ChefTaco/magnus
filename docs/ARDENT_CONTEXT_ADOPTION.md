@@ -22,6 +22,13 @@ The stateless Emberfold HTTP service is not involved.
   The manager checks available space before staging.
 
 Do not use `package-install` to replace an extended runtime for this operation.
+
+For a whole-package update, stop the managed profiles first. On consecutive updates,
+the node agent verifies both package receipts and package trees, then retains the
+older `ardent.previous` as a sibling `ardent.previous.<id>`. The most recent
+package remains at `ardent.previous`. The agent keeps these checkpoints intact
+and refuses to overwrite a checkpoint it cannot verify or an interrupted update
+with no active installation. Preserve these directories when investigating a refusal.
 It refuses an active context overlay. Public runtime version and context-engine
 adoption are separate identities; the overlay does not relabel the base version.
 

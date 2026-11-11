@@ -29,6 +29,17 @@ All notable changes to this project are documented in this file. The format is b
 - `MAGNUS_EMBERMEND_GRANTS_JSON` (server, secret): dedicated product credentials and exact target, environment and action grants; absent disables the bridge.
 - `MAGNUS_EMBERMEND_CONFIG` (agent): canonical root-controlled resource and worker configuration; absent disables reviewed remediation capabilities.
 
+## [2.3.7] - 2026-11-10
+
+### Fixed
+
+- Allow successive managed Ardent package updates. Verify the active package and earlier checkpoint against their receipts, retain the older checkpoint beside the install, and restore both package paths if promotion fails. Unverified or interrupted states remain held for recovery.
+- Refuse conflicting Ardent package, context, profile and service actions while a lifecycle action is running. Recheck that profiles are stopped before replacing the package.
+
+**New environment variables:** None.
+
+**Migration impact:** No database migrations.
+
 ## [2.3.6] - 2026-11-10
 
 ### Fixed
