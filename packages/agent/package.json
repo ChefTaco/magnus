@@ -1,6 +1,6 @@
 {
   "name": "@hivemagnus/magnus-agent",
-  "version": "2.3.7",
+  "version": "2.4.0",
   "description": "Magnus node agent: a small daemon that enrolls a Linux host with a magnus-server and runs authenticated health, command, cron, file and skill management, with optional Hermes Agent, Codex and Ardent management.",
   "keywords": [
     "magnus",
@@ -62,7 +62,7 @@
     "clean": "node -e \"const fs=require('node:fs');fs.rmSync('dist',{recursive:true,force:true});fs.rmSync('tsconfig.tsbuildinfo',{force:true})\""
   },
   "dependencies": {
-    "@hivemagnus/magnus-contracts": "2.3.7",
+    "@hivemagnus/magnus-contracts": "2.4.0",
     "@hono/node-server": "^2.1.6",
     "dotenv": "^18.0.9",
     "hono": "^4.13.16",
@@ -74,7 +74,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@hivemagnus/ardent": "3.0.0",
+    "@hivemagnus/ardent": "3.1.0",
     "@types/node": "^24.19.2",
     "@types/tar-stream": "^3.1.5",
     "tsx": "^4.23.15",

@@ -383,3 +383,25 @@ Skill and configuration changes apply after the profile restarts (`activation_re
 `@hivemagnus/magnus-contracts/ardent-service` publishes the routes (`ardentServiceRoutes`), request and
 response schemas, `ARDENT_SERVICE_PERMISSION`, `ARDENT_ACTING_SUBJECT_HEADER`,
 `ARDENT_SERVICE_ADMIN_ACTIONS` and `ARDENT_SERVICE_CONFIG_PATHS`.
+
+
+### Reviewed extension packages on managed installations
+
+Ardent 3.1 supports optional owner-bound workflow plugins. Profile policy, integrations
+and secrets stay in the extension and profile configuration. Magnus does not grant a
+plugin additional authority.
+
+A managed runtime with plugins needs an `extension-bundle.json` beside its package
+receipt. The explicit migration tool in Hive can create this bundle after compatibility
+and recovery rehearsals. The bundle contains exact package names, versions, local
+`extension-N.tgz` archives, their SHA-512 integrities and installed package tree digests.
+The package receipt pins the manifest's SHA-256 as `extensionBundleSha256`. Keep the
+manifest and archives owned by the service account, mode 0600, with no aliases or
+hard links. Private extensions can remain private; registry publication is unnecessary.
+
+Before replacement, Magnus verifies this bundle and requires every configured plugin
+to belong to a retained package. It installs those same archives alongside the selected
+Ardent package with dependency scripts disabled and strict runtime peers, checks the
+full lock and audits production dependencies. A mismatch holds the existing runtime.
+Profile binding files and journals remain in place. Normal installations without
+plugins continue to use the regular package action.
