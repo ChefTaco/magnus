@@ -69,3 +69,20 @@ response data. Compatible scanner images retain the affected file as failed
 analysis and report partial coverage, preserving other examined files. Source
 reading and preparation cannot ask for model access. A closed scanner input
 terminates the child and still follows independent worker cleanup.
+
+
+Reboot is opt-in in the protected node configuration through `reboot` with a
+`managementProbeId` and a bounded `continuationWindowSeconds` (60 to 900 seconds).
+The request binds the current inventory `bootId`. The reviewed handler schedules
+one reboot a minute ahead and durably retains systemd's exact mode, time and
+operation marker acknowledgement. It does not release ownership on acceptance.
+Only a different kernel boot within the scheduled continuation window can adopt
+the original operation; a same-boot agent restart, absent acknowledgement, changed
+request or late unrelated boot stays unknown. Receipt observation never schedules
+another reboot, including after the original admission deadline. Operational
+application health remains a separate verification.
+
+Compose rollout uses a digest-qualified image and `--no-build --no-deps`, with a
+bounded wait. Independent configuration inventory reports actual container IDs,
+image identities, service/project labels, running state and Docker health. A
+successful rollout receipt does not establish independent security verification.

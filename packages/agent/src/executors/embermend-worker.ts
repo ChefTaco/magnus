@@ -11,6 +11,7 @@ import { loadEmbermendConfig, rootControlled, type EmbermendNodeConfig } from '.
 import { scanRepository } from './embermend-scan.js';
 import { executeHostAction, hostResourceObservations, rememberRecovery } from './embermend-host.js';
 
+import { requestReboot, RebootOutcomeUnknown } from './embermend-reboot.js';
 import { assessImageVulnerabilities } from './embermend-trivy.js';
 import { assessUbuntuOval } from './embermend-oval.js';
 
@@ -65,11 +66,12 @@ export async function executeEmbermend(request: EmbermendOperation, config: Embe
     z.object({}).strict().parse(action.parameters); return { ubuntuOval: z.json().parse(await assessUbuntuOval()) };
   }
   if (action.targetKind !== 'host') throw new Error('Host action cannot change another namespace');
+  if (action.version === 'reboot.v1') return requestReboot(request, config);
   if (action.version === 'inventory.v1') {
     if (action.class !== 'assess') throw new Error('Assessment effect required');
     const parameters = z.object({ sections: z.array(z.enum(['packages', 'services', 'listeners', 'configuration', 'docker', 'compose', 'oval'])).min(1), profileId: z.string() }).strict().parse(action.parameters);
     const failures: { section: string; reason: string }[] = [];
-    const result: Record<string, z.infer<ReturnType<typeof z.json>>> = { magnus: { boundary: 'supervised-http-v1', protocol: 1 }, failures, platform: 'ubuntu-24.04', observedAt: new Date().toISOString(), sections: parameters.sections, coverage: 'complete' };
+    const result: Record<string, z.infer<ReturnType<typeof z.json>>> = { magnus: { boundary: 'supervised-http-v1', protocol: 1 }, failures, platform: 'ubuntu-24.04', observedAt: new Date().toISOString(), sections: parameters.sections, bootId: (await readFile('/proc/sys/kernel/random/boot_id', 'utf8')).trim(), coverage: 'complete' };
     for (const section of parameters.sections) {
       try {
       if (section === 'packages') result[section] = await command('/usr/bin/dpkg-query', ['-W', '-f=${binary:Package}\t${Version}\n']);
@@ -151,6 +153,6 @@ if (process.argv[1]?.endsWith('/embermend-worker.js')) {
     // No source or credentials enter ordinary logs. Detached worker cleanup
     // uncertainty must retain the original node lease.
     process.stderr.write('Embermend worker failed; inspect retained operation evidence\n');
-    process.exitCode = error instanceof Error && error.message === 'WORKER_CLEANUP_UNCERTAIN' ? 70 : 1;
+    process.exitCode = error instanceof RebootOutcomeUnknown || error instanceof Error && error.message === 'WORKER_CLEANUP_UNCERTAIN' ? 70 : 1;
   }
 }

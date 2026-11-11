@@ -40,13 +40,28 @@ async function serviceState(unit: string) {
   if (fields['LoadState'] !== 'loaded') throw new Error('Loaded allowlisted service required');
   const result = { unit, active: fields['ActiveState'] ?? 'unknown', enabled: fields['UnitFileState'] ?? 'unknown' }; return { ...result, beforeDigest: hash(result) };
 }
+type ComposeResource = Extract<EmbermendNodeConfig['resources'][string], { kind: 'compose' }>;
+async function composeInstances(resource: ComposeResource): Promise<z.infer<typeof instanceSchema>[]> {
+  const ids = (await command('/usr/bin/docker', ['compose', '-f', resource.path, '-f', resource.overridePath, 'ps', '--all', '--quiet', resource.service])).trim().split('\n').filter(Boolean);
+  if (ids.length > 100) throw new Error('Deployment instance coverage exceeds limit');
+  const result = [];
+  for (const id of ids) {
+    if (!/^[a-f0-9]{12,64}$/.test(id)) throw new Error('Unexpected container identity');
+    const format = '{"id":{{json .Id}},"imageId":{{json .Image}},"imageRef":{{json .Config.Image}},"status":{{json .State.Status}},"running":{{json .State.Running}},"health":{{if .State.Health}}{{json .State.Health.Status}}{{else}}null{{end}},"startedAt":{{json .State.StartedAt}},"service":{{json (index .Config.Labels "com.docker.compose.service")}},"project":{{json (index .Config.Labels "com.docker.compose.project")}}}';
+    const instance = instanceSchema.parse(JSON.parse(await command('/usr/bin/docker', ['inspect', '--format', format, id])));
+    if (instance.service !== resource.service) throw new Error('Compose service binding differs');
+    result.push(instance);
+  }
+  return result;
+}
+const instanceSchema = z.object({ id: z.string().regex(/^[a-f0-9]{64}$/), imageId: z.string().regex(/^sha256:[a-f0-9]{64}$/), imageRef: z.string(), status: z.string(), running: z.boolean(), health: z.string().nullable(), startedAt: z.string(), service: z.string(), project: z.string() }).strict();
 export async function hostResourceObservations(config: EmbermendNodeConfig): Promise<JsonObject> {
   const result: JsonObject = {};
   for (const [id, resource] of Object.entries(config.resources)) {
     if (resource.kind === 'ssh') { const state = await fileState(resource.path); const effective = await command('/usr/sbin/sshd', ['-T']); result[id] = { exists: state.exists, beforeDigest: state.digest, permitRootLogin: /^permitrootlogin (.+)$/m.exec(effective)?.[1] ?? 'unknown', passwordAuthentication: /^passwordauthentication (.+)$/m.exec(effective)?.[1] ?? 'unknown' }; }
     if (resource.kind === 'service') result[id] = await serviceState(resource.unit);
     if (resource.kind === 'firewall') { const status = await command('/usr/sbin/ufw', ['status', 'numbered']); result[id] = { status, beforeDigest: hash(status) }; }
-    if (resource.kind === 'compose') { const state = await fileState(resource.overridePath); const base = await fileState(resource.path); result[id] = { configurationDigest: sha(base.content ?? ''), beforeDigest: state.digest }; }
+    if (resource.kind === 'compose') { const state = await fileState(resource.overridePath); const base = await fileState(resource.path); result[id] = { configurationDigest: sha(base.content ?? ''), beforeDigest: state.digest, instances: await composeInstances(resource), observedAt: new Date().toISOString() }; }
   }
   return result;
 }
@@ -106,16 +121,13 @@ export async function executeHostAction(request: EmbermendOperation, config: Emb
     const override = JSON.stringify({ services: { [resource.service]: { image } } }); await rememberRecovery(request, { resourceId: input.deploymentId, kind: 'file', path: resource.overridePath, content: before.content, mode: before.mode });
     await atomicFile(resource.overridePath, override, 0o600);
     const args = ['compose', '-f', resource.path, '-f', resource.overridePath];
-    await command('/usr/bin/docker', [...args, 'config', '--quiet']); await command('/usr/bin/docker', [...args, 'up', '--detach', '--no-build', '--wait', resource.service]);
-    const containers = (await command('/usr/bin/docker', [...args, 'ps', '--quiet', resource.service])).trim().split('\n').filter(Boolean);
-    if (!containers.length) throw new Error('Deployment has no running instances');
+    await command('/usr/bin/docker', [...args, 'config', '--quiet']); await command('/usr/bin/docker', [...args, 'up', '--detach', '--no-build', '--no-deps', '--pull', 'always', '--wait', '--wait-timeout', '120', resource.service]);
+    const instances = await composeInstances(resource);
+    if (!instances.length) throw new Error('Deployment has no running instances');
     const expectedImageId = (await command('/usr/bin/docker', ['image', 'inspect', image, '--format', '{{.Id}}'])).trim();
-    for (const container of containers) {
-      if (!/^[a-f0-9]{12,64}$/.test(container)) throw new Error('Unexpected container identity');
-      if ((await command('/usr/bin/docker', ['inspect', container, '--format', '{{.Image}}'])).trim() !== expectedImageId || (await command('/usr/bin/docker', ['inspect', container, '--format', '{{.Config.Image}}'])).trim() !== image) throw new Error('Actual deployed artifact differs');
-    }
+    if (instances.some(instance => !instance.running || instance.health !== 'healthy' && instance.health !== null || instance.imageId !== expectedImageId || instance.imageRef !== image)) throw new Error('Actual deployed artifact or running state differs');
     const health = await fetch(resource.healthUrl, { redirect: 'error', signal: AbortSignal.timeout(10000) }).then(response => response.ok, () => false);
-    return { deploymentId: input.deploymentId, deployedArtifactDigest: input.artifactDigest, instances: containers, imageId: expectedImageId, healthPassed: health, securityVerification: 'outstanding' };
+    return { deploymentId: input.deploymentId, deployedArtifactDigest: input.artifactDigest, instances, imageId: expectedImageId, healthPassed: health, securityVerification: 'outstanding' };
   }
   if (action.version === 'configuration-recover.v1') {
     if (action.class !== 'recovery') throw new Error('Explicit recovery effect required');

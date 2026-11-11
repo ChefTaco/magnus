@@ -10,6 +10,9 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Added
 
+- Add opt-in, operation-bound Ubuntu reboot continuation using acknowledged systemd scheduling and subsequent-boot evidence. Retain uncertainty across lost replies and agent restarts.
+- Bound Compose rollout to one reviewed service and immutable image, with independent current container and health inventory.
+
 - Preserve partial scanner analysis when the approved model broker fails, and handle closed scanner input without losing cleanup ownership.
 
 - Bind isolated preparation/source entry commands to an explicitly reviewed Node path compatible with the suite runtime.

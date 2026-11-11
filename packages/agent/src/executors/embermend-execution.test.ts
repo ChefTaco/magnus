@@ -7,8 +7,9 @@ import { embermendOperationSchema, embermendCanonical } from '@hivemagnus/magnus
 import { httpIdentity, httpReceiptBody } from '../security/managed-http.js';
 import { commandRequestDigest } from './command-ledger.js';
 import { privateDirectory, writeJson, requestDigest, type SupervisorInput } from './execution-supervisor-state.js';
-const fixture = vi.hoisted(() => ({ status: vi.fn(), run: vi.fn(), config: vi.fn(), containerGone: vi.fn() }));
+const fixture = vi.hoisted(() => ({ status: vi.fn(), run: vi.fn(), config: vi.fn(), containerGone: vi.fn(), reboot: vi.fn() }));
 vi.mock('./execution-supervisor.js', () => ({ ExecutionSupervisor: class { status = fixture.status; run = fixture.run; } }));
+vi.mock('./embermend-reboot.js', () => ({ observeReboot: fixture.reboot }));
 vi.mock('./embermend-config.js', () => ({ loadEmbermendConfig: fixture.config }));
 vi.mock('./embermend-scan.js', () => ({ workerContainerGone: fixture.containerGone }));
 const signingKey = 'fixture-native-adoption-signing-key-not-real-0000';
@@ -17,8 +18,8 @@ const digest = (value: unknown): string => sha(embermendCanonical(value));
 let root: string;
 beforeEach(async () => { vi.resetModules(); fixture.status.mockReset(); fixture.run.mockReset(); root = await mkdtemp(join(tmpdir(), 'embermend-adoption-')); vi.stubEnv('AGENT_INSTALL_DIR', root); vi.stubEnv('RESULT_SIGNING_SECRET', signingKey); });
 afterEach(async () => { vi.unstubAllEnvs(); await rm(root, { recursive: true, force: true }); });
-async function interrupted(worker = false) {
-  const operation = embermendOperationSchema.parse({ operationId: 'fixture-operation', planId: 'fixture-plan', planRevision: 1, planDigest: 'a'.repeat(64), installationId: 'fixture-installation', authorizationRef: 'fixture-decision', expiresAt: '2026-12-01T00:00:00Z', action: { id: 'fixture-action', version: worker ? 'repository-scan.v1' : 'file-mode.v1', class: worker ? 'assess' : 'host-change', targetId: 'fixture-node', targetKind: worker ? 'worker' : 'host', requiredCapabilities: ['embermend:file-mode.v1'], parameters: worker ? { request: { operationId: 'fixture-scan' } } : {}, preconditions: {}, dependsOn: [], verificationIds: [], recovery: 'Separately authorized', expectedRevision: null, patchDigest: null, disruption: 'none' } });
+async function interrupted(worker: boolean | 'reboot' = false) {
+  const operation = embermendOperationSchema.parse({ operationId: 'fixture-operation', planId: 'fixture-plan', planRevision: 1, planDigest: 'a'.repeat(64), installationId: 'fixture-installation', authorizationRef: 'fixture-decision', expiresAt: '2026-12-01T00:00:00Z', action: { id: 'fixture-action', version: worker === 'reboot' ? 'reboot.v1' : worker ? 'repository-scan.v1' : 'file-mode.v1', class: worker === 'reboot' ? 'reboot' : worker ? 'assess' : 'host-change', targetId: 'fixture-node', targetKind: worker ? 'worker' : 'host', requiredCapabilities: ['embermend:file-mode.v1'], parameters: worker ? { request: { operationId: 'fixture-scan' } } : {}, preconditions: {}, dependsOn: [], verificationIds: [], recovery: 'Separately authorized', expectedRevision: null, patchDigest: null, disruption: 'none' } });
   const coordination = { version: 1 as const, resourceKey: 'node:fixture', fence: '1', expiresAt: Date.now() + 60000 };
   const identity = { ...httpIdentity('fixture-native', 'POST', '/embermend/action', JSON.stringify(operation), 780), coordination };
   const outerDigest = commandRequestDigest(identity);
@@ -44,6 +45,13 @@ describe('original Embermend worker completion adoption', () => {
     expect((await x.commandLedger.drainSnapshot()).unknownCount).toBe(0);
     expect((await x.recoverCommandReceipt(x.identity.commandId))?.result?.signature).toBe(recovered?.result?.signature);
     expect(fixture.run).not.toHaveBeenCalled(); expect(fixture.status).toHaveBeenCalledWith(x.input.commandId, requestDigest(x.input));
+  });
+  it('adopts only subsequent-boot evidence without asking the previous supervisor to run', async () => {
+    const x = await interrupted('reboot'); await rm(join(x.resultRoot, x.resultKey + '.json')); fixture.config.mockResolvedValue({});
+    fixture.reboot.mockResolvedValue(undefined); expect((await x.recoverCommandReceipt(x.identity.commandId))?.state).toBe('unknown');
+    fixture.reboot.mockResolvedValue({ rebootCompleted: true, beforeBootId: 'fixture-before', afterBootId: 'fixture-after', scheduleDigest: 'b'.repeat(64) });
+    expect((await x.recoverCommandReceipt(x.identity.commandId))?.state).toBe('completed');
+    expect(fixture.run).not.toHaveBeenCalled(); expect(fixture.status).toHaveBeenCalledTimes(1);
   });
   it('keeps detached rootless work unknown until container and mount absence is established', async () => {
     const x = await interrupted(true); fixture.status.mockResolvedValue(x.status); fixture.config.mockResolvedValue({ worker: { fixture: true } }); fixture.containerGone.mockResolvedValue(false);

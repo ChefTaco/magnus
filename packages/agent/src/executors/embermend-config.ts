@@ -17,6 +17,7 @@ export const embermendNodeConfigSchema = z.object({
   securityPackages: z.array(z.string().regex(/^[a-z0-9][a-z0-9+.-]*(?::[a-z0-9]+)?$/)),
   trivy: z.object({ path: z.string().startsWith('/'), sha256: z.string().regex(/^[a-f0-9]{64}$/), imageRepositories: z.array(z.string().regex(/^[a-zA-Z0-9._:/-]+$/)).min(1) }).strict().optional(),
   ovalEnabled: z.boolean().default(false),
+  reboot: z.object({ managementProbeId: z.string().min(1).max(200), continuationWindowSeconds: z.number().int().min(60).max(900) }).strict().optional(),
   worker: scanWorkerConfigSchema.optional(),
 }).strict();
 export type EmbermendNodeConfig = z.infer<typeof embermendNodeConfigSchema>;

@@ -8,6 +8,7 @@ import { privateDirectory, readJson, writeJson, requestDigest, type SupervisorIn
 import type { ExecutionSupervisor } from './execution-supervisor.js';
 import { NATIVE_COMPLETION_REGISTRY_SHA256 } from '../security/native-completion-registry.js';
 import { loadEmbermendConfig } from './embermend-config.js';
+import { observeReboot } from './embermend-reboot.js';
 import { workerContainerGone } from './embermend-scan.js';
 const sha = (value: string): string => createHash('sha256').update(value).digest('hex');
 const digest = (value: unknown): string => sha(embermendCanonical(value));
@@ -23,6 +24,19 @@ export async function recoverEmbermendResponse(commandId: string, requestSha256:
   const raw = await readJson<unknown>(directory(), sha(commandId) + '.json'); if (!raw) return undefined;
   const binding = bindingSchema.parse(raw);
   if (binding.commandId !== commandId || binding.requestSha256 !== requestSha256 || digest(binding.coordination) !== digest(coordination ?? null) || binding.supervisorCommandId !== 'embermend-' + sha(commandId + ':' + requestSha256)) throw new Error('Native recovery owner differs');
+  if (binding.operation.action.version === 'reboot.v1') {
+    const resultRoot = resolve(process.env['AGENT_INSTALL_DIR'] ?? process.cwd(), '.magnus/embermend-results');
+    const resultKey = sha(binding.operation.operationId + ':' + digest(binding.operation));
+    const observed = await observeReboot(binding.operation, await loadEmbermendConfig()); if (!observed) return undefined;
+    const retained = await readJson<unknown>(resultRoot, resultKey + '.json', 8 * 1024 * 1024);
+    if (!retained) {
+      await privateDirectory(resultRoot); await writeJson(resultRoot, resultKey + '.json', { success: true, data: observed });
+    }
+    const result = embermendNativeResultSchema.parse(retained ?? await readJson<unknown>(resultRoot, resultKey + '.json'));
+    if (!result.success || result.data['rebootCompleted'] !== true || result.data['beforeBootId'] !== observed['beforeBootId'] || result.data['afterBootId'] !== observed['afterBootId'] || result.data['scheduleDigest'] !== observed['scheduleDigest']) throw new Error('Retained reboot result differs');
+    const pointer = embermendResultPointerSchema.parse({ success: true, data: { resultKey, resultDigest: digest(result) } });
+    return { status: 200, body: JSON.stringify(pointer), durationMs: 0 };
+  }
   const observation = await supervisor.status(binding.supervisorCommandId, binding.supervisorRequestSha256);
   if (observation.state !== 'completed' || observation.evidence.commandId !== binding.supervisorCommandId || observation.evidence.requestSha256 !== binding.supervisorRequestSha256 || observation.evidence.groupEmpty !== true || !observation.result || observation.result.truncated || observation.result.exitCode !== 0) return undefined;
   // The inner cgroup alone cannot establish completion of a rootless daemon's work.
