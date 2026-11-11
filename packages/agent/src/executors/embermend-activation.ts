@@ -44,8 +44,8 @@ const system: ActivationSystem = {
   maps: async pid => boundedRead(`/proc/${pid}/maps`, limits.mapBytes),
   now: () => performance.now(),
 };
-const fileSchema = z.object({ path: z.string().startsWith('/').max(512), device: z.string().regex(/^\d+:\d+$/), inode: z.string().regex(/^\d+$/) }).strict();
-const consumerSchema = z.object({ pid: z.number().int().positive(), processStartTicks: z.string().regex(/^\d+$/), path: z.string().max(512), mappedDevice: z.string(), mappedInode: z.string(), installedDevice: z.string(), installedInode: z.string(), state: z.enum(['current', 'stale']) }).strict();
+const fileSchema = z.object({ path: z.string().startsWith('/').max(512).regex(/^[^\u0000-\u001f\u007f\\]+$/).refine(path => !path.endsWith(' (deleted)')), device: z.string().regex(/^\d+:\d+$/), inode: z.string().regex(/^\d+$/) }).strict();
+const consumerSchema = z.object({ pid: z.number().int().positive(), processStartTicks: z.string().regex(/^\d+$/), path: fileSchema.shape.path, mappedDevice: z.string(), mappedInode: z.string(), installedDevice: z.string(), installedInode: z.string(), state: z.enum(['current', 'stale']) }).strict();
 export const packageActivationSchema = z.object({
   version: z.literal(1), method: z.literal('userspace-package-mappings.v1'),
   scope: z.literal('Installed package file mappings only; not kernel, firmware, cached interpreted code or effective configuration'),
@@ -66,7 +66,7 @@ export async function packageActivation(input: readonly string[], host: Activati
     const paths = [...new Set(raw.paths)].sort(); if (paths.length > pathLimit) fail(`PACKAGE_FILE_LIMIT:${name}`);
     for (const path of paths.slice(0, pathLimit)) {
       if (outOfTime()) break;
-      if (!path.startsWith('/') || path.includes('\0') || path.split('/').includes('..') || path.length > 512) { fail(`UNSUPPORTED_PACKAGE_PATH:${name}`); continue; }
+      if (!fileSchema.shape.path.safeParse(path).success || path.split('/').includes('..')) { fail(`UNSUPPORTED_PACKAGE_PATH:${name}`); continue; }
       try { const file = await host.file(path); if (file) { const parsed = fileSchema.parse(file); const key = fingerprint(parsed); if (!known.has(key)) { known.add(key); files.push(parsed); } } }
       catch { fail(`PACKAGE_FILE_UNAVAILABLE:${name}`); }
     }

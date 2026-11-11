@@ -53,4 +53,10 @@ describe('bounded userspace package mapping evidence', () => {
     const processes = fixture(); processes.pids = async () => Array.from({ length: 8193 }, (_, index) => index + 1); expect((await packageActivation(['fixture-library'], processes)).failures).toContain('PROCESS_COUNT_LIMIT');
     const bytes = fixture(); const longPath = '/usr/lib/' + 'a'.repeat(490); bytes.file = async () => ({ path: longPath, device: '8:1', inode: '22' }); bytes.maps = async () => mapping('22', '', '08:01', longPath); bytes.pids = async () => Array.from({ length: 200 }, (_, index) => index + 1); const limited = await packageActivation(['fixture-library'], bytes); expect(limited.failures).toContain('CONSUMER_EVIDENCE_LIMIT'); expect(limited.packages[0]?.consumers.length).toBeLessThan(200);
   });
+  it('keeps ambiguous procfs path encodings unsupported instead of hiding stale consumers', async () => {
+    for (const file of ['/usr/lib/fixture\\012.so', '/usr/lib/fixture (deleted)', '/usr/lib/fixture\n.so']) {
+      const host = fixture(); host.metadata = async () => ({ version: '1.0-2', paths: [file] });
+      const result = await packageActivation(['fixture-library'], host); expect(result.coverage).toBe('partial'); expect(result.failures).toContain('UNSUPPORTED_PACKAGE_PATH:fixture-library');
+    }
+  });
 });
