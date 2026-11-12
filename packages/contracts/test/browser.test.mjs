@@ -115,3 +115,16 @@ test('agent identity: references, actor IDs and the response shape', () => {
   assert.deepEqual(agentIdentityResponseSchema.parse({ success: true, data: { ...data, token: 'fixture-token' } }).data, data);
   assert.throws(() => agentIdentityResponseSchema.parse({ success: true, data: { ...data, runtime: 'other' } }));
 });
+
+test('hive event feed: the route, the query and the event shape', async () => {
+  const { hiveEventFeedQuerySchema, hiveEventFeedResponseSchema } = await import('../dist/browser.js');
+  assert.equal(magnusBrowserRoute('/hive/events?limit=10').path, '/hive/events');
+  assert.deepEqual(hiveEventFeedQuerySchema.parse({ limit: '200' }), { limit: 200 });
+  for (const limit of ['0', '201', 'x']) assert.equal(hiveEventFeedQuerySchema.safeParse({ limit }).success, false, limit);
+  const event = { id: 'magnus:notification:cmabc123', product: 'magnus', type: 'node.offline', severity: 'critical',
+    title: 'node-1 went offline', summary: 'No heartbeat.', occurredAt: '2026-11-12T10:00:00.000Z',
+    subject: { nodeId: 'cmnode123' }, link: { product: 'magnus', path: '/fleet/nodes/cmnode123' }, sourceRef: 'cmabc123' };
+  assert.deepEqual(hiveEventFeedResponseSchema.parse({ data: [event], nextCursor: null }).data, [event]);
+  assert.throws(() => hiveEventFeedResponseSchema.parse({ data: [{ ...event, severity: 'error' }], nextCursor: null }));
+  assert.throws(() => hiveEventFeedResponseSchema.parse({ data: [{ ...event, link: { product: 'magnus', path: 'https://example.com' } }], nextCursor: null }));
+});

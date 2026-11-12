@@ -10,7 +10,7 @@ moved without updating it.
 
 | Class | Meaning | Rows | At the ingress |
 |---|---|---|---|
-| `browser` | A person's console drives it with a user token | 146 | Allow the exact method and path |
+| `browser` | A person's console drives it with a user token | 147 | Allow the exact method and path |
 | `machine` | Agents, services and integrations, with their own credentials | 82 | Deny |
 | `exclude` | Reachable with a user token, but no console needs it, or it was written for a server-side caller | 142 | Deny until a feature needs it and it is reviewed |
 | `retired` | Always answers 404 or 410 | 64 | Deny |
@@ -200,6 +200,28 @@ the same name on the node. A malformed reference answers 400 `INVALID_AGENT_REF`
 share 409 `AGENT_REF_AMBIGUOUS`. A linked service identity cannot reach these routes. The response
 carries identifiers only, never a credential.
 
+## Suite event feed
+
+The HiveXUI inbox reads Magnus notifications as HiveEvent v1 (from `@hivemagnus/hive-common`) at
+`GET /api/v1/hive/events?after=<cursor>&limit=<n>`. Through the HiveXUI proxy that is
+`/api/magnus/api/v1/hive/events`. The body is `{"data":[HiveEvent...],"nextCursor":string|null}`, with
+no `success` envelope:
+
+- Events come oldest first by `(occurredAt, id)`, from the last 14 days only. A page holds the events
+  strictly after `after`; a null `nextCursor` means caught up, so keep the last non-null cursor and ask
+  again later.
+- `limit` is 1-200 (default 50; larger values are clamped). A malformed `limit` or cursor answers 400.
+- Each event comes from one notification: `id` is `magnus:notification:<notificationId>`, `type` is the
+  notification type (such as `node.offline`), `sourceRef` the notification ID and `subject.nodeId` the
+  node. An Ardent notification also names `subject.agentRef` (`<nodeId>~<profile>`) and the HiveMem actor
+  as `subject.actorId`.
+- `link.path` is a HiveXUI path: `/fleet/ardent/profiles/<nodeId>~<profile>` for an Ardent profile,
+  `/fleet/nodes/<nodeId>` for a node, otherwise `/fleet/notifications`.
+- The summary never carries a command line, probe output or an upstream error message; the page the
+  link opens has them.
+- Any role may read the feed, as it may read notifications. Ardent notifications are listed for `ADMIN`
+  only, as on the Ardent routes. A linked service identity cannot reach it.
+
 ## Web terminal
 
 No route on this server offers a terminal, and `POST /api/v1/terminal/ticket` stays retired, so this
@@ -337,6 +359,7 @@ unless these rows change. `POST /api/v1/hermes/deploy` is retired and always ans
 | GET | `/api/v1/hermes/installations` | browser | `user:any` | yes |
 | GET | `/api/v1/hermes/installations/:id/profiles` | browser | `user:any` |  |
 | GET | `/api/v1/hermes/profiles` | browser | `user:any` |  |
+| GET | `/api/v1/hive/events` | browser | `user:any` | yes |
 | GET | `/api/v1/library/categories` | browser | `user:any` |  |
 | POST | `/api/v1/library/categories` | browser | `user:ADMIN\|OPERATOR` |  |
 | DELETE | `/api/v1/library/categories/:categoryId` | browser | `user:ADMIN` |  |

@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file. The format is b
 [Semantic Versioning](https://semver.org/).
 
 
+## [Unreleased]
+
+### Added
+
+- Suite event feed: `GET /api/v1/hive/events` serves notifications from the last 14 days as HiveEvent v1 for the HiveXUI inbox, oldest first with an opaque `after` cursor and `limit` 1-200 (default 50). Each event links to the HiveXUI page for its node or Ardent profile and names the node, and for Ardent the agent reference and HiveMem actor. Summaries leave out command lines, probe output and upstream errors. Any role may read it; Ardent notifications are listed for ADMIN only. The browser contract publishes the route (`hiveEventFeedResponseSchema`).
+
+### Changed
+
+- `@hivemagnus/hive-common` is now `^0.4.0` in the server, the fleet gateway and the Oathweave package.
+
+**New environment variables:** None.
+
+**Migration impact:** No datastore migrations.
+
 ## [2.7.0] - 2026-11-12
 
 ### Added
