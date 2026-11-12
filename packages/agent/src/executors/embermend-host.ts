@@ -40,6 +40,7 @@ async function serviceState(unit: string) {
   if (fields['LoadState'] !== 'loaded') throw new Error('Loaded allowlisted service required');
   const result = { unit, active: fields['ActiveState'] ?? 'unknown', enabled: fields['UnitFileState'] ?? 'unknown' }; return { ...result, beforeDigest: hash(result) };
 }
+export const composeInstanceFormat = '{"id":{{json .Id}},"imageId":{{json .Image}},"imageRef":{{json .Config.Image}},"status":{{json .State.Status}},"running":{{json .State.Running}},"health":{{with (index .State "Health")}}{{json .Status}}{{else}}null{{end}},"startedAt":{{json .State.StartedAt}},"service":{{json (index .Config.Labels "com.docker.compose.service")}},"project":{{json (index .Config.Labels "com.docker.compose.project")}}}';
 type ComposeResource = Extract<EmbermendNodeConfig['resources'][string], { kind: 'compose' }>;
 async function composeInstances(resource: ComposeResource): Promise<z.infer<typeof instanceSchema>[]> {
   const ids = (await command('/usr/bin/docker', ['compose', '-f', resource.path, '-f', resource.overridePath, 'ps', '--all', '--quiet', resource.service])).trim().split('\n').filter(Boolean);
@@ -47,7 +48,7 @@ async function composeInstances(resource: ComposeResource): Promise<z.infer<type
   const result = [];
   for (const id of ids) {
     if (!/^[a-f0-9]{12,64}$/.test(id)) throw new Error('Unexpected container identity');
-    const format = '{"id":{{json .Id}},"imageId":{{json .Image}},"imageRef":{{json .Config.Image}},"status":{{json .State.Status}},"running":{{json .State.Running}},"health":{{if .State.Health}}{{json .State.Health.Status}}{{else}}null{{end}},"startedAt":{{json .State.StartedAt}},"service":{{json (index .Config.Labels "com.docker.compose.service")}},"project":{{json (index .Config.Labels "com.docker.compose.project")}}}';
+    const format = composeInstanceFormat;
     const instance = instanceSchema.parse(JSON.parse(await command('/usr/bin/docker', ['inspect', '--format', format, id])));
     if (instance.service !== resource.service) throw new Error('Compose service binding differs');
     result.push(instance);

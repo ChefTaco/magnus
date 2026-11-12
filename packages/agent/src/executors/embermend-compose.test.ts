@@ -48,3 +48,11 @@ describe('bounded Compose artifact rollout and independent inventory', () => {
     expect(fixture.command.mock.calls.every(call => Array.isArray(call[1]) && !call[1].includes('up'))).toBe(true); expect(fixture.recovery).not.toHaveBeenCalled();
   });
 });
+
+
+it('keeps missing Docker health as unknown while retaining native instance identity', async () => {
+  const current = { ...instance(), health: null };
+  fixture.command.mockImplementation(async (_binary: string, args: string[]) => ({ stdout: args.includes('inspect') ? JSON.stringify(current) : current.id + '\n', stderr: '' }));
+  const result = await hostResourceObservations(config);
+  expect(result['app']).toMatchObject({ instances: [{ id: current.id, imageId: current.imageId, health: null }] });
+});

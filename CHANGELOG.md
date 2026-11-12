@@ -9,6 +9,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Added
 
+- Preserve unknown Compose instance health when an image has no Docker health check, rather than losing its inventory to a missing-field template failure.
+
 - Managed source workers resolve same-owner repository renames by immutable provider identity and refuse ownership transfers or unexpected clone destinations.
 
 - Recognize superseded ownership-recovery decisions only from a different immutable signed native acknowledgement; keep audit refusal ahead of delivery authority.
