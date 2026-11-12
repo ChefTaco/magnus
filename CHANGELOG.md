@@ -5,12 +5,19 @@ All notable changes to this project are documented in this file. The format is b
 [Semantic Versioning](https://semver.org/).
 
 
-## Unreleased
+## [2.4.3] - 2026-11-11
 
-- Require patched Node.js 24.22.3 or 26.13.1 in runtime engines, builds, CI and container images, including the shared runtime.
-- Upgrade Hono to 4.13.18 across the server, fleet gateway and agent to address tiny-chunk request memory exhaustion (GHSA-39q9-qp46-w8xg); test body aggregation and oversized requests before handlers run.
-- Return the generic API body-limit rejection as HTTP 413 instead of discarding the response and raising an internal error.
-- Enforce the packaged Node.js security minimum before native agent start and service installation, and report the same range in configuration and authenticated health checks while keeping diagnostic commands available.
+### Fixed
+
+- Require patched Node.js 24.22.3 or 26.13.1 in native runtimes, builds, CI and container images, including the shared runtime.
+- Upgrade Hono to 4.13.18 across the server, fleet gateway and agent to bound tiny-chunk request memory (GHSA-39q9-qp46-w8xg), with request-path regression coverage.
+- Return generic API body-limit rejections as HTTP 413.
+- Enforce the packaged Node.js security minimum before native agent start and service installation and report it in health and configuration checks.
+- Track the patched Ardent 3.1.2 release.
+
+**New environment variables:** None.
+
+**Migration impact:** No datastore migrations. Native services require Node.js 24.22.3 or 26.13.1 or a later patch in the corresponding major line.
 
 
 ## [2.4.2] - 2026-11-11

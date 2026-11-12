@@ -1,0 +1,5 @@
+{
+  "summary": "Patch Node.js and Hono security vulnerabilities and track Ardent 3.1.2. Native services require Node.js 24.22.3 or 26.13.1 or a later patch in the corresponding major line.",
+  "breaking": false,
+  "migrations": []
+}
