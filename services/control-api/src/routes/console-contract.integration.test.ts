@@ -186,6 +186,7 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('browser contract against rea
     '/notifications': `/notifications?nodeId=${nodeId}`,
     '/notifications/unread-count': '/notifications/unread-count',
     '/notifications/preferences': '/notifications/preferences',
+    '/hive/events': '/hive/events?limit=200',
     '/ops/retention': '/ops/retention',
     '/assistant/conversations': '/assistant/conversations',
     '/webhooks': '/webhooks',

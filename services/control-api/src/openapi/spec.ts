@@ -1,7 +1,7 @@
 import { skillJobRequest } from '../routes/hiveskills.js';
 import { embermendOperationSchema } from '@hivemagnus/magnus-contracts/embermend';
 import { z as zSchema } from 'zod';
-import { agentIdentitySchema } from '@hivemagnus/magnus-contracts/browser';
+import { agentIdentitySchema, hiveEventFeedResponseSchema } from '@hivemagnus/magnus-contracts/browser';
 import { managedTerminalActionSchema, managedTerminalAuthoritySchema, managedTerminalReceiptSchema } from '@hivemagnus/magnus-contracts';
 import { dashboardReserveSchema, dashboardStartSchema, dashboardFinishSchema, apiDrainAttestationSchema,
   schedulerBoundaryAttestationSchema } from '../services/resource-enrollment.js';
@@ -204,6 +204,7 @@ const tags = [
 
 const componentSchemas: Record<string, JsonSchema> = {
   AgentIdentity: zod(agentIdentitySchema),
+  HiveEventFeed: zod(hiveEventFeedResponseSchema),
   ResourceClaim: zod(resourceClaimSchema),
   ResourceLegacyAdmission: zod(legacyAdmissionRequestSchema),
   SharedResourceReserve: zod(sharedResourceReserveSchema),
@@ -2065,6 +2066,24 @@ const paths: Record<string, Record<string, unknown>> = {
       responses: {
         200: paginated('Notifications', ref('Notification')),
         401: err401,
+      },
+    },
+  },
+  '/hive/events': {
+    get: {
+      tags: ['Notifications'],
+      summary: 'Suite event feed',
+      description: 'HiveEvent v1 feed for the HiveXUI inbox, derived from notifications. Oldest first by `(occurredAt, id)`; covers the last 14 days. Pass a page\'s `nextCursor` as `after` to read on; a null `nextCursor` means caught up. Each event links to a HiveXUI path: the Ardent profile, the node, or the notifications page. Command lines, probe output and upstream errors are not carried. Any role may read it; Ardent notifications are listed for ADMIN only. The body has no `success` envelope.',
+      security: apiSecretAuth,
+      parameters: [
+        qp('after', 'Cursor from a previous page'),
+        qp('limit', 'Events per page, 1-200 (default 50; larger values are clamped)', { type: 'integer' }),
+      ],
+      responses: {
+        200: { description: 'A feed page', content: { 'application/json': { schema: ref('HiveEventFeed') } } },
+        400: err400,
+        401: err401,
+        403: err403,
       },
     },
   },

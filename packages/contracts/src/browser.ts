@@ -2414,6 +2414,44 @@ export const updateNotificationPreferencesRequestSchema = z.object({
   })).min(1).max(100),
 });
 
+// ── Suite event feed ──
+// services/control-api/src/routes/hive-events.ts (HiveEvent v1 from @hivemagnus/hive-common; no success envelope)
+export const hiveEventFeedQuerySchema = z.object({
+  /** The nextCursor of a previous page; omit it to start at the oldest event of the last 14 days. */
+  after: z.string().regex(/^[A-Za-z0-9._~:-]{1,512}$/u).optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+});
+
+const hiveIdentifier = z.string().regex(/^[a-z0-9_-]{2,32}$/u);
+
+// services/control-api/src/services/hive-events.ts
+export const hiveEventSchema = z.object({
+  /** `magnus:notification:<notificationId>`, stable for the record. */
+  id: z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u),
+  product: z.literal('magnus'),
+  /** The Magnus notification type, such as `node.offline`. */
+  type: z.string().min(1).max(100).regex(/^[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*)*$/u),
+  severity: z.enum(['info', 'warning', 'critical']),
+  title: z.string().min(1).max(200),
+  summary: z.string().max(2000),
+  occurredAt: isoDate,
+  subject: z.object({
+    actorId: hiveIdentifier.optional(),
+    agentRef: z.string().regex(/^[a-z0-9_-]{2,32}~[a-z0-9_-]{2,32}$/u).optional(),
+    nodeId: hiveIdentifier.optional(),
+  }).optional(),
+  /** A HiveXUI path: the node, the Ardent profile or the notifications page. */
+  link: z.object({ product: z.literal('magnus'), path: z.string().regex(/^\/(?![/\\])\S*$/u).max(1024) }),
+  /** The notification ID. */
+  sourceRef: z.string().min(1).max(256).optional(),
+});
+
+// services/control-api/src/routes/hive-events.ts
+export const hiveEventFeedResponseSchema = z.object({
+  data: z.array(hiveEventSchema),
+  nextCursor: z.string().nullable(),
+});
+
 // ── Data retention ──
 // services/control-api/src/services/ops-service.ts (cutoffs names differ by table, and some tables have none)
 export const retentionTableSchema = z.object({
@@ -3123,6 +3161,7 @@ export const magnusBrowserRoutes: readonly MagnusBrowserRoute[] = [
   { method: 'POST', path: '/notifications/read-all', response: notificationsMarkedResponseSchema, roles: ANY_ROLE },
   { method: 'GET', path: '/notifications/preferences', response: notificationPreferencesResponseSchema, roles: ANY_ROLE, note: "The caller's own preferences." },
   { method: 'PUT', path: '/notifications/preferences', request: updateNotificationPreferencesRequestSchema, response: notificationPreferencesResponseSchema, roles: ANY_ROLE, note: 'An upsert: categories not sent keep their values.' },
+  { method: 'GET', path: '/hive/events', query: hiveEventFeedQuerySchema, response: hiveEventFeedResponseSchema, roles: ANY_ROLE, note: 'HiveEvent v1 feed of notifications from the last 14 days, oldest first. Pass nextCursor as after; null means caught up. limit is 1-200 (default 50); a malformed limit or cursor answers 400. Ardent notifications are listed for ADMIN only.' },
 
   // Data retention
   { method: 'GET', path: '/ops/retention', response: retentionSummaryResponseSchema, roles: ANY_ROLE },
