@@ -26,6 +26,16 @@ export const scanWorkerConfigSchema = z.object({
   model: z.object({ baseUrl: z.url(), model: z.string(), ref: z.string(), local: z.boolean(), embermendBroker: z.boolean().default(false), caFile: z.string().startsWith('/').optional(), tokenFile: z.string().startsWith('/') }).strict(),
 }).strict().superRefine((value, context) => { const url = new URL(value.model.baseUrl); if (url.username || url.password || url.search || url.hash || !(url.protocol === 'https:' || url.protocol === 'http:' && (value.model.local || value.model.embermendBroker && ['127.0.0.1', '[::1]'].includes(url.hostname)))) context.addIssue({ code: 'custom', message: 'Approved local HTTP model or verified HTTPS required' }); if (value.model.embermendBroker && value.model.model !== value.model.ref) context.addIssue({ code: 'custom', message: 'Broker model must equal its authorized provider reference' }); });
 export type ScanWorkerConfig = z.infer<typeof scanWorkerConfigSchema>;
+// A repository rename changes its locator, never its authorized provider identity.
+// Transfers cross the configured owner boundary and require operator review.
+export function authorizedRepositoryCloneUrl(repository: ScanWorkerConfig['repositories'][string], raw: unknown): string {
+  const identity = z.object({ id: z.number().int().positive(), name: z.string().regex(/^[A-Za-z0-9_.-]+$/), full_name: z.string(), owner: z.object({ login: z.string().regex(/^[A-Za-z0-9-]+$/) }), clone_url: z.url() }).parse(raw);
+  const configuredOwner = new URL(repository.cloneUrl).pathname.split('/')[1];
+  const expected = `https://github.com/${identity.owner.login}/${identity.name}.git`;
+  if (String(identity.id) !== repository.providerId || identity.owner.login.toLowerCase() !== configuredOwner?.toLowerCase() || identity.full_name !== `${identity.owner.login}/${identity.name}` || identity.clone_url !== expected) throw new Error('Repository identity or owner changed; review required');
+  return expected;
+}
+
 export async function workerContainerGone(config: ScanWorkerConfig, operationId: string): Promise<boolean> {
   const name = 'embermend-scan-' + createHash('sha256').update(operationId).digest('hex');
   try {
@@ -47,9 +57,10 @@ export async function scanRepository(raw: unknown, config: ScanWorkerConfig, mod
   const source = mode === 'source' ? z.object({ id: z.string(), repositoryId: z.string(), providerId: z.string(), commit: z.string(), deadline: z.string() }).passthrough().parse(raw) : null;
   const request = preparation ? requestSchema.parse({ ...preparation, commit: preparation.baseCommit, operationId: preparation.id, sourcePolicy: { allowRemoteModel: false, providerRef: config.model.ref } }) : source ? requestSchema.parse({ ...source, operationId: source.id, sourcePolicy: { allowRemoteModel: false, providerRef: config.model.ref } }) : requestSchema.parse(raw); const repository = config.repositories[request.repositoryId];
   if (!repository || repository.providerId !== request.providerId || mode === 'scan' && (request.sourcePolicy.providerRef !== config.model.ref || !config.model.local && !request.sourcePolicy.allowRemoteModel)) throw new Error('Repository or model source-access policy denied');
-  const identityUrl = new URL(repository.cloneUrl);
-  const identity = await fetch('https://api.github.com/repos' + identityUrl.pathname.replace(/\.git$/, ''), { redirect: 'error', signal: AbortSignal.timeout(10000), headers: { accept: 'application/vnd.github+json' } });
-  if (!identity.ok || String(z.object({ id: z.number().int().positive() }).parse(await boundedJson(identity, 65536)).id) !== repository.providerId) throw new Error('Repository identity or access changed');
+  if (!/^[1-9][0-9]*$/.test(repository.providerId)) throw new Error('Immutable GitHub repository identity required');
+  const identity = await fetch('https://api.github.com/repositories/' + repository.providerId, { redirect: 'error', signal: AbortSignal.timeout(10000), headers: { accept: 'application/vnd.github+json' } });
+  if (!identity.ok) throw new Error('Repository identity or access changed');
+  const cloneUrl = authorizedRepositoryCloneUrl(repository, await boundedJson(identity, 65536));
   let token = ''; let modelAgent: Agent | undefined;
   if (mode === 'scan') { await rootControlled(config.model.tokenFile); if ((await lstat(config.model.tokenFile)).mode & 0o077 || (await lstat(config.model.tokenFile)).size > 8192) throw new Error('Protected model credential file required'); token = (await readFile(config.model.tokenFile, 'utf8')).trim(); }
   const owner = (await exec('/usr/bin/id', ['-u', config.user], { env: { PATH: '/usr/bin:/bin' } })).stdout.trim();
@@ -68,7 +79,7 @@ export async function scanRepository(raw: unknown, config: ScanWorkerConfig, mod
     const info = z.object({ SecurityOptions: z.array(z.string()) }).parse(JSON.parse(await userCommand('/usr/bin/docker', ['info', '--format', '{{json .}}'])));
     if (!info.SecurityOptions.some(value => value.includes('rootless'))) throw new Error('Rootless worker daemon required');
     await userCommand('/usr/bin/git', ['-c', 'core.hooksPath=/dev/null', 'init', workspace]);
-    await userCommand('/usr/bin/git', ['-C', workspace, '-c', 'core.hooksPath=/dev/null', '-c', 'protocol.file.allow=never', 'fetch', '--depth=1', repository.cloneUrl, request.commit]);
+    await userCommand('/usr/bin/git', ['-C', workspace, '-c', 'core.hooksPath=/dev/null', '-c', 'protocol.file.allow=never', 'fetch', '--depth=1', cloneUrl, request.commit]);
     await userCommand('/usr/bin/git', ['-C', workspace, '-c', 'core.hooksPath=/dev/null', 'checkout', '--detach', 'FETCH_HEAD']);
     if ((await userCommand('/usr/bin/git', ['-C', workspace, 'rev-parse', 'HEAD'])).trim() !== request.commit) throw new Error('Immutable checkout identity mismatch');
     let members = 0;

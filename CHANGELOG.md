@@ -9,6 +9,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Added
 
+- Managed source workers resolve same-owner repository renames by immutable provider identity and refuse ownership transfers or unexpected clone destinations.
+
 - Recognize superseded ownership-recovery decisions only from a different immutable signed native acknowledgement; keep audit refusal ahead of delivery authority.
 
 - Add exact-plan Embermend ownership settlement for independently reviewed, quiescent expired reboot and assessment operations. Retain the signed decision before delivery, recover lost acknowledgements by observation and preserve the historical outcome as unknown.
@@ -1068,3 +1070,4 @@ The initial release snapshot.
 [1.0.0]: https://github.com/ChefTaco/magnus/releases/tag/v1.0.0
 
 [2.0.0]: https://github.com/ChefTaco/magnus/releases/tag/v2.0.0
+
