@@ -42,10 +42,12 @@
     "test": "npm run build && node --test test/*.test.mjs"
   },
   "peerDependencies": {
+    "@hivemagnus/hive-common": "^0.3.0",
     "jose": "^6.2.13",
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@hivemagnus/hive-common": "^0.3.0",
     "@types/node": "^24.19.2",
     "typescript": "^6.0.3",
     "jose": "^6.2.13",

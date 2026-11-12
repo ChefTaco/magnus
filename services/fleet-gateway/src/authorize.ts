@@ -1,5 +1,6 @@
 /** Who may hold a terminal. Requires one exact account link, one permission and, to open, recency. */
 import {
+  hasOathweavePermission,
   uniqueOathweaveLink,
   type OathweaveIdentity,
   type OathweaveIdentityLink,
@@ -47,7 +48,7 @@ export function createAuthorizer(
       throw new GatewayError('UNAUTHORIZED');
     }
     const link = uniqueOathweaveLink(links, identity.issuer, identity.subject);
-    if (link?.role !== 'ADMIN' || !identity.permissions.includes(TERMINAL_PERMISSION)) {
+    if (link?.role !== 'ADMIN' || !hasOathweavePermission(identity, TERMINAL_PERMISSION)) {
       const refused = new GatewayError('FORBIDDEN');
       refused.audit = { subject: identity.subject, actorId: link?.localUserId ?? 'unlinked' };
       refused.ownerKey = ownerKeyOf(identity);

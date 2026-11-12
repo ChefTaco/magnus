@@ -340,11 +340,11 @@ describe('session revocation cache', () => {
     await expect(verify(token)).resolves.toMatchObject({ subject: SUBJECT });
     // ...but never past the bound, measured from when that check started.
     clock.now = START + OATHWEAVE_SESSION_CACHE_TTL_MS;
-    await expect(verify(token)).rejects.toThrow(/inactive/);
+    await expect(verify(token)).rejects.toMatchObject({ reason: 'session_inactive' });
     expect(clock.now - (START + 1_000)).toBeLessThanOrEqual(15_000);
     // A revoked token stays rejected on every later request.
     clock.now += 60_000;
-    await expect(verify(token)).rejects.toThrow(/inactive/);
+    await expect(verify(token)).rejects.toMatchObject({ reason: 'session_inactive' });
   });
 
   it('measures the bound from when a slow check started', async () => {
@@ -362,7 +362,7 @@ describe('session revocation cache', () => {
     await verify(token);
     loggedOut = true;
     clock.now = START + OATHWEAVE_SESSION_CACHE_TTL_MS;
-    await expect(verify(token)).rejects.toThrow(/inactive/);
+    await expect(verify(token)).rejects.toMatchObject({ reason: 'session_inactive' });
   });
 
   it('rejects an expired token even while its session answer is cached', async () => {
@@ -397,6 +397,14 @@ describe('session revocation cache', () => {
 
 describe('open streams', () => {
   const flush = async () => { for (let i = 0; i < 25; i += 1) await vi.advanceTimersByTimeAsync(0); };
+  // A re-check never overlaps the one before it, and verification awaits real crypto that fake
+  // timers cannot flush, so let each re-check settle in real time before the next tick.
+  const settle = async () => {
+    await flush();
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await flush();
+  };
 
   it('ends a stream within fifteen seconds of logout', async () => {
     const token = await mint();
@@ -407,13 +415,13 @@ describe('open streams', () => {
     const onRevoked = vi.fn();
     const stop = watchOathweaveStream(`Bearer ${token}`, onRevoked);
     await vi.advanceTimersByTimeAsync(OATHWEAVE_STREAM_RECHECK_MS);
-    await flush();
+    await settle();
     expect(onRevoked).not.toHaveBeenCalled();
 
     loggedOut = true;
     for (let elapsed = 0; elapsed < 15_000 && !onRevoked.mock.calls.length; elapsed += 1_000) {
       await vi.advanceTimersByTimeAsync(1_000);
-      await flush();
+      await settle();
     }
     // Verification awaits real crypto, which fake timers cannot flush.
     await vi.waitFor(() => expect(onRevoked).toHaveBeenCalledOnce());
@@ -429,10 +437,10 @@ describe('open streams', () => {
     const onRevoked = vi.fn();
     const stop = watchOathweaveStream(`Bearer ${token}`, onRevoked);
     await vi.advanceTimersByTimeAsync(5_000);
-    await flush();
+    await settle();
     expect(onRevoked).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(5_000);
-    await flush();
+    await settle();
     await vi.waitFor(() => expect(onRevoked).toHaveBeenCalledOnce());
     stop();
   });
