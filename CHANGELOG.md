@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file. The format is b
 [Semantic Versioning](https://semver.org/).
 
 
-## [Unreleased]
+## [2.6.0] - 2026-11-12
 
 ### Added
 
@@ -14,6 +14,11 @@ All notable changes to this project are documented in this file. The format is b
 ### Changed
 
 - Verify Oathweave tokens with the suite's shared verifier from `@hivemagnus/hive-common`, configured to keep Magnus's rules: no clock tolerance, a required `roles` claim, the `clientId` claim only and fifteen-minute tokens. The server and the fleet gateway gain the dependency `@hivemagnus/hive-common`. A few malformed tokens Magnus used to accept are now refused: a person's token whose `clientId` is empty or equals its subject, a token whose `client_id` contradicts its `clientId`, and a service token whose `roles` claim is not a string array.
+
+**New environment variables:** None.
+
+**Migration impact:** No datastore migrations.
+
 
 ## [2.5.0] - 2026-11-12
 

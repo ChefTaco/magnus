@@ -1,0 +1,5 @@
+{
+  "summary": "Verify Oathweave tokens with the shared suite verifier from @hivemagnus/hive-common and serve the suite health probes /health/live and /health/ready.",
+  "breaking": false,
+  "migrations": []
+}
