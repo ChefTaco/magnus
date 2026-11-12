@@ -1,0 +1,5 @@
+{
+  "summary": "Suite event feed: serve Magnus notifications as HiveEvent v1 at GET /api/v1/hive/events for the HiveXUI inbox.",
+  "breaking": false,
+  "migrations": []
+}
