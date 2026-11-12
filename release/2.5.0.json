@@ -1,12 +1,24 @@
 {
-  "summary": "Add the optional constrained Embermend product bridge and reviewed remediation capabilities after acceptance.",
+  "summary": "Add the optional constrained Embermend bridge, reviewed native actions, durable ownership recovery and application-scoped isolated workers.",
   "breaking": false,
-  "minUpgradeFrom": "2.3.4",
+  "minUpgradeFrom": "1.0.0",
   "newRequiredEnv": [],
   "newOptionalEnv": [
-    { "name": "MAGNUS_EMBERMEND_GRANTS_JSON", "component": "server", "secret": true, "description": "Dedicated hashed product credentials and exact installation, target, environment and action grants." },
-    { "name": "MAGNUS_EMBERMEND_CONFIG", "component": "agent", "secret": false, "description": "Canonical root-controlled node resource and worker capability configuration." }
+    {
+      "name": "MAGNUS_EMBERMEND_GRANTS_JSON",
+      "component": "server",
+      "secret": true,
+      "description": "Dedicated hashed product credentials and exact installation, target, environment and action grants."
+    },
+    {
+      "name": "MAGNUS_EMBERMEND_CONFIG",
+      "component": "agent",
+      "secret": false,
+      "description": "Canonical root-controlled node resource and worker capability configuration."
+    }
   ],
   "removedEnv": [],
-  "migrations": ["20261110123000_embermend_operations"]
+  "migrations": [
+    "20261110123000_embermend_operations"
+  ]
 }

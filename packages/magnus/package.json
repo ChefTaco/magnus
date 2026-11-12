@@ -67,7 +67,7 @@
       "@hivemagnus/magnus-agent": "2.5.0"
     },
     "breaking": false,
-    "minUpgradeFrom": "2.3.4",
+    "minUpgradeFrom": "1.0.0",
     "engineProtocol": 2,
     "newRequiredEnv": [],
     "newOptionalEnv": [
@@ -96,7 +96,7 @@
       "selfUpgradeProtocol": 1,
       "minLauncher": 1
     },
-    "summary": "Add the optional constrained Embermend product bridge and reviewed remediation capabilities after acceptance.",
+    "summary": "Add the optional constrained Embermend bridge, reviewed native actions, durable ownership recovery and application-scoped isolated workers.",
     "notesUrl": "https://github.com/ChefTaco/magnus/releases/tag/v2.5.0",
     "allowScripts": {
       "@prisma/engines": true,
