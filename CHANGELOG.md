@@ -9,6 +9,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Added
 
+- Project each isolated source worker checkout to its admitted paths before execution, removing sibling applications, exclusions, Git objects and symlinks from the sandbox.
+
 - Preserve unknown Compose instance health when an image has no Docker health check, rather than losing its inventory to a missing-field template failure.
 
 - Managed source workers resolve same-owner repository renames by immutable provider identity and refuse ownership transfers or unexpected clone destinations.

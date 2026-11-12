@@ -2,11 +2,12 @@ import { Agent, fetch as modelFetch } from 'undici';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createInterface } from 'node:readline';
-import { mkdir, chmod, rm, readFile, realpath, lstat, readdir } from 'node:fs/promises';
+import { mkdir, chmod, rm, readFile, realpath, lstat } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { rootControlled } from './embermend-files.js';
+import { projectRepositoryScope } from './embermend-source-scope.js';
 
 const exec = promisify(execFile);
 async function boundedJson(response: { ok: boolean; body: { getReader(): { read(): Promise<{ done?: boolean; value?: unknown }>; cancel(): Promise<void> } } | null }, maximum: number): Promise<unknown> {
@@ -82,18 +83,9 @@ export async function scanRepository(raw: unknown, config: ScanWorkerConfig, mod
     await userCommand('/usr/bin/git', ['-C', workspace, '-c', 'core.hooksPath=/dev/null', '-c', 'protocol.file.allow=never', 'fetch', '--depth=1', cloneUrl, request.commit]);
     await userCommand('/usr/bin/git', ['-C', workspace, '-c', 'core.hooksPath=/dev/null', 'checkout', '--detach', 'FETCH_HEAD']);
     if ((await userCommand('/usr/bin/git', ['-C', workspace, 'rev-parse', 'HEAD'])).trim() !== request.commit) throw new Error('Immutable checkout identity mismatch');
-    let members = 0;
-    const readable = async (directory: string): Promise<void> => {
-      for (const item of await readdir(directory, { withFileTypes: true })) {
-        if (++members > 100000) throw new Error('Repository member budget exceeded');
-        const path = join(directory, item.name); const info = await lstat(path);
-        if (info.isSymbolicLink()) continue;
-        if (info.isDirectory()) { await chmod(path, 0o755); await readable(path); }
-        else if (info.isFile() && info.nlink === 1) await chmod(path, 0o644 | (info.mode & 0o111));
-        else throw new Error('Unsupported repository filesystem member');
-      }
-    };
-    await readable(workspace); await chmod(workspace, 0o755);
+    // The sandbox must not expose sibling applications or Git objects to
+    // repository-controlled validation, even when model context is bounded.
+    await projectRepositoryScope(workspace, raw, mode);
     const validationArgv = preparation ? config.validationProfiles[preparation.validationProfileId] : undefined;
     if (preparation && !validationArgv) throw new Error('Reviewed validation profile required');
     const entry = preparation ? '/app/packages/scanner/dist/preparation-cli.js' : source ? '/app/packages/scanner/dist/source-cli.js' : null;
