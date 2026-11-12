@@ -1,6 +1,7 @@
 import { skillJobRequest } from '../routes/hiveskills.js';
 import { embermendOperationSchema } from '@hivemagnus/magnus-contracts/embermend';
 import { z as zSchema } from 'zod';
+import { agentIdentitySchema } from '@hivemagnus/magnus-contracts/browser';
 import { managedTerminalActionSchema, managedTerminalAuthoritySchema, managedTerminalReceiptSchema } from '@hivemagnus/magnus-contracts';
 import { dashboardReserveSchema, dashboardStartSchema, dashboardFinishSchema, apiDrainAttestationSchema,
   schedulerBoundaryAttestationSchema } from '../services/resource-enrollment.js';
@@ -196,11 +197,13 @@ const tags = [
   },
   { name: 'Codex Agent', description: 'Fleet Codex CLI version and ChatGPT OAuth lifecycle management' },
   { name: 'Magnus Ardent', description: 'Node-scoped Ardent profile inventory and managed actions' },
+  { name: 'Agent identity', description: 'How the products of a suite name one agent profile: fleet reference, runtime and HiveMem actor' },
 ];
 
 // ─── Component Schemas ──────────────────────────────────────────────
 
 const componentSchemas: Record<string, JsonSchema> = {
+  AgentIdentity: zod(agentIdentitySchema),
   ResourceClaim: zod(resourceClaimSchema),
   ResourceLegacyAdmission: zod(legacyAdmissionRequestSchema),
   SharedResourceReserve: zod(sharedResourceReserveSchema),
@@ -2308,6 +2311,27 @@ const paths: Record<string, Record<string, unknown>> = {
       description: 'Refreshes the update check immediately (ADMIN or OPERATOR).',
       security: apiSecretAuth,
       responses: { 200: success('Update status'), 401: err401, 403: err403 },
+    },
+  },
+  '/agents/{agentRef}/identity': {
+    get: {
+      tags: ['Agent identity'],
+      summary: 'Resolve an agent reference',
+      description: 'The identity of one agent profile: `agentRef` (`<nodeId>~<profile>`, each part `[A-Za-z0-9._-]{1,128}`), its runtime (`ardent` or `hermes`), and its HiveMem actor and workspace once Magnus enrolled an Ardent profile in HiveMem. `oathweaveSubject` and `emberpathClientKeyId` are null: Magnus issues neither per agent. Any role may read it; an Ardent profile is visible to ADMIN only, as on the Ardent routes, and wins over a Hermes profile of the same name on the node. Never carries a credential.',
+      security: apiSecretAuth,
+      parameters: [pp('agentRef', '`<nodeId>~<profile>`')],
+      responses: { 200: success('Agent identity', ref('AgentIdentity')), 400: err400, 401: err401, 403: err403, 404: err404,
+        409: { ...err409, description: 'AGENT_REF_AMBIGUOUS: two Hermes installations on the node have the profile' } },
+    },
+  },
+  '/agents/identity': {
+    get: {
+      tags: ['Agent identity'],
+      summary: 'Find an agent by HiveMem actor',
+      description: 'Reverse lookup: the agent whose HiveMem actor ID (`[a-z0-9_-]{2,32}`) is `actorId`. Only Ardent profiles Magnus enrolled in HiveMem have one, so a match needs ADMIN.',
+      security: apiSecretAuth,
+      parameters: [qp('actorId', 'HiveMem actor ID', { required: true })],
+      responses: { 200: success('Agent identity', ref('AgentIdentity')), 400: err400, 401: err401, 403: err403, 404: err404, 409: err409 },
     },
   },
   '/agents/upgrade/eligibility': {

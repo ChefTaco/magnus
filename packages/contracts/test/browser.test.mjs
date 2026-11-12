@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
+  agentActorIdSchema, agentIdentityResponseSchema, agentRefSchema,
   consoleSessionResponseSchema, cronUpdateResponseSchema, fleetReadinessResponseSchema, magnusBrowserContractVersion,
   magnusBrowserResponseSchema, magnusBrowserRoute, magnusBrowserRoutes, nodeListItemSchema, registerNodeResponseSchema, roleSchema,
   UPGRADE_REMEDIES, upgradeFailureClass, upgradeRemedy,
@@ -100,4 +101,17 @@ test('webhook responses cannot carry a stored credential', () => {
   const parsed = magnusBrowserResponseSchema('/webhooks/hook-1').parse({ success: true, data: { endpoint: { ...endpoint, secret: 'fake-secret', headers: 'fake-headers' } } });
   assert.equal('secret' in parsed.data.endpoint, false);
   assert.equal('headers' in parsed.data.endpoint, false);
+});
+
+test('agent identity: references, actor IDs and the response shape', () => {
+  for (const ref of ['node-1~lead', 'cmabc123.x~default']) assert.equal(agentRefSchema.safeParse(ref).success, true, ref);
+  for (const ref of ['node-1', 'node-1~', '~lead', 'a~b~c', 'node 1~lead', `${'a'.repeat(129)}~lead`]) assert.equal(agentRefSchema.safeParse(ref).success, false, ref);
+  assert.equal(agentActorIdSchema.safeParse('ardent-lead-0a1b2c3d').success, true);
+  for (const id of ['a', 'Ardent', 'a'.repeat(33), 'x/y']) assert.equal(agentActorIdSchema.safeParse(id).success, false, id);
+  assert.equal(magnusBrowserRoute('/agents/identity?actorId=ardent-lead-0a1b2c3d').path, '/agents/identity');
+  assert.equal(magnusBrowserRoute('/agents/node-1~lead/identity').path, '/agents/{agentRef}/identity');
+  const data = { agentRef: 'node-1~default', nodeId: 'node-1', profile: 'default', runtime: 'hermes', actorId: null, workspaceId: null,
+    oathweaveSubject: null, emberpathClientKeyId: null };
+  assert.deepEqual(agentIdentityResponseSchema.parse({ success: true, data: { ...data, token: 'fixture-token' } }).data, data);
+  assert.throws(() => agentIdentityResponseSchema.parse({ success: true, data: { ...data, runtime: 'other' } }));
 });
