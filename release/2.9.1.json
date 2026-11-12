@@ -1,0 +1,8 @@
+{
+  "summary": "Assistant model routes send their own model to non-Ollama providers.",
+  "breaking": false,
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}
