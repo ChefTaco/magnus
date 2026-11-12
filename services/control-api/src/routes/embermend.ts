@@ -12,6 +12,7 @@ import { safeEqual } from '../utils/safe-equal.js';
 import { HttpError } from '../middleware/error-handler.js';
 import { logAuditEvent } from '../services/audit-service.js';
 import { httpReceiptBody } from '../security/managed-http.js';
+import { ownerSettlementEnabled, ownerSettlementParameters, observeOwnerSettlement, settleEmbermendOwner } from '../services/embermend-settlement.js';
 
 const slug = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,127}$/);
 export const embermendGrantsSchema = z.record(slug, z.object({ tokenSha256: z.string().regex(/^[a-f0-9]{64}$/), installationId: slug, productInstallationId: slug, applicationIds: z.array(slug), targets: z.record(slug, z.object({ nodeId: z.string().min(1).max(200), environment: slug.default('unknown'), actions: z.array(z.string().min(1).max(100)) }).strict()) }).strict()).superRefine((grants, context) => {
@@ -48,10 +49,15 @@ async function observed(grant: Grant, operationId: string) {
   if (stored.state === 'queued') return { ...base, state: 'queued' };
   const refusal = z.object({ notDispatched: z.literal(true), reason: z.string() }).safeParse(stored.result);
   if (stored.state === 'failed' && refusal.success) return { ...base, state: 'failed', result: refusal.data, ownershipReleased: true };
+  if (operation.request.action.version === 'execution-settle.v1') {
+    const result = await observeOwnerSettlement(grant.integrationId, operation.request, node, client).catch(() => undefined);
+    return result ? { ...base, state: 'completed', result, evidenceIds: [result.nativeCommandId], ownershipReleased: true } : { ...base, state: 'unknown' };
+  }
   const lease = await db.commandResourceLease.findUnique({ where: { commandId: operation.commandId } });
   if (!lease) return { ...base, state: 'unknown' };
   try {
     const receipt = await client.getCommandReceipt(operation.commandId, { nodeFqdn: node.hostname, requestSha256: lease.requestSha256 });
+    if (receipt.state === 'reconciled') return { ...base, state: 'unknown', result: { originalOutcome: 'unknown', ownershipSettled: true, reconciliation: receipt.reconciliation }, evidenceIds: [operation.commandId], ownershipReleased: true };
     if (receipt.state !== 'completed') return { ...base, state: receipt.state === 'running' ? 'running' : 'unknown', ownershipReleased: lease.state === 'released' };
     const currentLease = await db.commandResourceLease.findUnique({ where: { commandId: operation.commandId } });
     if (receipt.result.exitCode !== 0) return { ...base, state: 'failed', result: { exitCode: receipt.result.exitCode }, ownershipReleased: currentLease?.state === 'released' };
@@ -69,7 +75,9 @@ embermendRouter.get('/capabilities', async c => {
   for (const logicalId of Object.keys(grant.targets)) {
     const { binding, node, client } = await target(grant, logicalId); const enrollment = await getDb().resourceEnrollment.findUnique({ where: { nodeId: node.id } });
     const capability = await client.embermendCapabilities().catch(() => null);
-    const supported = capability?.data.actions.filter(action => binding.actions.includes(action)) ?? []; supported.forEach(action => actions.add(action));
+    const supported = capability?.data.actions.filter(action => binding.actions.includes(action)) ?? [];
+    if (capability && ownerSettlementEnabled() && binding.actions.includes('execution-settle.v1') && await client.embermendCanSettle().catch(() => false)) supported.push('execution-settle.v1');
+    supported.forEach(action => actions.add(action));
     const agentId = 'agent-' + hash([grant.installationId, node.agent?.id ?? node.id]);
     if (node.agent) agents.push({ id: agentId, kind: 'management-agent', label: 'Magnus management agent', scope: { installationId: grant.productInstallationId, applicationIds: [], targetIds: [logicalId] }, provenance: { source: 'magnus', assurance: 'established', evidenceIds: [], observedAt: new Date().toISOString() }, magnusInstallationId: grant.installationId, magnusAgentId: node.agent.id, targetIds: [logicalId], capabilities: supported.map(action => 'embermend:' + action), version: node.agent.version, lifecycle: node.status === 'ONLINE' ? 'active' : 'offline' });
     targets.push({ id: logicalId, kind: 'target', label: node.name, scope: { installationId: grant.productInstallationId, applicationIds: [], targetIds: [logicalId] }, provenance: { source: 'magnus', assurance: 'established', evidenceIds: [], observedAt: new Date().toISOString() }, magnusInstallationId: grant.installationId, magnusTargetId: node.id, agentId, environment: binding.environment, targetKind: capability?.data.targetKind ?? 'host', enrollment: enrollment?.state ?? 'legacy', platform: capability?.data.platform ?? 'unsupported', capabilities: supported.map(action => 'embermend:' + action), lastSeenAt: node.lastHeartbeatAt?.toISOString() ?? new Date(0).toISOString(), parentHostId: null, workloadId: null, instanceId: null, executionNamespace: 'host', lifecycle: node.status === 'ONLINE' ? 'active' : 'offline' });
@@ -86,7 +94,10 @@ embermendRouter.post('/operations', async c => {
   if (!binding.actions.includes(request.action.version) || !request.action.requiredCapabilities.includes('embermend:' + request.action.version)) throw new HttpError(403, 'FORBIDDEN', 'Action outside product capability grant');
   const enrollment = await getDb().resourceEnrollment.findUnique({ where: { nodeId: node.id } });
   const capability = await client.embermendCapabilities();
-  if (enrollment?.state !== 'enrolled' || node.status !== 'ONLINE' || !node.lastHeartbeatAt || Date.now() - node.lastHeartbeatAt.getTime() > 120000 || !capability.data.actions.includes(request.action.version) || !(capability.data.targetKind === request.action.targetKind || capability.data.targetKind === 'host' && request.action.targetKind === 'worker')) throw new HttpError(409, 'CAPABILITY_UNAVAILABLE', 'Enrolled compatible target required');
+  const settlement = request.action.version === 'execution-settle.v1';
+  if (settlement) ownerSettlementParameters(request);
+  const supported = settlement ? ownerSettlementEnabled() && await client.embermendCanSettle() : capability.data.actions.includes(request.action.version);
+  if (enrollment?.state !== 'enrolled' || node.status !== 'ONLINE' || !node.lastHeartbeatAt || Date.now() - node.lastHeartbeatAt.getTime() > 120000 || !supported || !(capability.data.targetKind === request.action.targetKind || capability.data.targetKind === 'host' && request.action.targetKind === 'worker')) throw new HttpError(409, 'CAPABILITY_UNAVAILABLE', 'Enrolled compatible target required');
   const commandId = 'embermend-' + hash([grant.integrationId, request.operationId]);
   const inserted = await getDb().$transaction(async tx => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${commandId}, 0))`;
@@ -113,6 +124,7 @@ export async function dispatchQueuedEmbermend(): Promise<void> {
     active.add(row.id);
     void (async () => {
       let started = false;
+      let settlement = false;
       try {
         const request = embermendOperationSchema.parse(row.request);
         const grants = embermendGrantsSchema.parse(JSON.parse(process.env['MAGNUS_EMBERMEND_GRANTS_JSON'] ?? '{}'));
@@ -123,11 +135,20 @@ export async function dispatchQueuedEmbermend(): Promise<void> {
         const enrollment = await db.resourceEnrollment.findUnique({ where: { nodeId: node.id } });
         const capability = await client.embermendCapabilities();
         if (!['assess', 'prepare'].includes(request.action.class) && request.action.preconditions['environment'] !== binding.environment) throw new Error('TARGET_ENVIRONMENT_CHANGED');
-        if (node.id !== row.nodeId || !binding.actions.includes(request.action.version) || !capability.data.actions.includes(request.action.version) || enrollment?.state !== 'enrolled' || node.status !== 'ONLINE' || !node.lastHeartbeatAt || Date.now() - node.lastHeartbeatAt.getTime() > 120000) throw new Error('TARGET_NO_LONGER_ELIGIBLE');
+        settlement = request.action.version === 'execution-settle.v1';
+        const supported = settlement ? ownerSettlementEnabled() && await client.embermendCanSettle() : capability.data.actions.includes(request.action.version);
+        if (node.id !== row.nodeId || !binding.actions.includes(request.action.version) || !supported || enrollment?.state !== 'enrolled' || node.status !== 'ONLINE' || !node.lastHeartbeatAt || Date.now() - node.lastHeartbeatAt.getTime() > 120000) throw new Error('TARGET_NO_LONGER_ELIGIBLE');
         started = true;
-        await client.embermendExecute(request, row.commandId);
+        if (settlement) await settleEmbermendOwner(grant.integrationId, request, node, client);
+        else await client.embermendExecute(request, row.commandId);
         await observed(grant, request.operationId);
       } catch {
+        if (settlement && started) {
+          // The settlement endpoint cannot be called before its assertion is
+          // committed. No retained decision proves this recovery never started.
+          const current = await db.embermendOperation.findUnique({ where: { id: row.id } });
+          if (current?.result === null) started = false;
+        }
         if (!started) await db.embermendOperation.update({ where: { id: row.id }, data: { state: 'failed', result: { notDispatched: true, reason: 'PRE_DISPATCH_CAPABILITY_OR_AUTHORITY_CHANGED' } } });
         // Once native admission may have begun, retain the original command and
         // lease for signed reconciliation; no blind retry or inferred completion.

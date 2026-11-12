@@ -13,6 +13,12 @@ export const embermendOperationSchema = z.object({
   installationId: id, authorizationRef: id, expiresAt: z.iso.datetime({ offset: true }),
 }).strict();
 export type EmbermendOperation = z.infer<typeof embermendOperationSchema>;
+/** Explicit review of current effects settles ownership, never historical success. */
+export const embermendSettlementSchema = z.object({
+  originalOperationId: id, originalRequestDigest: sha, nativeCommandId: id, nativeRequestDigest: sha,
+  evidenceId: id, evidenceDigest: sha,
+  disposition: z.enum(['effects_verified', 'no_effect_verified']), originalOutcome: z.literal('unknown'),
+}).strict();
 export const embermendResultPointerSchema = z.object({ success: z.literal(true), data: z.object({ resultKey: sha, resultDigest: sha }).strict() }).strict();
 export const embermendNativeResultSchema = z.object({ success: z.boolean(), data: z.record(z.string(), z.json()) }).strict();
 export const embermendNodeCapabilitiesSchema = z.object({ success: z.literal(true), data: z.object({ protocol: z.literal(1), actions: z.array(id), platform: id, targetKind: z.enum(['host', 'worker', 'container']) }).strict() }).strict();

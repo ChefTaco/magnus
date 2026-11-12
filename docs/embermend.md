@@ -129,3 +129,29 @@ is named `no-stale-mappings-observed`, `stale-mappings-observed` or `unknown`;
 operator verification must match that declared scope to the affected component.
 Successful installation and absence of a vendor advisory remain independent of
 the effective running state. Complete integrated acceptance remains pending.
+
+
+## Explicit ownership settlement
+
+`execution-settle.v1` is a controller capability advertised only for an explicitly
+granted target with the existing separate reconciliation key and native signed
+reconciliation support. It requires no node credential in Embermend and does not
+need a replacement native agent or a new execution slot. The existing product
+service credential remains bounded by its versioned target grant.
+
+Embermend requires fresh independent technical evidence, a published exact plan,
+a separate operator approval and scoped execution/recovery authority. The review
+must establish that the original supported effect is quiescent before dispatch.
+The controller additionally binds the original product operation, enrolled node,
+native command, request digests and expired resource fence. Only expired unknown
+reboot, Ubuntu OVAL and repository-scan owners are supported. Running work,
+changed targets, other effects and missing ownership remain blocked.
+
+The exact signed operator reconciliation decision is persisted before delivery.
+After a lost reply, receipt reads adopt that same acknowledged decision without
+another mutation. The recovery operation completes only after the original signed
+native reconciliation is verified and its lease released. The original product
+receipt remains unknown, with explicit ownership settlement and the original
+historical uncertainty. Current-effect review never invents a successful reboot,
+scan, exit code, security verification or campaign continuation. Active cleanup
+and unattended settlement are outside this action's boundary.

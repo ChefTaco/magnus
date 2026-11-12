@@ -360,6 +360,11 @@ export class NodeApiClient {
     return embermendNodeCapabilitiesSchema.parse(await this.api.get('embermend/capabilities', { retry: 0 }).json<unknown>());
   }
 
+  async embermendCanSettle(): Promise<boolean> {
+    const value = z.object({ success: z.literal(true), data: z.object({ features: z.object({ commandReconciliation: z.literal(1) }) }) }).safeParse(await this.api.get('ping', { retry: 0 }).json<unknown>());
+    return value.success;
+  }
+
   async embermendExecute(body: EmbermendOperation, commandId: string) {
     const result = await this.mutateWithEvidence<unknown>('POST', 'embermend/action', embermendOperationSchema.parse(body), 900000, commandId, undefined, true);
     if (!result.evidence) throw new Error('Embermend requires enrolled admission and a signed receipt');
