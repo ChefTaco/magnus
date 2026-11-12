@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file. The format is b
 [Semantic Versioning](https://semver.org/).
 
 
-## Unreleased
+## [2.5.0] - 2026-11-12
 
 ### Added
 
@@ -40,6 +40,7 @@ All notable changes to this project are documented in this file. The format is b
 
 - `MAGNUS_EMBERMEND_GRANTS_JSON` (server, secret): dedicated product credentials and exact target, environment and action grants; absent disables the bridge.
 - `MAGNUS_EMBERMEND_CONFIG` (agent): canonical root-controlled resource and worker configuration; absent disables reviewed remediation capabilities.
+
 
 ## [2.4.3] - 2026-11-11
 
