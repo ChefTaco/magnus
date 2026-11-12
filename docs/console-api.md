@@ -204,7 +204,7 @@ carries identifiers only, never a credential.
 
 The HiveXUI inbox reads Magnus notifications as HiveEvent v1 (from `@hivemagnus/hive-common`) at
 `GET /api/v1/hive/events?after=<cursor>&limit=<n>`. Through the HiveXUI proxy that is
-`/api/magnus/api/v1/hive/events`. The body is `{"data":[HiveEvent...],"nextCursor":string|null}`, with
+`/api/magnus/hive/events`, because the suite ingress maps `/api/magnus/*` to `/api/v1/*`. The body is `{"data":[HiveEvent...],"nextCursor":string|null}`, with
 no `success` envelope:
 
 - Events come oldest first by `(occurredAt, id)`, from the last 14 days only. A page holds the events
