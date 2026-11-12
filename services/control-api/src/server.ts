@@ -24,6 +24,7 @@ import { hiveskillsRouter } from './routes/hiveskills.js';
 import { skillsRouter } from './routes/skills.js';
 import { logsRouter } from './routes/logs.js';
 import { healthRouter } from './routes/health.js';
+import { registerHealthProbes } from './routes/health-probes.js';
 import { auditRouter } from './routes/audit.js';
 import { heartbeatRouter } from './routes/heartbeat.js';
 import { deployRouter } from './routes/deploy.js';
@@ -204,3 +205,6 @@ app.route('/metrics', metricsRouter);
 
 // ── Root health-check ──
 app.get('/', (c) => c.json({ service: 'magnus-control-api', status: 'ok' }));
+
+// ── Suite liveness and readiness probes: /health/live, /health/ready ──
+registerHealthProbes(app);
