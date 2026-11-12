@@ -1,0 +1,12 @@
+{
+  "summary": "Opt-in Emberpath model provider for the fleet assistant.",
+  "breaking": false,
+  "newRequiredEnv": [],
+  "newOptionalEnv": [
+    { "name": "MAGNUS_EMBERPATH_URL", "component": "server", "secret": false, "description": "Emberpath OpenAI-compatible base URL including /v1. Set with MAGNUS_EMBERPATH_API_KEY and MAGNUS_EMBERPATH_MODEL to add the opt-in emberpath assistant provider; unset keeps OpenRouter as the hosted default." },
+    { "name": "MAGNUS_EMBERPATH_API_KEY", "component": "server", "secret": true, "description": "Emberpath client API key (Bearer), ideally with actorId metadata for attribution." },
+    { "name": "MAGNUS_EMBERPATH_MODEL", "component": "server", "secret": false, "description": "Emberpath model name or alias used by the default hosted routes." }
+  ],
+  "removedEnv": [],
+  "migrations": []
+}

@@ -1,4 +1,4 @@
-export type ProviderId = 'ollama' | 'llamacpp' | 'openai' | 'anthropic' | 'openrouter';
+export type ProviderId = 'ollama' | 'llamacpp' | 'openai' | 'anthropic' | 'openrouter' | 'emberpath';
 export type ThinkingMode = 'off' | 'standard' | 'deep';
 
 export interface LlmToolCall {

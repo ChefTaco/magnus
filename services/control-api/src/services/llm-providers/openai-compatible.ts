@@ -2,7 +2,7 @@ import type { LlmChatRequest, LlmChatResult, LlmProvider, LlmProviderHealth, Llm
 import { createHttpProviderError, LlmProviderError, normalizeProviderError } from './provider-error.js';
 
 interface OpenAiCompatibleConfig {
-  id: Extract<ProviderId, 'openai' | 'openrouter'>;
+  id: Extract<ProviderId, 'openai' | 'openrouter' | 'emberpath'>;
   name: string;
   baseUrl: string;
   apiKey?: string;
@@ -30,7 +30,7 @@ export class OpenAiCompatibleProvider implements LlmProvider {
   readonly supportsToolCalling = true;
   readonly supportsStructuredOutputs = true;
 
-  readonly id: Extract<ProviderId, 'openai' | 'openrouter'>;
+  readonly id: Extract<ProviderId, 'openai' | 'openrouter' | 'emberpath'>;
   readonly name: string;
   readonly baseUrl: string;
   readonly apiKey: string | undefined;

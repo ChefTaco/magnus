@@ -162,6 +162,9 @@ export const ENV_CATALOG: readonly EnvVariable[] = [
   { name: 'OPENAI_API_KEY', group: 'ai', secret: true, description: 'Optional OpenAI provider key.' },
   { name: 'OPENROUTER_API_KEY', group: 'ai', secret: true, description: 'Optional OpenRouter provider key.' },
   { name: 'ANTHROPIC_API_KEY', group: 'ai', secret: true, description: 'Optional Anthropic provider key.' },
+  { name: 'MAGNUS_EMBERPATH_URL', group: 'ai', description: 'Opt-in Emberpath provider: OpenAI-compatible base URL including /v1 (HTTPS in production). Set with MAGNUS_EMBERPATH_API_KEY and MAGNUS_EMBERPATH_MODEL; the default hosted routes then try Emberpath before OpenRouter.' },
+  { name: 'MAGNUS_EMBERPATH_API_KEY', group: 'ai', secret: true, requiredWhen: 'MAGNUS_EMBERPATH_URL set', description: 'Emberpath client API key (Bearer). Give the key actorId metadata so Emberpath attributes the assistant traffic.' },
+  { name: 'MAGNUS_EMBERPATH_MODEL', group: 'ai', requiredWhen: 'MAGNUS_EMBERPATH_URL set', description: 'Emberpath model name or alias the default routes use.' },
 
   // ── Upgrades ── (every automatic behaviour has its own switch; set them false to run your own release process)
   { name: 'MAGNUS_AUTO_MIGRATE', group: 'upgrades', default: 'false', description: 'true: apply pending migrations at startup, before listening, under an advisory lock and after a pg_dump. `magnus init` projects and the container images set it to true.' },

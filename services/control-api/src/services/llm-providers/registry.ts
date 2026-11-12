@@ -3,7 +3,10 @@ import { AnthropicProvider } from './anthropic.js';
 import { OllamaProvider } from './ollama.js';
 import { OpenAiCompatibleProvider } from './openai-compatible.js';
 import { LlamaCppProvider } from './llama-cpp.js';
+import { emberpathSettings } from './emberpath.js';
 import type { LlmProvider, LlmProviderHealth, ProviderId } from './types.js';
+
+const emberpath = emberpathSettings();
 
 const providers: Record<ProviderId, LlmProvider> = {
   ollama: new OllamaProvider(),
@@ -14,6 +17,8 @@ const providers: Record<ProviderId, LlmProvider> = {
       'HTTP-Referer': process.env['OPENROUTER_HTTP_REFERER'] ?? 'https://magnus.local',
       'X-Title': process.env['OPENROUTER_APP_NAME'] ?? 'Magnus AI',
     } }),
+  // Opt-in: configured only when MAGNUS_EMBERPATH_URL, _API_KEY and _MODEL are all set.
+  emberpath: new OpenAiCompatibleProvider({ id: 'emberpath', name: 'Emberpath', baseUrl: emberpath?.baseUrl ?? '', ...optional("apiKey", emberpath?.apiKey) }),
 };
 
 let providerHealthCache: { fetchedAt: number; statuses: LlmProviderHealth[] } | null = null;

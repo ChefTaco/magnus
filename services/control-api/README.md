@@ -123,7 +123,7 @@ without any of them. `magnus-server check` prints which are on.
 | Hermes Agent plugin API | Endpoint-scoped plugin credentials (read, operator) and the signed approval bridge | `MAGNUS_PLUGIN_API_ENABLED=true`, `MAGNUS_PLUGIN_READ_TOKEN_DIGESTS_JSON`, `MAGNUS_PLUGIN_OPERATOR_TOKEN_SHA256`, optional `MAGNUS_APPROVAL_BRIDGE_CONSUMER`, `APPROVAL_SIGNER_PUBLIC_KEY_*`, `APPROVAL_*_ACTOR_SHA256` |
 | Hermes registry sync | Imports the bundled skill catalogue and tracks plugin sources; staged deployments to named hosts | `MAGNUS_HERMES_REGISTRY_ENABLED=true`, `MAGNUS_REGISTRY_DEPLOY_HOSTS`, `MAGNUS_REGISTRY_SUBMIT_ONLY_HOSTS` |
 | Observability collector | Read-only credential for an external collector | `MAGNUS_COLLECTOR_TOKEN_SHA256` |
-| AI fleet assistant | Ollama, llama.cpp, OpenAI, OpenRouter or Anthropic model profiles | `OLLAMA_URL`, `LLAMACPP_URL`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY` |
+| AI fleet assistant | Ollama, llama.cpp, OpenAI, OpenRouter, Anthropic or Emberpath model profiles. Emberpath is opt-in: with all three of its settings the default hosted routes try it before OpenRouter; without them OpenRouter stays the hosted default. Give the Emberpath client key `actorId` metadata so Emberpath attributes the traffic | `OLLAMA_URL`, `LLAMACPP_URL`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `MAGNUS_EMBERPATH_URL` (OpenAI-compatible base including `/v1`) with `MAGNUS_EMBERPATH_API_KEY` and `MAGNUS_EMBERPATH_MODEL` |
 | Agent discovery | Agents self-register | `ENABLE_AGENT_DISCOVERY=true`, `AGENT_DISCOVERY_SECRET` |
 | Resource leases | Durable node and shared-resource lease coordination | `MAGNUS_RESOURCE_LEASES_ENABLED=true` |
 
