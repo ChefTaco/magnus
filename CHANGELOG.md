@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file. The format is b
 [Semantic Versioning](https://semver.org/).
 
 
+## [Unreleased]
+
+### Fixed
+
+- Fleet assistant: a model route whose primary provider is not Ollama (for example `emberpath`, `openai` or `llamacpp`) now sends its own model to that provider. The global AI settings model is an Ollama model and previously replaced every route's model, so such routes were sent the Ollama model id. The settings model still applies to Ollama routes, and to other routes only when they have no model. Streaming chat for a route whose primary provider is not Ollama now goes through the provider-aware request path instead of calling Ollama directly.
+
+**New environment variables:** None.
+
+**Migration impact:** No datastore migrations.
+
 ## [2.9.0] - 2026-11-12
 
 ### Added

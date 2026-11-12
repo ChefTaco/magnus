@@ -16,7 +16,7 @@ vi.mock('../db/index.js', () => ({
   }),
 }));
 
-import { getModelProfiles, getToolCallSignature, getTextSimilarity, hasStalledForwardProgress, selectModel, updateModelProfiles } from './ai-assistant-service.js';
+import { getModelProfiles, getToolCallSignature, getTextSimilarity, hasStalledForwardProgress, resolveRouteModel, selectModel, updateModelProfiles } from './ai-assistant-service.js';
 
 beforeEach(() => {
   dbMocks.aiMemoryFindUnique.mockReset();
@@ -112,6 +112,38 @@ describe('ai-assistant-service Emberpath routing', () => {
       provider: 'openrouter',
       fallbacks: [{ provider: 'openai', model: 'gpt-4.1-mini' }],
     });
+  });
+});
+
+describe('resolveRouteModel', () => {
+  it('lets the global settings model override Ollama routes', () => {
+    expect(resolveRouteModel({ provider: 'ollama', model: 'gemma4:31b-it-q8_0' }, 'qwen3:32b')).toBe('qwen3:32b');
+    expect(resolveRouteModel({ model: 'gemma4:31b-it-q8_0' }, 'qwen3:32b')).toBe('qwen3:32b');
+    expect(resolveRouteModel({ provider: 'ollama', model: 'gemma4:31b-it-q8_0' }, '')).toBe('gemma4:31b-it-q8_0');
+  });
+
+  it('keeps the route model for providers other than Ollama', () => {
+    expect(resolveRouteModel({ provider: 'emberpath', model: 'standard' }, 'qwen3:32b')).toBe('standard');
+    expect(resolveRouteModel({ provider: 'openai', model: 'gpt-4.1-mini' }, 'qwen3:32b')).toBe('gpt-4.1-mini');
+    expect(resolveRouteModel({ provider: 'llamacpp', model: 'local-gguf' }, 'qwen3:32b')).toBe('local-gguf');
+  });
+
+  it('falls back to the settings model only when a non-Ollama route has no model', () => {
+    expect(resolveRouteModel({ provider: 'emberpath', model: '' }, 'qwen3:32b')).toBe('qwen3:32b');
+  });
+
+  it('resolves a saved emberpath route to its own model', async () => {
+    dbMocks.aiMemoryFindUnique.mockResolvedValue({
+      content: JSON.stringify([
+        { taskType: 'chat', provider: 'emberpath', model: 'standard', fallbacks: [], temperature: 0.3, maxTokens: 2048 },
+      ]),
+    });
+
+    const profile = await selectModel('chat');
+    expect(resolveRouteModel(profile, 'qwen3:32b')).toBe('standard');
+    const heartbeat = await selectModel('heartbeat');
+    expect(heartbeat.provider).toBe('ollama');
+    expect(resolveRouteModel(heartbeat, 'qwen3:32b')).toBe('qwen3:32b');
   });
 });
 
