@@ -247,3 +247,39 @@ describe('Hive IAM environment contract', () => {
     })).toThrow(/operator credential must differ/);
   });
 });
+
+describe('Emberpath assistant provider environment', () => {
+  const emberpath = {
+    MAGNUS_EMBERPATH_URL: 'https://models.example.com/v1',
+    MAGNUS_EMBERPATH_API_KEY: 'ep-test-key',
+    MAGNUS_EMBERPATH_MODEL: 'fleet-assistant',
+  };
+
+  it('stays off by default', () => {
+    expect(loadEnv({}).MAGNUS_EMBERPATH_URL).toBeUndefined();
+  });
+
+  it('accepts a complete configuration', () => {
+    expect(loadEnv(emberpath)).toMatchObject(emberpath);
+  });
+
+  it.each(['MAGNUS_EMBERPATH_URL', 'MAGNUS_EMBERPATH_API_KEY', 'MAGNUS_EMBERPATH_MODEL'] as const)('requires %s with the others', (missing) => {
+    expect(() => loadEnv({ ...emberpath, [missing]: undefined })).toThrow(/must be configured together/);
+  });
+
+  it('refuses credentials, a query or a non-HTTP scheme in the URL', () => {
+    for (const url of ['https://user:pass@models.example.com/v1', 'https://models.example.com/v1?key=x', 'ftp://models.example.com/v1']) {
+      expect(() => loadEnv({ ...emberpath, MAGNUS_EMBERPATH_URL: url })).toThrow(/MAGNUS_EMBERPATH_URL/);
+    }
+  });
+
+  it('requires HTTPS in production', () => {
+    expect(() => loadEnv({ ...emberpath, NODE_ENV: 'production', MAGNUS_EMBERPATH_URL: 'http://models.example.com/v1' }))
+      .toThrow(/MAGNUS_EMBERPATH_URL must use HTTPS in production/);
+    expect(loadEnv({ ...emberpath, MAGNUS_EMBERPATH_URL: 'http://127.0.0.1:8090/v1' }).MAGNUS_EMBERPATH_URL).toBe('http://127.0.0.1:8090/v1');
+  });
+
+  it('refuses a key with whitespace', () => {
+    expect(() => loadEnv({ ...emberpath, MAGNUS_EMBERPATH_API_KEY: 'ep key' })).toThrow(/MAGNUS_EMBERPATH_API_KEY/);
+  });
+});

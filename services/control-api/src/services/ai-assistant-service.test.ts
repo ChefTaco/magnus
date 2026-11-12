@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const dbMocks = vi.hoisted(() => ({
   aiMemoryFindUnique: vi.fn(),
@@ -64,6 +64,54 @@ describe('ai-assistant-service model routing', () => {
     expect(persisted[0]).not.toHaveProperty('routePurpose');
     expect(persisted[0]).not.toHaveProperty('routeReason');
     expect(persisted[0]).not.toHaveProperty('routeSource');
+  });
+});
+
+describe('ai-assistant-service Emberpath routing', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('keeps OpenRouter as the hosted default when Emberpath is not configured', async () => {
+    vi.stubEnv('MAGNUS_EMBERPATH_URL', '');
+    const profiles = await getModelProfiles();
+
+    expect(profiles.find((profile) => profile.taskType === 'internet_data')).toMatchObject({ provider: 'openrouter' });
+    for (const profile of profiles) {
+      expect(profile.provider).not.toBe('emberpath');
+      expect(profile.fallbacks?.some((fallback) => fallback.provider === 'emberpath')).toBe(false);
+    }
+  });
+
+  it('routes the hosted defaults through Emberpath first, then OpenRouter, when it is configured', async () => {
+    vi.stubEnv('MAGNUS_EMBERPATH_URL', 'https://models.example.com/v1');
+    vi.stubEnv('MAGNUS_EMBERPATH_API_KEY', 'ep-test-key');
+    vi.stubEnv('MAGNUS_EMBERPATH_MODEL', 'fleet-assistant');
+    const profiles = await getModelProfiles();
+
+    const internet = profiles.find((profile) => profile.taskType === 'internet_data')!;
+    expect(internet).toMatchObject({ provider: 'emberpath', model: 'fleet-assistant' });
+    expect(internet.fallbacks?.[0]?.provider).toBe('openrouter');
+    const chat = profiles.find((profile) => profile.taskType === 'chat')!;
+    expect(chat.provider).toBe('ollama');
+    expect(chat.fallbacks?.slice(0, 2).map((fallback) => fallback.provider)).toEqual(['emberpath', 'openrouter']);
+    expect(profiles.find((profile) => profile.taskType === 'summarization')!.fallbacks).toEqual([]);
+  });
+
+  it('leaves saved routes as they were saved', async () => {
+    vi.stubEnv('MAGNUS_EMBERPATH_URL', 'https://models.example.com/v1');
+    vi.stubEnv('MAGNUS_EMBERPATH_API_KEY', 'ep-test-key');
+    vi.stubEnv('MAGNUS_EMBERPATH_MODEL', 'fleet-assistant');
+    dbMocks.aiMemoryFindUnique.mockResolvedValue({
+      content: JSON.stringify([
+        { taskType: 'internet_data', provider: 'openrouter', model: 'openai/gpt-4.1-mini', fallbacks: [{ provider: 'openai', model: 'gpt-4.1-mini' }], temperature: 0.2, maxTokens: 4096 },
+      ]),
+    });
+
+    await expect(selectModel('internet_data')).resolves.toMatchObject({
+      provider: 'openrouter',
+      fallbacks: [{ provider: 'openai', model: 'gpt-4.1-mini' }],
+    });
   });
 });
 

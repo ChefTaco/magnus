@@ -646,7 +646,7 @@ export interface AiChatResponse {
   structuredAnalysis?: unknown;
 }
 
-export type AiProviderId = 'ollama' | 'llamacpp' | 'openai' | 'anthropic' | 'openrouter';
+export type AiProviderId = 'ollama' | 'llamacpp' | 'openai' | 'anthropic' | 'openrouter' | 'emberpath';
 
 export interface AiHeartbeatPrompt {
   content: string;

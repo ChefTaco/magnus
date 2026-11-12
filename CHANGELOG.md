@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file. The format is b
 [Semantic Versioning](https://semver.org/).
 
 
+## [Unreleased]
+
+### Added
+
+- Fleet assistant: an opt-in `emberpath` model provider. Emberpath's OpenAI-compatible API is reached at `MAGNUS_EMBERPATH_URL` (the base URL including `/v1`, HTTPS in production) with the client key in `MAGNUS_EMBERPATH_API_KEY` and the model in `MAGNUS_EMBERPATH_MODEL`; the server refuses to start unless all three are set together. When they are, the default hosted routes (the `internet_data` route and the hosted fallbacks of the others) try Emberpath first and OpenRouter next; without them OpenRouter stays the hosted default. Saved model routes are unchanged, and `emberpath` can be chosen for any route. Give the Emberpath key `actorId` metadata so Emberpath attributes the assistant traffic.
+
+### New environment variables
+
+- Server, all optional and set together: `MAGNUS_EMBERPATH_URL`, `MAGNUS_EMBERPATH_API_KEY` (secret), `MAGNUS_EMBERPATH_MODEL`.
+
+**Migration impact:** No datastore migrations.
+
 ## [2.8.0] - 2026-11-12
 
 ### Added

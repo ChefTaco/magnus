@@ -8,6 +8,7 @@ import { webhookTypeAliases } from '../services/webhook-types.js';
 const portSchema = z.coerce.number().int().min(1).max(65535);
 import { isConsoleBasePath } from './console-path.js';
 import { oathweaveConfigurationIssues } from './oathweave.js';
+import { emberpathConfigurationIssues } from '../services/llm-providers/emberpath.js';
 
 const booleanEnvSchema = z.enum(['true', 'false']).default('false').transform((value) => value === 'true');
 
@@ -188,6 +189,10 @@ export const envSchema = z.object({
   MAGNUS_ARDENT_HIVEMEM_WORKSPACE_ID: z.string().regex(/^[a-z0-9_-]{1,100}$/).optional(),
   MAGNUS_ARDENT_HIVEMEM_CREDENTIAL_HOURS: z.coerce.number().int().min(1).max(720).optional(),
   MAGNUS_ARDENT_EMBERPATH_URL: z.string().url().optional(),
+  // Fleet assistant Emberpath provider (opt-in; services/llm-providers/emberpath.ts)
+  MAGNUS_EMBERPATH_URL: z.string().url().optional(),
+  MAGNUS_EMBERPATH_API_KEY: z.string().optional(),
+  MAGNUS_EMBERPATH_MODEL: z.string().optional(),
   // Ardent skill-install: the HiveSkills registry Magnus fetches catalog releases from (services/ardent-hiveskills.ts)
   MAGNUS_ARDENT_HIVESKILLS_URL: z.string().url().optional(),
 
@@ -247,6 +252,10 @@ export const envSchema = z.object({
       path: ['NOTIFICATION_READ_RETENTION_DAYS'],
       message: 'NOTIFICATION_READ_RETENTION_DAYS cannot exceed NOTIFICATION_MAX_RETENTION_DAYS',
     });
+  }
+
+  for (const issue of emberpathConfigurationIssues(env)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: [issue.path], message: issue.message });
   }
 
   for (const issue of oathweaveConfigurationIssues(env)) {

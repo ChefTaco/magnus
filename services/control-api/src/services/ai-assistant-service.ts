@@ -17,7 +17,7 @@ import { executeAiTool, listAvailableTools, type AiToolCall, type AiToolResult }
 import { logAuditEvent } from './audit-service.js';
 import { clientErrorMessage } from '../utils/safe-errors.js';
 import { autoStoreToolResult, listScratchpadEntries } from './ai-scratchpad-service.js';
-import { getLlmProvider, getLlmProviderStatuses, type LlmChatResult, type LlmMessage, type LlmToolDefinition, type ProviderFallback, type ProviderId, type ThinkingMode } from './llm-providers/index.js';
+import { emberpathSettings, getLlmProvider, getLlmProviderStatuses, type LlmChatResult, type LlmMessage, type LlmToolDefinition, type ProviderFallback, type ProviderId, type ThinkingMode } from './llm-providers/index.js';
 import { getOllamaThinkingCapability } from './llm-providers/ollama.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -93,22 +93,35 @@ const MODEL_ROUTE_DEFINITIONS: Record<string, ModelRouteDefinition> = {
   },
 };
 
+/**
+ * The hosted gateway routes, in order. Emberpath comes first when it is
+ * configured (MAGNUS_EMBERPATH_URL, _API_KEY and _MODEL); OpenRouter stays the
+ * hosted default otherwise, and remains the next fallback after Emberpath.
+ */
+function hostedRoutes(): ProviderFallback[] {
+  const emberpath = emberpathSettings();
+  const openrouter: ProviderFallback = { provider: 'openrouter', model: OPENROUTER_MODEL };
+  return emberpath ? [{ provider: 'emberpath', model: emberpath.model }, openrouter] : [openrouter];
+}
+
 function getDefaultFallbacks(taskType: string): ProviderFallback[] {
   if (taskType === 'summarization') return [];
   if (taskType === 'heartbeat') {
     return [
-      { provider: 'openrouter', model: OPENROUTER_MODEL },
+      ...hostedRoutes(),
       { provider: 'openai', model: OPENAI_MODEL },
     ];
   }
   if (taskType === 'dangerous') {
     return [
       { provider: 'anthropic', model: ANTHROPIC_MODEL },
-      { provider: 'openrouter', model: OPENROUTER_MODEL },
+      ...hostedRoutes(),
     ];
   }
   if (taskType === 'internet_data') {
+    // The primary route is the first hosted route; the rest follow it.
     return [
+      ...hostedRoutes().slice(1),
       { provider: 'openai', model: OPENAI_MODEL },
       { provider: 'anthropic', model: ANTHROPIC_MODEL },
     ];
@@ -116,11 +129,11 @@ function getDefaultFallbacks(taskType: string): ProviderFallback[] {
   if (taskType === 'hard') {
     return [
       { provider: 'openai', model: OPENAI_MODEL },
-      { provider: 'openrouter', model: OPENROUTER_MODEL },
+      ...hostedRoutes(),
     ];
   }
   return [
-    { provider: 'openrouter', model: OPENROUTER_MODEL },
+    ...hostedRoutes(),
     { provider: 'openai', model: OPENAI_MODEL },
     { provider: 'anthropic', model: ANTHROPIC_MODEL },
   ];
@@ -145,20 +158,23 @@ function normalizeModelProfile(profile: ModelProfile, routeSource: ModelProfile[
   }, routeSource);
 }
 
-/** Default model profiles — can be overridden via settings */
-const DEFAULT_MODEL_PROFILES: ModelProfile[] = [
-  normalizeModelProfile({ taskType: 'chat', provider: 'ollama', model: OLLAMA_MODEL, temperature: AI_TEMPERATURE, maxTokens: AI_MAX_TOKENS, maxToolRounds: DEFAULT_MAX_TOOL_ROUNDS, thinkingMode: 'standard' }, 'built-in'),
-  normalizeModelProfile({ taskType: 'heartbeat', provider: 'ollama', model: OLLAMA_MODEL, temperature: 0.2, maxTokens: AI_MAX_TOKENS, maxToolRounds: 2, thinkingMode: 'standard' }, 'built-in'),
-  normalizeModelProfile({ taskType: 'summarization', provider: 'ollama', model: OLLAMA_MODEL, temperature: 0.1, maxTokens: 2048, maxToolRounds: 1, thinkingMode: 'off', systemPromptSuffix: 'Be extremely concise.' }, 'built-in'),
-  normalizeModelProfile({ taskType: 'code_generation', provider: 'ollama', model: OLLAMA_MODEL, temperature: 0.1, maxTokens: AI_MAX_TOKENS * 2, maxToolRounds: 2, thinkingMode: 'deep', systemPromptSuffix: 'Focus on generating clean, working code.' }, 'built-in'),
-  normalizeModelProfile({ taskType: 'analysis', provider: 'ollama', model: OLLAMA_MODEL, temperature: 0.2, maxTokens: AI_MAX_TOKENS, maxToolRounds: DEFAULT_MAX_TOOL_ROUNDS, thinkingMode: 'standard' }, 'built-in'),
-  normalizeModelProfile({ taskType: 'dangerous', provider: 'openai', model: OPENAI_MODEL, temperature: 0.1, maxTokens: AI_MAX_TOKENS, maxToolRounds: DEFAULT_MAX_TOOL_ROUNDS, thinkingMode: 'deep' }, 'built-in'),
-  normalizeModelProfile({ taskType: 'internet_data', provider: 'openrouter', model: OPENROUTER_MODEL, temperature: 0.2, maxTokens: AI_MAX_TOKENS, maxToolRounds: 2, thinkingMode: 'standard' }, 'built-in'),
-  normalizeModelProfile({ taskType: 'hard', provider: 'anthropic', model: ANTHROPIC_MODEL, temperature: 0.2, maxTokens: AI_MAX_TOKENS * 2, maxToolRounds: DEFAULT_MAX_TOOL_ROUNDS, thinkingMode: 'deep' }, 'built-in'),
-];
+/** Default model profiles — can be overridden via settings. Built per call so the hosted route follows the environment. */
+function defaultModelProfiles(): ModelProfile[] {
+  const hosted = hostedRoutes()[0]!;
+  return [
+    normalizeModelProfile({ taskType: 'chat', provider: 'ollama', model: OLLAMA_MODEL, temperature: AI_TEMPERATURE, maxTokens: AI_MAX_TOKENS, maxToolRounds: DEFAULT_MAX_TOOL_ROUNDS, thinkingMode: 'standard' }, 'built-in'),
+    normalizeModelProfile({ taskType: 'heartbeat', provider: 'ollama', model: OLLAMA_MODEL, temperature: 0.2, maxTokens: AI_MAX_TOKENS, maxToolRounds: 2, thinkingMode: 'standard' }, 'built-in'),
+    normalizeModelProfile({ taskType: 'summarization', provider: 'ollama', model: OLLAMA_MODEL, temperature: 0.1, maxTokens: 2048, maxToolRounds: 1, thinkingMode: 'off', systemPromptSuffix: 'Be extremely concise.' }, 'built-in'),
+    normalizeModelProfile({ taskType: 'code_generation', provider: 'ollama', model: OLLAMA_MODEL, temperature: 0.1, maxTokens: AI_MAX_TOKENS * 2, maxToolRounds: 2, thinkingMode: 'deep', systemPromptSuffix: 'Focus on generating clean, working code.' }, 'built-in'),
+    normalizeModelProfile({ taskType: 'analysis', provider: 'ollama', model: OLLAMA_MODEL, temperature: 0.2, maxTokens: AI_MAX_TOKENS, maxToolRounds: DEFAULT_MAX_TOOL_ROUNDS, thinkingMode: 'standard' }, 'built-in'),
+    normalizeModelProfile({ taskType: 'dangerous', provider: 'openai', model: OPENAI_MODEL, temperature: 0.1, maxTokens: AI_MAX_TOKENS, maxToolRounds: DEFAULT_MAX_TOOL_ROUNDS, thinkingMode: 'deep' }, 'built-in'),
+    normalizeModelProfile({ taskType: 'internet_data', provider: hosted.provider, model: hosted.model, temperature: 0.2, maxTokens: AI_MAX_TOKENS, maxToolRounds: 2, thinkingMode: 'standard' }, 'built-in'),
+    normalizeModelProfile({ taskType: 'hard', provider: 'anthropic', model: ANTHROPIC_MODEL, temperature: 0.2, maxTokens: AI_MAX_TOKENS * 2, maxToolRounds: DEFAULT_MAX_TOOL_ROUNDS, thinkingMode: 'deep' }, 'built-in'),
+  ];
+}
 
 function mergeModelProfiles(saved: ModelProfile[] = []): ModelProfile[] {
-  const merged = new Map(DEFAULT_MODEL_PROFILES.map((profile) => [profile.taskType, normalizeModelProfile(profile, 'built-in')]));
+  const merged = new Map(defaultModelProfiles().map((profile) => [profile.taskType, normalizeModelProfile(profile, 'built-in')]));
 
   for (const profile of saved) {
     if (!profile?.taskType) continue;
@@ -191,7 +207,7 @@ export async function selectModel(taskType: string): Promise<ModelProfile> {
   return normalizeModelProfile(
     profiles.find((p) => p.taskType === taskType)
       ?? profiles.find((p) => p.taskType === 'chat')
-      ?? DEFAULT_MODEL_PROFILES[0]!,
+      ?? defaultModelProfiles()[0]!,
   );
 }
 

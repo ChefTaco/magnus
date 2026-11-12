@@ -515,10 +515,10 @@ assistantRouter.get('/model-profiles', async (c) => {
 
 assistantRouter.patch('/model-profiles', requireRole('ADMIN'), async (c) => {
   const body = await c.req.json<Record<string, {
-    provider?: 'ollama' | 'llamacpp' | 'openai' | 'anthropic' | 'openrouter';
+    provider?: 'ollama' | 'llamacpp' | 'openai' | 'anthropic' | 'openrouter' | 'emberpath';
     model: string;
     fallbacks?: Array<{
-      provider: 'ollama' | 'llamacpp' | 'openai' | 'anthropic' | 'openrouter';
+      provider: 'ollama' | 'llamacpp' | 'openai' | 'anthropic' | 'openrouter' | 'emberpath';
       model: string;
     }>;
     temperature?: number;
