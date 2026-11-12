@@ -5,8 +5,10 @@
 //   node scripts/e2e/synthetic-release.mjs --from DIR --version 1.1.1-ci --out DIR
 //        [--broken-server] [--migration NAME] [--agent-never-heartbeats] [--only name,name]
 //
-// Internal pins, the server's bundled agent version and the meta package's
-// magnusRelease follow the new version. Test tooling only; never published.
+// Pins on sibling packages of this release (the tarballs in --from), the server's
+// bundled agent version and the meta package's magnusRelease follow the new
+// version. Other @hivemagnus packages, such as @hivemagnus/hive-common, are
+// published separately and keep their pins. Test tooling only; never published.
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -24,7 +26,11 @@ const out = resolve(values.out);
 mkdirSync(out, { recursive: true });
 const only = values.only ? new Set(values.only.split(',').map((name) => `@hivemagnus/${name}`)) : null;
 
-for (const file of readdirSync(values.from).filter((name) => name.endsWith('.tgz'))) {
+const tarballs = readdirSync(values.from).filter((name) => name.endsWith('.tgz'));
+const packageName = (file) => JSON.parse(execFileSync('tar', ['-xzOf', join(values.from, file), 'package/package.json'], { encoding: 'utf8' })).name;
+const siblings = new Set(tarballs.map(packageName));
+
+for (const file of tarballs) {
   const work = mkdtempSync(join(tmpdir(), 'magnus-synthetic-'));
   execFileSync('tar', ['-xzf', join(values.from, file), '-C', work]);
   const manifestPath = join(work, 'package', 'package.json');
@@ -35,7 +41,7 @@ for (const file of readdirSync(values.from).filter((name) => name.endsWith('.tgz
     // Siblings outside --only keep their original pins (they are not re-versioned).
     // A bundled sibling stays at the version in the tarball.
     for (const name of Object.keys(pkg[category] ?? {})) {
-      if (name.startsWith('@hivemagnus/') && (!only || only.has(name)) && !pkg.bundleDependencies?.includes(name)) pkg[category][name] = version;
+      if (siblings.has(name) && (!only || only.has(name)) && !pkg.bundleDependencies?.includes(name)) pkg[category][name] = version;
     }
   }
   if (pkg.magnusRelease) {
