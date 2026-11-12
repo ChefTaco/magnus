@@ -126,6 +126,8 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('secrets in browser-facing re
       .replace('/webhooks/:id', `/webhooks/${prefix}-webhook`)
       .replace('/rollouts/:id', `/rollouts/${prefix}-run`)
       .replace('/hermes/installations/:id', `/hermes/installations/${ids['installation']}`)
+      .replace('/agents/:agentRef/identity', `/agents/${nodeId}~default/identity`)
+      .replace('/agents/identity', '/agents/identity?actorId=ardent-default-00000000')
       .replace(/:(?:nodeId|id|token|fileId|name|artifactId|sessionId)\b/gu, nodeId);
   }
 

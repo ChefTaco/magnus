@@ -10,7 +10,7 @@ moved without updating it.
 
 | Class | Meaning | Rows | At the ingress |
 |---|---|---|---|
-| `browser` | A person's console drives it with a user token | 144 | Allow the exact method and path |
+| `browser` | A person's console drives it with a user token | 146 | Allow the exact method and path |
 | `machine` | Agents, services and integrations, with their own credentials | 82 | Deny |
 | `exclude` | Reachable with a user token, but no console needs it, or it was written for a server-side caller | 142 | Deny until a feature needs it and it is reviewed |
 | `retired` | Always answers 404 or 410 | 64 | Deny |
@@ -166,6 +166,40 @@ answers 409 `CONFLICT`; Ardent's own 409 for a stale identity or skill revision 
 `terminal` is true when a fleet gateway is deployed (`FLEET_GATEWAY_URL`, `FLEET_GATEWAY_TOKEN_SHA256`)
 and this person holds an `ADMIN` link and `magnus:terminal`. It only says whether to offer the terminal.
 
+## Agent identity
+
+A console that joins data about one agent across products asks Magnus how that agent is named.
+`GET /api/v1/agents/:agentRef/identity` takes the fleet reference `<nodeId>~<profile>` (each part
+`[A-Za-z0-9._-]{1,128}`, the form Ardent Studio uses) and answers:
+
+```json
+{
+  "success": true,
+  "data": {
+    "agentRef": "node-1~lead",
+    "nodeId": "node-1",
+    "profile": "lead",
+    "runtime": "ardent",
+    "actorId": "ardent-lead-0a1b2c3d",
+    "workspaceId": "ardent-agents",
+    "oathweaveSubject": null,
+    "emberpathClientKeyId": null
+  }
+}
+```
+
+`runtime` is `ardent` or `hermes`. `actorId` is the HiveMem actor and `workspaceId` its workspace, set
+once Magnus enrolled an Ardent profile in HiveMem; a Hermes profile has neither. Magnus issues no
+per-agent Oathweave client or Emberpath key, so `oathweaveSubject` and `emberpathClientKeyId` are null.
+`GET /api/v1/agents/identity?actorId=` is the reverse lookup by HiveMem actor.
+
+Any role may read both, as it may read nodes and Hermes profiles. An Ardent profile is visible to
+`ADMIN` only, as on the Ardent routes, and answers 404 for anyone else; it wins over a Hermes profile of
+the same name on the node. A malformed reference answers 400 `INVALID_AGENT_REF`, a malformed `actorId`
+400 `VALIDATION_ERROR`, an unknown agent 404 and a profile that two Hermes installations on the node
+share 409 `AGENT_REF_AMBIGUOUS`. A linked service identity cannot reach these routes. The response
+carries identifiers only, never a credential.
+
 ## Web terminal
 
 No route on this server offers a terminal, and `POST /api/v1/terminal/ticket` stays retired, so this
@@ -246,6 +280,8 @@ unless these rows change. `POST /api/v1/hermes/deploy` is retired and always ans
 | Method | Path pattern | Class | Auth | Wave 1 |
 |---|---|---|---|---|
 | GET | `/api/docs/openapi.json` | browser | `public` |  |
+| GET | `/api/v1/agents/:agentRef/identity` | browser | `user:any` | yes |
+| GET | `/api/v1/agents/identity` | browser | `user:any` | yes |
 | POST | `/api/v1/agents/upgrade` | browser | `user:ADMIN` | yes |
 | GET | `/api/v1/agents/upgrade/eligibility` | browser | `user:any` | yes |
 | GET | `/api/v1/agents/upgrade/runs/:id` | browser | `user:any` | yes |

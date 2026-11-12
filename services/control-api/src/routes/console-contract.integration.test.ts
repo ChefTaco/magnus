@@ -193,6 +193,7 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('browser contract against rea
     '/webhooks/{id}/deliveries': `/webhooks/${webhookId}/deliveries`,
     '/topology': '/topology',
     '/ardent/agents/operations/{id}': `/ardent/agents/operations/${operationId}`,
+    '/agents/{agentRef}/identity': `/agents/${nodeId}~default/identity`,
   };
   const NOT_RUN_HERE = new Set([
     '/assistant/insights', // model provider
@@ -202,6 +203,7 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('browser contract against rea
     '/ardent/agents/operations/{id}/stream', // stream
     '/files/read', '/ops/storage-evidence/{nodeId}', // live agent
     '/library/files/{fileId}', '/ops/incidents/{id}/evidence', // covered below
+    '/agents/identity', // needs an Ardent HiveMem enrollment; agent-identity.test.ts covers it
   ]);
 
   it('covers every GET route in the contract', () => {

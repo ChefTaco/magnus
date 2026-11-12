@@ -2814,6 +2814,36 @@ export const ardentAgentOperationSchema = z.object({
 export const ardentAgentOperationResponseSchema = ok(ardentAgentOperationSchema);
 export const ardentAgentOperationAcceptedResponseSchema = ok(z.object({ operationId: z.string() }));
 
+// ── Agent identity ──
+// services/control-api/src/routes/agent-identity.ts
+/** One part of an agent reference: a Magnus node ID or a profile name. */
+export const AGENT_REF_PART_PATTERN = /^[A-Za-z0-9._-]{1,128}$/u;
+/** `<nodeId>~<profile>`: the fleet key for one agent profile on one node, as Ardent Studio writes it. */
+export const agentRefSchema = z.string().max(257).refine((value) => {
+  const parts = value.split('~');
+  return parts.length === 2 && parts.every((part) => AGENT_REF_PART_PATTERN.test(part));
+}, 'Expected <nodeId>~<profile>');
+/** A HiveMem actor ID, the agent's identity in HiveMem. */
+export const agentActorIdSchema = z.string().regex(/^[a-z0-9_-]{2,32}$/u);
+/** The runtime that serves the profile. */
+export const agentRuntimeSchema = z.enum(['ardent', 'hermes']);
+/**
+ * How the products of a suite name one agent. Magnus fills what it knows and leaves the rest null:
+ * an Ardent profile has a HiveMem actor once Magnus enrolled it; a Hermes profile has none.
+ */
+export const agentIdentitySchema = z.object({
+  agentRef: z.string(),
+  nodeId: z.string(),
+  profile: z.string(),
+  runtime: agentRuntimeSchema,
+  actorId: z.string().nullable(),
+  workspaceId: z.string().nullable(),
+  oathweaveSubject: z.string().nullable(),
+  emberpathClientKeyId: z.string().nullable(),
+});
+export const agentIdentityResponseSchema = ok(agentIdentitySchema);
+export const agentIdentityLookupQuerySchema = z.object({ actorId: agentActorIdSchema });
+
 // ── Agent upgrade remedies ──
 // A copy of packages/contracts/src/upgrade-remedies.ts, which is the source and stays free of dependencies so
 // browser bundles can import it alone. This file is exported as one file, so the copy travels with it, and
@@ -3125,6 +3155,12 @@ export const magnusBrowserRoutes: readonly MagnusBrowserRoute[] = [
     note: 'Reruns a failed operation from its first unfinished step; finished steps are never rerun. 409 unless the operation failed.' },
   { method: 'POST', path: '/ardent/installations/{nodeId}/profiles/{name}/hivemem', response: ardentAgentOperationAcceptedResponseSchema, roles: ADMIN_ONLY, successStatus: 202,
     note: 'Enable HiveMem on an existing running profile: profile-check, hivemem-enroll, config-save, service-restart, ready-probe. A profile already enrolled in HiveMem gets a replacement credential: renewed with a fresh deadline where HiveMem supports it, otherwise rotated. Magnus then renews it before every deadline.' },
+
+  // Agent identity
+  { method: 'GET', path: '/agents/identity', query: agentIdentityLookupQuerySchema, response: agentIdentityResponseSchema, roles: ANY_ROLE,
+    note: 'Reverse lookup by HiveMem actor ID. 400 for a malformed actorId. 404 when no agent has it; Ardent agents resolve for ADMIN only, as the Ardent routes do.' },
+  { method: 'GET', path: '/agents/{agentRef}/identity', response: agentIdentityResponseSchema, roles: ANY_ROLE,
+    note: 'agentRef is <nodeId>~<profile>. 400 INVALID_AGENT_REF for a malformed reference. 404 for an unknown agent; an Ardent profile is known to ADMIN only, as the Ardent routes are, and wins over a Hermes profile of the same name on that node. 409 AGENT_REF_AMBIGUOUS when two Hermes installations on the node have the profile.' },
 
   // Topology
   { method: 'GET', path: '/topology', response: topologyResponseSchema, roles: ANY_ROLE, note: 'Cached for five minutes. A cache miss probes every node, which can take seconds.' },

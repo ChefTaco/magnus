@@ -5,6 +5,12 @@ All notable changes to this project are documented in this file. The format is b
 [Semantic Versioning](https://semver.org/).
 
 
+## [Unreleased]
+
+### Added
+
+- Agent identity: `GET /api/v1/agents/:agentRef/identity` resolves an agent reference (`<nodeId>~<profile>`) to its runtime and, for an Ardent profile enrolled in HiveMem, its HiveMem actor and workspace; `GET /api/v1/agents/identity?actorId=` is the reverse lookup. Any role may read them; Ardent profiles stay visible to ADMIN only. The browser contract publishes both (`agentIdentityResponseSchema`).
+
 ## [2.6.0] - 2026-11-12
 
 ### Added
