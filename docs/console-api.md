@@ -11,7 +11,7 @@ moved without updating it.
 | Class | Meaning | Rows | At the ingress |
 |---|---|---|---|
 | `browser` | A person's console drives it with a user token | 144 | Allow the exact method and path |
-| `machine` | Agents, services and integrations, with their own credentials | 80 | Deny |
+| `machine` | Agents, services and integrations, with their own credentials | 82 | Deny |
 | `exclude` | Reachable with a user token, but no console needs it, or it was written for a server-side caller | 142 | Deny until a feature needs it and it is reviewed |
 | `retired` | Always answers 404 or 410 | 64 | Deny |
 
@@ -412,6 +412,8 @@ Each row is a non-browser route that a broader `browser` pattern also matches. D
 | Method | Path pattern | Class | Auth | Why |
 |---|---|---|---|---|
 | GET | `/` | machine | `public` | Public liveness probe for load balancers. |
+| GET | `/health/live` | machine | `public` | Suite liveness probe; touches no dependency. |
+| GET | `/health/ready` | machine | `public` | Suite readiness probe: database required, Redis degraded. |
 | POST | `/api/v1/cron/managed-occurrences/admit` | machine | `node-token` | Agent scheduler coordination with the node credential. |
 | POST | `/api/v1/cron/managed-occurrences/settle` | machine | `node-token` | Agent scheduler coordination with the node credential. |
 | POST | `/api/v1/cron/managed-occurrences/status` | machine | `node-token` | Agent scheduler coordination with the node credential. |

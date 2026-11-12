@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { decodeJwt, decodeProtectedHeader } from 'jose';
+import { hasOathweavePermission, uniqueOathweaveLink, watchStreamAuthorization } from '@hivemagnus/magnus-oathweave';
 import { parseOathweaveLinks, type OathweaveIdentityLink } from '../config/oathweave.js';
 import {
   configuredOathweaveServiceVerifier,
@@ -42,15 +43,14 @@ export function linkedMagnusIdentity(
   } catch {
     throw new OathweaveAccessDenied('Identity links are unreadable');
   }
-  const matches = links.filter((link) => link.issuer === identity.issuer && link.subject === identity.subject);
-  if (matches.length !== 1) throw new OathweaveAccessDenied('An explicit unique account link is required');
-  const link = matches[0]!;
+  const link = uniqueOathweaveLink(links, identity.issuer, identity.subject);
+  if (!link) throw new OathweaveAccessDenied('An explicit unique account link is required');
   if (link.role === 'ARDENT_SERVICE') throw new OathweaveAccessDenied('A service link cannot authenticate a person');
 
   let role: UserRole;
-  if (link.role === 'ADMIN' && identity.permissions.includes('magnus:admin')) role = 'ADMIN';
-  else if (link.role !== 'VIEWER' && identity.permissions.includes('magnus:operate')) role = 'OPERATOR';
-  else if (identity.permissions.includes('magnus:view')) role = 'VIEWER';
+  if (link.role === 'ADMIN' && hasOathweavePermission(identity, 'magnus:admin')) role = 'ADMIN';
+  else if (link.role !== 'VIEWER' && hasOathweavePermission(identity, 'magnus:operate')) role = 'OPERATOR';
+  else if (hasOathweavePermission(identity, 'magnus:view')) role = 'VIEWER';
   else throw new OathweaveAccessDenied('Magnus permission required');
 
   // `email` is an audit actor label across this server (often read as
@@ -58,7 +58,7 @@ export function linkedMagnusIdentity(
   return {
     userId: link.localUserId, email: link.localUserId, role, iat: identity.issuedAt, exp: identity.expiresAt,
     // The fleet gateway applies the same rule, and also requires recent identity verification.
-    terminal: link.role === 'ADMIN' && identity.permissions.includes(OATHWEAVE_TERMINAL_PERMISSION),
+    terminal: link.role === 'ADMIN' && hasOathweavePermission(identity, OATHWEAVE_TERMINAL_PERMISSION),
   };
 }
 
@@ -79,10 +79,10 @@ export function linkedMagnusService(
   } catch {
     throw new OathweaveAccessDenied('Identity links are unreadable');
   }
-  const matches = links.filter((link) => link.issuer === identity.issuer && link.subject === identity.clientId);
-  if (matches.length !== 1 || matches[0]!.role !== 'ARDENT_SERVICE') throw new OathweaveAccessDenied('An explicit unique service link is required');
-  if (!identity.permissions.includes(OATHWEAVE_ARDENT_SERVICE_PERMISSION)) throw new OathweaveAccessDenied('Ardent service permission required');
-  const userId = `service:ardent:${matches[0]!.localUserId}`;
+  const link = uniqueOathweaveLink(links, identity.issuer, identity.clientId);
+  if (link?.role !== 'ARDENT_SERVICE') throw new OathweaveAccessDenied('An explicit unique service link is required');
+  if (!hasOathweavePermission(identity, OATHWEAVE_ARDENT_SERVICE_PERMISSION)) throw new OathweaveAccessDenied('Ardent service permission required');
+  const userId = `service:ardent:${link.localUserId}`;
   return { userId, email: userId, role: 'VIEWER', iat: identity.issuedAt, exp: identity.expiresAt,
     service: { kind: 'ardent', issuer: identity.issuer, clientId: identity.clientId } };
 }
@@ -101,8 +101,8 @@ export function actingOathweaveLink(
   if (!subject || subject.length > 256) return undefined;
   let links: OathweaveIdentityLink[];
   try { links = identityLinks(raw); } catch { return undefined; }
-  const matches = links.filter((link) => link.issuer === issuer && link.subject === subject);
-  return matches.length === 1 && matches[0]!.role !== 'ARDENT_SERVICE' ? matches[0] : undefined;
+  const link = uniqueOathweaveLink(links, issuer, subject);
+  return link?.role !== 'ARDENT_SERVICE' ? link : undefined;
 }
 
 /** Routing only: the chosen verifier checks the signature and every claim. */
@@ -167,18 +167,25 @@ export { OATHWEAVE_STREAM_RECHECK_MS };
 export function watchOathweaveStream(authorization: string | undefined, onRevoked: () => void): () => void {
   const token = authorization?.startsWith('Bearer ') ? authorization.slice(7) : '';
   if (!isOathweaveToken(token)) return () => undefined;
-  let stopped = false;
-  const stop = () => {
-    stopped = true;
-    clearInterval(timer);
-  };
-  const timer = setInterval(() => {
-    oathweaveAuthentication(token).catch(() => {
-      if (stopped) return;
-      stop();
-      onRevoked();
-    });
-  }, OATHWEAVE_STREAM_RECHECK_MS);
-  timer.unref();
-  return stop;
+  const watch = watchStreamAuthorization({
+    // Every re-check verifies the token again, so this unverified expiry can only end a stream sooner.
+    expiresAt: unverifiedExpiry(token),
+    recheck: async () => {
+      const user = await oathweaveAuthentication(token);
+      if (!user) throw new Error('Oathweave authentication is no longer configured');
+      return { expiresAt: user.exp };
+    },
+    onEnd: onRevoked,
+    intervalMs: OATHWEAVE_STREAM_RECHECK_MS,
+  });
+  return () => watch.stop();
+}
+
+function unverifiedExpiry(token: string): number {
+  try {
+    const { exp } = decodeJwt(token);
+    return typeof exp === 'number' && Number.isFinite(exp) ? exp : 0;
+  } catch {
+    return 0;
+  }
 }

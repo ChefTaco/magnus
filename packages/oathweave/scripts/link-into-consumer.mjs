@@ -5,7 +5,7 @@
 // there as the last step of its build. Node resolves the link to this same source, so nothing is
 // copied. The link goes when node_modules does; `npm run check:packs` fails if a tarball lacks it.
 //
-// jose and zod are peer dependencies for the same reason: npm would pack a linked package's regular
+// @hivemagnus/hive-common, jose and zod are peer dependencies for the same reason: npm would pack a linked package's regular
 // dependencies at paths outside the tarball root. Consumers depend on them directly instead.
 import { existsSync, mkdirSync, rmSync, symlinkSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';

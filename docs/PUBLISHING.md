@@ -126,9 +126,9 @@ to be private and on the release version.
   that use it, through `bundleDependencies`. `npm pack` in a workspace omits a
   dependency hoisted to the repository root without saying so, so each consumer's
   build links the package into its own `node_modules`. `npm run check:packs` fails
-  if a tarball lacks it. It declares `jose` and `zod` as peers, which its consumers
-  depend on directly, because npm would pack regular dependencies of a linked
-  package at paths outside the tarball.
+  if a tarball lacks it. It declares `@hivemagnus/hive-common`, `jose` and `zod`
+  as peers, which its consumers depend on directly, because npm would pack regular
+  dependencies of a linked package at paths outside the tarball.
 - **`@hivemagnus/magnus-fleet-gateway`** ships as the image
   `ghcr.io/cheftaco/magnus-fleet-gateway`.
 

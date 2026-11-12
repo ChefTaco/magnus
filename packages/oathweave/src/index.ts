@@ -1,12 +1,27 @@
-/** Oathweave resource token verification shared by the Magnus server and fleet gateway. */
-import { createHash } from 'node:crypto';
+/**
+ * Oathweave resource token verification shared by the Magnus server and fleet gateway.
+ *
+ * A thin layer over `@hivemagnus/hive-common/oathweave`: the suite verifier, its session cache,
+ * link lookup and permission helpers, configured to keep Magnus's rules (no clock tolerance, a
+ * required `roles` claim, the `clientId` claim only, https endpoints, fifteen-minute tokens).
+ */
 import {
-  createRemoteJWKSet,
-  customFetch,
-  jwtVerify,
-  type JWTVerifyGetKey,
-} from 'jose';
+  createOathweaveVerifier as createSuiteVerifier,
+  hasPermissions,
+  isOathweaveEndpoint as isSuiteEndpoint,
+  uniqueIdentityLink,
+  type OathweaveVerifierOptions,
+} from '@hivemagnus/hive-common/oathweave';
+import type { JWTVerifyGetKey } from 'jose';
 import { z } from 'zod';
+
+export {
+  OATHWEAVE_SESSION_CACHE_TTL_MS,
+  OATHWEAVE_STREAM_RECHECK_MS,
+  OathweaveError,
+  isOathweaveError,
+  watchStreamAuthorization,
+} from '@hivemagnus/hive-common/oathweave';
 
 /** The only resource audience Magnus services accept on Oathweave tokens. */
 export const OATHWEAVE_AUDIENCE = 'magnus';
@@ -24,6 +39,8 @@ const localUserId = z.string().min(1).max(256)
     message: 'localUserId must not name the system or a service actor',
   });
 
+// Magnus's link contract: exactly these four fields, a closed role set and a free-form local
+// actor label. The shared parser accepts more fields and fewer local IDs, so it is not used here.
 const identityLinkSchema = z.object({
   issuer: z.url(),
   subject: z.string().min(1).max(256),
@@ -33,7 +50,7 @@ const identityLinkSchema = z.object({
 
 export type OathweaveIdentityLink = z.infer<typeof identityLinkSchema>;
 
-/** Parse MAGNUS_OATHWEAVE_IDENTITIES_JSON. Throws on anything malformed. */
+/** Parse MAGNUS_OATHWEAVE_IDENTITIES_JSON. Throws on anything malformed. Duplicates parse, and grant nothing. */
 export function parseOathweaveLinks(raw: string): OathweaveIdentityLink[] {
   return z.array(identityLinkSchema).max(10_000).parse(JSON.parse(raw));
 }
@@ -44,18 +61,17 @@ export function uniqueOathweaveLink(
   issuer: string,
   subject: string,
 ): OathweaveIdentityLink | undefined {
-  const matches = links.filter((link) => link.issuer === issuer && link.subject === subject);
-  return matches.length === 1 ? matches[0] : undefined;
+  return uniqueIdentityLink(links, issuer, subject);
+}
+
+/** Whether a verified token grants `permission`. Exact names only: Magnus honours no wildcards. */
+export function hasOathweavePermission(identity: { readonly permissions: readonly string[] }, permission: string): boolean {
+  return hasPermissions(identity.permissions, [permission], { wildcards: false });
 }
 
 /** Oathweave endpoints carry bearer tokens, so only verified HTTPS is acceptable. */
 export function isOathweaveEndpoint(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return url.protocol === 'https:' && !url.username && !url.password && !url.hash;
-  } catch {
-    return false;
-  }
+  return isSuiteEndpoint(value);
 }
 
 export interface OathweaveOptions {
@@ -80,125 +96,62 @@ export interface OathweaveIdentity {
 
 export type OathweaveVerifier = (token: string) => Promise<OathweaveIdentity>;
 
-/**
- * How long a userinfo answer is reused. Measured from the moment that request
- * started, not from when it answered, so a slow identity service cannot stretch
- * it. Together with OATHWEAVE_STREAM_RECHECK_MS this keeps logout effective
- * within 15 seconds on open streams as well as on ordinary requests.
- */
-export const OATHWEAVE_SESSION_CACHE_TTL_MS = 10_000;
-/** How often a long-lived connection re-checks its token. */
-export const OATHWEAVE_STREAM_RECHECK_MS = 5_000;
-// Long enough to stop one failing request verifying twice, short enough that a
-// network blip does not lock anyone out.
-const FAILED_CHECK_TTL_MS = 2_000;
-const SESSION_CACHE_MAX = 5_000;
-const IDENTITY_REQUEST_TIMEOUT_MS = 3_000;
-
-interface SessionCheck {
-  expiresAt: number;
-  displayName: Promise<string>;
+export interface OathweaveOverrides {
+  keys?: JWTVerifyGetKey;
+  fetch?: typeof fetch;
+  now?: () => number;
 }
 
-/** Resource JWT validation plus online session revocation. Failure is closed. */
-export function createOathweaveVerifier(
-  options: OathweaveOptions,
-  overrides: { keys?: JWTVerifyGetKey; fetch?: typeof fetch; now?: () => number } = {},
-): OathweaveVerifier {
-  for (const value of [options.issuer, options.jwksUrl, options.userinfoUrl]) {
+function assertEndpoints(values: readonly string[]): void {
+  for (const value of values) {
     if (!isOathweaveEndpoint(value)) throw new Error('Oathweave endpoints require verified HTTPS');
   }
-  const request: typeof fetch = overrides.fetch ?? ((input, init) => fetch(input, init));
-  const now = overrides.now ?? (() => Date.now());
-  const keys = overrides.keys ?? createRemoteJWKSet(new URL(options.jwksUrl), {
-    [customFetch]: (url, init) => request(url, {
-      ...init,
-      redirect: 'error',
-      signal: AbortSignal.timeout(IDENTITY_REQUEST_TIMEOUT_MS),
-    }),
+}
+
+/** The settings Magnus has always verified with, for both principal kinds. */
+function suiteOptions(
+  options: { issuer: string; jwksUrl: string; audience: string },
+  overrides: OathweaveOverrides,
+): OathweaveVerifierOptions {
+  return {
+    issuer: options.issuer,
+    audience: options.audience,
+    jwksUrl: options.jwksUrl,
+    ...(overrides.keys ? { keys: overrides.keys } : {}),
+    ...(overrides.fetch ? { fetch: overrides.fetch } : {}),
+    // Read the clock on every call, as Magnus always has, rather than binding Date.now once.
+    now: overrides.now ?? (() => Date.now()),
+    clockToleranceSec: 0,
+    maxLifetimeSec: 900,
+    clientIdClaim: 'clientId',
+  };
+}
+
+/**
+ * Resource JWT validation plus online session revocation. Failure is closed: every refusal is an
+ * `OathweaveError`. Signature, claims and lifetime are checked on every call; only the userinfo
+ * answer is cached (10 s from when its request started, 2 s for failures).
+ */
+export function createOathweaveVerifier(options: OathweaveOptions, overrides: OathweaveOverrides = {}): OathweaveVerifier {
+  assertEndpoints([options.issuer, options.jwksUrl, options.userinfoUrl]);
+  const verifier = createSuiteVerifier({
+    ...suiteOptions(options, overrides),
+    userinfoUrl: options.userinfoUrl,
+    accept: 'user',
+    requireRoles: true,
   });
-
-  // Holds only tokens whose signature already verified, so unauthenticated
-  // garbage can neither fill it nor reach the identity service.
-  const sessions = new Map<string, SessionCheck>();
-
-  async function fetchDisplayName(token: string, subject: string): Promise<string> {
-    const result = await request(options.userinfoUrl, {
-      headers: { Authorization: `Bearer ${token}` },
-      redirect: 'error',
-      signal: AbortSignal.timeout(IDENTITY_REQUEST_TIMEOUT_MS),
-    });
-    if (!result.ok) throw new Error('Identity session is inactive');
-    const user: unknown = await result.json();
-    if (!user || typeof user !== 'object' || (user as { sub?: unknown }).sub !== subject) {
-      throw new Error('Identity subject mismatch');
-    }
-    return 'name' in user && typeof user.name === 'string' ? user.name : subject;
-  }
-
-  function sessionCheck(token: string, subject: string): Promise<string> {
-    const key = createHash('sha256').update(token).digest('hex');
-    const startedAt = now();
-    const current = sessions.get(key);
-    if (current && startedAt < current.expiresAt) return current.displayName;
-
-    sessions.delete(key);
-    if (sessions.size >= SESSION_CACHE_MAX) {
-      for (const [entryKey, entry] of sessions) if (entry.expiresAt <= startedAt) sessions.delete(entryKey);
-      if (sessions.size >= SESSION_CACHE_MAX) sessions.delete(sessions.keys().next().value as string);
-    }
-    // Concurrent pollers share this one in-flight request.
-    const check: SessionCheck = {
-      expiresAt: startedAt + OATHWEAVE_SESSION_CACHE_TTL_MS,
-      displayName: fetchDisplayName(token, subject),
-    };
-    check.displayName.catch(() => {
-      check.expiresAt = Math.min(check.expiresAt, now() + FAILED_CHECK_TTL_MS);
-    });
-    sessions.set(key, check);
-    return check.displayName;
-  }
-
   return async (token: string): Promise<OathweaveIdentity> => {
-    // Signature, claims and lifetime are checked on every call. Only the online
-    // session answer is cached, so an expired token never survives on a cache hit.
-    const { payload } = await jwtVerify(token, keys, {
-      algorithms: ['RS256'],
-      issuer: options.issuer,
-      audience: options.audience,
-      requiredClaims: ['sub', 'iat', 'exp', 'jti'],
-      maxTokenAge: '15m',
-      currentDate: new Date(now()),
-    });
-    if (
-      payload.aud !== options.audience
-      || typeof payload.iat !== 'number'
-      || typeof payload.exp !== 'number'
-      || payload.exp <= payload.iat
-      || payload.exp - payload.iat > 900
-    ) throw new Error('Invalid resource token audience or lifetime');
-    if (
-      payload['actorType'] !== 'USER'
-      || typeof payload.sub !== 'string' || !payload.sub
-      || typeof payload.jti !== 'string' || !payload.jti
-      || typeof payload['sessionId'] !== 'string' || !payload['sessionId']
-      || typeof payload['clientId'] !== 'string'
-      || !Array.isArray(payload['permissions']) || !payload['permissions'].every((value) => typeof value === 'string')
-      || !Array.isArray(payload['roles']) || !payload['roles'].every((value) => typeof value === 'string')
-    ) throw new Error('Invalid resource identity');
-
-    const displayName = await sessionCheck(token, payload.sub);
-    const authTime = payload['auth_time'];
+    const principal = await verifier.verifyUser(token);
     return {
-      subject: payload.sub,
-      issuer: options.issuer,
-      sessionId: payload['sessionId'],
-      permissions: payload['permissions'] as string[],
-      roles: payload['roles'] as string[],
-      displayName,
-      issuedAt: payload.iat,
-      expiresAt: payload.exp,
-      authTime: typeof authTime === 'number' && Number.isSafeInteger(authTime) && authTime > 0 ? authTime : undefined,
+      subject: principal.subject,
+      issuer: principal.issuer,
+      sessionId: principal.sessionId,
+      permissions: [...principal.permissions],
+      roles: [...principal.roles],
+      displayName: principal.displayName,
+      issuedAt: principal.issuedAt,
+      expiresAt: principal.expiresAt,
+      authTime: principal.authTime,
     };
   };
 }
@@ -229,52 +182,19 @@ export type OathweaveServiceVerifier = (token: string) => Promise<OathweaveServi
  */
 export function createOathweaveServiceVerifier(
   options: OathweaveServiceOptions,
-  overrides: { keys?: JWTVerifyGetKey; fetch?: typeof fetch; now?: () => number } = {},
+  overrides: OathweaveOverrides = {},
 ): OathweaveServiceVerifier {
-  for (const value of [options.issuer, options.jwksUrl]) {
-    if (!isOathweaveEndpoint(value)) throw new Error('Oathweave endpoints require verified HTTPS');
-  }
-  const request: typeof fetch = overrides.fetch ?? ((input, init) => fetch(input, init));
-  const now = overrides.now ?? (() => Date.now());
-  const keys = overrides.keys ?? createRemoteJWKSet(new URL(options.jwksUrl), {
-    [customFetch]: (url, init) => request(url, {
-      ...init,
-      redirect: 'error',
-      signal: AbortSignal.timeout(IDENTITY_REQUEST_TIMEOUT_MS),
-    }),
-  });
+  assertEndpoints([options.issuer, options.jwksUrl]);
+  const verifier = createSuiteVerifier({ ...suiteOptions(options, overrides), accept: 'service' });
   return async (token: string): Promise<OathweaveServiceIdentity> => {
-    const { payload } = await jwtVerify(token, keys, {
-      algorithms: ['RS256'],
-      issuer: options.issuer,
-      audience: options.audience,
-      requiredClaims: ['sub', 'iat', 'exp', 'jti'],
-      maxTokenAge: '15m',
-      currentDate: new Date(now()),
-    });
-    if (
-      payload.aud !== options.audience
-      || typeof payload.iat !== 'number'
-      || typeof payload.exp !== 'number'
-      || payload.exp <= payload.iat
-      || payload.exp - payload.iat > 900
-    ) throw new Error('Invalid service token audience or lifetime');
-    if (
-      payload['actorType'] !== 'SERVICE_ACCOUNT'
-      || payload['token_type'] !== 'access'
-      || typeof payload.sub !== 'string' || !payload.sub
-      || payload['clientId'] !== payload.sub
-      || payload['sessionId'] !== undefined
-      || typeof payload.jti !== 'string' || !payload.jti
-      || !Array.isArray(payload['permissions']) || !payload['permissions'].every((value) => typeof value === 'string')
-    ) throw new Error('Invalid service identity');
+    const principal = await verifier.verifyService(token);
     return {
-      clientId: payload.sub,
-      issuer: options.issuer,
-      tokenId: payload.jti,
-      permissions: payload['permissions'] as string[],
-      issuedAt: payload.iat,
-      expiresAt: payload.exp,
+      clientId: principal.subject,
+      issuer: principal.issuer,
+      tokenId: principal.tokenId,
+      permissions: [...principal.permissions],
+      issuedAt: principal.issuedAt,
+      expiresAt: principal.expiresAt,
     };
   };
 }

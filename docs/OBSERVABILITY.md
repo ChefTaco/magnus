@@ -13,6 +13,17 @@ and process and fleet gauges.
 Set `OTEL_EXPORTER_OTLP_ENDPOINT` on the server or the agent to export traces over OTLP HTTP. The
 agent can also forward journald logs to the server.
 
+## Health probes
+
+The server answers the suite's unauthenticated probes. `GET /health/live` is 200 whenever the
+process can answer and touches no dependency. `GET /health/ready` checks PostgreSQL and Redis with a
+2 s timeout each: it is 200 `ready`, 200 `degraded` when only Redis is down (queued work waits), and
+503 `not_ready` when the database is down. Both bodies name the service and carry no version or
+error text. `GET /` and `GET /api/v1/health` are unchanged; authenticated detail stays at
+`/api/v1/health/details`.
+
+## Operational summaries
+
 Read-only summaries for dashboards and agents are under `/api/v1/ops/*`: dependency health, fleet
 readiness, timeline, retention, trace map, predictive maintenance, incident summary, package
 security posture, Hermes effective state, Codex fleet status and application probes. Console pages
