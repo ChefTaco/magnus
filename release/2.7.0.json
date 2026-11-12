@@ -1,0 +1,5 @@
+{
+  "summary": "Agent identity lookup: resolve an agent reference (<nodeId>~<profile>) to its runtime and HiveMem actor, and look an agent up by its HiveMem actor, for HiveXUI's Agent 360 page.",
+  "breaking": false,
+  "migrations": []
+}

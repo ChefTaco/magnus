@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file. The format is b
 [Semantic Versioning](https://semver.org/).
 
 
-## [Unreleased]
+## [2.7.0] - 2026-11-12
 
 ### Added
 
