@@ -211,6 +211,21 @@ export async function selectModel(taskType: string): Promise<ModelProfile> {
   );
 }
 
+/**
+ * Resolve the model id to send to a route's primary provider.
+ *
+ * The global AI settings model is an Ollama model (it is validated against the
+ * local Ollama model list and falls back to `OLLAMA_MODEL`), so it only
+ * overrides routes whose provider is Ollama. Any other provider gets the
+ * route's own model; the settings model is used there only when the route has
+ * no model at all.
+ */
+export function resolveRouteModel(profile: Pick<ModelProfile, 'provider' | 'model'>, settingsModel: string | null | undefined): string {
+  const provider = profile.provider ?? 'ollama';
+  if (provider === 'ollama') return settingsModel || profile.model || OLLAMA_MODEL;
+  return profile.model || settingsModel || OLLAMA_MODEL;
+}
+
 export async function getModelProfiles(): Promise<ModelProfile[]> {
   return loadModelProfiles();
 }
@@ -1471,7 +1486,7 @@ export async function chat(request: ChatRequest): Promise<ChatResponse> {
   // Load AI settings for model selection + model routing
   const aiSettings = await getAiSettings();
   const modelProfile = await selectModel(request.type ?? 'chat');
-  const activeModel = aiSettings.model || modelProfile.model;
+  const activeModel = resolveRouteModel(modelProfile, aiSettings.model);
   const maxToolRounds = request.maxToolRounds ?? aiSettings.maxToolRounds ?? modelProfile.maxToolRounds ?? MAX_TOOL_ROUNDS;
 
   // Auto-fetch fleet status and anomaly context for user chats
@@ -2430,9 +2445,12 @@ export async function chatStream(
   try {
     const aiSettings = await getAiSettings();
     const profile = await selectModel(request.type ?? 'chat');
-    const primaryProvider = getLlmProvider(profile.provider ?? 'ollama');
+    const primaryProviderName = profile.provider ?? 'ollama';
+    const primaryProvider = getLlmProvider(primaryProviderName);
 
-    if (!primaryProvider.supportsStreaming || !primaryProvider.streamChat) {
+    // The streaming loop below talks to Ollama directly, so any other primary
+    // provider goes through chat(), which sends the route's own model to it.
+    if (primaryProviderName !== 'ollama' || !primaryProvider.supportsStreaming || !primaryProvider.streamChat) {
       const fallback = await chat(request);
       if (fallback.thinking) {
         onEvent({ event: 'thinking_token', data: { text: fallback.thinking, round: 1 } });
@@ -2487,7 +2505,7 @@ export async function chatStream(
     });
 
     // Build system prompt and message history
-    const activeModel = aiSettings.model || profile.model;
+    const activeModel = resolveRouteModel(profile, aiSettings.model);
     const maxToolRounds = request.maxToolRounds ?? aiSettings.maxToolRounds ?? profile.maxToolRounds ?? DEFAULT_MAX_TOOL_ROUNDS;
     const memories = await getMemoriesAsContext();
     const systemPrompt = buildSystemPrompt({ memories, ...optional("fleetStatus", request.fleetContext), ...optional("anomalies", request.anomalyContext), ...optional("controllerContext", request.controllerContext), ...optional("userContext", request.userInfo
