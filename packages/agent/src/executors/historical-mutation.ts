@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 /** Root-operated historical process quiescence. Never a completion receipt. */
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
@@ -34,8 +35,7 @@ export type { ReviewedHistoricalRecords };
 /** Records an operator has independently inspected and approved for historical
  * settlement, from the root-controlled MAGNUS_AGENT_REVIEWED_HISTORICAL_RECORDS
  * file, read once at startup. Empty when the file is absent or refused. */
-export const reviewedHistoricalRecordsLoad = loadReviewedHistoricalRecords({
-  path: process.env['MAGNUS_AGENT_REVIEWED_HISTORICAL_RECORDS']?.trim() || undefined, hostname: HOST_FQDN });
+export const reviewedHistoricalRecordsLoad = loadReviewedHistoricalRecords({ ...optional("path", process.env['MAGNUS_AGENT_REVIEWED_HISTORICAL_RECORDS']?.trim() || undefined), hostname: HOST_FQDN });
 if (reviewedHistoricalRecordsLoad.problem) {
   logger.warn(`Reviewed historical records refused; historical settlements are not honoured: ${reviewedHistoricalRecordsLoad.problem}`);
 } else if (reviewedHistoricalRecordsLoad.count > 0) {

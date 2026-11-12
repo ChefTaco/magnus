@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 import { Hono } from 'hono';
 import type { AppVariables } from '../types/index.js';
 import { authMiddleware, getUser, requireRole } from '../middleware/auth.js';
@@ -87,7 +88,7 @@ orchestraRouter.post('/skill-catalog/:slug/quarantine', requireRole('ADMIN', 'OP
 orchestraRouter.post('/skill-bundles/preview', async (c) => {
   const body = await c.req.json().catch(() => ({})) as { slugs?: string[]; installationId?: string; profileId?: string | null };
   const slugs = Array.isArray(body.slugs) ? body.slugs.filter((slug): slug is string => typeof slug === 'string' && slug.trim().length > 0) : [];
-  const data = await previewSkillBundle({ slugs, installationId: body.installationId, profileId: body.profileId ?? null });
+  const data = await previewSkillBundle({ slugs, ...optional("installationId", body.installationId), profileId: body.profileId ?? null });
   return c.json({ success: true, data });
 });
 
@@ -132,14 +133,14 @@ function requiredParam(name: string, value: string | undefined): string {
 orchestraRouter.get('/skill-assignments', async (c) => {
   const installationId = c.req.query('installationId');
   const profileId = c.req.query('profileId');
-  const data = await svc.listSkillAssignments({ installationId, profileId });
+  const data = await svc.listSkillAssignments({ ...optional("installationId", installationId), ...optional("profileId", profileId) });
   return c.json({ success: true, data });
 });
 
 orchestraRouter.post('/skill-assignments', requireRole('ADMIN', 'OPERATOR'), async (c) => {
   const user = getUser(c);
   const body = await parseBody(c, skillAssignmentCreateSchema);
-  const created = await svc.createSkillAssignment({ ...body, actorId: user.userId });
+  const created = await svc.createSkillAssignment({ "installationId": body.installationId, "skillSlug": body.skillSlug, "source": body.source, ...optional("profileId", body.profileId), ...optional("pinnedVersion", body.pinnedVersion), ...optional("enabled", body.enabled), ...optional("metadata", body.metadata), actorId: user.userId });
   await logAuditEvent({ action: 'orchestra.skill_assignment.create', actorId: user.userId, targetType: 'hermes-skill-assignment', targetId: created.id, details: { installationId: body.installationId, skillSlug: body.skillSlug } });
   return c.json({ success: true, data: created }, 201);
 });
@@ -148,7 +149,7 @@ orchestraRouter.patch('/skill-assignments/:id', requireRole('ADMIN', 'OPERATOR')
   const user = getUser(c);
   const id = requiredParam('id', c.req.param('id'));
   const body = await parseBody(c, skillAssignmentUpdateSchema);
-  const updated = await svc.updateSkillAssignment(id, body);
+  const updated = await svc.updateSkillAssignment(id, { ...optional("pinnedVersion", body.pinnedVersion), ...optional("enabled", body.enabled), ...optional("metadata", body.metadata) });
   await logAuditEvent({ action: 'orchestra.skill_assignment.update', actorId: user.userId, targetType: 'hermes-skill-assignment', targetId: id, details: body });
   return c.json({ success: true, data: updated });
 });
@@ -163,14 +164,14 @@ orchestraRouter.delete('/skill-assignments/:id', requireRole('ADMIN', 'OPERATOR'
 
 // ── Toolset policies ────────────────────────────────────────────────────────
 orchestraRouter.get('/toolset-policies', async (c) => {
-  const data = await svc.listToolsetPolicies({ installationId: c.req.query('installationId'), profileId: c.req.query('profileId') });
+  const data = await svc.listToolsetPolicies({ ...optional("installationId", c.req.query('installationId')), ...optional("profileId", c.req.query('profileId')) });
   return c.json({ success: true, data });
 });
 
 orchestraRouter.put('/toolset-policies', requireRole('ADMIN', 'OPERATOR'), async (c) => {
   const user = getUser(c);
   const body = await parseBody(c, toolsetPolicyCreateSchema);
-  const row = await svc.upsertToolsetPolicy({ ...body, actorId: user.userId });
+  const row = await svc.upsertToolsetPolicy({ "installationId": body.installationId, "toolset": body.toolset, "approvalMode": body.approvalMode, ...optional("profileId", body.profileId), ...optional("enabled", body.enabled), ...optional("perToolHooks", body.perToolHooks), ...optional("allowList", body.allowList), ...optional("denyList", body.denyList), ...optional("metadata", body.metadata), actorId: user.userId });
   await logAuditEvent({ action: 'orchestra.toolset_policy.upsert', actorId: user.userId, targetType: 'hermes-toolset-policy', targetId: row.id, details: { installationId: body.installationId, toolset: body.toolset } });
   return c.json({ success: true, data: row });
 });
@@ -179,7 +180,7 @@ orchestraRouter.patch('/toolset-policies/:id', requireRole('ADMIN', 'OPERATOR'),
   const user = getUser(c);
   const id = requiredParam('id', c.req.param('id'));
   const body = await parseBody(c, toolsetPolicyUpdateSchema);
-  const row = await svc.updateToolsetPolicyById(id, body);
+  const row = await svc.updateToolsetPolicyById(id, { ...optional("metadata", body.metadata), ...optional("enabled", body.enabled), ...optional("approvalMode", body.approvalMode), ...optional("perToolHooks", body.perToolHooks), ...optional("allowList", body.allowList), ...optional("denyList", body.denyList) });
   await logAuditEvent({ action: 'orchestra.toolset_policy.update', actorId: user.userId, targetType: 'hermes-toolset-policy', targetId: id, details: {} });
   return c.json({ success: true, data: row });
 });
@@ -246,7 +247,7 @@ orchestraRouter.get('/roles/:id/child-preview', async c => {
 orchestraRouter.post('/roles', requireRole('ADMIN', 'OPERATOR'), async (c) => {
   const user = getUser(c);
   const body = await parseBody(c, hermesRoleCreateSchema);
-  const row = await svc.createHermesRole({ ...body, actorId: user.userId });
+  const row = await svc.createHermesRole({ "name": body.name, "personalityMd": body.personalityMd, ...optional("description", body.description), ...optional("personalityRef", body.personalityRef), ...optional("toolsets", body.toolsets), ...optional("skills", body.skills), ...optional("provider", body.provider), ...optional("cron", body.cron), ...optional("messaging", body.messaging), ...optional("metadata", body.metadata), actorId: user.userId });
   await logAuditEvent({ action: 'orchestra.role.create', actorId: user.userId, targetType: 'hermes-role', targetId: row.id, details: { name: body.name } });
   return c.json({ success: true, data: row }, 201);
 });
@@ -255,7 +256,7 @@ orchestraRouter.patch('/roles/:id', requireRole('ADMIN', 'OPERATOR'), async (c) 
   const user = getUser(c);
   const id = requiredParam('id', c.req.param('id'));
   const body = await parseBody(c, hermesRoleUpdateSchema);
-  const row = await svc.updateHermesRole(id, body);
+  const row = await svc.updateHermesRole(id, { ...optional("metadata", body.metadata), ...optional("description", body.description), ...optional("cron", body.cron), ...optional("skills", body.skills), ...optional("toolsets", body.toolsets), ...optional("provider", body.provider), ...optional("personalityMd", body.personalityMd), ...optional("personalityRef", body.personalityRef), ...optional("messaging", body.messaging) });
   await logAuditEvent({ action: 'orchestra.role.update', actorId: user.userId, targetType: 'hermes-role', targetId: id, details: {} });
   return c.json({ success: true, data: row });
 });
@@ -272,7 +273,7 @@ orchestraRouter.post('/roles/:id/apply', requireRole('ADMIN', 'OPERATOR'), async
   const user = getUser(c);
   const id = requiredParam('id', c.req.param('id'));
   const body = await parseBody(c, hermesRoleApplySchema);
-  const row = await svc.applyHermesRole(id, { ...body, actorId: user.userId });
+  const row = await svc.applyHermesRole(id, { "installationId": body.installationId, ...optional("profileId", body.profileId), actorId: user.userId });
   await logAuditEvent({ action: 'orchestra.role.apply', actorId: user.userId, targetType: 'hermes-role', targetId: id, details: { installationId: body.installationId, profileId: body.profileId } });
   return c.json({ success: true, data: row }, 202);
 });
@@ -289,7 +290,7 @@ orchestraRouter.get('/providers', async (c) => {
 orchestraRouter.put('/providers', requireRole('ADMIN', 'OPERATOR'), async (c) => {
   const user = getUser(c);
   const body = await parseBody(c, providerConfigSchema);
-  const row = await svc.upsertProviderConfig({ ...body, actorId: user.userId });
+  const row = await svc.upsertProviderConfig({ "installationId": body.installationId, "chain": body.chain, "sortStrategy": body.sortStrategy, ...optional("profileId", body.profileId), ...optional("whitelist", body.whitelist), ...optional("blacklist", body.blacklist), ...optional("visionOverride", body.visionOverride), ...optional("compressionOverride", body.compressionOverride), ...optional("metadata", body.metadata), actorId: user.userId });
   await logAuditEvent({ action: 'orchestra.provider_config.upsert', actorId: user.userId, targetType: 'hermes-provider-config', targetId: row.id, details: { installationId: body.installationId, profileId: body.profileId } });
   return c.json({ success: true, data: row });
 });
@@ -303,7 +304,7 @@ orchestraRouter.get('/credential-pools', async (c) => {
 orchestraRouter.post('/credential-pools', requireRole('ADMIN'), async (c) => {
   const user = getUser(c);
   const body = await parseBody(c, credentialPoolCreateSchema);
-  const row = await svc.createCredentialPool({ ...body, actorId: user.userId });
+  const row = await svc.createCredentialPool({ "name": body.name, "provider": body.provider, "rotationPolicy": body.rotationPolicy, "secretRefs": body.secretRefs, ...optional("metadata", body.metadata), actorId: user.userId });
   await logAuditEvent({ action: 'orchestra.credential_pool.create', actorId: user.userId, targetType: 'hermes-credential-pool', targetId: row.id, details: { name: body.name, provider: body.provider } });
   return c.json({ success: true, data: row }, 201);
 });
@@ -312,7 +313,7 @@ orchestraRouter.patch('/credential-pools/:id', requireRole('ADMIN'), async (c) =
   const user = getUser(c);
   const id = requiredParam('id', c.req.param('id'));
   const body = await parseBody(c, credentialPoolUpdateSchema);
-  const row = await svc.updateCredentialPool(id, body);
+  const row = await svc.updateCredentialPool(id, { ...optional("metadata", body.metadata), ...optional("provider", body.provider), ...optional("rotationPolicy", body.rotationPolicy), ...optional("secretRefs", body.secretRefs) });
   await logAuditEvent({ action: 'orchestra.credential_pool.update', actorId: user.userId, targetType: 'hermes-credential-pool', targetId: id, details: {} });
   return c.json({ success: true, data: row });
 });
@@ -329,7 +330,7 @@ orchestraRouter.post('/credential-pools/:id/attach', requireRole('ADMIN'), async
   const user = getUser(c);
   const id = requiredParam('id', c.req.param('id'));
   const body = await parseBody(c, credentialPoolAttachSchema);
-  const row = await svc.attachCredentialPool(id, { ...body, actorId: user.userId });
+  const row = await svc.attachCredentialPool(id, { "installationId": body.installationId, ...optional("profileId", body.profileId), actorId: user.userId });
   await logAuditEvent({ action: 'orchestra.credential_pool.attach', actorId: user.userId, targetType: 'hermes-credential-pool', targetId: id, details: { installationId: body.installationId } });
   return c.json({ success: true, data: row }, 202);
 });
@@ -351,7 +352,7 @@ orchestraRouter.get('/mcp-servers', async (c) => {
 orchestraRouter.post('/mcp-servers', requireRole('ADMIN', 'OPERATOR'), async (c) => {
   const user = getUser(c);
   const body = await parseBody(c, mcpServerCreateSchema);
-  const row = await svc.createMcpServer({ ...body, actorId: user.userId });
+  const row = await svc.createMcpServer({ "name": body.name, "transport": body.transport, ...optional("endpoint", body.endpoint), ...optional("args", body.args), ...optional("env", body.env), ...optional("toolFilter", body.toolFilter), ...optional("samplingEnabled", body.samplingEnabled), ...optional("metadata", body.metadata), actorId: user.userId });
   await logAuditEvent({ action: 'orchestra.mcp_server.create', actorId: user.userId, targetType: 'hermes-mcp-server', targetId: row.id, details: { name: body.name, transport: body.transport } });
   return c.json({ success: true, data: row }, 201);
 });
@@ -360,7 +361,7 @@ orchestraRouter.patch('/mcp-servers/:id', requireRole('ADMIN', 'OPERATOR'), asyn
   const user = getUser(c);
   const id = requiredParam('id', c.req.param('id'));
   const body = await parseBody(c, mcpServerUpdateSchema);
-  const row = await svc.updateMcpServer(id, body);
+  const row = await svc.updateMcpServer(id, { ...optional("env", body.env), ...optional("metadata", body.metadata), ...optional("args", body.args), ...optional("endpoint", body.endpoint), ...optional("transport", body.transport), ...optional("toolFilter", body.toolFilter), ...optional("samplingEnabled", body.samplingEnabled) });
   await logAuditEvent({ action: 'orchestra.mcp_server.update', actorId: user.userId, targetType: 'hermes-mcp-server', targetId: id, details: {} });
   return c.json({ success: true, data: row });
 });
@@ -377,7 +378,7 @@ orchestraRouter.post('/mcp-servers/:id/attach', requireRole('ADMIN', 'OPERATOR')
   const user = getUser(c);
   const id = requiredParam('id', c.req.param('id'));
   const body = await parseBody(c, mcpServerAttachSchema);
-  const row = await svc.attachMcpServer(id, { ...body, actorId: user.userId });
+  const row = await svc.attachMcpServer(id, { "installationId": body.installationId, ...optional("profileId", body.profileId), actorId: user.userId });
   await logAuditEvent({ action: 'orchestra.mcp_server.attach', actorId: user.userId, targetType: 'hermes-mcp-server', targetId: id, details: { installationId: body.installationId } });
   return c.json({ success: true, data: row }, 202);
 });
@@ -392,14 +393,14 @@ orchestraRouter.delete('/mcp-servers/attachments/:attachmentId', requireRole('AD
 
 // ── Messaging bindings ──────────────────────────────────────────────────────
 orchestraRouter.get('/messaging-bindings', async (c) => {
-  const data = await svc.listMessagingBindings({ installationId: c.req.query('installationId'), profileId: c.req.query('profileId') });
+  const data = await svc.listMessagingBindings({ ...optional("installationId", c.req.query('installationId')), ...optional("profileId", c.req.query('profileId')) });
   return c.json({ success: true, data });
 });
 
 orchestraRouter.post('/messaging-bindings', requireRole('ADMIN', 'OPERATOR'), async (c) => {
   const user = getUser(c);
   const body = await parseBody(c, messagingBindingCreateSchema);
-  const row = await svc.createMessagingBinding({ ...body, actorId: user.userId });
+  const row = await svc.createMessagingBinding({ "installationId": body.installationId, "platform": body.platform, ...optional("profileId", body.profileId), ...optional("channelIds", body.channelIds), ...optional("voiceEnabled", body.voiceEnabled), ...optional("voiceModel", body.voiceModel), ...optional("ttsProvider", body.ttsProvider), ...optional("secretRef", body.secretRef), ...optional("metadata", body.metadata), actorId: user.userId });
   await logAuditEvent({ action: 'orchestra.messaging_binding.create', actorId: user.userId, targetType: 'hermes-messaging-binding', targetId: row.id, details: { installationId: body.installationId, platform: body.platform } });
   return c.json({ success: true, data: row }, 201);
 });
@@ -408,7 +409,7 @@ orchestraRouter.patch('/messaging-bindings/:id', requireRole('ADMIN', 'OPERATOR'
   const user = getUser(c);
   const id = requiredParam('id', c.req.param('id'));
   const body = await parseBody(c, messagingBindingUpdateSchema);
-  const row = await svc.updateMessagingBinding(id, body);
+  const row = await svc.updateMessagingBinding(id, { ...optional("metadata", body.metadata), ...optional("channelIds", body.channelIds), ...optional("voiceEnabled", body.voiceEnabled), ...optional("voiceModel", body.voiceModel), ...optional("ttsProvider", body.ttsProvider), ...optional("secretRef", body.secretRef) });
   await logAuditEvent({ action: 'orchestra.messaging_binding.update', actorId: user.userId, targetType: 'hermes-messaging-binding', targetId: id, details: {} });
   return c.json({ success: true, data: row });
 });
@@ -423,14 +424,14 @@ orchestraRouter.delete('/messaging-bindings/:id', requireRole('ADMIN', 'OPERATOR
 
 // ── Hermes cron jobs ────────────────────────────────────────────────────────
 orchestraRouter.get('/cron-jobs', async (c) => {
-  const data = await svc.listHermesCronJobs({ installationId: c.req.query('installationId'), profileId: c.req.query('profileId') });
+  const data = await svc.listHermesCronJobs({ ...optional("installationId", c.req.query('installationId')), ...optional("profileId", c.req.query('profileId')) });
   return c.json({ success: true, data });
 });
 
 orchestraRouter.post('/cron-jobs', requireRole('ADMIN', 'OPERATOR'), async (c) => {
   const user = getUser(c);
   const body = await parseBody(c, hermesCronJobCreateSchema);
-  const row = await svc.createHermesCronJob({ ...body, actorId: user.userId });
+  const row = await svc.createHermesCronJob({ "installationId": body.installationId, "name": body.name, "prompt": body.prompt, "cronExpr": body.cronExpr, ...optional("profileId", body.profileId), ...optional("naturalLanguage", body.naturalLanguage), ...optional("attachedSkills", body.attachedSkills), ...optional("delivery", body.delivery), ...optional("enabled", body.enabled), ...optional("metadata", body.metadata), actorId: user.userId });
   await logAuditEvent({ action: 'orchestra.cron_job.create', actorId: user.userId, targetType: 'hermes-cron-job', targetId: row.id, details: { installationId: body.installationId, name: body.name } });
   return c.json({ success: true, data: row }, 201);
 });
@@ -439,7 +440,7 @@ orchestraRouter.patch('/cron-jobs/:id', requireRole('ADMIN', 'OPERATOR'), async 
   const user = getUser(c);
   const id = requiredParam('id', c.req.param('id'));
   const body = await parseBody(c, hermesCronJobUpdateSchema);
-  const row = await svc.updateHermesCronJob(id, body);
+  const row = await svc.updateHermesCronJob(id, { ...optional("metadata", body.metadata), ...optional("enabled", body.enabled), ...optional("delivery", body.delivery), ...optional("cronExpr", body.cronExpr), ...optional("prompt", body.prompt), ...optional("naturalLanguage", body.naturalLanguage), ...optional("attachedSkills", body.attachedSkills) });
   await logAuditEvent({ action: 'orchestra.cron_job.update', actorId: user.userId, targetType: 'hermes-cron-job', targetId: id, details: {} });
   return c.json({ success: true, data: row });
 });
@@ -454,14 +455,14 @@ orchestraRouter.delete('/cron-jobs/:id', requireRole('ADMIN', 'OPERATOR'), async
 
 // ── Plugins ─────────────────────────────────────────────────────────────────
 orchestraRouter.get('/plugins', async (c) => {
-  const data = await svc.listHermesPlugins({ installationId: c.req.query('installationId'), profileId: c.req.query('profileId') });
+  const data = await svc.listHermesPlugins({ ...optional("installationId", c.req.query('installationId')), ...optional("profileId", c.req.query('profileId')) });
   return c.json({ success: true, data });
 });
 
 orchestraRouter.post('/plugins', requireRole('ADMIN', 'OPERATOR'), async (c) => {
   const user = getUser(c);
   const body = await parseBody(c, hermesPluginCreateSchema);
-  const row = await svc.installHermesPlugin({ ...body, actorId: user.userId });
+  const row = await svc.installHermesPlugin({ "installationId": body.installationId, "pluginSlug": body.pluginSlug, "pluginType": body.pluginType, ...optional("profileId", body.profileId), ...optional("pinnedVersion", body.pinnedVersion), ...optional("metadata", body.metadata), actorId: user.userId });
   await logAuditEvent({ action: 'orchestra.plugin.install', actorId: user.userId, targetType: 'hermes-plugin-install', targetId: row.id, details: { installationId: body.installationId, pluginSlug: body.pluginSlug } });
   return c.json({ success: true, data: row }, 201);
 });
@@ -476,14 +477,14 @@ orchestraRouter.delete('/plugins/:id', requireRole('ADMIN', 'OPERATOR'), async (
 
 // ── Hooks ───────────────────────────────────────────────────────────────────
 orchestraRouter.get('/hooks', async (c) => {
-  const data = await svc.listHermesHooks({ installationId: c.req.query('installationId'), profileId: c.req.query('profileId') });
+  const data = await svc.listHermesHooks({ ...optional("installationId", c.req.query('installationId')), ...optional("profileId", c.req.query('profileId')) });
   return c.json({ success: true, data });
 });
 
 orchestraRouter.post('/hooks', requireRole('ADMIN', 'OPERATOR'), async (c) => {
   const user = getUser(c);
   const body = await parseBody(c, hermesHookCreateSchema);
-  const row = await svc.createHermesHook({ ...body, actorId: user.userId });
+  const row = await svc.createHermesHook({ "installationId": body.installationId, "event": body.event, "target": body.target, ...optional("profileId", body.profileId), ...optional("config", body.config), ...optional("enabled", body.enabled), ...optional("metadata", body.metadata), actorId: user.userId });
   await logAuditEvent({ action: 'orchestra.hook.create', actorId: user.userId, targetType: 'hermes-hook', targetId: row.id, details: { installationId: body.installationId, event: body.event } });
   return c.json({ success: true, data: row }, 201);
 });
@@ -492,7 +493,7 @@ orchestraRouter.patch('/hooks/:id', requireRole('ADMIN', 'OPERATOR'), async (c) 
   const user = getUser(c);
   const id = requiredParam('id', c.req.param('id'));
   const body = await parseBody(c, hermesHookUpdateSchema);
-  const row = await svc.updateHermesHook(id, body);
+  const row = await svc.updateHermesHook(id, { ...optional("metadata", body.metadata), ...optional("enabled", body.enabled), ...optional("event", body.event), ...optional("target", body.target), ...optional("config", body.config) });
   await logAuditEvent({ action: 'orchestra.hook.update', actorId: user.userId, targetType: 'hermes-hook', targetId: id, details: {} });
   return c.json({ success: true, data: row });
 });

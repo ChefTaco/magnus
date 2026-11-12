@@ -60,7 +60,7 @@ describe('console API route inventory', () => {
 
   it.each([
     '/api/v1/heartbeat', '/api/v1/discovery', '/api/v1/logs/ingest', '/api/v1/resource-leases/enrollment',
-    '/api/v1/shared-resource-leases', '/api/v1/mcp', '/api/v1/security-integration', '/api/v1/hiveskills', '/api/v1/hermes-registry',
+    '/api/v1/embermend', '/api/v1/shared-resource-leases', '/api/v1/mcp', '/api/v1/security-integration', '/api/v1/hiveskills', '/api/v1/hermes-registry',
   ])('never allows machine surface %s', (prefix) => {
     const matching = rows.filter((row) => row.path.startsWith(prefix) && row.method !== 'ALL');
     expect(matching.length).toBeGreaterThan(0);

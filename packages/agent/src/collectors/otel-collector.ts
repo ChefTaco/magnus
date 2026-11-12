@@ -116,7 +116,7 @@ export function startSpan(
   const active: ActiveSpan = {
     traceId,
     spanId,
-    parentSpanId: options?.parentSpanId,
+    ...(options?.parentSpanId === undefined ? {} : { parentSpanId: options.parentSpanId }),
     operationName,
     kind: options?.kind ?? 'internal',
     startTimeMs: Date.now(),
@@ -128,7 +128,7 @@ export function startSpan(
     traceId,
     spanId,
     addEvent(name: string, attrs?: Record<string, string | number | boolean>) {
-      active.events.push({ name, timestampMs: Date.now(), attributes: attrs });
+      active.events.push({ name, timestampMs: Date.now(), ...(attrs === undefined ? {} : { attributes: attrs }) });
     },
     setAttribute(key: string, value: string | number | boolean) {
       active.attributes[key] = value;
@@ -138,7 +138,7 @@ export function startSpan(
       const span: Span = {
         traceId: active.traceId,
         spanId: active.spanId,
-        parentSpanId: active.parentSpanId,
+        ...(active.parentSpanId === undefined ? {} : { parentSpanId: active.parentSpanId }),
         operationName: active.operationName,
         serviceName: SERVICE_NAME,
         kind: active.kind,

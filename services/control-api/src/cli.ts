@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { optional } from './utils/optional.js';
 // magnus-server: npm and container entry point. Server modules read the
 // environment when they are imported, so they load only after the env files
 // named on the command line have been applied.
@@ -192,11 +193,7 @@ async function commandBackup(label: string | undefined): Promise<number> {
   await client.connect();
   try {
     const state = await readMigrationState(client, MIGRATIONS_DIR).catch(() => null);
-    const result = await backupDatabase({
-      databaseUrl, client, backupDir: defaultBackupDir(process.env, magnusHome()),
-      label: label ?? `manual-${await version()}`, pgDump: process.env['MAGNUS_PG_DUMP'],
-      lastApplied: state?.lastApplied ?? null, keep: backupKeep(),
-    });
+    const result = await backupDatabase({ databaseUrl, client, backupDir: defaultBackupDir(process.env, magnusHome()), label: label ?? `manual-${await version()}`, ...optional("pgDump", process.env['MAGNUS_PG_DUMP']), lastApplied: state?.lastApplied ?? null, keep: backupKeep() });
     console.log(JSON.stringify(result));
     return 0;
   } finally {
@@ -265,15 +262,7 @@ async function startupAutoMigrate(): Promise<void> {
   const { autoMigrate, defaultBackupDir, migrateDatabaseUrl } = await import('./cli/auto-migrate.js');
   const { magnusHome } = await import('./utils/magnus-home.js');
   try {
-    await autoMigrate({
-      databaseUrl: migrateDatabaseUrl(process.env, resolveDatabaseUrl()),
-      migrationsDir: MIGRATIONS_DIR,
-      backupDir: defaultBackupDir(process.env, magnusHome()),
-      version: await version(),
-      settings,
-      pgDump: process.env['MAGNUS_PG_DUMP'],
-      migrate,
-    });
+    await autoMigrate({ databaseUrl: migrateDatabaseUrl(process.env, resolveDatabaseUrl()), migrationsDir: MIGRATIONS_DIR, backupDir: defaultBackupDir(process.env, magnusHome()), version: await version(), settings, ...optional("pgDump", process.env['MAGNUS_PG_DUMP']), migrate });
   } catch (error) {
     if (error instanceof FatalError) throw error;
     fatal(error instanceof Error ? error.message : String(error));

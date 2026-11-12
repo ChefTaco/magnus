@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 /**
  * anomaly-detector.ts — Statistical anomaly detection using Z-score analysis.
  *
@@ -279,11 +280,7 @@ export async function evaluateAnomalies(
   for (const { metric, value } of extractions) {
     const history = baselines[metric];
     const result = detectAnomaly(value, history);
-    result.severity = classifyResourceSeverity(metric, value, {
-      memoryPercent: metrics.memoryPercent,
-      swapUsedBytes: Number(metrics.swapUsedBytes ?? 0),
-      cpuSamples,
-    });
+    result.severity = classifyResourceSeverity(metric, value, { ...optional("memoryPercent", metrics.memoryPercent), swapUsedBytes: Number(metrics.swapUsedBytes ?? 0), cpuSamples });
     results.push(result);
 
     const existing = await db.anomalyEvent.findFirst({

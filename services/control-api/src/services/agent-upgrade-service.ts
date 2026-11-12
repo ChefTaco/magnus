@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 /**
  * Server-driven agent upgrades (MAGNUS_AGENT_UPGRADES). The server pins one
  * exact version and its npm integrity, checks every selected node before
@@ -285,7 +286,7 @@ export async function verifyAgentRelease(version: string, fetchImpl?: typeof fet
   if (cached && Date.now() - cached.at < 10 * 60_000) return cached.value;
   let value: ReleaseVerification;
   try {
-    const release = await resolveAgentRelease({ version, fetchImpl, timeoutMs: 5_000 });
+    const release = await resolveAgentRelease({ version, ...optional("fetchImpl", fetchImpl), timeoutMs: 5_000 });
     value = { verified: true, integrity: release.integrity, reason: null };
   } catch (error) {
     value = { verified: false, integrity: null, reason: error instanceof Error ? error.message : String(error) };
@@ -671,7 +672,7 @@ export function defaultDeps(store: RunStore = defaultRunStore()): UpgradeDeps {
       return { version: row?.agent?.version ?? null, report: storedSelfUpgrade(row?.metadata), lastHeartbeatAt: row?.lastHeartbeatAt ?? null };
     },
     check: async (nodeId, run) => {
-      const [candidate] = await listUpgradeCandidates(run.version, [nodeId], { allowRetryReverted: run.allowRetryReverted });
+      const [candidate] = await listUpgradeCandidates(run.version, [nodeId], { ...optional("allowRetryReverted", run.allowRetryReverted) });
       if (!candidate) return { reason: 'node is no longer in the inventory', code: 'NODE_NOT_FOUND' };
       return candidate.eligible ? null : { reason: candidate.reason ?? 'not eligible', code: candidate.code };
     },
@@ -1138,7 +1139,7 @@ export interface CheckOptions {
  */
 export async function checkCandidates(release: Pick<AgentRelease, 'version' | 'engines'>, nodeIds: readonly string[] | undefined, deps: Pick<UpgradeDeps, 'preflight' | 'heal'>,
   options: CheckOptions = {}): Promise<UpgradeCandidate[]> {
-  const list = () => listUpgradeCandidates(release.version, nodeIds, { allowRetryReverted: options.allowRetryReverted });
+  const list = () => listUpgradeCandidates(release.version, nodeIds, { ...optional("allowRetryReverted", options.allowRetryReverted) });
   let candidates = await list();
   const ask = deps.preflight;
   if (!ask) return candidates;
@@ -1206,7 +1207,7 @@ export async function checkUpgrade(options: Pick<StartRunOptions, 'version' | 'i
   let release: ReleaseVerification;
   let engines: string | null = null;
   try {
-    const resolved = await resolveAgentRelease({ version, integrity: options.integrity });
+    const resolved = await resolveAgentRelease({ version, ...optional("integrity", options.integrity) });
     release = { verified: true, integrity: resolved.integrity, reason: null };
     engines = resolved.engines ?? null;
   } catch (error) {
@@ -1237,7 +1238,7 @@ export async function startUpgradeRun(options: StartRunOptions): Promise<{ run: 
   try {
     const running = await latestUpgradeRun(store);
     if (running?.status === 'running') throw new HttpError(409, 'AGENT_UPGRADE_RUNNING', `Upgrade run ${running.id} is still in progress`);
-    const release = await resolveAgentRelease({ version, integrity: options.integrity });
+    const release = await resolveAgentRelease({ version, ...optional("integrity", options.integrity) });
     const baseDeps = options.deps ?? defaultDeps(store);
     const deps: UpgradeDeps = { ...baseDeps, index: baseDeps.index ?? (next => store.index(next)) };
     // Checking a large fleet can outlast the lock's TTL.
@@ -1328,7 +1329,5 @@ export async function retryUpgradeRun(id: string, options: Omit<StartRunOptions,
   const stoppedOnAmbiguity = Boolean(previous.suspectedRelease && previous.nodes.some(isCountedAmbiguous) && !previous.nodes.some(node => node.state === 'confirmed'));
   const holdOldAgents = !options.acknowledgeSuspicion && (stoppedOnAmbiguity || Boolean(previous.excluded?.some(node => node.code === 'RETRY_HELD_SUSPECTED')));
   const { acknowledgeSuspicion: _acknowledged, ...startOptions } = options;
-  return startUpgradeRun({ ...startOptions, store, holdOldAgents, version: previous.version, integrity: previous.integrity, nodeIds, retryOf: previous.id,
-    maxFailures: options.maxFailures ?? previous.maxFailures,
-    allowPrerelease: options.allowPrerelease ?? isPrerelease(previous.version) });
+  return startUpgradeRun({ ...startOptions, store, holdOldAgents, version: previous.version, integrity: previous.integrity, nodeIds, retryOf: previous.id, ...optional("maxFailures", options.maxFailures ?? previous.maxFailures), allowPrerelease: options.allowPrerelease ?? isPrerelease(previous.version) });
 }

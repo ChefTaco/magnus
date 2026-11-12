@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 import { Hono } from 'hono';
 import type { AppVariables } from '../types/index.js';
 import { authMiddleware } from '../middleware/auth.js';
@@ -21,7 +22,7 @@ auditRouter.get('/', async (c) => {
   const action = c.req.query('action') ?? undefined;
   const actorId = c.req.query('actorId') ?? undefined;
 
-  const result = await queryAuditEvents({ date, action, actorId, page, pageSize });
+  const result = await queryAuditEvents({ ...optional("date", date), ...optional("action", action), ...optional("actorId", actorId), page, pageSize });
 
   return c.json({
     success: true,

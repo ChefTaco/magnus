@@ -128,6 +128,7 @@ export const envSchema = z.object({
   MAGNUS_PLUGIN_READ_TOKEN_DIGESTS_JSON: z.string().optional(),
   MAGNUS_PLUGIN_OPERATOR_TOKEN_SHA256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   MAGNUS_SHARED_RESOURCE_TOKEN_SHA256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  MAGNUS_EMBERMEND_GRANTS_JSON: z.string().optional(),
   MAGNUS_HIVESKILLS_DEPLOYMENTS_JSON: z.string().optional(),
   MAGNUS_SHARED_RESOURCE_TOKEN_DIGESTS_JSON: z.string().optional(),
   MAGNUS_FLEET_CHECK_TOKEN_SHA256: z.string().regex(/^[a-f0-9]{64}$/).optional(),

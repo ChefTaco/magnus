@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import type { AppVariables } from '../types/index.js';
@@ -52,8 +53,8 @@ const parseBody = async <T extends z.ZodType>(schema: T, raw: unknown): Promise<
 agentUpgradesRouter.post('/', requireRole('ADMIN'), async c => {
   const body = await parseBody(startSchema, await c.req.json().catch(() => ({})));
   const { dryRun, ...options } = body;
-  if (dryRun) return c.json({ success: true, data: { dryRun: true, ...await checkUpgrade(options) } });
-  const { run } = await startUpgradeRun({ ...options, actorId: getUser(c).userId });
+  if (dryRun) return c.json({ success: true, data: { dryRun: true, ...await checkUpgrade({ ...optional("version", options.version), ...optional("integrity", options.integrity), ...optional("nodeIds", options.nodeIds), ...optional("allowRetryReverted", options.allowRetryReverted) }) } });
+  const { run } = await startUpgradeRun({ ...optional("version", options.version), ...optional("integrity", options.integrity), ...optional("nodeIds", options.nodeIds), ...optional("canaryNodeId", options.canaryNodeId), ...optional("allowPrerelease", options.allowPrerelease), ...optional("allowRetryReverted", options.allowRetryReverted), ...optional("maxFailures", options.maxFailures), actorId: getUser(c).userId });
   return c.json({ success: true, data: run }, 202);
 });
 
@@ -77,6 +78,6 @@ const retrySchema = z.object({
 
 agentUpgradesRouter.post('/runs/:id/retry', requireRole('ADMIN'), async c => {
   const body = await parseBody(retrySchema, await c.req.json().catch(() => ({})));
-  const { run } = await retryUpgradeRun(c.req.param('id')!, { ...body, actorId: getUser(c).userId });
+  const { run } = await retryUpgradeRun(c.req.param('id')!, { ...optional("canaryNodeId", body.canaryNodeId), ...optional("allowRetryReverted", body.allowRetryReverted), ...optional("maxFailures", body.maxFailures), ...optional("acknowledgeSuspicion", body.acknowledgeSuspicion), actorId: getUser(c).userId });
   return c.json({ success: true, data: run }, 202);
 });

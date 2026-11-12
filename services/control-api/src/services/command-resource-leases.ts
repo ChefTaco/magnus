@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 import type { Prisma } from '../db/generated/prisma/client.js';
 import { assertEnrollmentComplete, lockResourceNode } from './resource-enrollment.js';
 import { assertArdentScope } from './ardent-scope-enrollment.js';
@@ -131,7 +132,7 @@ export async function admitResourceCommand(context: ResourceCommandContext, raw:
     if (command) {
       if (scopedArdent) throw new HttpError(409, 'RESOURCE_SCOPE_INVALID', 'Ardent scope requires a fresh direct native action');
       const stored: CommandRequest = { commandId: command.id, command: command.command, args: JSON.parse(command.args),
-        timeoutSeconds: command.timeoutSeconds, workingDirectory: command.workingDirectory ?? undefined,
+        timeoutSeconds: command.timeoutSeconds, ...optional("workingDirectory", command.workingDirectory ?? undefined),
         environment: JSON.parse(command.environment),
         ...(command.coordinationJson ? { coordination: commandFenceSchema.parse(JSON.parse(command.coordinationJson)) } : {}) };
       if (command.nodeId !== node.id || command.status !== 'RUNNING' || commandRequestDigest(stored) !== commandRequestDigest(payload))

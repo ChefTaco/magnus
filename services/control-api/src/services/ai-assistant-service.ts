@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 /**
  * ai-assistant-service.ts — AI Fleet Operations Assistant powered by Ollama.
  *
@@ -131,7 +132,7 @@ function applyRouteMetadata(profile: ModelProfile, routeSource: ModelProfile['ro
     ...profile,
     routePurpose: profile.routePurpose ?? definition?.purpose ?? 'Custom task route.',
     routeReason: profile.routeReason ?? definition?.reason ?? 'Selected only when a caller explicitly requests this task type; otherwise unknown task types fall back to chat.',
-    routeSource,
+    ...optional("routeSource", routeSource),
   };
 }
 
@@ -253,14 +254,7 @@ export async function summarizeConversation(conversationId: string): Promise<str
     const result = await callLlm([
       { role: 'system', content: 'You are a concise summarizer. Respond with ONLY the summary, no preamble.' },
       { role: 'user', content: summaryPrompt },
-    ], {
-      provider: profile.provider,
-      model: profile.model,
-      fallbacks: profile.fallbacks,
-      thinkingMode: 'off',
-      temperature: profile.temperature,
-      maxTokens: profile.maxTokens,
-    });
+    ], { ...optional("provider", profile.provider), model: profile.model, ...optional("fallbacks", profile.fallbacks), thinkingMode: 'off', temperature: profile.temperature, maxTokens: profile.maxTokens });
 
     const summary = result.content.slice(0, 500);
     await db.aiConversation.update({
@@ -917,15 +911,7 @@ async function callLlm<TStructured = unknown>(
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         console.log(`[AI] Calling ${provider.name} model=${candidate.model} messages=${preparedMessages.length} tools=${options.tools?.length ?? 0} attempt=${attempt + 1}`);
-        const result = await provider.chat({
-          messages: preparedMessages,
-          model: candidate.model,
-          tools: provider.supportsToolCalling ? options.tools : undefined,
-          temperature: options.temperature,
-          maxTokens: options.maxTokens,
-          thinkingMode: options.thinkingMode,
-          jsonSchema: provider.supportsStructuredOutputs ? jsonSchema : null,
-        });
+        const result = await provider.chat({ messages: preparedMessages, model: candidate.model, ...optional("tools", provider.supportsToolCalling ? options.tools : undefined), ...optional("temperature", options.temperature), ...optional("maxTokens", options.maxTokens), ...optional("thinkingMode", options.thinkingMode), jsonSchema: provider.supportsStructuredOutputs ? jsonSchema : null });
 
         let content = result.content;
         if (!content && result.nativeToolCalls.length === 0 && result.thinking) {
@@ -1443,7 +1429,7 @@ export async function chat(request: ChatRequest): Promise<ChatResponse> {
   const conversationId = request.conversationId ??
     await getOrCreateConversation(
       request.type ?? 'chat',
-      { nodeId: request.nodeId, createdBy: request.createdBy },
+      { ...optional("nodeId", request.nodeId), ...optional("createdBy", request.createdBy) },
     );
 
   // Load conversation history. Automated heartbeats already receive a fresh
@@ -1514,18 +1500,7 @@ export async function chat(request: ChatRequest): Promise<ChatResponse> {
     if (parts.length > 0) userContext = parts.join('\n');
   }
 
-  const systemPrompt = buildSystemPrompt({
-    memories,
-    fleetStatus: fleetContext,
-    anomalies: anomalyContext,
-    isHeartbeat: request.type === 'heartbeat',
-    heartbeatDoc,
-    recentHistory,
-    controllerContext: request.controllerContext,
-    userContext,
-    scratchpadContext: request.replMode ? getScratchpadAsContext(conversationId) ?? undefined : undefined,
-    replMode: request.replMode,
-  });
+  const systemPrompt = buildSystemPrompt({ memories, ...optional("fleetStatus", fleetContext), ...optional("anomalies", anomalyContext), isHeartbeat: request.type === 'heartbeat', ...optional("heartbeatDoc", heartbeatDoc), ...optional("recentHistory", recentHistory), ...optional("controllerContext", request.controllerContext), ...optional("userContext", userContext), ...optional("scratchpadContext", request.replMode ? getScratchpadAsContext(conversationId) ?? undefined : undefined), ...optional("replMode", request.replMode) });
 
   const messages: LlmMessage[] = [];
   messages.push({ role: 'system', content: systemPrompt });
@@ -1543,7 +1518,7 @@ export async function chat(request: ChatRequest): Promise<ChatResponse> {
   if (request.attachments?.length) {
     userMessage.images = request.attachments
       .filter((a) => a.type === 'image')
-      .map((a) => ({ type: 'image' as const, data: a.data, mimeType: a.mimeType }));
+      .map((a) => ({ type: 'image' as const, data: a.data, ...optional("mimeType", a.mimeType) }));
   }
   messages.push(userMessage);
 
@@ -1570,16 +1545,7 @@ export async function chat(request: ChatRequest): Promise<ChatResponse> {
   console.log(`[AI] chat() start — type=${request.type ?? 'chat'} provider=${modelProfile.provider ?? 'ollama'} model=${activeModel} conversationId=${conversationId} historySize=${history.length} nativeTools=${llmTools.length}`);
   let llmResult: LlmResult;
   try {
-    llmResult = await callLlm(messages, {
-      provider: modelProfile.provider,
-      model: activeModel,
-      fallbacks: modelProfile.fallbacks,
-      tools: llmTools,
-      temperature: modelProfile.temperature,
-      maxTokens: modelProfile.maxTokens,
-      thinkingMode: request.thinkingMode ?? aiSettings.thinkingMode ?? modelProfile.thinkingMode ?? 'standard',
-      responseSchema: aiSettings.structuredOutputsEnabled ? request.responseSchema : undefined,
-    });
+    llmResult = await callLlm(messages, { ...optional("provider", modelProfile.provider), model: activeModel, ...optional("fallbacks", modelProfile.fallbacks), tools: llmTools, temperature: modelProfile.temperature, maxTokens: modelProfile.maxTokens, thinkingMode: request.thinkingMode ?? aiSettings.thinkingMode ?? modelProfile.thinkingMode ?? 'standard', ...optional("responseSchema", aiSettings.structuredOutputsEnabled ? request.responseSchema : undefined) });
   } catch (err) {
     console.error(`[AI] LLM call failed:`, err instanceof Error ? err.message : err);
     const providerLabel = modelProfile.provider === 'ollama' ? `Ollama at ${OLLAMA_BASE_URL}` : `provider ${modelProfile.provider ?? 'ollama'}`;
@@ -1622,15 +1588,7 @@ export async function chat(request: ChatRequest): Promise<ChatResponse> {
         ...messages,
         { role: 'assistant', content: responseContent },
         { role: 'user', content: instruction },
-      ], {
-        provider: modelProfile.provider,
-        model: activeModel,
-        fallbacks: modelProfile.fallbacks,
-        temperature: modelProfile.temperature,
-        maxTokens: modelProfile.maxTokens,
-        thinkingMode: request.thinkingMode ?? aiSettings.thinkingMode ?? modelProfile.thinkingMode ?? 'standard',
-        responseSchema: aiSettings.structuredOutputsEnabled ? request.responseSchema : undefined,
-      });
+      ], { ...optional("provider", modelProfile.provider), model: activeModel, ...optional("fallbacks", modelProfile.fallbacks), temperature: modelProfile.temperature, maxTokens: modelProfile.maxTokens, thinkingMode: request.thinkingMode ?? aiSettings.thinkingMode ?? modelProfile.thinkingMode ?? 'standard', ...optional("responseSchema", aiSettings.structuredOutputsEnabled ? request.responseSchema : undefined) });
 
       responseContent = forced.content || buildLoopStopSummary(instruction, allToolResults);
       if (forced.thinking) {
@@ -1706,11 +1664,7 @@ export async function chat(request: ChatRequest): Promise<ChatResponse> {
         tool_calls: toolCalls,
       });
       roundResults.forEach((r, index) => {
-        messages.push({
-          role: 'tool',
-          content: JSON.stringify(r.success ? r.result : { error: r.error }),
-          tool_call_id: toolCalls[index] && 'id' in toolCalls[index] ? (toolCalls[index] as { id?: string }).id : undefined,
-        });
+        messages.push({ role: 'tool', content: JSON.stringify(r.success ? r.result : { error: r.error }), ...optional("tool_call_id", toolCalls[index] && 'id' in toolCalls[index] ? (toolCalls[index] as { id?: string }).id : undefined) });
       });
     } else {
       // ── Text-based fallback path ──
@@ -1739,16 +1693,7 @@ export async function chat(request: ChatRequest): Promise<ChatResponse> {
     }
 
     try {
-      llmResult = await callLlm(messages, {
-        provider: modelProfile.provider,
-        model: activeModel,
-        fallbacks: modelProfile.fallbacks,
-        tools: llmTools,
-        temperature: modelProfile.temperature,
-        maxTokens: modelProfile.maxTokens,
-        thinkingMode: request.thinkingMode ?? aiSettings.thinkingMode ?? modelProfile.thinkingMode ?? 'standard',
-        responseSchema: aiSettings.structuredOutputsEnabled ? request.responseSchema : undefined,
-      });
+      llmResult = await callLlm(messages, { ...optional("provider", modelProfile.provider), model: activeModel, ...optional("fallbacks", modelProfile.fallbacks), tools: llmTools, temperature: modelProfile.temperature, maxTokens: modelProfile.maxTokens, thinkingMode: request.thinkingMode ?? aiSettings.thinkingMode ?? modelProfile.thinkingMode ?? 'standard', ...optional("responseSchema", aiSettings.structuredOutputsEnabled ? request.responseSchema : undefined) });
       responseContent = llmResult.content;
       if (llmResult.thinking) {
         responseThinking = [responseThinking, llmResult.thinking].filter(Boolean).join('\n\n---\n\n');
@@ -1837,7 +1782,7 @@ export async function chat(request: ChatRequest): Promise<ChatResponse> {
     content: responseContent,
     toolCalls: allToolResults,
     tokenCount,
-    thinking: responseThinking || undefined,
+    ...optional("thinking", responseThinking || undefined),
     structuredAnalysis: structuredAnalysis ?? undefined,
   };
 }
@@ -2428,7 +2373,7 @@ export async function checkOllamaHealth(): Promise<{ available: boolean; model: 
       available: !!modelAvailable,
       model: OLLAMA_MODEL,
       url: OLLAMA_BASE_URL,
-      error: modelAvailable ? undefined : `Model ${OLLAMA_MODEL} not found`,
+      ...optional("error", modelAvailable ? undefined : `Model ${OLLAMA_MODEL} not found`),
     };
   } catch (err) {
     return {
@@ -2529,19 +2474,11 @@ export async function chatStream(
     const activeModel = aiSettings.model || profile.model;
     const maxToolRounds = request.maxToolRounds ?? aiSettings.maxToolRounds ?? profile.maxToolRounds ?? DEFAULT_MAX_TOOL_ROUNDS;
     const memories = await getMemoriesAsContext();
-    const systemPrompt = buildSystemPrompt({
-      memories,
-      fleetStatus: request.fleetContext,
-      anomalies: request.anomalyContext,
-      controllerContext: request.controllerContext,
-      userContext: request.userInfo
+    const systemPrompt = buildSystemPrompt({ memories, ...optional("fleetStatus", request.fleetContext), ...optional("anomalies", request.anomalyContext), ...optional("controllerContext", request.controllerContext), ...optional("userContext", request.userInfo
         ? [request.userInfo.email ? `Email: ${request.userInfo.email}` : null, request.userInfo.username ? `Username: ${request.userInfo.username}` : null, request.userInfo.role ? `Role: ${request.userInfo.role}` : null]
           .filter(Boolean)
           .join('\n')
-        : undefined,
-      scratchpadContext: request.replMode ? getScratchpadAsContext(conversationId) ?? undefined : undefined,
-      replMode: request.replMode,
-    });
+        : undefined), ...optional("scratchpadContext", request.replMode ? getScratchpadAsContext(conversationId) ?? undefined : undefined), ...optional("replMode", request.replMode) });
 
     const messages: LlmMessage[] = [{ role: 'system', content: systemPrompt }];
 
@@ -2556,7 +2493,7 @@ export async function chatStream(
     if (request.attachments?.length) {
       userStreamMsg.images = request.attachments
         .filter((a) => a.type === 'image')
-        .map((a) => ({ type: 'image' as const, data: a.data, mimeType: a.mimeType }));
+        .map((a) => ({ type: 'image' as const, data: a.data, ...optional("mimeType", a.mimeType) }));
     }
     messages.push(userStreamMsg);
 

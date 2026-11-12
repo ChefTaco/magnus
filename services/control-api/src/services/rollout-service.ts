@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 import { recordMonitorPulse } from './monitor-pulse.js';
 import { createHash } from 'node:crypto';
 import { nanoid } from 'nanoid';
@@ -161,7 +162,7 @@ export async function createRollout(opts: CreateRolloutOpts) {
         metadata: JSON.stringify({
           ...input.metadata,
           requestDigest: digest,
-          waves: planRolloutWaves(ids, input.strategy, input),
+          waves: planRolloutWaves(ids, input.strategy, { "waveSize": input.waveSize, ...optional("percentageWaves", input.percentageWaves), ...optional("canaryNodeId", input.canaryNodeId) }),
           maxUnavailable: input.maxUnavailable,
           contractVersion: 1,
         }),
@@ -363,7 +364,7 @@ export async function executeRollout(runId: string): Promise<void> {
           args: JSON.stringify(metadata.args),
           timeoutSeconds: metadata.timeoutSeconds,
           executionDeadline: metadata.executionDeadline !== undefined ? new Date(metadata.executionDeadline) : null,
-          coordinationJson,
+          ...optional("coordinationJson", coordinationJson),
           status: 'QUEUED',
           idempotencyKey: `rollout:${runId}:${nodeId}`,
           correlationId: runId,

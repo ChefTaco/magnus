@@ -9,6 +9,22 @@ datasource db {
   provider = "postgresql"
 }
 
+// Product requests retain their original identity before crossing managed admission.
+model EmbermendOperation {
+  id String @id
+  integrationId String
+  operationId String
+  nodeId String
+  commandId String @unique
+  requestDigest String
+  request Json
+  state String
+  result Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([integrationId, operationId])
+}
+
 // Append-only database side of the root-owned release anti-rewind chain.
 // Application routes never mutate these receipts; deployment tooling does.
 model MagnusReleaseCanary {

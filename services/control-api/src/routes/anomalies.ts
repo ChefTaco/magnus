@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 /**
  * anomalies.ts — Routes for anomaly detection events.
  *
@@ -32,14 +33,7 @@ anomaliesRouter.use('*', authMiddleware);
 
 // ── Fleet-wide anomaly feed ──
 anomaliesRouter.get('/', async (c) => {
-  const result = await listAnomalyEvents({
-    nodeId: c.req.query('nodeId'),
-    metric: c.req.query('metric'),
-    severity: c.req.query('severity'),
-    resolved: c.req.query('resolved') === 'true' ? true : c.req.query('resolved') === 'false' ? false : undefined,
-    page: parseInt(c.req.query('page') ?? '1', 10),
-    pageSize: parseInt(c.req.query('pageSize') ?? '50', 10),
-  });
+  const result = await listAnomalyEvents({ ...optional("nodeId", c.req.query('nodeId')), ...optional("metric", c.req.query('metric')), ...optional("severity", c.req.query('severity')), ...optional("resolved", c.req.query('resolved') === 'true' ? true : c.req.query('resolved') === 'false' ? false : undefined), page: parseInt(c.req.query('page') ?? '1', 10), pageSize: parseInt(c.req.query('pageSize') ?? '50', 10) });
   return c.json({ success: true, data: result });
 });
 
@@ -61,7 +55,7 @@ anomaliesRouter.get('/correlations', async (c) => {
 anomaliesRouter.get('/timeline', async (c) => {
   const hours = Math.min(Math.max(Number(c.req.query('hours') ?? '24'), 1), 24 * 30);
   const nodeId = c.req.query('nodeId') ?? undefined;
-  return c.json({ success: true, data: await getAnomalyTimeline({ hours, nodeId }) });
+  return c.json({ success: true, data: await getAnomalyTimeline({ hours, ...optional("nodeId", nodeId) }) });
 });
 
 // ── Per-anomaly AI correlation details ──
@@ -83,14 +77,7 @@ anomaliesRouter.get('/:nodeId/summary', async (c) => {
 // ── Node anomaly list ──
 anomaliesRouter.get('/:nodeId', async (c) => {
   const nodeId = c.req.param('nodeId')!;
-  const result = await listAnomalyEvents({
-    nodeId,
-    metric: c.req.query('metric'),
-    severity: c.req.query('severity'),
-    resolved: c.req.query('resolved') === 'true' ? true : c.req.query('resolved') === 'false' ? false : undefined,
-    page: parseInt(c.req.query('page') ?? '1', 10),
-    pageSize: parseInt(c.req.query('pageSize') ?? '50', 10),
-  });
+  const result = await listAnomalyEvents({ nodeId, ...optional("metric", c.req.query('metric')), ...optional("severity", c.req.query('severity')), ...optional("resolved", c.req.query('resolved') === 'true' ? true : c.req.query('resolved') === 'false' ? false : undefined), page: parseInt(c.req.query('page') ?? '1', 10), pageSize: parseInt(c.req.query('pageSize') ?? '50', 10) });
   return c.json({ success: true, data: result });
 });
 

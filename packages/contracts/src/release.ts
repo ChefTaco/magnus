@@ -38,16 +38,17 @@ function requireVersion(version: string): ParsedVersion {
 function comparePrerelease(a: string[], b: string[]): number {
   if (a.length === 0 || b.length === 0) return a.length === b.length ? 0 : a.length === 0 ? 1 : -1;
   for (let i = 0; i < Math.max(a.length, b.length); i++) {
-    if (a[i] === undefined) return -1;
-    if (b[i] === undefined) return 1;
-    const an = /^\d+$/.test(a[i]) ? Number(a[i]) : null;
-    const bn = /^\d+$/.test(b[i]) ? Number(b[i]) : null;
+    const left = a[i]; const right = b[i];
+    if (left === undefined) return -1;
+    if (right === undefined) return 1;
+    const an = /^\d+$/.test(left) ? Number(left) : null;
+    const bn = /^\d+$/.test(right) ? Number(right) : null;
     if (an !== null && bn !== null) {
       if (an !== bn) return an < bn ? -1 : 1;
     } else if (an !== null || bn !== null) {
       return an !== null ? -1 : 1;
-    } else if (a[i] !== b[i]) {
-      return a[i] < b[i] ? -1 : 1;
+    } else if (left !== right) {
+      return left < right ? -1 : 1;
     }
   }
   return 0;

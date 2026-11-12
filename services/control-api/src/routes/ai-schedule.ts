@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 /**
  * ai-schedule.ts — Routes for Scheduled AI Operations.
  *
@@ -63,10 +64,7 @@ aiScheduleRouter.post('/', requireRole('ADMIN', 'OPERATOR'), async (c) => {
   const body = CreateSchema.parse(raw);
   const user = c.get('user');
 
-  const op = await createScheduledOp({
-    ...body,
-    createdBy: user?.email ?? user?.userId ?? 'unknown',
-  });
+  const op = await createScheduledOp({ "name": body.name, "cronExpr": body.cronExpr, "prompt": body.prompt, ...optional("description", body.description), ...optional("type", body.type), ...optional("nodeId", body.nodeId), createdBy: user?.email ?? user?.userId ?? 'unknown' });
 
   return c.json({ data: op }, 201);
 });
@@ -76,7 +74,7 @@ aiScheduleRouter.patch('/:id', requireRole('ADMIN', 'OPERATOR'), async (c) => {
   const raw = await c.req.json();
   const body = UpdateSchema.parse(raw);
 
-  const op = await updateScheduledOp(c.req.param('id')!, body);
+  const op = await updateScheduledOp(c.req.param('id')!, { ...optional("name", body.name), ...optional("description", body.description), ...optional("cronExpr", body.cronExpr), ...optional("prompt", body.prompt), ...optional("enabled", body.enabled), ...optional("nodeId", body.nodeId) });
   return c.json({ data: op });
 });
 

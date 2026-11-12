@@ -169,13 +169,22 @@ export function hermesRuntimeCommand(args: string[]): boolean {
   }
   return false;
 }
+/** systemctl list-unit-files returns 1 for an empty filtered result on Ubuntu
+ * 24.04. Only its exact empty, diagnostic-free answer is absence evidence. */
+export function emptyTimerUnitFiles(command: string, args: readonly string[], error: unknown): boolean {
+  if (command !== '/usr/bin/systemctl' || !args.includes('list-unit-files') || !args.includes('--type=timer') || !args.includes('--state=enabled,enabled-runtime') || !args.includes('--no-legend')) return false;
+  const result = z.object({ code: z.literal(1), stdout: z.literal(''), stderr: z.literal(''), killed: z.literal(false).optional(), signal: z.null().optional() }).safeParse(error);
+  return result.success;
+}
 export async function discoverSchedulerSources(options: DiscoveryOptions = {}) {
   const issues: string[] = []; const blockers: DiscoveryBlockerInput[] = []; const sources: Record<string, string> = {};
   const homes = new Set<string>(); const hermesRoots = new Set<string>();
   const now = options.now ?? Date.now; const deadline = now() + 10_000;
   const check = () => { if (now() >= deadline) throw new Error('Scheduler discovery deadline'); };
   const run = options.run ?? (async (command, args) => {
-    check(); return (await exec(command, args, { timeout: Math.max(1, Math.min(2000, deadline - now())), maxBuffer: 256 * 1024 })).stdout;
+    check();
+    try { return (await exec(command, args, { timeout: Math.max(1, Math.min(2000, deadline - now())), maxBuffer: 256 * 1024 })).stdout; }
+    catch (error) { if (emptyTimerUnitFiles(command, args, error)) return ''; throw error; }
   });
   const blockEvidence = (kind: string, evidence: SchedulerMemberEvidence[], count = evidence.length) => {
     if (count) blockers.push({ kind, sourceSha256: schedulerMemberEvidenceDigest(evidence), count });

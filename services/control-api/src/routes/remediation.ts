@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 /**
  * remediation.ts — Auto-remediation rule management and execution history.
  *
@@ -82,7 +83,7 @@ remediationRouter.get('/rules/:id', async (c) => {
 remediationRouter.post('/rules', requireRole('ADMIN', 'OPERATOR'), async (c) => {
   const body = await parseBody(c, CreateRuleSchema);
   const user = c.get('user');
-  const rule = await createRule({ ...body, createdBy: user?.userId ?? 'system' });
+  const rule = await createRule({ "name": body.name, "agentDefinitionId": body.agentDefinitionId, ...optional("description", body.description), ...optional("metric", body.metric), ...optional("severityThreshold", body.severityThreshold), ...optional("input", body.input), ...optional("cooldownMinutes", body.cooldownMinutes), ...optional("maxConcurrentRuns", body.maxConcurrentRuns), ...optional("nodeFilter", body.nodeFilter), ...optional("enabled", body.enabled), createdBy: user?.userId ?? 'system' });
   await logAuditEvent({ action: 'remediation.rule.create', actorId: getUser(c).userId, targetType: 'remediation-rule',
     targetId: rule.id, details: { name: body.name, runbook: body.agentDefinitionId, metric: body.metric ?? null,
       enabled: body.enabled ?? null } });
@@ -91,7 +92,7 @@ remediationRouter.post('/rules', requireRole('ADMIN', 'OPERATOR'), async (c) => 
 
 remediationRouter.patch('/rules/:id', requireRole('ADMIN', 'OPERATOR'), async (c) => {
   const body = await parseBody(c, UpdateRuleSchema);
-  const rule = await updateRule(c.req.param('id')!, body);
+  const rule = await updateRule(c.req.param('id')!, { ...optional("name", body.name), ...optional("description", body.description), ...optional("metric", body.metric), ...optional("severityThreshold", body.severityThreshold), ...optional("agentDefinitionId", body.agentDefinitionId), ...optional("input", body.input), ...optional("cooldownMinutes", body.cooldownMinutes), ...optional("maxConcurrentRuns", body.maxConcurrentRuns), ...optional("nodeFilter", body.nodeFilter), ...optional("enabled", body.enabled) });
   await logAuditEvent({ action: 'remediation.rule.update', actorId: getUser(c).userId, targetType: 'remediation-rule',
     targetId: c.req.param('id')!, details: { changedFields: Object.keys(body).sort(),
       ...(body.enabled !== undefined && { enabled: body.enabled }),
@@ -116,7 +117,7 @@ remediationRouter.get('/executions', async (c) => {
     page: c.req.query('page') ? Number(c.req.query('page')) : undefined,
     pageSize: c.req.query('pageSize') ? Number(c.req.query('pageSize')) : undefined,
   };
-  const result = await listExecutions(params);
+  const result = await listExecutions({ ...optional("ruleId", params.ruleId), ...optional("nodeId", params.nodeId), ...optional("status", params.status), ...optional("page", params.page), ...optional("pageSize", params.pageSize) });
   return c.json({ data: result });
 });
 

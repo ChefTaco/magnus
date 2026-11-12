@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 /**
  * Startup auto-migrate (`MAGNUS_AUTO_MIGRATE=true`).
  *
@@ -146,16 +147,7 @@ export async function autoMigrate(options: AutoMigrateOptions): Promise<AutoMigr
         backup = { file: recent, metadataFile: `${recent}.json`, restoreCommand: restoreCommand(recent), reused: true };
         log(`[auto-migrate] reusing the dump of the same database state from the last attempt: ${recent}`);
       } else {
-        backup = await backupDatabase({
-          databaseUrl: options.databaseUrl,
-          backupDir: options.backupDir,
-          label,
-          client,
-          pgDump: options.pgDump,
-          lastApplied: state.lastApplied,
-          keep: limits.keepBackups,
-          now: now(),
-        }).catch((error: unknown) => {
+        backup = await backupDatabase({ databaseUrl: options.databaseUrl, backupDir: options.backupDir, label, client, ...optional("pgDump", options.pgDump), lastApplied: state.lastApplied, keep: limits.keepBackups, now: now() }).catch((error: unknown) => {
           throw new Error(`Auto-migrate stopped before migrating: the backup failed. ${error instanceof Error ? error.message : String(error)}`);
         });
         log(`[auto-migrate] backup written to ${backup.file}`);
@@ -170,7 +162,7 @@ export async function autoMigrate(options: AutoMigrateOptions): Promise<AutoMigr
       throw new Error(`${error instanceof Error ? error.message : String(error)}${restore}`);
     }
     log('[auto-migrate] migrations applied');
-    return { decision, backup };
+    return { decision, ...optional("backup", backup) };
   } finally {
     if (locked) await client.query('SELECT pg_advisory_unlock(hashtextextended($1, 0))', [MIGRATE_LOCK_KEY]).catch(() => undefined);
     await client.end().catch(() => undefined);

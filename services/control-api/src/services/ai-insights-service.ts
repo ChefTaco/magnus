@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 /**
  * ai-insights-service.ts — AI-powered fleet insights generation.
  *
@@ -68,7 +69,7 @@ export async function generateInsights(force = false): Promise<InsightsResponse>
             body: String(insight.body ?? '').slice(0, 500),
             severity: (['critical', 'warning', 'info', 'success'].includes(insight.severity) ? insight.severity : 'info') as AiInsight['severity'],
             category: String(insight.category ?? 'health'),
-            nodeId: insight.nodeId ? String(insight.nodeId) : undefined,
+            ...optional("nodeId", insight.nodeId ? String(insight.nodeId) : undefined),
           })),
           generatedAt: structured.generatedAt ?? latestStructuredHeartbeat.createdAt.toISOString(),
           conversationId: latestStructuredHeartbeat.conversationId,
@@ -177,7 +178,7 @@ Generate 3-5 most important insights. No markdown, no explanation, ONLY the JSON
       body: String(i.body ?? '').slice(0, 500),
       severity: (['critical', 'warning', 'info', 'success'].includes(i.severity) ? i.severity : 'info') as AiInsight['severity'],
       category: String(i.category ?? 'health'),
-      nodeId: i.nodeId ? String(i.nodeId) : undefined,
+      ...optional("nodeId", i.nodeId ? String(i.nodeId) : undefined),
     }));
 
     const response: InsightsResponse = {
@@ -238,7 +239,7 @@ export async function pinInsight(insight: AiInsight & { generatedAt?: string }):
   const pinned: PinnedAiInsight = {
     id: nanoid(),
     pinnedAt: new Date().toISOString(),
-    generatedAt: insight.generatedAt,
+    ...optional("generatedAt", insight.generatedAt),
     ...insight,
   };
 

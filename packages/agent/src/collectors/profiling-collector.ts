@@ -98,7 +98,7 @@ export function collectProcessProfile(): ProcessProfile {
     cpuUsage: process.cpuUsage(),
     resourceUsage: process.resourceUsage(),
     v8HeapStats: v8.getHeapStatistics(),
-    eventLoopUtilization: elu,
+    ...(elu === undefined ? {} : { eventLoopUtilization: elu }),
   }
 }
 

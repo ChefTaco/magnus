@@ -1,0 +1,134 @@
+import { Agent, fetch as modelFetch } from 'undici';
+import { spawn, execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { createInterface } from 'node:readline';
+import { mkdir, chmod, rm, readFile, realpath, lstat } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { join } from 'node:path';
+import { z } from 'zod';
+import { rootControlled } from './embermend-files.js';
+import { projectRepositoryScope } from './embermend-source-scope.js';
+
+const exec = promisify(execFile);
+async function boundedJson(response: { ok: boolean; body: { getReader(): { read(): Promise<{ done?: boolean; value?: unknown }>; cancel(): Promise<void> } } | null }, maximum: number): Promise<unknown> {
+  if (!response.ok || !response.body) throw new Error('Remote broker unavailable');
+  const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let size = 0;
+  try { for (;;) { const row = await reader.read(); if (row.done) break; const value = z.instanceof(Uint8Array).parse(row.value); size += value.length; if (size > maximum) throw new Error('Remote broker response exceeded budget'); chunks.push(value); } }
+  finally { await reader.cancel().catch(() => undefined); }
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+}
+export const scanWorkerConfigSchema = z.object({
+  user: z.string().regex(/^[a-z_][a-z0-9_-]{0,31}$/), uid: z.number().int().positive(), home: z.string().regex(/^\/[a-zA-Z0-9_./-]+$/), workspaceRoot: z.string().regex(/^\/[a-zA-Z0-9_./-]+$/),
+  workspaceMiB: z.number().int().min(32).max(2048).default(512),
+  nodeExecutable: z.enum(['/usr/bin/node', '/usr/local/bin/node']).default('/usr/bin/node'),
+  scannerImage: z.string().regex(/^(?:sha256:[a-f0-9]{64}|.+@sha256:[a-f0-9]{64})$/),
+  validationProfiles: z.record(z.string(), z.array(z.string().max(1000)).min(1).max(64)).default({}),
+  repositories: z.record(z.string(), z.object({ providerId: z.string(), cloneUrl: z.url().refine(value => /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\.git$/.test(value)) }).strict()),
+  model: z.object({ baseUrl: z.url(), model: z.string(), ref: z.string(), local: z.boolean(), embermendBroker: z.boolean().default(false), caFile: z.string().startsWith('/').optional(), tokenFile: z.string().startsWith('/') }).strict(),
+}).strict().superRefine((value, context) => { const url = new URL(value.model.baseUrl); if (url.username || url.password || url.search || url.hash || !(url.protocol === 'https:' || url.protocol === 'http:' && (value.model.local || value.model.embermendBroker && ['127.0.0.1', '[::1]'].includes(url.hostname)))) context.addIssue({ code: 'custom', message: 'Approved local HTTP model or verified HTTPS required' }); if (value.model.embermendBroker && value.model.model !== value.model.ref) context.addIssue({ code: 'custom', message: 'Broker model must equal its authorized provider reference' }); });
+export type ScanWorkerConfig = z.infer<typeof scanWorkerConfigSchema>;
+// A repository rename changes its locator, never its authorized provider identity.
+// Transfers cross the configured owner boundary and require operator review.
+export function authorizedRepositoryCloneUrl(repository: ScanWorkerConfig['repositories'][string], raw: unknown): string {
+  const identity = z.object({ id: z.number().int().positive(), name: z.string().regex(/^[A-Za-z0-9_.-]+$/), full_name: z.string(), owner: z.object({ login: z.string().regex(/^[A-Za-z0-9-]+$/) }), clone_url: z.url() }).parse(raw);
+  const configuredOwner = new URL(repository.cloneUrl).pathname.split('/')[1];
+  const expected = `https://github.com/${identity.owner.login}/${identity.name}.git`;
+  if (String(identity.id) !== repository.providerId || identity.owner.login.toLowerCase() !== configuredOwner?.toLowerCase() || identity.full_name !== `${identity.owner.login}/${identity.name}` || identity.clone_url !== expected) throw new Error('Repository identity or owner changed; review required');
+  return expected;
+}
+
+export async function workerContainerGone(config: ScanWorkerConfig, operationId: string): Promise<boolean> {
+  const name = 'embermend-scan-' + createHash('sha256').update(operationId).digest('hex');
+  try {
+    const result = await exec('/usr/sbin/runuser', ['-u', config.user, '--', '/usr/bin/docker', 'ps', '--all', '--filter', `name=^${name}$`, '--format', '{{.ID}}'], { env: { PATH: '/usr/bin:/bin', HOME: config.home, XDG_RUNTIME_DIR: `/run/user/${config.uid}`, DOCKER_HOST: `unix:///run/user/${config.uid}/docker.sock` }, timeout: 10000, maxBuffer: 8192 });
+    const workspace = join(config.workspaceRoot, createHash('sha256').update(operationId).digest('hex'));
+    const mounts = await readFile('/proc/self/mountinfo', 'utf8');
+    return result.stdout.trim() === '' && !mounts.split('\n').some(line => line.split(' ')[4] === workspace);
+  } catch { return false; }
+}
+const requestSchema = z.object({ repositoryId: z.string(), providerId: z.string(), commit: z.string().regex(/^[a-f0-9]{40,64}$/), operationId: z.string(), deadline: z.iso.datetime({ offset: true }), sourcePolicy: z.object({ allowRemoteModel: z.boolean(), providerRef: z.string().min(1) }).passthrough() }).passthrough();
+// Context comes from the admitted operation, never from repository stdout.
+export function scanModelBody(model: ScanWorkerConfig['model'], raw: unknown, system: string, content: string): unknown {
+  const request = requestSchema.parse(raw);
+  if (request.sourcePolicy.providerRef !== model.ref || !model.local && !request.sourcePolicy.allowRemoteModel) throw new Error('Model source-access policy denied');
+  return { model: model.model, temperature: 0, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: system }, { role: 'user', content }], ...(model.embermendBroker ? { embermend_context: { providerRef: model.ref, operationId: request.operationId, allowRemoteModel: request.sourcePolicy.allowRemoteModel } } : {}) };
+}
+export async function scanRepository(raw: unknown, config: ScanWorkerConfig, mode: 'scan' | 'prepare' | 'source' = 'scan'): Promise<unknown> {
+  const preparation = mode === 'prepare' ? z.object({ id: z.string(), repositoryId: z.string(), providerId: z.string(), baseCommit: z.string(), deadline: z.string(), validationProfileId: z.string() }).passthrough().parse(raw) : null;
+  const source = mode === 'source' ? z.object({ id: z.string(), repositoryId: z.string(), providerId: z.string(), commit: z.string(), deadline: z.string() }).passthrough().parse(raw) : null;
+  const request = preparation ? requestSchema.parse({ ...preparation, commit: preparation.baseCommit, operationId: preparation.id, sourcePolicy: { allowRemoteModel: false, providerRef: config.model.ref } }) : source ? requestSchema.parse({ ...source, operationId: source.id, sourcePolicy: { allowRemoteModel: false, providerRef: config.model.ref } }) : requestSchema.parse(raw); const repository = config.repositories[request.repositoryId];
+  if (!repository || repository.providerId !== request.providerId || mode === 'scan' && (request.sourcePolicy.providerRef !== config.model.ref || !config.model.local && !request.sourcePolicy.allowRemoteModel)) throw new Error('Repository or model source-access policy denied');
+  if (!/^[1-9][0-9]*$/.test(repository.providerId)) throw new Error('Immutable GitHub repository identity required');
+  const identity = await fetch('https://api.github.com/repositories/' + repository.providerId, { redirect: 'error', signal: AbortSignal.timeout(10000), headers: { accept: 'application/vnd.github+json' } });
+  if (!identity.ok) throw new Error('Repository identity or access changed');
+  const cloneUrl = authorizedRepositoryCloneUrl(repository, await boundedJson(identity, 65536));
+  let token = ''; let modelAgent: Agent | undefined;
+  if (mode === 'scan') { await rootControlled(config.model.tokenFile); if ((await lstat(config.model.tokenFile)).mode & 0o077 || (await lstat(config.model.tokenFile)).size > 8192) throw new Error('Protected model credential file required'); token = (await readFile(config.model.tokenFile, 'utf8')).trim(); }
+  const owner = (await exec('/usr/bin/id', ['-u', config.user], { env: { PATH: '/usr/bin:/bin' } })).stdout.trim();
+  if (owner !== String(config.uid) || config.uid === 0) throw new Error('Dedicated non-root worker identity required');
+  if (await realpath(config.home) !== config.home || await realpath(config.workspaceRoot) !== config.workspaceRoot) throw new Error('Canonical worker directories required');
+  const workspace = join(config.workspaceRoot, createHash('sha256').update(request.operationId).digest('hex'));
+  const containerName = 'embermend-scan-' + createHash('sha256').update(request.operationId).digest('hex');
+  await mkdir(workspace, { mode: 0o700 }); await chmod(workspace, 0o700);
+  let mounted = false;
+  await exec('/usr/bin/chown', [String(config.uid), workspace], { env: { PATH: '/usr/bin:/bin' } });
+  const environment = { PATH: '/usr/bin:/bin', HOME: config.home, XDG_RUNTIME_DIR: `/run/user/${config.uid}`, DOCKER_HOST: `unix:///run/user/${config.uid}/docker.sock`, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0' };
+  const userCommand = async (binary: string, args: string[]): Promise<string> => (await exec('/usr/sbin/runuser', ['-u', config.user, '--', binary, ...args], { env: environment, timeout: 180000, maxBuffer: 1024 * 1024 })).stdout;
+  try {
+  if (mode === 'scan' && config.model.caFile) { await rootControlled(config.model.caFile); const info = await lstat(config.model.caFile); if (!info.isFile() || info.nlink !== 1 || info.size > 1024 * 1024) throw new Error('Bounded root-controlled model CA required'); modelAgent = new Agent({ connect: { rejectUnauthorized: true, ca: await readFile(config.model.caFile) } }); }
+    await exec('/usr/bin/mount', ['-t', 'tmpfs', '-o', `size=${config.workspaceMiB}m,nodev,nosuid,noexec,mode=0755,uid=${config.uid},gid=${config.uid}`, 'embermend-worker', workspace], { env: { PATH: '/usr/bin:/bin' }, timeout: 10000, maxBuffer: 8192 }); mounted = true;
+    const info = z.object({ SecurityOptions: z.array(z.string()) }).parse(JSON.parse(await userCommand('/usr/bin/docker', ['info', '--format', '{{json .}}'])));
+    if (!info.SecurityOptions.some(value => value.includes('rootless'))) throw new Error('Rootless worker daemon required');
+    await userCommand('/usr/bin/git', ['-c', 'core.hooksPath=/dev/null', 'init', workspace]);
+    await userCommand('/usr/bin/git', ['-C', workspace, '-c', 'core.hooksPath=/dev/null', '-c', 'protocol.file.allow=never', 'fetch', '--depth=1', cloneUrl, request.commit]);
+    await userCommand('/usr/bin/git', ['-C', workspace, '-c', 'core.hooksPath=/dev/null', 'checkout', '--detach', 'FETCH_HEAD']);
+    if ((await userCommand('/usr/bin/git', ['-C', workspace, 'rev-parse', 'HEAD'])).trim() !== request.commit) throw new Error('Immutable checkout identity mismatch');
+    // The sandbox must not expose sibling applications or Git objects to
+    // repository-controlled validation, even when model context is bounded.
+    await projectRepositoryScope(workspace, raw, mode);
+    const validationArgv = preparation ? config.validationProfiles[preparation.validationProfileId] : undefined;
+    if (preparation && !validationArgv) throw new Error('Reviewed validation profile required');
+    const entry = preparation ? '/app/packages/scanner/dist/preparation-cli.js' : source ? '/app/packages/scanner/dist/source-cli.js' : null;
+    const child = spawn('/usr/sbin/runuser', ['-u', config.user, '--', '/usr/bin/docker', 'run', '--name', containerName, '--rm', '--interactive', '--network=none', '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges', '--pids-limit=64', '--memory=1g', '--cpus=1', preparation ? '--user=0:0' : '--user=1000:1000', ...(entry ? [`--entrypoint=${config.nodeExecutable}`] : []), '--mount', `type=bind,source=${workspace},target=/source${preparation ? '' : ',readonly'}`, '--tmpfs', '/tmp:rw,noexec,nosuid,size=64m', config.scannerImage, ...(entry ? [entry] : [])], { env: environment, stdio: ['pipe', 'pipe', 'pipe'] });
+    // Make the read-only checkout readable by the container's non-root user.
+    // Only this disposable source tree is shared; no home, socket or credentials.
+    const exited = new Promise<number | null>((resolve, reject) => { child.once('error', reject); child.once('close', resolve); });
+    let stdinClosed = false; child.stdin.on('error', () => { stdinClosed = true; child.kill('SIGKILL'); });
+    let stderrBytes = 0; child.stderr.on('data', (value: Buffer) => { stderrBytes += value.length; if (stderrBytes > 65536) child.kill('SIGKILL'); });
+    const timer = setTimeout(() => child.kill('SIGKILL'), Math.max(1, Date.parse(request.deadline) - Date.now()));
+    child.stdin.write(JSON.stringify(preparation ? { request: raw, validationArgv } : source ? { request: raw } : { request: raw, modelRef: config.model.ref, localModel: config.model.local }) + '\n');
+    let result: unknown; let outputBytes = 0;
+    try {
+      for await (const line of createInterface({ input: child.stdout, crlfDelay: Infinity })) {
+        outputBytes += Buffer.byteLength(line); if (outputBytes > 8 * 1024 * 1024) throw new Error('Scanner output budget exceeded');
+        const message = z.discriminatedUnion('kind', [z.object({ kind: z.literal('model-request'), id: z.string(), system: z.string().max(16000), content: z.string().max(100000) }).strict(), z.object({ kind: z.literal('result'), result: z.unknown() }).strict()]).parse(JSON.parse(line));
+        if (message.kind === 'result') { result = message.result; continue; }
+        if (mode !== 'scan') throw new Error('Source reading or validation cannot request model access');
+        const base = new URL(config.model.baseUrl.endsWith('/') ? config.model.baseUrl : config.model.baseUrl + '/');
+        if (base.username || base.password || base.search || base.hash) throw new Error('Credential-free configured model URL required');
+        try {
+          const reply = await modelFetch(new URL('chat/completions', base), { ...(modelAgent ? { dispatcher: modelAgent } : {}), method: 'POST', redirect: 'error', signal: AbortSignal.timeout(Math.min(120000, Math.max(1, Date.parse(request.deadline) - Date.now()))), headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify(scanModelBody(config.model, request, message.system, message.content)) });
+          if (!reply.ok || Number(reply.headers.get('content-length')) > 1024 * 1024) { await reply.body?.cancel(); throw new Error('Configured model unavailable'); }
+          const parsed = z.object({ model: z.literal(config.model.model), choices: z.array(z.object({ finish_reason: z.literal('stop'), message: z.object({ content: z.string().max(1000000), tool_calls: z.undefined().optional() }) })).length(1) }).parse(await boundedJson(reply, 1024 * 1024));
+          const choice = parsed.choices[0]; if (!choice) throw new Error('Missing model completion');
+          child.stdin.write(JSON.stringify({ id: message.id, result: JSON.parse(choice.message.content) }) + '\n');
+        } catch {
+          // A provider failure is a failed analysis for this file, not clean
+          // coverage and not an opportunity to select a different model.
+          if (!stdinClosed && child.stdin.writable && child.exitCode === null && child.signalCode === null)
+            child.stdin.write(JSON.stringify({ id: message.id, error: 'MODEL_BROKER_UNAVAILABLE' }) + '\n');
+        }
+      }
+      const code = await exited; if (code !== 0 || result === undefined) throw new Error('Scanner did not produce a complete terminal result'); return result;
+    } finally { clearTimeout(timer); child.stdin.destroy(); if (child.exitCode === null) { child.kill('SIGKILL'); await exited.catch(() => undefined); } }
+  } finally {
+    try {
+    await userCommand('/usr/bin/docker', ['rm', '--force', containerName]).catch(() => undefined);
+    let retained: string;
+    try { retained = await userCommand('/usr/bin/docker', ['ps', '--all', '--filter', `name=^${containerName}$`, '--format', '{{.ID}}']); } catch { throw new Error('WORKER_CLEANUP_UNCERTAIN'); }
+    if (retained.trim()) throw new Error('WORKER_CLEANUP_UNCERTAIN');
+    if (mounted) { try { await exec('/usr/bin/umount', [workspace], { env: { PATH: '/usr/bin:/bin' }, timeout: 10000, maxBuffer: 8192 }); } catch { throw new Error('WORKER_CLEANUP_UNCERTAIN'); } }
+    await rm(workspace, { recursive: true, force: true });
+    } finally { await modelAgent?.close(); }
+  }
+}

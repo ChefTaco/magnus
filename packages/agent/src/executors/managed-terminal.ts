@@ -167,7 +167,7 @@ export class ManagedTerminals {
       live.child?.kill();
       await this.settle(intent);
     })();
-    try { await live.closing; } catch (error) { live.closing = undefined; throw error; }
+    try { await live.closing; } catch (error) { delete live.closing; throw error; }
   }
 
   private async resize(live: Live, size: ManagedTerminalSize) {
@@ -215,8 +215,9 @@ export class ManagedTerminals {
       child.stderr.resume();
       for (let attempt = 0; attempt < 50; attempt++) {
         const unit = await this.backend.inspect(intent.unit);
-        if (unit && /^[a-f0-9]{32}$/.test(unit['InvocationID'] ?? '') && unit['ControlGroup'] === '/system.slice/' + intent.unit) {
-          intent.invocationId = unit['InvocationID']; intent.cgroup = unit['ControlGroup'];
+        const invocationId = unit?.['InvocationID']; const cgroup = unit?.['ControlGroup'];
+        if (unit && invocationId !== undefined && /^[a-f0-9]{32}$/.test(invocationId) && cgroup === '/system.slice/' + intent.unit) {
+          intent.invocationId = invocationId; intent.cgroup = cgroup;
           if (!terminalUnitMatches(unit, intent)) throw new Error('Terminal supervisor properties differ');
           await this.save(intent);
           try { await this.resize(live, action.size); } catch { live.pendingResize = action.size; }
@@ -234,7 +235,7 @@ export class ManagedTerminals {
       if (action.action === 'input') { if (!live.child?.stdin.write(action.data)) throw new Error('Terminal input busy'); }
       else await this.resize(live, action.size);
     } else {
-      if (live.pendingResize) { try { await this.resize(live, live.pendingResize); live.pendingResize = undefined; } catch { /* PTY may still be starting. */ } }
+      if (live.pendingResize) { try { await this.resize(live, live.pendingResize); delete live.pendingResize; } catch { /* PTY may still be starting. */ } }
       await this.observe(live);
       const first = live.chunks.shift() ?? Buffer.alloc(0); const chunk = first.subarray(0, 24 * 1024);
       if (first.length > chunk.length) live.chunks.unshift(first.subarray(chunk.length));

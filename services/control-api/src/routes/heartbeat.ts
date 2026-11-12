@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 import { enqueueSecurityObservations } from '../services/security-export.js';
 import { warnOnAgentVersionMismatch } from '../services/agent-version-warnings.js';
 import { recordSelfUpgradeReport } from '../services/agent-upgrade-service.js';
@@ -607,28 +608,12 @@ heartbeatRouter.post('/', async (c) => {
 
       // Evaluate health against alert rules (fire-and-forget)
       const alertNodeName = existing?.name ?? fqdn ?? nodeId;
-      evaluateHealth(nodeId, alertNodeName, {
-        cpuUsagePercent: h.cpu?.usagePercent,
-        memoryPercent: h.memory?.usagePercent,
-        swapUsedBytes: h.memory?.swapUsedBytes,
-        swapTotalBytes: h.memory?.swapTotalBytes,
-        disks: h.disks as Array<{ mountpoint?: string; usagePercent?: number }>,
-        gpuFanPercent: gpuFanValues.length > 0 ? Math.max(...gpuFanValues) : undefined,
-        gpuSampledAt: gpuSampleIsSane ? gpuSampledAt ?? undefined : undefined,
-        gpuSampleIsNew,
-        gpuDevices: h.gpu?.devices,
-      }).catch((err) => {
+      evaluateHealth(nodeId, alertNodeName, { ...optional("cpuUsagePercent", h.cpu?.usagePercent), ...optional("memoryPercent", h.memory?.usagePercent), ...optional("swapUsedBytes", h.memory?.swapUsedBytes), ...optional("swapTotalBytes", h.memory?.swapTotalBytes), disks: h.disks as Array<{ mountpoint?: string; usagePercent?: number }>, ...optional("gpuFanPercent", gpuFanValues.length > 0 ? Math.max(...gpuFanValues) : undefined), ...optional("gpuSampledAt", gpuSampleIsSane ? gpuSampledAt ?? undefined : undefined), gpuSampleIsNew, ...optional("gpuDevices", h.gpu?.devices) }).catch((err) => {
         console.error(`[alert] evaluate error for ${nodeId}:`, err instanceof Error ? err.message : err);
       });
 
       // Evaluate anomaly detection (fire-and-forget)
-      evaluateAnomalies(nodeId, alertNodeName, {
-        cpuUsagePercent: h.cpu?.usagePercent,
-        memoryPercent: h.memory?.usagePercent,
-        swapUsedBytes: h.memory?.swapUsedBytes,
-        swapTotalBytes: h.memory?.swapTotalBytes,
-        disks: h.disks as Array<{ usagePercent?: number; mountpoint?: string }>,
-      }, healthSnapshot.id).catch((err) => {
+      evaluateAnomalies(nodeId, alertNodeName, { ...optional("cpuUsagePercent", h.cpu?.usagePercent), ...optional("memoryPercent", h.memory?.usagePercent), ...optional("swapUsedBytes", h.memory?.swapUsedBytes), ...optional("swapTotalBytes", h.memory?.swapTotalBytes), disks: h.disks as Array<{ usagePercent?: number; mountpoint?: string }> }, healthSnapshot.id).catch((err) => {
         console.error(`[anomaly] evaluate error for ${nodeId}:`, err instanceof Error ? err.message : err);
       });
 

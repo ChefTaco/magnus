@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 import fs from 'node:fs/promises';
 import { magnusHomePath } from '../utils/magnus-home.js';
 import { createReadStream, existsSync } from 'node:fs';
@@ -352,5 +353,5 @@ export async function queryAuditEvents(opts: {
 }
 
 export async function verifyAuditIntegrity(date?: string): Promise<AuditVerification> {
-  return (await queryAuditEvents({ date, pageSize: 1 })).verification;
+  return (await queryAuditEvents({ ...optional("date", date), pageSize: 1 })).verification;
 }

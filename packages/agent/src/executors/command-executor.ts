@@ -1,3 +1,5 @@
+import { recoverEmbermendResponse } from './embermend-execution.js';
+import { httpReceiptBody } from '../security/managed-http.js';
 import { managedExecution } from '../security/managed-context.js';
 import { Hono } from 'hono';
 import { spawn } from 'node:child_process';
@@ -175,6 +177,15 @@ export async function recoverCommandReceipt(commandId: string) {
   const row = await commandLedger.receipt(commandId);
   if (!row || !['unknown', 'completed'].includes(row.state)) return row;
   try {
+    if (row.state === 'unknown') {
+      const native = await recoverEmbermendResponse(commandId, row.requestSha256, row.coordination, executionSupervisor);
+      if (native) {
+        const unsigned = { commandId, exitCode: 0, stdout: httpReceiptBody('POST', '/embermend/action', native.status, native.body), stderr: '', durationMs: native.durationMs, truncated: false,
+          ...(row.coordination ? { coordination: { ...row.coordination, requestSha256: row.requestSha256 } } : {}) };
+        const recovered = await commandLedger.adoptRecoveredResult(commandId, row.requestSha256, { ...unsigned, signature: signCommandResult(unsigned, RESULT_SIGNING_SECRET) });
+        await mutationBarrier.settleCompletedCommand(commandId, commandLedger); return recovered;
+      }
+    }
     const observation = await executionSupervisor.status(commandId, row.requestSha256);
     if (observation.state !== 'completed' || !observation.result || observation.evidence.requestSha256 !== row.requestSha256
       || observation.evidence.completionOwner?.version !== 1

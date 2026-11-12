@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import type { AppVariables } from '../types/index.js';
@@ -40,7 +41,7 @@ hermesRegistryRouter.post('/core/receipts', async c => {
       beforeGatewayActive: z.boolean().optional(), afterGatewayActive: z.boolean().optional(), backupSha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
       nativeReceiptSha256: z.string().regex(/^[a-f0-9]{64}$/).optional(), toolCheck: z.boolean().optional(), pluginCheck: z.boolean().optional(),
       error: z.string().max(500).optional() }) }));
-  return c.json({ success: true, data: await settleCoreSlot(host, installation.id, body) });
+  return c.json({ success: true, data: await settleCoreSlot(host, installation.id, { commit: body.commit, status: body.status, evidence: { ...optional("beforeVersion", body.evidence.beforeVersion), ...optional("afterVersion", body.evidence.afterVersion), ...optional("beforeGatewayActive", body.evidence.beforeGatewayActive), ...optional("afterGatewayActive", body.evidence.afterGatewayActive), ...optional("backupSha256", body.evidence.backupSha256), ...optional("nativeReceiptSha256", body.evidence.nativeReceiptSha256), ...optional("toolCheck", body.evidence.toolCheck), ...optional("pluginCheck", body.evidence.pluginCheck), ...optional("error", body.evidence.error) } }) });
 });
 
 hermesRegistryRouter.get('/profiles', async c => {
@@ -116,8 +117,7 @@ hermesRegistryRouter.post('/capture', async c => {
     baseRevision: z.number().int().nonnegative().optional(), tags: z.array(identity).max(32).default([]) }));
   if (body.profileId && !(await getDb().hermesProfile.findFirst({ where: { id: body.profileId, installationId: installation.id } })))
     throw new HttpError(403, 'INVALID_PROFILE', 'Profile does not belong to this installation');
-  const result = await publishRevision({ kind: 'skill', slug: body.slug, artifact: body.artifact, metadata: { tags: body.tags, authorProfileId: body.profileId },
-    sourceHost: host, publishedBy: `node:${installation.id}`, baseRevision: body.baseRevision });
+  const result = await publishRevision({ kind: 'skill', slug: body.slug, artifact: body.artifact, metadata: { tags: body.tags, authorProfileId: body.profileId }, sourceHost: host, publishedBy: `node:${installation.id}`, ...optional("baseRevision", body.baseRevision) });
   if (!result.duplicate && result.revision.status === 'published') {
     await assignSkillTargets(body.slug, body.tags, body.profileId, host);
   }
@@ -172,7 +172,7 @@ hermesRegistryRouter.post('/inventory', async c => {
 hermesRegistryRouter.post('/revisions', authMiddleware, requireRole('ADMIN', 'OPERATOR'), async c => {
   const body = await parseBody(c, z.object({ kind: registryKind, slug: identity, artifact: z.unknown().optional(), metadata: z.record(z.string(), z.unknown()).default({}), baseRevision: z.number().int().nonnegative().optional() }));
   if (body.artifact === undefined) throw new HttpError(400, 'INVALID_ARTIFACT', 'Artifact is required');
-  const result = await publishRevision({ ...body, artifact: body.artifact, publishedBy: getUser(c).userId });
+  const result = await publishRevision({ "kind": body.kind, "slug": body.slug, "metadata": body.metadata, ...optional("artifact", body.artifact), ...optional("baseRevision", body.baseRevision), artifact: body.artifact, publishedBy: getUser(c).userId });
   await logAuditEvent({ action: 'hermes.registry.publish', actorId: getUser(c).userId, targetType: body.kind, targetId: body.slug,
     details: { revision: result.revision.revision, status: result.revision.status } });
   return c.json({ success: true, data: { revision: result.revision.revision, sha256: result.revision.sha256, status: result.revision.status, duplicate: result.duplicate } }, 201);

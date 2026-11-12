@@ -17,9 +17,9 @@ describe('native HTTP wire compatibility', () => {
   it('shares the exact versioned native completion registry and digest', () => {
     expect(controlRegistry.NATIVE_COMPLETION_REGISTRY).toEqual(nodeRegistry.NATIVE_COMPLETION_REGISTRY);
     expect(controlRegistry.NATIVE_COMPLETION_REGISTRY_SHA256).toBe(nodeRegistry.NATIVE_COMPLETION_REGISTRY_SHA256);
-    expect(controlRegistry.NATIVE_COMPLETION_REGISTRY_SHA256).toBe('c248ac35d858536199a2426069aa8dfab6e858a4668abbec93a166907cd053ed');
+    expect(controlRegistry.NATIVE_COMPLETION_REGISTRY_SHA256).toBe('68e3d69a5fac7ab624a209c44b36004dcb8cb54ae4851562ac17553d646f7b42');
     expect(controlRegistry.NATIVE_COMPLETION_REGISTRY.version).toBe(1);
-    expect(controlRegistry.NATIVE_COMPLETION_REGISTRY.descriptors).toHaveLength(12);
+    expect(controlRegistry.NATIVE_COMPLETION_REGISTRY.descriptors).toHaveLength(13);
     // Agent self-upgrade is the one lifecycle mutation in the registry: exact version and integrity, launcher-confirmed.
     expect(controlRegistry.nativeCompletionDescriptor('POST', '/agent-upgrade')).toMatchObject({ id: 'agent-self-upgrade', resourceClassifier: 'node-filesystem' });
   });

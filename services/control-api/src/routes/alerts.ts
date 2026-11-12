@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 import { Hono } from 'hono';
 import type { AppVariables } from '../types/index.js';
 import { authMiddleware, getUser, requireRole } from '../middleware/auth.js';
@@ -106,12 +107,6 @@ alertsRouter.delete('/rules/:id', requireRole('ADMIN'), async (c) => {
 
 // ── List violations (with optional filters) ──
 alertsRouter.get('/violations', async (c) => {
-  const result = await listAlertViolations({
-    ruleId: c.req.query('ruleId'),
-    nodeId: c.req.query('nodeId'),
-    status: c.req.query('status'),
-    page: parseInt(c.req.query('page') ?? '1', 10),
-    pageSize: parseInt(c.req.query('pageSize') ?? '50', 10),
-  });
+  const result = await listAlertViolations({ ...optional("ruleId", c.req.query('ruleId')), ...optional("nodeId", c.req.query('nodeId')), ...optional("status", c.req.query('status')), page: parseInt(c.req.query('page') ?? '1', 10), pageSize: parseInt(c.req.query('pageSize') ?? '50', 10) });
   return c.json(result);
 });

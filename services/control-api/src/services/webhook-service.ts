@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 import { consolePagePath } from '../config/console-path.js';
 import { bullQueueIdentity } from '../queue/names.js';
 import { assertLiveExecution } from '../config/rehearsal.js';
@@ -321,7 +322,7 @@ export function startWebhookWorker(): Worker<WebhookJobPayload> {
             httpStatus: res.status,
             response: res.responseBody,
             attempts: attempt,
-            deliveredAt: res.ok ? new Date() : undefined,
+            ...optional("deliveredAt", res.ok ? new Date() : undefined),
             error: res.ok ? null : `HTTP ${res.status}`,
           },
         });
@@ -535,7 +536,7 @@ export async function testWebhookEndpoint(id: string): Promise<{ success: boolea
     }
 
     const res = await postWebhook(webhookUrl(endpoint), { headers, body, timeoutMs: endpoint.timeoutMs });
-    return { success: res.ok, error: res.ok ? undefined : `HTTP ${res.status}` };
+    return { success: res.ok, ...optional("error", res.ok ? undefined : `HTTP ${res.status}`) };
   } catch (err) {
     return { success: false, error: clientErrorMessage(err, 'Unknown error') };
   }

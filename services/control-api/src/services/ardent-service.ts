@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 import { ARDENT_STUDIO_CAPABILITY, ArdentNodeStateSchema, ArdentContextReleaseSchema, ArdentContextAdoptionInputSchema, type ArdentFleetInstallation } from '@hivemagnus/magnus-contracts';
 import { getDb } from '../db/index.js';
 import { NodeApiClient } from '../sdk/index.js';
@@ -30,7 +31,7 @@ async function persistObservation(nodeId: string, state: ArdentFleetInstallation
         installed: state.installed, reachable: state.reachable, error: state.error,
         ...(observedAt ? { observedAt } : {}) },
       update: { reachable: state.reachable, error: state.error, checkedAt: new Date(),
-        ...(state.reachable ? { owner: state.owner, version: state.version, installed: state.installed, observedAt } : {}) } });
+        ...(state.reachable ? { owner: state.owner, version: state.version, installed: state.installed, ...optional("observedAt", observedAt) } : {}) } });
     if (!state.reachable) return;
     const names = state.profiles.map(profile => profile.id);
     await tx.ardentProfile.deleteMany({ where: { installationId: installation.id, ...(names.length ? { name: { notIn: names } } : {}) } });

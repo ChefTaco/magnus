@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 /** Only authenticated cron administration creates scope; triggers consume immutable authority. */
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
@@ -409,9 +410,9 @@ export async function admitCronOccurrence(raw: SchedulerTrigger) {
       create: { resourceKey: `node:${node.id}`, generation: 1n }, update: { generation: { increment: 1n } } });
     const coordination = { version: 1 as const, resourceKey: `node:${node.id}`, fence: fence.generation.toString(), expiresAt: deadline };
     const payload: CommandRequest = { commandId: 'cron-' + occurrenceId, command: spec.command, args: spec.args,
-      workingDirectory: spec.workingDirectory, environment: spec.environment, timeoutSeconds: spec.timeoutSeconds, coordination };
+      ...optional("workingDirectory", spec.workingDirectory), environment: spec.environment, timeoutSeconds: spec.timeoutSeconds, coordination };
     await tx.remoteCommand.create({ data: { id: payload.commandId, nodeId: node.id, command: payload.command,
-      args: JSON.stringify(payload.args), environment: JSON.stringify(payload.environment ?? {}), workingDirectory: payload.workingDirectory,
+      args: JSON.stringify(payload.args), environment: JSON.stringify(payload.environment ?? {}), ...optional("workingDirectory", payload.workingDirectory),
       timeoutSeconds: payload.timeoutSeconds, status: 'RUNNING', createdBy: job.createdBy,
       idempotencyKey: 'managed-cron:' + occurrenceId, correlationId: 'managed-cron:' + definition.cronJobId,
       startedAt: new Date(), executionDeadline: new Date(deadline), coordinationJson: JSON.stringify(coordination) } });

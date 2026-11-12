@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -42,9 +43,9 @@ function safeParseRun(line: string): FleetCheckRunLog | null {
       completedAt: String(value.completedAt),
       durationMs: Number(value.durationMs ?? 0),
       summary: String(value.summary ?? ''),
-      counts: typeof value.counts === 'object' && value.counts ? value.counts as Record<string, unknown> : undefined,
-      data: typeof value.data === 'object' && value.data ? value.data as Record<string, unknown> : undefined,
-      errors: Array.isArray(value.errors) ? value.errors.map(String) : undefined,
+      ...optional("counts", typeof value.counts === 'object' && value.counts ? value.counts as Record<string, unknown> : undefined),
+      ...optional("data", typeof value.data === 'object' && value.data ? value.data as Record<string, unknown> : undefined),
+      ...optional("errors", Array.isArray(value.errors) ? value.errors.map(String) : undefined),
     };
   } catch {
     return null;
@@ -134,6 +135,6 @@ export async function getLatestFleetCheckRun(kind?: string): Promise<{
   directory: string;
   run: FleetCheckRunLog | null;
 }> {
-  const { directory, runs } = await listFleetCheckRuns({ limit: 1, kind });
+  const { directory, runs } = await listFleetCheckRuns({ limit: 1, ...optional("kind", kind) });
   return { directory, run: runs[0] ?? null };
 }

@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 import { managedCronRouter } from './managed-cron.js';
 import { canStageLegacyCronForEnrollment, cronMutationMode, finalizeManagedCronRevocation, installManagedCron, registerManagedCron,
   reconcileForeignSchedulerSource, revokeManagedCron, stageLegacyCronForEnrollment,
@@ -44,17 +45,7 @@ async function pushCronSync(
       resourceNodeId: job.nodeId,
       nodeToken: getNodeManagerSecret(),
     });
-    await client.syncCronJob({
-      nodeId: job.nodeId,
-      name: job.name,
-      description: job.description,
-      schedule: job.schedule,
-      command: job.command,
-      args: job.args,
-      workingDirectory: job.workingDirectory ?? undefined,
-      environment: job.environment,
-      timeoutSeconds: job.timeoutSeconds,
-    });
+    await client.syncCronJob({ nodeId: job.nodeId, name: job.name, ...optional("description", job.description), schedule: job.schedule, command: job.command, args: job.args, ...optional("workingDirectory", job.workingDirectory ?? undefined), ...optional("environment", job.environment), timeoutSeconds: job.timeoutSeconds });
   } catch {
     // Agent push failure is non-fatal — DB remains source of truth.
     // The cron job will be synced on next heartbeat reconciliation.
@@ -176,17 +167,7 @@ cronRouter.post('/', requireRole('ADMIN', 'OPERATOR'), async (c) => {
   } else {
     // Preserve the established best-effort legacy path until activation or the
     // first durable ownership record makes that bypass permanently ineligible.
-    void pushCronSync(node.ipAddress, node.port, {
-      nodeId: body.nodeId,
-      name: body.name,
-      description: body.description,
-      schedule: body.schedule,
-      command: body.command,
-      args: body.args ?? [],
-      workingDirectory: body.workingDirectory,
-      environment: sanitizeDetails(body.environment ?? {}) as Record<string, string>,
-      timeoutSeconds: body.timeoutSeconds ?? 600,
-    });
+    void pushCronSync(node.ipAddress, node.port, { nodeId: body.nodeId, name: body.name, description: body.description, schedule: body.schedule, command: body.command, args: body.args ?? [], ...optional("workingDirectory", body.workingDirectory), environment: sanitizeDetails(body.environment ?? {}) as Record<string, string>, timeoutSeconds: body.timeoutSeconds ?? 600 });
   }
 
   return c.json({ success: true, data: cronJobForRole(job, user.role) }, 201);

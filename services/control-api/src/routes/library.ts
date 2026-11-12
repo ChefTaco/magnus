@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 import { clientErrorMessage } from '../utils/safe-errors.js';
 import { Hono } from 'hono';
 import type { AppVariables } from '../types/index.js';
@@ -401,10 +402,7 @@ libraryRouter.post(
             const cron = createCronSchema.parse({ ...parsed, nodeId: node.id, name: parsed['name'] ?? file.name });
             const mode = await cronMutationMode(node.id);
             if (mode === 'legacy') {
-              await client.syncCronJob({ nodeId: node.id, name: cron.name, description: cron.description,
-                schedule: cron.schedule, command: cron.command, args: cron.args,
-                workingDirectory: cron.workingDirectory ?? undefined,
-                environment: sanitizeDetails(cron.environment) as Record<string, string>, timeoutSeconds: cron.timeoutSeconds });
+              await client.syncCronJob({ nodeId: node.id, name: cron.name, description: cron.description, schedule: cron.schedule, command: cron.command, args: cron.args, ...optional("workingDirectory", cron.workingDirectory ?? undefined), environment: sanitizeDetails(cron.environment) as Record<string, string>, timeoutSeconds: cron.timeoutSeconds });
             } else {
               if (!cron.managed) throw new Error('Activated nodes require an exact finite managed cron revision');
               const { job } = await upsertAndRegisterManagedCron(node.id, cron.name, {

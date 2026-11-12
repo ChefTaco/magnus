@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 import { Hono, type Context } from 'hono';
 import type { AppVariables, UserRole } from '../types/index.js';
 import { authMiddleware, getUser } from '../middleware/auth.js';
@@ -75,7 +76,7 @@ hermesRouter.get('/jobs', async (c) => {
   if (!parsed.success) {
     throw new HttpError(400, 'VALIDATION_ERROR', parsed.error.issues.map((issue) => issue.message).join('; '));
   }
-  return c.json({ success: true, data: await listHermesJobs(parsed.data) });
+  return c.json({ success: true, data: await listHermesJobs({ "limit": parsed.data.limit, ...optional("status", parsed.data.status), ...optional("type", parsed.data.type), ...optional("category", parsed.data.category), ...optional("installationId", parsed.data.installationId), ...optional("profileId", parsed.data.profileId) }) });
 });
 
 hermesRouter.get('/jobs/:id', async (c) => {

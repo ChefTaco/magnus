@@ -5,6 +5,43 @@ All notable changes to this project are documented in this file. The format is b
 [Semantic Versioning](https://semver.org/).
 
 
+## [2.5.0] - 2026-11-12
+
+### Added
+
+- Project each isolated source worker checkout to its admitted paths before execution, removing sibling applications, exclusions, Git objects and symlinks from the sandbox.
+
+- Preserve unknown Compose instance health when an image has no Docker health check, rather than losing its inventory to a missing-field template failure.
+
+- Managed source workers resolve same-owner repository renames by immutable provider identity and refuse ownership transfers or unexpected clone destinations.
+
+- Recognize superseded ownership-recovery decisions only from a different immutable signed native acknowledgement; keep audit refusal ahead of delivery authority.
+
+- Add exact-plan Embermend ownership settlement for independently reviewed, quiescent expired reboot and assessment operations. Retain the signed decision before delivery, recover lost acknowledgements by observation and preserve the historical outcome as unknown.
+
+- Require exact previous-boot logind shutdown proof before adopting an Embermend reboot. A cancelled schedule followed by an unrelated boot, missing journal or mismatched trusted event retains uncertainty and ownership.
+
+- Include bounded userspace package mapping evidence in configured Embermend package inventory, with stable process/file identities, explicit partial coverage and scoped limitations.
+- Add opt-in, operation-bound Ubuntu reboot continuation using acknowledged systemd scheduling and subsequent-boot evidence. Retain uncertainty across lost replies and agent restarts.
+- Bound Compose rollout to one reviewed service and immutable image, with independent current container and health inventory.
+
+- Preserve partial scanner analysis when the approved model broker fails, and handle closed scanner input without losing cleanup ownership.
+
+- Bind isolated preparation/source entry commands to an explicitly reviewed Node path compatible with the suite runtime.
+
+- Retain native Embermend supervisor bindings and adopt exact successful worker completion after API-process loss without replay; incomplete or detached-work evidence retains ownership.
+
+- Forward admitted scanner operation and source-policy context to an optional Embermend-owned inference broker, with exact provider identity and verified transport.
+
+- Optional constrained Embermend product bridge with durable operation identities, signed result references, reviewed host actions and isolated source workers. Native reboot continuation and complete product acceptance remain release prerequisites.
+- Exact TypeScript 6.0.3 with `strict`, `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes` in the affected contracts, agent and server workspaces; absent optional boundary values are omitted.
+
+### New environment variables
+
+- `MAGNUS_EMBERMEND_GRANTS_JSON` (server, secret): dedicated product credentials and exact target, environment and action grants; absent disables the bridge.
+- `MAGNUS_EMBERMEND_CONFIG` (agent): canonical root-controlled resource and worker configuration; absent disables reviewed remediation capabilities.
+
+
 ## [2.4.3] - 2026-11-11
 
 ### Fixed
@@ -1053,3 +1090,4 @@ The initial release snapshot.
 [1.0.0]: https://github.com/ChefTaco/magnus/releases/tag/v1.0.0
 
 [2.0.0]: https://github.com/ChefTaco/magnus/releases/tag/v2.0.0
+

@@ -1,3 +1,4 @@
+// Zod optional wire fields can be explicitly undefined before JSON serialization.
 /** Private durable supervisor files. No command/environment appears in public evidence. */
 import { constants } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
@@ -7,9 +8,9 @@ export const hash = (value: string | Buffer): string => createHash('sha256').upd
 // Worst-case JSON escaping across both streams stays below the 4 MiB record cap.
 export const MAX_OUTPUT = 256 * 1024;
 export interface SupervisorInput {
-  commandId: string; command: string; args: string[]; workingDirectory?: string;
-  environment?: Record<string,string>; timeoutSeconds: number;
-  coordination?: { version: 1; resourceKey: string; fence: string; expiresAt: number };
+  commandId: string; command: string; args: string[]; workingDirectory?: string | undefined;
+  environment?: Record<string,string> | undefined; timeoutSeconds: number;
+  coordination?: { version: 1; resourceKey: string; fence: string; expiresAt: number } | undefined;
 }
 export function requestDigest(input: SupervisorInput): string {
   return hash(JSON.stringify({ commandId:input.commandId,command:input.command,args:input.args,

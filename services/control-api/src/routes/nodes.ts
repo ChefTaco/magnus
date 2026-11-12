@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 import { Hono } from 'hono';
 import type { AppVariables } from '../types/index.js';
 import { nodeForRole } from '../services/secret-views.js';
@@ -1089,11 +1090,7 @@ nodesRouter.post('/:nodeId/provision-user', requireRole('ADMIN', 'OPERATOR'), as
     nodeToken: getNodeManagerSecret(),
   });
 
-  const result = await client.provisionUser({
-    username: body.username,
-    password: body.password,
-    group: body.group,
-  });
+  const result = await client.provisionUser({ username: body.username, password: body.password, ...optional("group", body.group) });
 
   await logAuditEvent({
     action: 'node.provision_user',

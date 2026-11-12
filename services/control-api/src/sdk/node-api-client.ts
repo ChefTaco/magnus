@@ -1,4 +1,5 @@
 import type { HiveSkillsTargetPosture, HiveSkillsSyncInput } from '@hivemagnus/magnus-contracts';
+import { embermendOperationSchema, embermendNodeCapabilitiesSchema, embermendNativeResultSchema, type EmbermendOperation } from '@hivemagnus/magnus-contracts/embermend';
 import { createHash, randomUUID } from 'node:crypto';
 import { assertLiveExecution } from '../config/rehearsal.js';
 import { MANAGED_CLAIM_HEADER, credentialMutationIdentity, httpIdentity, httpReceiptBody, managedHttpRequestSchema } from '../security/managed-http.js';
@@ -354,6 +355,25 @@ export class NodeApiClient {
   }
 
   // ── Health ──
+
+  async embermendCapabilities() {
+    return embermendNodeCapabilitiesSchema.parse(await this.api.get('embermend/capabilities', { retry: 0 }).json<unknown>());
+  }
+
+  async embermendCanSettle(): Promise<boolean> {
+    const value = z.object({ success: z.literal(true), data: z.object({ features: z.object({ commandReconciliation: z.literal(1) }) }) }).safeParse(await this.api.get('ping', { retry: 0 }).json<unknown>());
+    return value.success;
+  }
+
+  async embermendExecute(body: EmbermendOperation, commandId: string) {
+    const result = await this.mutateWithEvidence<unknown>('POST', 'embermend/action', embermendOperationSchema.parse(body), 900000, commandId, undefined, true);
+    if (!result.evidence) throw new Error('Embermend requires enrolled admission and a signed receipt');
+    return { response: embermendNativeResultSchema.parse(result.response), evidence: result.evidence };
+  }
+
+  async embermendResult(operationId: string, resultKey: string) {
+    return embermendNativeResultSchema.parse(await this.api.get('embermend/results/' + encodeURIComponent(operationId), { searchParams: { resultKey }, retry: 0 }).json<unknown>());
+  }
 
   async hiveSkillsTargetPosture(target:string,registryId:string):Promise<ApiResponse<HiveSkillsTargetPosture>> {
     return this.api.get('hiveskills/targets/'+encodeURIComponent(target),{searchParams:{registryId},retry:0}).json();

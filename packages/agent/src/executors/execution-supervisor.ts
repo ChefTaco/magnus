@@ -203,7 +203,8 @@ export class ExecutionSupervisor {
       // Re-read after cgroup inspection: a replaced invocation cannot supply proof.
       const after=await this.backend.inspect(intent.unit);
       if(!after||UNIT_FIELDS.some(key=>after[key]!==unit[key]))return unknown;
-      evidence.groupEmpty=true;evidence.supervisorResult=unit['Result'];evidence.cgroup=started.cgroup;
+      const supervisorResult=unit['Result'];if(supervisorResult===undefined)return unknown;
+      evidence.groupEmpty=true;evidence.supervisorResult=supervisorResult;evidence.cgroup=started.cgroup;
       evidence.startedAt=started.startedAt;evidence.terminalAt=Date.now();
       if(!/^[0-9]+$/.test(unit['ExecMainCode']??'')||!/^[0-9]+$/.test(unit['ExecMainStatus']??''))return unknown;
       const exitKind=Number(unit['ExecMainCode']);const exitStatus=Number(unit['ExecMainStatus']);

@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 import { z } from 'zod';
 import { getDb } from '../db/index.js';
 import { HttpError } from '../middleware/error-handler.js';
@@ -63,7 +64,7 @@ async function request(path: string, method: string, body?: unknown) {
   const res = await fetch(new URL(path, config.base), {
     method,
     headers: { Authorization: `Bearer ${config.token}`, 'Content-Type': 'application/json' },
-    body: body ? JSON.stringify(body) : undefined,
+    ...optional("body", body ? JSON.stringify(body) : undefined),
     redirect: 'error',
     signal: AbortSignal.timeout(8000),
   });

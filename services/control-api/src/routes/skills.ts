@@ -1,3 +1,4 @@
+import { optional } from '../utils/optional.js';
 import { Hono } from 'hono';
 import type { AppVariables } from '../types/index.js';
 import { getDb } from '../db/index.js';
@@ -102,15 +103,7 @@ skillsRouter.post('/', requireRole('ADMIN', 'OPERATOR'), async (c) => {
   const body = await parseBody(c, createSkillSchema);
 
   try {
-    const skill = await skillService.createSkill({
-      name: body.name,
-      version: body.version,
-      description: body.description,
-      author: user.email,
-      entryPoint: body.entryPoint,
-      dependencies: body.dependencies,
-      tags: body.tags,
-    });
+    const skill = await skillService.createSkill({ name: body.name, version: body.version, ...optional("description", body.description), author: user.email, ...optional("entryPoint", body.entryPoint), ...optional("dependencies", body.dependencies), ...optional("tags", body.tags) });
 
     await logAuditEvent({
       action: 'skill.create',
@@ -353,13 +346,7 @@ skillsRouter.patch('/:name{[a-zA-Z0-9_-]+}', requireRole('ADMIN', 'OPERATOR'), a
   const existing = await skillService.getSkill(name);
   if (!existing) throw new HttpError(404, 'NOT_FOUND', 'Skill not found');
 
-  const skill = await skillService.updateSkill(name, {
-    version: body.version,
-    description: body.description,
-    entryPoint: body.entryPoint,
-    tags: body.tags,
-    dependencies: body.dependencies,
-  });
+  const skill = await skillService.updateSkill(name, { ...optional("version", body.version), ...optional("description", body.description), ...optional("entryPoint", body.entryPoint), ...optional("tags", body.tags), ...optional("dependencies", body.dependencies) });
 
   await logAuditEvent({
     action: 'skill.update',
@@ -438,13 +425,7 @@ skillsRouter.post('/registry/:slug/publish', requireRole('ADMIN', 'OPERATOR'), a
   const body = await parseBody(c, publishVersionSchema);
 
   try {
-    const result = await registryService.publishVersion({
-      slug,
-      version: body.version,
-      changelog: body.changelog,
-      tagNames: body.tags,
-      publishedBy: user.userId,
-    });
+    const result = await registryService.publishVersion({ slug, version: body.version, ...optional("changelog", body.changelog), ...optional("tagNames", body.tags), publishedBy: user.userId });
 
     await logAuditEvent({
       action: 'skill.registry.publish',

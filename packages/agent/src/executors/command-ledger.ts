@@ -1,3 +1,4 @@
+// Zod optional wire fields can be explicitly undefined before JSON serialization.
 import type { ManagedClaim } from '../security/managed-http.js';
 /** Node-local admission and receipts. A crash never silently releases uncertainty. */
 import { createHash, randomUUID } from 'node:crypto';
@@ -18,8 +19,8 @@ export const commandFenceSchema = z.object({
 }).strict();
 export type CommandFence = z.infer<typeof commandFenceSchema>;
 export interface CommandIdentity {
-  commandId: string; command: string; args: string[]; workingDirectory?: string;
-  environment?: Record<string, string>; timeoutSeconds: number; coordination?: CommandFence;
+  commandId: string; command: string; args: string[]; workingDirectory?: string | undefined;
+  environment?: Record<string, string> | undefined; timeoutSeconds: number; coordination?: CommandFence | undefined;
 }
 export function isArdentScopedCommand(input: CommandIdentity, nodeId: string): boolean {
   return input.command === MANAGED_HTTP_COMMAND && input.args.length === 3
@@ -31,8 +32,8 @@ export function isArdentScopedCommand(input: CommandIdentity, nodeId: string): b
 export interface CommandReceiptResult {
   commandId: string; exitCode: number; stdout: string; stderr: string; durationMs: number;
   truncated: boolean; signature: string;
-  coordination?: CommandFence & { requestSha256: string };
-  completion?: { registryVersion:1; registrySha256:string; descriptorId:string };
+  coordination?: (CommandFence & { requestSha256: string }) | undefined;
+  completion?: { registryVersion:1; registrySha256:string; descriptorId:string } | undefined;
 }
 const resultSchema = z.object({
   commandId: z.string(), exitCode: z.number().int(), stdout: z.string(), stderr: z.string(),
@@ -219,7 +220,7 @@ export class CommandLedger {
       || result.coordination.resourceKey !== fence.resourceKey || result.coordination.fence !== fence.fence
       || result.coordination.expiresAt !== fence.expiresAt : result.coordination !== undefined)) throw new Error('Result binding differs');
   }
-  private checkReconciliation(row: { commandId: string; requestSha256: string; coordination?: CommandFence }, assertion: CommandReconciliationAssertion, fresh: boolean) {
+  private checkReconciliation(row: { commandId: string; requestSha256: string; coordination?: CommandFence | undefined }, assertion: CommandReconciliationAssertion, fresh: boolean) {
     commandReconciliationSchema.parse(assertion);
     const expected = row.coordination;
     const actual = assertion.coordination;

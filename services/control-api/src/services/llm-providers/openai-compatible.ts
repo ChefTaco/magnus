@@ -33,7 +33,7 @@ export class OpenAiCompatibleProvider implements LlmProvider {
   readonly id: Extract<ProviderId, 'openai' | 'openrouter'>;
   readonly name: string;
   readonly baseUrl: string;
-  readonly apiKey?: string;
+  readonly apiKey: string | undefined;
   private readonly defaultHeaders: Record<string, string>;
 
   constructor(config: OpenAiCompatibleConfig) {
@@ -161,7 +161,7 @@ export class OpenAiCompatibleProvider implements LlmProvider {
         } catch {
           argumentsObject = {};
         }
-        return [{ id: toolCall.id, name, arguments: argumentsObject }];
+        return [{ ...(toolCall.id === undefined ? {} : { id: toolCall.id }), name, arguments: argumentsObject }];
       });
 
       return {
