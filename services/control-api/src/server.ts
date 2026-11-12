@@ -111,7 +111,7 @@ app.use('/api/v1/security-integration/response/*', bodyLimitMiddleware(16_384));
 app.use('/api/v1/*', async (c, next) => {
   const limit = c.req.path === '/api/v1/hermes-registry/capture' || c.req.path === '/api/v1/hermes-registry/revisions'
     ? 4_500_000 : Number(process.env['API_BODY_LIMIT_BYTES'] ?? 1_048_576);
-  await bodyLimitMiddleware(limit)(c, next);
+  return bodyLimitMiddleware(limit)(c, next);
 });
 
 // ── API routes (v1) ──

@@ -85,7 +85,7 @@ npx @hivemagnus/magnus adopt --server-env-file /etc/magnus/server.env --ui-env-f
 See [UPGRADING.md](https://github.com/ChefTaco/magnus/blob/main/UPGRADING.md) for every upgrade
 path, agent upgrades and the switches that turn automation off.
 
-Requires Node.js `^24.22.1` or `^26.13.0`, npm, systemd (or `--supervisor none`), and `openssl` for
+Requires Node.js `^24.22.3` or `^26.13.1`, npm, systemd (or `--supervisor none`), and `openssl` for
 the self-signed certificate.
 
 ## License

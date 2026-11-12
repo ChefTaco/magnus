@@ -39,6 +39,21 @@ All notable changes to this project are documented in this file. The format is b
 - `MAGNUS_EMBERMEND_GRANTS_JSON` (server, secret): dedicated product credentials and exact target, environment and action grants; absent disables the bridge.
 - `MAGNUS_EMBERMEND_CONFIG` (agent): canonical root-controlled resource and worker configuration; absent disables reviewed remediation capabilities.
 
+## [2.4.3] - 2026-11-11
+
+### Fixed
+
+- Require patched Node.js 24.22.3 or 26.13.1 in native runtimes, builds, CI and container images, including the shared runtime.
+- Upgrade Hono to 4.13.18 across the server, fleet gateway and agent to bound tiny-chunk request memory (GHSA-39q9-qp46-w8xg), with request-path regression coverage.
+- Return generic API body-limit rejections as HTTP 413.
+- Enforce the packaged Node.js security minimum before native agent start and service installation and report it in health and configuration checks.
+- Track the patched Ardent 3.1.2 release.
+
+**New environment variables:** None.
+
+**Migration impact:** No datastore migrations. Native services require Node.js 24.22.3 or 26.13.1 or a later patch in the corresponding major line.
+
+
 ## [2.4.2] - 2026-11-11
 
 ### Fixed

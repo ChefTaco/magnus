@@ -18,7 +18,7 @@ import {
 const manifest = (version, extra = {}) => releaseManifestSchema.parse({
   schema: 1,
   version,
-  engines: { node: '^24.22.1 || ^26.13.0' },
+  engines: { node: '^24.22.3 || ^26.13.1' },
   components: { '@hivemagnus/magnus-server': version },
   engineProtocol: 1,
   agent: { selfUpgradeProtocol: 1, minLauncher: 1 },
@@ -35,9 +35,11 @@ test('versions compare by semver precedence, including prereleases', () => {
 });
 
 test('engine ranges accept only the declared Node lines', () => {
-  const range = '^24.22.1 || ^26.13.0';
-  assert.ok(satisfiesRange('24.22.1', range));
+  const range = '^24.22.3 || ^26.13.1';
+  assert.ok(satisfiesRange('24.22.3', range));
   assert.ok(satisfiesRange('v26.14.0', range));
+  assert.ok(!satisfiesRange('24.22.2', range));
+  assert.ok(!satisfiesRange('26.13.0', range));
   assert.ok(!satisfiesRange('24.22.0', range));
   assert.ok(!satisfiesRange('25.0.0', range));
   assert.ok(!satisfiesRange('22.11.0', range));

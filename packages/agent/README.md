@@ -44,7 +44,7 @@ Optional executors:
 - Linux with systemd. By default the agent runs as root (privileged mode). You
   can also run it as an ordinary account with fewer features; see
   [Privileged and unprivileged mode](#privileged-and-unprivileged-mode).
-- Node.js `^24.22.1` or `^26.13.0`.
+- Node.js `^24.22.3` or `^26.13.1`.
 - `/usr/bin/flock` (util-linux) for command execution.
 - A reachable magnus-server Control API.
 

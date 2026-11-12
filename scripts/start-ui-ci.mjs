@@ -107,7 +107,7 @@ await db.node.upsert({
     status: 'ONLINE',
     lastHeartbeatAt: new Date(),
     metadata: JSON.stringify({ agentSelfUpgrade: { protocol: 1, launcherProtocol: 1, layout: 'versioned', enabled: true, reason: null,
-      upgrade: { state: 'idle', from: null, to: fixtureAgentVersion }, nodeVersion: 'v24.22.1', observedAt: new Date().toISOString() } }),
+      upgrade: { state: 'idle', from: null, to: fixtureAgentVersion }, nodeVersion: 'v24.22.3', observedAt: new Date().toISOString() } }),
     agent: { create: { version: fixtureAgentVersion, status: 'RUNNING', capabilities: '[]' } },
   },
   update: { lastHeartbeatAt: new Date() },

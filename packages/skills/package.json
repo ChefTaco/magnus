@@ -1,6 +1,6 @@
 {
   "name": "@hivemagnus/magnus-skills",
-  "version": "2.4.2",
+  "version": "2.4.3",
   "description": "Ubuntu operations skill catalogue for Magnus and Hermes Agent: package, service, network, storage and security runbooks with validated manifests.",
   "keywords": [
     "magnus",
@@ -39,7 +39,7 @@
     "LICENSE"
   ],
   "engines": {
-    "node": "^24.22.1 || ^26.13.0"
+    "node": "^24.22.3 || ^26.13.1"
   },
   "publishConfig": {
     "access": "public"

@@ -3,7 +3,7 @@ import { checkForUpdate, classifyAgentVersions, summarizePackument, updateResult
 import { agentVersionStatus, warnOnAgentVersionMismatch } from './agent-version-warnings.js';
 
 const manifest = (version: string, extra: Record<string, unknown> = {}) => ({
-  schema: 1, version, engines: { node: '^24.22.1 || ^26.13.0' }, components: {}, engineProtocol: 1,
+  schema: 1, version, engines: { node: '^24.22.3 || ^26.13.1' }, components: {}, engineProtocol: 1,
   agent: { selfUpgradeProtocol: 1, minLauncher: 1 }, summary: `Release ${version}`, notesUrl: `https://example.com/${version}`, ...extra,
 });
 const packument = (...entries: Array<[string, Record<string, unknown> | null]>) =>

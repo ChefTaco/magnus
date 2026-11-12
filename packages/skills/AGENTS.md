@@ -121,7 +121,7 @@ The generator overwrites `skills/index.json` and each bundle's generated
 preserves `generatedAt` when catalogue content is unchanged and accepts
 `SOURCE_DATE_EPOCH` for deterministic changed-catalogue builds. The
 `catalog:check` command fails when generated catalogue files drift from source.
-It has no runtime dependencies beyond Node.js `^24.22.1 || ^26.13.0`.
+It has no runtime dependencies beyond Node.js `^24.22.3 || ^26.13.1`.
 
 ## Commands
 

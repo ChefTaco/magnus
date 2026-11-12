@@ -50,6 +50,12 @@ export async function main(argv: string[]): Promise<number | null> {
   if (cli.version || cli.command === 'version') { console.log(version()); return 0; }
   if (cli.help || cli.command === 'help') { console.log(USAGE); return 0; }
 
+  if (cli.command === 'start' || cli.command === 'install-service') {
+    const { nodeRuntimeCheck } = await import('./node-runtime.js');
+    const runtime = nodeRuntimeCheck();
+    if (runtime.status === 'fail') return fail(runtime.message);
+  }
+
   if (cli.envFile) {
     const loaded = config({ path: resolve(cli.envFile), quiet: true });
     if (loaded.error) return fail(`cannot read --env-file ${cli.envFile}: ${loaded.error.message}`);
@@ -81,6 +87,9 @@ export async function main(argv: string[]): Promise<number | null> {
       const { configurationErrors, CONTROL_API_URL, HOST_FQDN } = await import('./env.js');
       const { agentPrivileged, privilegedFeatureStatus } = await import('./privileged.js');
       const errors = configurationErrors();
+      const { nodeRuntimeCheck } = await import('./node-runtime.js');
+      const runtime = nodeRuntimeCheck();
+      if (runtime.status === 'fail') errors.unshift(runtime.message);
       const features = privilegedFeatureStatus();
       const report = { ok: errors.length === 0, version: version(), hostFqdn: HOST_FQDN, controlApiUrl: CONTROL_API_URL,
         privileged: agentPrivileged(), features, errors };

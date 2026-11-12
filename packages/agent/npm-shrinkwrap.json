@@ -1,19 +1,19 @@
 {
   "name": "@hivemagnus/magnus-agent",
-  "version": "2.4.2",
+  "version": "2.4.3",
   "lockfileVersion": 3,
   "requires": true,
   "packages": {
     "": {
       "name": "@hivemagnus/magnus-agent",
-      "version": "2.4.2",
+      "version": "2.4.3",
       "license": "Apache-2.0",
       "dependencies": {
-        "@hivemagnus/magnus-contracts": "2.4.2",
+        "@hivemagnus/magnus-contracts": "2.4.3",
         "@hono/node-server": "^2.1.6",
         "dotenv": "^18.0.9",
         "fast-xml-parser": "5.12.0",
-        "hono": "^4.13.16",
+        "hono": "^4.13.18",
         "ky": "^2.2.0",
         "nanoid": "^6.0.2",
         "tar-stream": "3.2.2",
@@ -25,7 +25,7 @@
         "magnus-agent": "dist/index.js"
       },
       "devDependencies": {
-        "@hivemagnus/ardent": "3.1.1",
+        "@hivemagnus/ardent": "3.1.2",
         "@types/node": "^24.19.2",
         "@types/tar-stream": "^3.1.5",
         "tsx": "^4.23.15",
@@ -33,7 +33,7 @@
         "vitest": "^5.1.0"
       },
       "engines": {
-        "node": "^24.22.1 || ^26.13.0"
+        "node": "^24.22.3 || ^26.13.1"
       }
     },
     "node_modules/@a2a-js/sdk": {
@@ -567,9 +567,9 @@
       }
     },
     "node_modules/@hivemagnus/ardent": {
-      "version": "3.1.1",
-      "resolved": "https://registry.npmjs.org/@hivemagnus/ardent/-/ardent-3.1.1.tgz",
-      "integrity": "sha512-4GQbkPr0DlUSBTCJLE0v2g52ojUhuma3e6gaIbVZKlBTRMSaXwbvT57lIg5QE/HD1J7oXV3HDFgu49qJM4Zh+g==",
+      "version": "3.1.2",
+      "resolved": "https://registry.npmjs.org/@hivemagnus/ardent/-/ardent-3.1.2.tgz",
+      "integrity": "sha512-ZgxpLsro4YgwkoDFJFIxBicVkLPPqs0PCDoBwVE37Po8n+GpnCSUM+b9CZpqtlH6fvsGC2yd5bfk3zNCm/yA9A==",
       "dev": true,
       "license": "Apache-2.0",
       "dependencies": {
@@ -582,7 +582,7 @@
         "@photostructure/sqlite": "3.3.1",
         "dotenv": "^18.0.9",
         "express": "5.3.0",
-        "hono": "^4.13.16",
+        "hono": "^4.13.18",
         "marked": "18.1.1",
         "parse5": "8.1.1",
         "pdfmake": "0.3.13",
@@ -594,7 +594,7 @@
         "ardent": "dist/cli.js"
       },
       "engines": {
-        "node": "^24.22.1 || ^26.13.0"
+        "node": "^24.22.3 || ^26.13.1"
       }
     },
     "node_modules/@hivemagnus/canvas-word-codec": {
@@ -628,9 +628,9 @@
       }
     },
     "node_modules/@hivemagnus/magnus-contracts": {
-      "version": "2.4.2",
-      "resolved": "https://registry.npmjs.org/@hivemagnus/magnus-contracts/-/magnus-contracts-2.4.2.tgz",
-      "integrity": "sha512-+biiL4ZKaXc83jivTEOaMz0sEGGpUXKlliPh1TybCRe5PSuFd6cbc0tAO1HQoy6G21k+tR/qVVXt7OVA8DNQmQ==",
+      "version": "2.4.3",
+      "resolved": "https://registry.npmjs.org/@hivemagnus/magnus-contracts/-/magnus-contracts-2.4.3.tgz",
+      "integrity": "sha512-rHa0peCI+40WKm+6F1hIK8A8kKenn4SKtpnjX+omvComKLl92XzrkXcfy3hClIyMU2blTldHKNNSR9U/6csJbQ==",
       "license": "Apache-2.0",
       "dependencies": {
         "openapi-fetch": "^0.17.0",
@@ -2162,9 +2162,9 @@
       }
     },
     "node_modules/hono": {
-      "version": "4.13.17",
-      "resolved": "https://registry.npmjs.org/hono/-/hono-4.13.17.tgz",
-      "integrity": "sha512-vZIcbkvjOR5hHRWERbGkr8fGfF0GGM1ooYkuH448iO3b2AdVEr3AXZSw4Z3Kn+1L5z0CVoVeyV29VGYmFh05kQ==",
+      "version": "4.13.18",
+      "resolved": "https://registry.npmjs.org/hono/-/hono-4.13.18.tgz",
+      "integrity": "sha512-H9q/E1XizaWstJxUW881dmLxEj+t/TrGGnyxINkm4+sK0qUwsMtFdo2BWI9Vs3cIS19MU6b6iCijoUoEf4f3DA==",
       "license": "MIT",
       "engines": {
         "node": ">=16.9.0"

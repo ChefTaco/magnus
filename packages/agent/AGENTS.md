@@ -15,7 +15,7 @@ that the agent can inspect and manage when they are configured.
 | Area | Choice |
 | --- | --- |
 | Framework | Hono v4 on `@hono/node-server` |
-| Runtime | Node.js `^24.22.1 \|\| ^26.13.0`, ESM |
+| Runtime | Node.js `^24.22.3 \|\| ^26.13.1`, ESM |
 | Language | TypeScript strict, NodeNext imports with `.js` extensions |
 | Auth | `x-node-token` shared secret; signed command results |
 | TLS | Verified outbound TLS through `verifiedFetch()` / `controlApiFetch()`; optional `CONTROL_API_CA_PATH` |

@@ -19,7 +19,7 @@ const { AgentResponseError, DispatchOutcomeUnknownError, NotDispatchedError, cla
 const INTEGRITY = 'sha512-' + 'A'.repeat(86) + '==';
 const report = (extra: Partial<StoredSelfUpgrade> = {}) => JSON.stringify({ agentSelfUpgrade: {
   protocol: 1, launcherProtocol: 1, layout: 'versioned', enabled: true, reason: null, upgrade: { state: 'idle', from: null, to: '1.1.0' },
-  nodeVersion: 'v24.22.1', observedAt: '2026-11-01T00:00:00.000Z', ...extra } });
+  nodeVersion: 'v24.22.3', observedAt: '2026-11-01T00:00:00.000Z', ...extra } });
 const row = (extra: Partial<CandidateRow> = {}): CandidateRow => ({ id: 'n1', name: 'node-1', hostname: 'node-1.example.com', status: 'ONLINE',
   lastHeartbeatAt: new Date(), metadata: report(), agent: { version: '1.1.0' }, ...extra });
 const enrolled = { state: 'enrolled', nodeFqdn: 'node-1.example.com', startedAt: new Date('2026-05-01'), updatedAt: new Date('2026-05-01') };
@@ -113,7 +113,7 @@ describe('self-upgrade reports', () => {
     db.node.findUnique.mockImplementation(async () => ({ metadata }));
     db.node.update.mockReset().mockImplementation(async ({ data }: { data: { metadata: string } }) => { metadata = data.metadata; });
     db.agent.findUnique.mockImplementation(async () => ({ status: 'RUNNING' }));
-    const beat = (freeBytes: number, low = false) => recordSelfUpgradeReport({ id: 'n1', name: 'node-1' }, { nodeVersion: 'v24.22.1', selfUpgrade: { protocol: 1, launcherProtocol: 1, layout: 'versioned', enabled: true,
+    const beat = (freeBytes: number, low = false) => recordSelfUpgradeReport({ id: 'n1', name: 'node-1' }, { nodeVersion: 'v24.22.3', selfUpgrade: { protocol: 1, launcherProtocol: 1, layout: 'versioned', enabled: true,
       fenceHighWater: { 'node:n1': '5' }, disk: { freeBytes, requiredBytes: 100, low } } }, memoryRunStore());
     await beat(1000);
     await beat(999);
