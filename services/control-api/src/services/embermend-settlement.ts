@@ -33,7 +33,15 @@ export async function observeOwnerSettlement(integrationId: string, request: Emb
   const retained = z.object({ assertion: commandReconciliationSchema }).passthrough().safeParse(row.result);
   if (!retained.success) return undefined;
   const receipt = await client.getCommandReceipt(original.commandId, { nodeFqdn: node.hostname, requestSha256: parameters.nativeRequestDigest });
-  if (receipt.state !== 'reconciled' || receipt.reconciliation.signature !== retained.data.assertion.signature || receipt.reconciliation.evidenceSha256 !== hash(request) || receipt.reconciliation.approvalRef !== request.authorizationRef || receipt.reconciliation.decisionId !== request.operationId) return undefined;
+  if (receipt.state !== 'reconciled') return undefined;
+  if (receipt.reconciliation.signature !== retained.data.assertion.signature) {
+    // The immutable native slot accepted another explicit decision. That proves
+    // this decision did not take effect and can never be applied later.
+    const result = { originalOperationId: parameters.originalOperationId, originalOutcome: 'unknown', superseded: true, winningRecoveryOperationId: receipt.reconciliation.decisionId, nativeCommandId: original.commandId, reconciliation: receipt.reconciliation };
+    await getDb().embermendOperation.update({ where: { id: row.id }, data: { state: 'failed' } });
+    return result;
+  }
+  if (receipt.reconciliation.evidenceSha256 !== hash(request) || receipt.reconciliation.approvalRef !== request.authorizationRef || receipt.reconciliation.decisionId !== request.operationId) return undefined;
   const result = { originalOperationId: parameters.originalOperationId, originalRequestDigest: parameters.originalRequestDigest, originalOutcome: 'unknown', ownershipSettled: true, reviewEvidenceId: parameters.evidenceId, reviewEvidenceDigest: parameters.evidenceDigest, disposition: receipt.reconciliation.disposition, nativeCommandId: original.commandId, reconciliation: receipt.reconciliation };
   await getDb().embermendOperation.update({ where: { id: row.id }, data: { state: 'completed' } });
   return result;
@@ -48,9 +56,10 @@ export async function settleEmbermendOwner(integrationId: string, request: Ember
   const coordination = z.object({ version: z.literal(1), resourceKey: z.string(), fence: z.string(), expiresAt: z.number() }).strict().parse(JSON.parse(lease.coordinationJson));
   const unsigned = { nodeFqdn: node.hostname, commandId: original.commandId, requestSha256: parameters.nativeRequestDigest, coordination, disposition: parameters.disposition, evidenceSha256: hash(request), approvalRef: request.authorizationRef, decisionId: request.operationId, expiresAt: Math.min(Date.parse(request.expiresAt), Date.now() + 240000) };
   const assertion = commandReconciliationSchema.parse({ ...unsigned, signature: createHmac('sha256', process.env['COMMAND_RECONCILIATION_SECRET'] ?? '').update(commandReconciliationSigningPayload(unsigned)).digest('hex') });
-  // Commit the exact decision before delivery. A restart only reads this decision.
-  await getDb().embermendOperation.update({ where: { integrationId_operationId: { integrationId, operationId: request.operationId } }, data: { result: { assertion } } });
   await logAuditEvent({ action: 'embermend.owner_settlement', actorId: 'service:embermend:' + integrationId, targetType: 'command', targetId: original.commandId, details: { recoveryOperationId: request.operationId, originalOperationId: parameters.originalOperationId, authorizationRef: request.authorizationRef, evidenceId: parameters.evidenceId, originalOutcome: 'unknown' } });
+  // An audit refusal precedes delivery authority. Commit the exact decision
+  // before delivery; a restart only reads this decision.
+  await getDb().embermendOperation.update({ where: { integrationId_operationId: { integrationId, operationId: request.operationId } }, data: { result: { assertion } } });
   await client.reconcileCommandReceipt(assertion, { nodeFqdn: node.hostname, requestSha256: parameters.nativeRequestDigest });
   if (!await observeOwnerSettlement(integrationId, request, node, client)) throw new Error('Exact native settlement acknowledgement unavailable');
 }

@@ -39,6 +39,15 @@ describe('explicit unknown-owner settlement', () => {
     expect(await observeOwnerSettlement('fixture-grant', operation, node, api)).toMatchObject({ originalOutcome: 'unknown', ownershipSettled: true });
     expect(send).toHaveBeenCalledTimes(1);
   });
+  it('fails a superseded decision only after another immutable native settlement is verified', async () => {
+    const api = client(); vi.spyOn(api, 'getCommandReceipt').mockImplementation(async () => receipt());
+    vi.spyOn(api, 'reconcileCommandReceipt').mockImplementation(async value => { assertion = value; throw new Error('Pre-delivery interruption'); });
+    const operation = request(); await expect(settleEmbermendOwner('fixture-grant', operation, node, api)).rejects.toThrow();
+    if (!assertion) throw new Error('Retained decision required');
+    assertion = { ...assertion, decisionId: 'different-explicit-recovery', signature: 'e'.repeat(64) }; acknowledged = true;
+    expect(await observeOwnerSettlement('fixture-grant', operation, node, api)).toMatchObject({ superseded: true, winningRecoveryOperationId: 'different-explicit-recovery', originalOutcome: 'unknown' });
+    expect(db.operation.update).toHaveBeenLastCalledWith({ where: { id: 'recovery-row' }, data: { state: 'failed' } });
+  });
   it.each(['request-digest', 'native-digest', 'target', 'unexpired', 'active'])('refuses changed or active ownership: %s', async mode => {
     const operation = request();
     if (mode === 'request-digest') operation.action.parameters['originalRequestDigest'] = '0'.repeat(64);

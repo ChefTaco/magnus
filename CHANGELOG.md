@@ -9,6 +9,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Added
 
+- Recognize superseded ownership-recovery decisions only from a different immutable signed native acknowledgement; keep audit refusal ahead of delivery authority.
+
 - Add exact-plan Embermend ownership settlement for independently reviewed, quiescent expired reboot and assessment operations. Retain the signed decision before delivery, recover lost acknowledgements by observation and preserve the historical outcome as unknown.
 
 - Require exact previous-boot logind shutdown proof before adopting an Embermend reboot. A cancelled schedule followed by an unrelated boot, missing journal or mismatched trusted event retains uncertainty and ownership.

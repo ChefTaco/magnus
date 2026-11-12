@@ -51,7 +51,7 @@ async function observed(grant: Grant, operationId: string) {
   if (stored.state === 'failed' && refusal.success) return { ...base, state: 'failed', result: refusal.data, ownershipReleased: true };
   if (operation.request.action.version === 'execution-settle.v1') {
     const result = await observeOwnerSettlement(grant.integrationId, operation.request, node, client).catch(() => undefined);
-    return result ? { ...base, state: 'completed', result, evidenceIds: [result.nativeCommandId], ownershipReleased: true } : { ...base, state: 'unknown' };
+    return result ? { ...base, state: 'superseded' in result && result.superseded === true ? 'failed' : 'completed', result, evidenceIds: [result.nativeCommandId], ownershipReleased: true } : { ...base, state: 'unknown' };
   }
   const lease = await db.commandResourceLease.findUnique({ where: { commandId: operation.commandId } });
   if (!lease) return { ...base, state: 'unknown' };

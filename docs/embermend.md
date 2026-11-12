@@ -155,3 +155,12 @@ receipt remains unknown, with explicit ownership settlement and the original
 historical uncertainty. Current-effect review never invents a successful reboot,
 scan, exit code, security verification or campaign continuation. Active cleanup
 and unattended settlement are outside this action's boundary.
+
+
+If a recovery decision was retained but never acknowledged, another separately
+approved decision may later settle that original native slot. The native ledger
+accepts exactly one immutable reconciliation. Reading a different acknowledged
+decision therefore establishes that the earlier recovery did not take effect;
+the earlier recovery is marked failed and superseded, without rewriting either
+decision or converting the original operation to success. Audit refusal occurs
+before a new signed delivery decision is persisted.
