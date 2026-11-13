@@ -1,16 +1,16 @@
 import { SENTINEL_NODE_IDS } from '../utils/sentinel-nodes.js';
 import { securityInventoryTargetSchema } from '@hivemagnus/magnus-contracts';
-import { createHash } from 'node:crypto';
 import { Hono } from 'hono';
 import { getDb } from '../db/index.js';
-import { safeEqual, authMiddleware, requirePermission } from '../middleware/auth.js';
+import { authMiddleware, requirePermission } from '../middleware/auth.js';
+import { matchesSha256Digest } from '../utils/safe-equal.js';
 import { getNodeBaseUrl } from '../utils/node-url.js';
 import type { AppVariables } from '../types/index.js';
 export const securityIntegrationRouter = new Hono<AppVariables>();
 securityIntegrationRouter.get('/inventory', async (c) => {
   const token = c.req.header('Authorization')?.replace(/^Bearer /, '') ?? '';
   const expected = process.env['SECURITY_INVENTORY_TOKEN_SHA256'];
-  if (!expected || !token || !safeEqual(createHash('sha256').update(token).digest('hex'), expected))
+  if (!matchesSha256Digest(token, expected))
     return c.json({ error: 'Unauthorized' }, 401);
   const nodes = await getDb().node.findMany({
     where: {id: {notIn: SENTINEL_NODE_IDS}, agent: {isNot: null}},

@@ -5,7 +5,7 @@ import type { AppVariables } from '../types/index.js';
 import { getDb } from '../db/index.js';
 import { authMiddleware, getUser, requireRole } from '../middleware/auth.js';
 import { HttpError } from '../middleware/error-handler.js';
-import { parseBody } from '../utils/validate.js';
+import { parseBody, parseInput } from '../utils/validate.js';
 import { logAuditEvent } from '../services/audit-service.js';
 import { authenticateRegistryToken, assignSkillTargets, desiredManifest, enrollClient, identity, publishRevision, registryKind, isDeployHost } from '../services/hermes-registry-service.js';
 import { requestCoreSlot, settleCoreSlot } from '../services/hermes-core-rollout.js';
@@ -101,9 +101,9 @@ hermesRegistryRouter.post('/policy/receipts', async c => {
 
 hermesRegistryRouter.get('/artifacts/:kind/:slug/:revision', async c => {
   const { installation } = await client(c, 'pull');
-  const kind = registryKind.parse(c.req.param('kind'));
-  const slug = identity.parse(c.req.param('slug'));
-  const number = z.coerce.number().int().positive().parse(c.req.param('revision'));
+  const kind = parseInput(c.req.param('kind'), registryKind);
+  const slug = parseInput(c.req.param('slug'), identity);
+  const number = parseInput(c.req.param('revision'), z.coerce.number().int().positive());
   const allowed = (await desiredManifest(installation.id)).some(item => item.kind === kind && item.slug === slug && item.revision === number);
   if (!allowed) throw new HttpError(403, 'REGISTRY_TARGET_REQUIRED', 'Artifact is not assigned to this installation');
   const revision = await getDb().hermesRegistryRevision.findUnique({ where: { kind_slug_revision: { kind, slug, revision: number } } });
@@ -222,9 +222,9 @@ hermesRegistryRouter.post('/targets', authMiddleware, requireRole('ADMIN', 'OPER
 });
 
 hermesRegistryRouter.post('/revisions/:kind/:slug/:revision/consent', authMiddleware, requireRole('ADMIN'), async c => {
-  const kind = registryKind.parse(c.req.param('kind'));
-  const slug = identity.parse(c.req.param('slug'));
-  const revision = z.coerce.number().int().positive().parse(c.req.param('revision'));
+  const kind = parseInput(c.req.param('kind'), registryKind);
+  const slug = parseInput(c.req.param('slug'), identity);
+  const revision = parseInput(c.req.param('revision'), z.coerce.number().int().positive());
   if (kind === 'skill') throw new HttpError(400, 'INVALID_CONSENT', 'Skill conflicts require a new reviewed revision');
   const body = await parseBody(c, z.object({ evidence: z.string().min(20).max(2000) }));
   const row = await getDb().hermesRegistryRevision.findUnique({ where: { kind_slug_revision: { kind, slug, revision } } });
@@ -247,7 +247,7 @@ hermesRegistryRouter.post('/revisions/:kind/:slug/:revision/consent', authMiddle
 });
 
 hermesRegistryRouter.put('/profile-groups/:profileId', authMiddleware, requireRole('ADMIN', 'OPERATOR'), async c => {
-  const profileId = identity.parse(c.req.param('profileId'));
+  const profileId = parseInput(c.req.param('profileId'), identity);
   const body = await parseBody(c, z.object({ groups: z.array(identity).max(32) }));
   const profile = await getDb().hermesProfile.findUnique({ where: { id: profileId }, include: { installation: true } });
   if (!profile || !isDeployHost(profile.installation.hostname.split('.')[0]!.toLowerCase()))

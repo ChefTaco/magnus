@@ -11,11 +11,26 @@ All notable changes to this project are documented in this file. The format is b
 
 - Node agent: a root agent no longer runs a Hermes executable, or runs one against a Hermes home, that another account controls as root. Hermes discovery (every heartbeat cycle), the Hermes management routes and the `hermes-cli` health check now run such an executable as the account that owns it or its home, with that account's own `HOME` and session bus. Before, any local account with a home directory could place a `hermes` file there and have the agent run it as root. A Hermes installed for a user is therefore run as that user from now on; a root-owned install with a root-owned home is unchanged. The health-check probes no longer inherit agent credentials, and `OTEL_EXPORTER_OTLP_HEADERS` is no longer passed to child processes.
 - Skills: `backup-manager` writes archives and checksums readable only by the invoking account (a default run archives `/etc`), purges only its own archives directly in the destination, and validates the retention. `news-reporter` sends the API key in a header read from stdin instead of the URL, validates its settings, bounds the request time and filters every remote field.
+- Server: creating a skill no longer lets a name or entry point with path separators write outside the skills directory, and skill file reads and writes can no longer reach a sibling skill whose name starts with the same text. Skill names must be letters, digits, underscores and hyphens; an entry point must be a plain file name.
+- Fleet assistant: approving, rejecting or confirming a pending tool call now requires read access to its conversation (the owner, or any operator for the shared fleet heartbeat); for anyone else it answers 404. Two concurrent decisions on the same call can no longer both run the tool, and confirming a command is audited with the person who confirmed it.
+- Fleet assistant: `runSkill` refuses a skill name or action that is not a plain name before it builds the node-side command. The file tools also refuse private keys, certificates, `.npmrc`, databases, dumps and the `certs`, `state`, `artifacts` and `backups` directories.
+- Server: the audit, command and log CSV exports quote every cell and stop a spreadsheet from evaluating a cell as a formula. A quote in an actor, target or node value previously shifted that row's columns.
 
 ### Fixed
 
 - Node agent: log forwarding no longer stalls for good when the server rejects a batch. Journal messages that journalctl prints as byte arrays (lines with colour escapes, for example) are decoded, and a batch the server answers with 400, 413 or 422 is dropped instead of being re-queued ahead of every later entry.
 - Node agent: a non-numeric `OTEL_FLUSH_INTERVAL_MS` or `HERMES_DISCOVERY_INTERVAL_MS` falls back to the default instead of becoming a one-millisecond timer or a rediscovery on every heartbeat. The disk probe runs `df` without a shell and does not start another while an earlier one is stuck on a dead mount. `GET /api/v1/traces?limit=` handles non-numeric and negative values.
+- Server: a log stream that the server ends (revoked or expired identity session) now releases its keep-alive timer and log subscription. Each such stream previously left both behind until the server restarted.
+- Server: scheduled AI operations compute their next run from all five cron fields. Step values such as `*/15` in the minute or hour field were refused with an unexplained 400, and the day-of-month, month and day-of-week fields were ignored, so a weekly schedule ran daily. Expressions are validated when a schedule is created or changed: numbers, `*`, ranges, steps and lists are supported; names such as `MON` are not.
+- Server: malformed JSON, an invalid path parameter or an invalid body now answers `400 VALIDATION_ERROR` on the routes that answered `500` (scheduled AI operations, the Hermes registry, shared resource leases, Embermend operations, MCP, node user provisioning, and every route that reads a body through the shared parser). An oversized body still answers `413`.
+- Server: `page`, `pageSize`, `limit`, `hours` and `windowMinutes` query values that are not numbers fall back to the default, and out-of-range values are clamped, instead of reaching the database. The library file list and webhook delivery list now cap `pageSize` at 200.
+- Server: an invalid `date`, `from` or `to` on the audit routes answers 400 instead of 500.
+- `magnus init` and `magnus upgrade`: an env-file value containing a single quote is written intact (double-quoted) instead of having the quote removed; a value that cannot be written faithfully is refused with a message.
+- `magnus init` and `magnus adopt` with systemd: a project directory or env-file path containing whitespace or `" ' \ % $ ;` is refused before anything is written, instead of generating a unit that cannot start.
+
+**New environment variables:** None.
+
+**Migration impact:** No datastore migrations.
 
 ## [2.9.1] - 2026-11-12
 

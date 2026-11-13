@@ -1,4 +1,5 @@
 import { optional } from '../utils/optional.js';
+import { intQuery, pagination } from '../utils/query.js';
 /**
  * anomalies.ts — Routes for anomaly detection events.
  *
@@ -33,7 +34,7 @@ anomaliesRouter.use('*', authMiddleware);
 
 // ── Fleet-wide anomaly feed ──
 anomaliesRouter.get('/', async (c) => {
-  const result = await listAnomalyEvents({ ...optional("nodeId", c.req.query('nodeId')), ...optional("metric", c.req.query('metric')), ...optional("severity", c.req.query('severity')), ...optional("resolved", c.req.query('resolved') === 'true' ? true : c.req.query('resolved') === 'false' ? false : undefined), page: parseInt(c.req.query('page') ?? '1', 10), pageSize: parseInt(c.req.query('pageSize') ?? '50', 10) });
+  const result = await listAnomalyEvents({ ...optional("nodeId", c.req.query('nodeId')), ...optional("metric", c.req.query('metric')), ...optional("severity", c.req.query('severity')), ...optional("resolved", c.req.query('resolved') === 'true' ? true : c.req.query('resolved') === 'false' ? false : undefined), ...pagination(c, { pageSize: 50, maxPageSize: 100 }) });
   return c.json({ success: true, data: result });
 });
 
@@ -45,7 +46,7 @@ anomaliesRouter.get('/summary', async (c) => {
 
 // ── Cross-fleet anomaly groups ──
 anomaliesRouter.get('/correlations', async (c) => {
-  const windowMinutes = Math.min(Math.max(Number(c.req.query('windowMinutes') ?? '5'), 1), 120);
+  const windowMinutes = intQuery(c, 'windowMinutes', { fallback: 5, min: 1, max: 120 });
   const includeResolved = c.req.query('includeResolved') === 'true';
   const groups = await correlateAnomalies({ windowMinutes, includeResolved });
   return c.json({ success: true, data: groups });
@@ -53,7 +54,7 @@ anomaliesRouter.get('/correlations', async (c) => {
 
 // ── Time-ordered anomaly and health context ──
 anomaliesRouter.get('/timeline', async (c) => {
-  const hours = Math.min(Math.max(Number(c.req.query('hours') ?? '24'), 1), 24 * 30);
+  const hours = intQuery(c, 'hours', { fallback: 24, min: 1, max: 24 * 30 });
   const nodeId = c.req.query('nodeId') ?? undefined;
   return c.json({ success: true, data: await getAnomalyTimeline({ hours, ...optional("nodeId", nodeId) }) });
 });
@@ -77,7 +78,7 @@ anomaliesRouter.get('/:nodeId/summary', async (c) => {
 // ── Node anomaly list ──
 anomaliesRouter.get('/:nodeId', async (c) => {
   const nodeId = c.req.param('nodeId')!;
-  const result = await listAnomalyEvents({ nodeId, ...optional("metric", c.req.query('metric')), ...optional("severity", c.req.query('severity')), ...optional("resolved", c.req.query('resolved') === 'true' ? true : c.req.query('resolved') === 'false' ? false : undefined), page: parseInt(c.req.query('page') ?? '1', 10), pageSize: parseInt(c.req.query('pageSize') ?? '50', 10) });
+  const result = await listAnomalyEvents({ nodeId, ...optional("metric", c.req.query('metric')), ...optional("severity", c.req.query('severity')), ...optional("resolved", c.req.query('resolved') === 'true' ? true : c.req.query('resolved') === 'false' ? false : undefined), ...pagination(c, { pageSize: 50, maxPageSize: 100 }) });
   return c.json({ success: true, data: result });
 });
 

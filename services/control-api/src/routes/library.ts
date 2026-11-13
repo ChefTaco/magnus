@@ -1,4 +1,5 @@
 import { optional } from '../utils/optional.js';
+import { pagination } from '../utils/query.js';
 import { clientErrorMessage } from '../utils/safe-errors.js';
 import { Hono } from 'hono';
 import type { AppVariables } from '../types/index.js';
@@ -146,8 +147,7 @@ libraryRouter.get('/files', async (c) => {
   const query = c.req.query('query');
   const categoryId = c.req.query('categoryId');
   const mimeType = c.req.query('mimeType');
-  const page = parseInt(c.req.query('page') ?? '1', 10);
-  const pageSize = parseInt(c.req.query('pageSize') ?? '50', 10);
+  const { page, pageSize } = pagination(c, { pageSize: 50, maxPageSize: 200 });
 
   const where: Record<string, unknown> = {};
   if (query) {

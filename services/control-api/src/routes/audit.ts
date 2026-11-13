@@ -1,12 +1,22 @@
 import { optional } from '../utils/optional.js';
+import { pagination } from '../utils/query.js';
 import { Hono } from 'hono';
 import type { AppVariables } from '../types/index.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { listAuditDays, queryAuditEvents, verifyAuditIntegrity } from '../services/audit-service.js';
 import { getDb } from '../db/index.js';
+import { HttpError } from '../middleware/error-handler.js';
+import { csvRow } from '../utils/csv.js';
 
 export const auditRouter = new Hono<AppVariables>();
 auditRouter.use('*', authMiddleware);
+
+/** The `date` query parameter: a day key, or nothing for today. Anything else is a 400. */
+function auditDate(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new HttpError(400, 'VALIDATION_ERROR', 'date must be YYYY-MM-DD');
+  return value;
+}
 
 // ── List available day keys ──
 auditRouter.get('/days', async (c) => {
@@ -16,9 +26,8 @@ auditRouter.get('/days', async (c) => {
 
 // ── Query audit events for a given day ──
 auditRouter.get('/', async (c) => {
-  const page = Number(c.req.query('page') ?? '1');
-  const pageSize = Math.min(Number(c.req.query('pageSize') ?? '50'), 200);
-  const date = c.req.query('date') ?? undefined;
+  const { page, pageSize } = pagination(c, { pageSize: 50, maxPageSize: 200 });
+  const date = auditDate(c.req.query('date'));
   const action = c.req.query('action') ?? undefined;
   const actorId = c.req.query('actorId') ?? undefined;
 
@@ -41,6 +50,9 @@ auditRouter.get('/export', async (c) => {
   const days = await listAuditDays();
   const fromDate = from ? new Date(from) : new Date(0);
   const toDate = to ? new Date(to) : new Date();
+  if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) {
+    throw new HttpError(400, 'VALIDATION_ERROR', 'from and to must be dates');
+  }
 
   const filteredDays = days.filter((d) => {
     const dayDate = new Date(d);
@@ -79,10 +91,10 @@ auditRouter.get('/export', async (c) => {
   c.header('Content-Disposition', `attachment; filename="audit-${dateStr}.csv"`);
 
   const csvHeader = 'timestamp,action,actorId,targetType,targetId,details\n';
-  const csvRows = filtered.map((e) => {
-    const details = typeof e.details === 'object' ? JSON.stringify(e.details).replace(/"/g, '""') : '';
-    return `"${e.timestamp}","${e.action ?? ''}","${e.actorId ?? ''}","${e.targetType ?? ''}","${e.targetId ?? ''}","${details}"`;
-  });
+  const csvRows = filtered.map((e) => csvRow([
+    e.timestamp, e.action, e.actorId, e.targetType, e.targetId,
+    typeof e.details === 'object' ? JSON.stringify(e.details) : '',
+  ]));
 
   return c.text(csvHeader + csvRows.join('\n'));
 });
@@ -114,10 +126,9 @@ auditRouter.get('/commands/export', async (c) => {
   c.header('Content-Disposition', `attachment; filename="commands-${dateStr}.csv"`);
 
   const csvHeader = 'id,nodeId,command,status,createdAt,completedAt,createdBy\n';
-  const csvRows = commands.map((cmd) => {
-    const command = String(cmd.command ?? '').replace(/"/g, '""');
-    return `"${cmd.id}","${cmd.nodeId ?? ''}","${command}","${cmd.status}","${cmd.createdAt.toISOString()}","${cmd.completedAt?.toISOString() ?? ''}","${cmd.createdBy ?? ''}"`;
-  });
+  const csvRows = commands.map((cmd) => csvRow([
+    cmd.id, cmd.nodeId, cmd.command, cmd.status, cmd.createdAt.toISOString(), cmd.completedAt?.toISOString(), cmd.createdBy,
+  ]));
 
   return c.text(csvHeader + csvRows.join('\n'));
 });
@@ -149,17 +160,14 @@ auditRouter.get('/logs/export', async (c) => {
   c.header('Content-Disposition', `attachment; filename="logs-${dateStr}.csv"`);
 
   const csvHeader = 'timestamp,nodeId,source,level,message\n';
-  const csvRows = logs.map((log) => {
-    const message = String(log.message ?? '').replace(/"/g, '""');
-    return `"${log.timestamp.toISOString()}","${log.nodeId}","${log.source}","${log.level}","${message}"`;
-  });
+  const csvRows = logs.map((log) => csvRow([log.timestamp.toISOString(), log.nodeId, log.source, log.level, log.message]));
 
   return c.text(csvHeader + csvRows.join('\n'));
 });
 
 // ── Verify audit log integrity (HMAC chain) ──
 auditRouter.get('/verify', async (c) => {
-  const date = c.req.query('date') ?? undefined;
+  const date = auditDate(c.req.query('date'));
   const result = await verifyAuditIntegrity(date);
   return c.json({ success: true, data: result });
 });

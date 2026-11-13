@@ -19,8 +19,17 @@ export function generateSecret(): string {
   return randomBytes(32).toString('hex');
 }
 
-function quote(value: string): string {
-  return /^[A-Za-z0-9_./:@%+,=-]*$/.test(value) ? value : `'${value.replace(/'/g, '')}'`;
+/**
+ * One env-file value, readable unchanged by dotenv, `node --env-file` and `docker compose
+ * --env-file`. Single quotes are literal in all three. A value that itself holds a single quote is
+ * double-quoted when nothing in it is special there; anything else cannot be written faithfully,
+ * and is refused rather than silently altered (a changed password only shows up as a failed login).
+ */
+export function quoteEnvValue(value: string): string {
+  if (/^[A-Za-z0-9_./:@%+,=-]*$/.test(value)) return value;
+  if (!value.includes("'")) return `'${value}'`;
+  if (!/["\\$`]/.test(value)) return `"${value}"`;
+  throw new Error('An env-file value cannot mix a single quote with a double quote, backslash, dollar sign or backtick; percent-encode it (in a URL) or choose another value');
 }
 
 export interface EnvEntry {
@@ -35,7 +44,7 @@ export function renderEnv(header: string, sections: Array<{ title: string; entri
     lines.push('', `# ── ${section.title} ──`);
     for (const entry of section.entries) {
       if (entry.comment) lines.push(`# ${entry.comment}`);
-      lines.push(`${entry.name}=${quote(entry.value)}`);
+      lines.push(`${entry.name}=${quoteEnvValue(entry.value)}`);
     }
   }
   return `${lines.join('\n')}\n`;
@@ -52,7 +61,7 @@ export function appendMissing(path: string, entries: EnvEntry[], note: string): 
   if (missing.length === 0) return [];
   const block = [`\n# ${note}`, ...missing.flatMap((entry) => [
     ...(entry.comment ? [`# ${entry.comment}`] : []),
-    `${entry.name}=${quote(entry.value)}`,
+    `${entry.name}=${quoteEnvValue(entry.value)}`,
   ])].join('\n');
   const present = existsSync(path);
   const current = present ? readFileSync(path, 'utf8') : '';

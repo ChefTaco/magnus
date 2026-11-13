@@ -77,6 +77,17 @@ function hardening(options: ServiceUnitOptions, writable: string[]): string[] {
   ];
 }
 
+/**
+ * The generated units write paths unquoted, and systemd splits `ExecStart=` and `Environment=`
+ * on whitespace and expands `%` and `$`. A path with any of those would produce a unit that
+ * starts the wrong command, so it is refused before anything is written.
+ */
+export function unitPathProblem(what: string, path: string): string | null {
+  return /[\s"'\\%$;]/.test(path)
+    ? `${what} (${path}) contains whitespace or one of " ' \\ % $ ; which a generated systemd unit cannot carry. Choose another path, or pass --supervisor none and write your own units.`
+    : null;
+}
+
 export function serverUnit(options: ServiceUnitOptions): string {
   const { project } = options;
   return [

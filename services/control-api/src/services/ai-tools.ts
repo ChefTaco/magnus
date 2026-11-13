@@ -450,14 +450,24 @@ registerTool('getNodeLogs', async (args) => {
 
 // ── File Tools ──
 
+/**
+ * Files the assistant never reads, lists or writes: the same kinds the repository refuses to
+ * commit. File contents go to the model provider, which may be a hosted service.
+ */
+const BLOCKED_PATH_PARTS = ['.env', '.npmrc', 'node_modules', '.git', 'prisma/magnus.db', 'certs', 'state', 'artifacts', 'backups', '.ssh'];
+const BLOCKED_FILE_NAME = /(?:\.(?:pem|key|crt|p12|pfx|jks|db|sqlite|sqlite3|dump)|(?:^|[_-])id_(?:rsa|ed25519|ecdsa))$/i;
+
 function isPathSafe(targetPath: string): boolean {
   const resolved = resolve(WORKSPACE_ROOT, targetPath);
   const rel = relative(WORKSPACE_ROOT, resolved);
   // Must stay within workspace and not traverse up
   if (rel.startsWith('..') || resolve(resolved) !== resolved) return false;
   // Block access to sensitive files
-  const blocked = ['.env', 'node_modules', '.git', 'prisma/magnus.db'];
-  return !blocked.some((b) => rel.includes(b));
+  const segments = rel.split(/[\\/]/);
+  if (BLOCKED_FILE_NAME.test(segments.at(-1) ?? '')) return false;
+  return !BLOCKED_PATH_PARTS.some((blocked) => (blocked.includes('/') || blocked.startsWith('.')
+    ? rel.includes(blocked)
+    : segments.includes(blocked)));
 }
 
 registerTool('readFile', async (args) => {
@@ -942,12 +952,19 @@ registerTool('getNodeDetails', async (args) => {
 
 // ── Skill Execution Tools ──
 
+/** A skill name or action that is safe to place in the node-side shell command. */
+const SKILL_SHELL_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+
 registerTool('runSkill', async (args) => {
   const nodeId = String(args['nodeId'] ?? '');
   const skillName = String(args['skillName'] ?? '');
   const action = String(args['action'] ?? 'run');
 
   if (!nodeId || !skillName) return { error: 'nodeId and skillName are required' };
+  // Both values become part of a shell command on the node, and both come from the model.
+  if (!SKILL_SHELL_NAME.test(skillName) || !SKILL_SHELL_NAME.test(action)) {
+    return { error: 'skillName and action may contain only letters, digits, dots, underscores and hyphens' };
+  }
 
   const db = getDb();
   const node = await db.node.findUnique({

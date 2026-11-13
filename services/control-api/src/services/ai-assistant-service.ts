@@ -2827,26 +2827,50 @@ export async function chatStream(
 
 // ── Tool Approval Actions ──
 
+export interface PendingToolApproval {
+  toolName: string;
+  toolArgs: Record<string, unknown>;
+  conversationId: string;
+}
+
+/** The conversation whose message holds a pending approval, or null when the message holds none. */
+export async function getPendingApprovalConversation(messageId: string): Promise<string | null> {
+  const message = await getDb().aiMessage.findUnique({ where: { id: messageId }, select: { conversationId: true, pendingApproval: true } });
+  return message?.pendingApproval ? message.conversationId : null;
+}
+
 /**
- * Approve a pending tool call and resume the conversation.
+ * Take a message's pending approval. The clear is conditional on the value read, so of two
+ * concurrent decisions (a double click, two operators) exactly one gets the approval and the
+ * tool runs once.
  */
-export async function approveToolCall(messageId: string, actorId = 'operator'): Promise<ChatResponse | null> {
+export async function claimPendingApproval(messageId: string): Promise<PendingToolApproval | null> {
   const db = getDb();
-  const message = await db.aiMessage.findUnique({ where: { id: messageId } });
+  const message = await db.aiMessage.findUnique({ where: { id: messageId }, select: { conversationId: true, pendingApproval: true } });
   if (!message?.pendingApproval) return null;
 
-  let approval: { toolName: string; toolArgs: Record<string, unknown>; conversationId: string };
+  let approval: PendingToolApproval;
   try {
-    approval = JSON.parse(message.pendingApproval);
+    approval = JSON.parse(message.pendingApproval) as PendingToolApproval;
   } catch {
     return null;
   }
 
-  // Clear the pending approval
-  await db.aiMessage.update({
-    where: { id: messageId },
+  const claimed = await db.aiMessage.updateMany({
+    where: { id: messageId, pendingApproval: message.pendingApproval },
     data: { pendingApproval: null },
   });
+  if (claimed.count !== 1) return null;
+  // The message's own conversation is authoritative, not the copy inside the stored JSON.
+  return { toolName: approval.toolName, toolArgs: approval.toolArgs ?? {}, conversationId: message.conversationId };
+}
+
+/**
+ * Approve a pending tool call and resume the conversation.
+ */
+export async function approveToolCall(messageId: string, actorId = 'operator'): Promise<ChatResponse | null> {
+  const approval = await claimPendingApproval(messageId);
+  if (!approval) return null;
 
   await logAuditEvent({
     action: 'assistant.tool_approval',
@@ -2879,22 +2903,8 @@ export async function approveToolCall(messageId: string, actorId = 'operator'): 
  * Reject a pending tool call.
  */
 export async function rejectToolCall(messageId: string, actorId = 'operator'): Promise<ChatResponse | null> {
-  const db = getDb();
-  const message = await db.aiMessage.findUnique({ where: { id: messageId } });
-  if (!message?.pendingApproval) return null;
-
-  let approval: { toolName: string; conversationId: string };
-  try {
-    approval = JSON.parse(message.pendingApproval);
-  } catch {
-    return null;
-  }
-
-  // Clear the pending approval
-  await db.aiMessage.update({
-    where: { id: messageId },
-    data: { pendingApproval: null },
-  });
+  const approval = await claimPendingApproval(messageId);
+  if (!approval) return null;
 
   await logAuditEvent({
     action: 'assistant.tool_approval',

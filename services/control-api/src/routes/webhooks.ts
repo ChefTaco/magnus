@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { pagination } from '../utils/query.js';
 import type { AppVariables } from '../types/index.js';
 import { authMiddleware, getUser, requireRole } from '../middleware/auth.js';
 import { logAuditEvent } from '../services/audit-service.js';
@@ -133,8 +134,7 @@ webhooksRouter.get('/:id/deliveries', async (c) => {
   const existing = await getWebhookEndpoint(id);
   if (!existing) throw new HttpError(404, 'NOT_FOUND', 'Webhook endpoint not found');
 
-  const page = parseInt(c.req.query('page') ?? '1', 10);
-  const pageSize = parseInt(c.req.query('pageSize') ?? '20', 10);
+  const { page, pageSize } = pagination(c, { pageSize: 20, maxPageSize: 200 });
 
   const result = await listDeliveries(id, page, pageSize);
   return c.json({ success: true, data: result });

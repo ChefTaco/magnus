@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { pruneBackups } from './database.js';
-import { appendMissing } from './env-file.js';
+import { appendMissing, quoteEnvValue, readEnvFile, renderEnv } from './env-file.js';
 import { init, type InitOptions } from './init.js';
 import type { Io, RunOptions, RunResult } from './io.js';
 import { ArgsError, parseArgs } from './main.js';
@@ -11,7 +11,7 @@ import { acquireLock, parseLock, Project, type ProjectState } from './project.js
 import { automaticCandidates, fetchRegistryCatalog, pickTarget, registryPackagePath, releaseFor, resolveRegistry, trimTrailingSlashes } from './release.js';
 import { restore } from './restore.js';
 import { rollback } from './rollback.js';
-import { composeProjectName, refreshUnit, serverUnit } from './templates.js';
+import { composeProjectName, refreshUnit, serverUnit, unitPathProblem } from './templates.js';
 import { upgrade, UpgradeError, type UpgradeOptions } from './upgrade.js';
 
 const manifest = (version: string, extra: Record<string, unknown> = {}) => ({
@@ -588,6 +588,18 @@ describe('generated files', () => {
     expect(readFileSync(`${file}.bak`, 'utf8')).toBe('A=1\n');
   });
 
+  it('env values survive a round trip, and one that cannot is refused instead of altered', () => {
+    const values = ['plain-1.2:3', 'two words', '$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA', 'postgres://magnus:it\'s@db.example.com/magnus', 'a#b', 'say "hi"', ''];
+    const dir = mkdtempSync(join(tmpdir(), 'magnus-env-'));
+    const file = join(dir, 'values.env');
+    writeFileSync(file, renderEnv('header', [{ title: 'Values', entries: values.map((value, index) => ({ name: `V${index}`, value })) }]));
+    const read = readEnvFile(file);
+    values.forEach((value, index) => expect(read[`V${index}`]).toBe(value));
+    expect(quoteEnvValue("it's")).toBe('"it\'s"');
+    expect(() => quoteEnvValue('it\'s "quoted"')).toThrow(/cannot mix a single quote/);
+    expect(() => quoteEnvValue("pa'ss$word")).toThrow(/cannot mix a single quote/);
+  });
+
   it('a broken state file names itself and the backup copy', () => {
     const project = makeProject();
     project.save();
@@ -615,6 +627,17 @@ describe('init', () => {
       postgresPort: 5432, redisPort: 6379, adminUser: 'admin', ui: true, start: true, autoMigrate: true, healthTimeoutMs: 1000 } as InitOptions;
     await expect(init(host.io, initOptions)).rejects.toThrow(/need Linux.*--supervisor none/s);
     expect(existsSync(dir)).toBe(false);
+  });
+
+  it('refuses a project directory a systemd unit cannot carry before writing anything', async () => {
+    const dir = join(mkdtempSync(join(tmpdir(), 'magnus-init-')), 'My Project');
+    const host = makeHost(makeProject(), {});
+    const initOptions = { dir, system: false, supervisor: 'systemd', registry: 'https://registry.example.com', serverPort: 4000, uiPort: 3000,
+      postgresPort: 5432, redisPort: 6379, adminUser: 'admin', ui: true, start: true, autoMigrate: true, healthTimeoutMs: 1000 } as InitOptions;
+    await expect(init(host.io, initOptions)).rejects.toThrow(/project directory .*contains whitespace.*--supervisor none/s);
+    expect(existsSync(dir)).toBe(false);
+    expect(unitPathProblem('The project directory', '/opt/magnus-1.2_x')).toBeNull();
+    expect(unitPathProblem('The project directory', '/opt/100%')).toMatch(/cannot carry/);
   });
 });
 
