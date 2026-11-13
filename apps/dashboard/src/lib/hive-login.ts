@@ -78,9 +78,8 @@ async function json(url: string, init?: RequestInit) {
     signal: AbortSignal.timeout(8000),
     cache: 'no-store',
   });
-  if (!res.ok) throw new Error('Hive identity request failed');
   const reader = res.body?.getReader();
-  if (!reader) throw new Error('Empty Hive response');
+  if (!reader) throw new Error(res.ok ? 'Empty Hive response' : 'Hive identity request failed');
   const chunks: Uint8Array[] = [];
   let bytes = 0;
   try {
@@ -94,7 +93,31 @@ async function json(url: string, init?: RequestInit) {
   } finally {
     await reader.cancel();
   }
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  const text = Buffer.concat(chunks).toString('utf8');
+  if (!res.ok) {
+    if (res.status === 401 && oauthError(text) === 'invalid_client') throw new HiveClientRejected();
+    throw new Error('Hive identity request failed');
+  }
+  return JSON.parse(text);
+}
+function oauthError(text: string): unknown {
+  try {
+    return (JSON.parse(text) as { error?: unknown } | null)?.error;
+  } catch {
+    return undefined;
+  }
+}
+/**
+ * The identity service refused this dashboard's OAuth client credentials. The message names
+ * configuration only, never a secret, so the callback may log it for the operator.
+ */
+export class HiveClientRejected extends Error {
+  constructor() {
+    super(
+      'Hive IAM refused the OAuth client credentials (invalid_client). A client registered as confidential must authenticate when it exchanges the authorization code: set HIVE_OAUTH_CLIENT_SECRET to its secret, or register HIVE_OAUTH_CLIENT_ID as a public PKCE client and leave the secret unset.',
+    );
+    this.name = 'HiveClientRejected';
+  }
 }
 async function discovery() {
   const config = settings();

@@ -26,7 +26,13 @@ vi.mock('jose', () => ({ createRemoteJWKSet: vi.fn(), jwtVerify: mocks.verify })
 vi.mock('./auth-constants', () => ({
   getSecretKey: () => new TextEncoder().encode('dedicated-test-session-encryption-key'),
 }));
-import { beginHiveLogin, finishHiveLogin, hiveCredential, revokeHiveSession } from './hive-login';
+import {
+  beginHiveLogin,
+  finishHiveLogin,
+  hiveCredential,
+  HiveClientRejected,
+  revokeHiveSession,
+} from './hive-login';
 const doc = {
   issuer: 'https://iam.invalid',
   authorization_endpoint: 'https://iam.invalid/authorize',
@@ -82,6 +88,53 @@ describe('named Hive delegation', () => {
     await expect(finishHiveLogin(flow.state, 'code')).rejects.toThrow('consumed');
     await revokeHiveSession(session);
     await expect(hiveCredential(session, 'https://api.invalid')).rejects.toThrow('expired');
+  });
+  it('always sends the PKCE verifier, and the client secret when one is configured', async () => {
+    const exchanged = async () => {
+      const flow = await beginHiveLogin();
+      await finishHiveLogin(flow.state, 'code');
+      const call = vi
+        .mocked(fetch)
+        .mock.calls.filter(([url]) => String(url).endsWith('/token'))
+        .at(-1)!;
+      return new URLSearchParams(String((call[1] as RequestInit).body));
+    };
+    const publicClient = await exchanged();
+    expect(publicClient.get('code_verifier')).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(publicClient.has('client_secret')).toBe(false);
+    vi.stubEnv('HIVE_OAUTH_CLIENT_SECRET', 'obviously-fake-client-secret');
+    const confidential = await exchanged();
+    expect(confidential.get('code_verifier')).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(confidential.get('client_secret')).toBe('obviously-fake-client-secret');
+  });
+  it('names the missing client secret when the identity service refuses the client', async () => {
+    const refuse = (status: number, body: string) =>
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (url: string) =>
+          url.endsWith('/token')
+            ? new Response(body, { status })
+            : new Response(JSON.stringify(doc)),
+        ),
+      );
+    refuse(401, JSON.stringify({ error: 'invalid_client', error_description: 'private detail' }));
+    let flow = await beginHiveLogin();
+    const refusal = await finishHiveLogin(flow.state, 'code').catch((error: unknown) => error);
+    expect(refusal).toBeInstanceOf(HiveClientRejected);
+    expect((refusal as Error).message).toContain('HIVE_OAUTH_CLIENT_SECRET');
+    expect((refusal as Error).message).not.toContain('private detail');
+    // Any other refusal stays generic.
+    for (const [status, body] of [
+      [400, JSON.stringify({ error: 'invalid_grant' })],
+      [401, 'not json'],
+      [500, JSON.stringify({ error: 'invalid_client' })],
+    ] as const) {
+      refuse(status, body);
+      flow = await beginHiveLogin();
+      const other = await finishHiveLogin(flow.state, 'code').catch((error: unknown) => error);
+      expect(other).not.toBeInstanceOf(HiveClientRejected);
+      expect((other as Error).message).toBe('Hive identity request failed');
+    }
   });
   it('rejects issuer, audience, expiry and service-account verification failures without fallback', async () => {
     for (const failure of ['issuer', 'audience', 'expired']) {
