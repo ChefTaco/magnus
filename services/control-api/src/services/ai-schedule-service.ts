@@ -3,42 +3,21 @@ import { optional } from '../utils/optional.js';
  * ai-schedule-service.ts — Scheduled AI Operations.
  *
  * Manages recurring AI operations (fleet analysis, reports, runbooks)
- * using cron expressions and BullMQ repeatable jobs.
+ * using five-field cron expressions (see cron-next-run.ts). Due operations run when
+ * POST /ai-schedules/execute-due is called.
  */
 
 import { getDb } from '../db/index.js';
 import { chat } from './ai-assistant-service.js';
 import { nanoid } from 'nanoid';
+import { nextCronRun } from './cron-next-run.js';
 
+/**
+ * When the operation runs next. An expression that cannot be scheduled (only possible for a row
+ * stored before expressions were validated) is retried in an hour instead of running in a loop.
+ */
 function parseCronToNextRun(cronExpr: string): Date {
-  // Simple next-run estimate: parse cron and compute next occurrence
-  // For a production system, use a cron library. Here we do a 1h default fallback.
-  const parts = cronExpr.trim().split(/\s+/);
-  if (parts.length < 5) return new Date(Date.now() + 3600_000);
-
-  const now = new Date();
-  const minute = parts[0] === '*' ? now.getMinutes() : parseInt(parts[0]!, 10);
-  const hour = parts[1] === '*' ? now.getHours() : parseInt(parts[1]!, 10);
-
-  const next = new Date(now);
-  next.setSeconds(0, 0);
-  next.setMinutes(minute);
-  next.setHours(hour);
-
-  // If the computed time is in the past, advance by the interval
-  if (next <= now) {
-    if (parts[1]?.startsWith('*/')) {
-      const interval = parseInt(parts[1].slice(2), 10) || 1;
-      next.setHours(next.getHours() + interval);
-    } else if (parts[0]?.startsWith('*/')) {
-      const interval = parseInt(parts[0].slice(2), 10) || 1;
-      next.setMinutes(next.getMinutes() + interval);
-    } else {
-      next.setDate(next.getDate() + 1);
-    }
-  }
-
-  return next;
+  return nextCronRun(cronExpr) ?? new Date(Date.now() + 3600_000);
 }
 
 export async function createScheduledOp(params: {

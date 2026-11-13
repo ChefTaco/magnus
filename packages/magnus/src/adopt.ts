@@ -13,7 +13,7 @@ import type { Io } from './io.js';
 import { acquireLock, Project, type Component, type ProjectState, type Supervisor } from './project.js';
 import { releaseFor } from './release.js';
 import { checkSupervisor, enableServices, unitDirectory } from './supervisor.js';
-import { serverUnit, uiUnit } from './templates.js';
+import { serverUnit, uiUnit, unitPathProblem } from './templates.js';
 import { loadCatalog, UpgradeError } from './upgrade.js';
 import { defaultProjectDir } from './init.js';
 
@@ -46,6 +46,9 @@ export async function adopt(io: Io, options: AdoptOptions): Promise<number> {
   if (Project.exists(dir)) throw new UpgradeError(`${dir} already holds a Magnus project.`);
   if (options.supervisor === 'systemd') {
     if (io.platform !== 'linux') throw new UpgradeError(`systemd units need Linux; on ${io.platform} pass --supervisor none.`);
+    const problem = unitPathProblem('The project directory', dir) ?? unitPathProblem('--server-env-file', serverEnvFile)
+      ?? (uiEnvFile ? unitPathProblem('--ui-env-file', uiEnvFile) : null);
+    if (problem) throw new UpgradeError(problem);
     if (options.installUnits) await checkSupervisor(io, 'systemd', options.system ? 'system' : 'user').catch((error: unknown) => {
       throw new UpgradeError(error instanceof Error ? error.message : String(error));
     });

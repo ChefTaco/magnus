@@ -1,4 +1,5 @@
 import { optional } from '../utils/optional.js';
+import { intQuery } from '../utils/query.js';
 import { NodeApiClient } from '../sdk/node-api-client.js';
 import { getNodeBaseUrl } from '../utils/node-url.js';
 import { getNodeManagerSecret } from '../utils/env.js';
@@ -30,8 +31,8 @@ commandsRouter.get('/', async (c) => {
   const db = getDb();
   const nodeId = c.req.query('nodeId') ?? undefined;
   const status = c.req.query('status') ?? undefined;
-  const hours = Math.min(Math.max(Number(c.req.query('hours') ?? '24'), 1), 24 * 30);
-  const pageSize = Math.min(Math.max(Number(c.req.query('pageSize') ?? '25'), 1), 100);
+  const hours = intQuery(c, 'hours', { fallback: 24, min: 1, max: 24 * 30 });
+  const pageSize = intQuery(c, 'pageSize', { fallback: 25, min: 1, max: 100 });
   const since = new Date(Date.now() - hours * 60 * 60 * 1000);
 
   const commands = await db.remoteCommand.findMany({

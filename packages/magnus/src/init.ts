@@ -15,7 +15,7 @@ import { mustRun, type Io } from './io.js';
 import { acquireLock, Project, type Component, type DatabaseConfig, type ProjectState, type Supervisor } from './project.js';
 import { ownPackage, releaseFor } from './release.js';
 import { checkSupervisor, enableServices, restartServices, unitDirectory } from './supervisor.js';
-import { composeProjectName, depsCompose, depsEnv, serverEnv, serverUnit, uiEnv, uiUnit } from './templates.js';
+import { composeProjectName, depsCompose, depsEnv, serverEnv, serverUnit, uiEnv, uiUnit, unitPathProblem } from './templates.js';
 import { loadCatalog, UpgradeError } from './upgrade.js';
 
 export interface InitOptions {
@@ -79,6 +79,10 @@ export async function init(io: Io, options: InitOptions): Promise<number> {
   if (options.system && !options.serviceUser) throw new UpgradeError('--system needs --service-user <existing account> to run the services as.');
   const dir = resolve(options.dir ?? defaultProjectDir(io, options.system));
   if (Project.exists(dir)) throw new UpgradeError(`${dir} already holds a Magnus project. Use \`magnus upgrade\` or \`magnus status\`.`);
+  if (options.supervisor === 'systemd') {
+    const problem = unitPathProblem('The project directory', dir) ?? unitPathProblem('The Node.js path', process.execPath);
+    if (problem) throw new UpgradeError(problem);
+  }
   // Before anything is written: systemd needs Linux and (user units) a session bus.
   await checkSupervisor(io, options.supervisor, options.system ? 'system' : 'user').catch((error: unknown) => {
     throw new UpgradeError(`${error instanceof Error ? error.message : String(error)} Or pass --supervisor none.`);

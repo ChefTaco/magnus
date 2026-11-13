@@ -1,10 +1,9 @@
-import { createHash } from 'node:crypto';
 import { Hono, type Context, type Next } from 'hono';
 import { z } from 'zod';
 import { getDb } from '../db/index.js';
 import { HttpError } from '../middleware/error-handler.js';
 import { parseBody } from '../utils/validate.js';
-import { safeEqual } from '../utils/safe-equal.js';
+import { matchesSha256Digest } from '../utils/safe-equal.js';
 import { logAuditEvent } from '../services/audit-service.js';
 import type { AppVariables } from '../types/index.js';
 
@@ -17,7 +16,7 @@ export const fleetGatewayRouter = new Hono<AppVariables>();
 async function requireGatewayCredential(c: Context<AppVariables>, next: Next): Promise<void> {
   const expected = process.env['FLEET_GATEWAY_TOKEN_SHA256'] ?? '';
   const token = c.req.header('x-fleet-gateway-token') ?? '';
-  if (!expected || !token || !safeEqual(createHash('sha256').update(token).digest('hex'), expected))
+  if (!matchesSha256Digest(token, expected))
     throw new HttpError(401, 'UNAUTHORIZED', 'Fleet gateway credential required');
   await next();
 }

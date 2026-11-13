@@ -158,6 +158,8 @@ logsRouter.get('/stream', (c) => {
 
   return streamSSE(c, async (stream) => {
     let eventId = 0;
+    let finish!: () => void;
+    const finished = new Promise<void>((resolve) => { finish = resolve; });
 
     // Keep-alive heartbeat every 30s
     const heartbeatTimer = setInterval(() => {
@@ -177,21 +179,24 @@ logsRouter.get('/stream', (c) => {
       });
     });
 
-    const stopWatching = watchOathweaveStream(c.req.header('Authorization'), () => {
-      void stream.close();
-    });
-
-    // Wait until the client disconnects
-    stream.onAbort(() => {
+    // One idempotent cleanup for both ways a stream ends. A stream the server closes
+    // (revoked or expired session) never reports an abort, so the abort callback alone
+    // would leave the timer and the log subscription behind.
+    let stopWatching: () => void = () => undefined;
+    let cleaned = false;
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
       clearInterval(heartbeatTimer);
       stopWatching();
       unsubscribe();
-    });
+      finish();
+    };
+    stopWatching = watchOathweaveStream(c.req.header('Authorization'), cleanup);
+    stream.onAbort(cleanup);
 
-    // Keep the stream open — the onAbort callback will clean up
-    // We need to await something that never resolves to keep the stream alive
-    await new Promise(() => {
-      // intentionally never resolves — stream closed via onAbort
-    });
+    // Hold the stream open until the client disconnects or the session ends;
+    // the helper closes it once this callback returns.
+    await finished;
   });
 });

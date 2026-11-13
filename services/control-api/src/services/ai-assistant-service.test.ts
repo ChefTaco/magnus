@@ -4,6 +4,8 @@ const dbMocks = vi.hoisted(() => ({
   aiMemoryFindUnique: vi.fn(),
   aiMemoryUpdate: vi.fn(),
   aiMemoryCreate: vi.fn(),
+  aiMessageFindUnique: vi.fn(),
+  aiMessageUpdateMany: vi.fn(),
 }));
 
 vi.mock('../db/index.js', () => ({
@@ -13,10 +15,14 @@ vi.mock('../db/index.js', () => ({
       update: dbMocks.aiMemoryUpdate,
       create: dbMocks.aiMemoryCreate,
     },
+    aiMessage: {
+      findUnique: dbMocks.aiMessageFindUnique,
+      updateMany: dbMocks.aiMessageUpdateMany,
+    },
   }),
 }));
 
-import { getModelProfiles, getToolCallSignature, getTextSimilarity, hasStalledForwardProgress, resolveRouteModel, selectModel, updateModelProfiles } from './ai-assistant-service.js';
+import { claimPendingApproval, getPendingApprovalConversation, getModelProfiles, getToolCallSignature, getTextSimilarity, hasStalledForwardProgress, resolveRouteModel, selectModel, updateModelProfiles } from './ai-assistant-service.js';
 
 beforeEach(() => {
   dbMocks.aiMemoryFindUnique.mockReset();
@@ -188,5 +194,42 @@ describe('ai-assistant-service loop helpers', () => {
 
     expect(getTextSimilarity(previous, current)).toBeLessThan(0.5);
     expect(hasStalledForwardProgress(previous, current)).toBe(false);
+  });
+});
+
+describe('pending tool approvals', () => {
+  const pending = JSON.stringify({ toolName: 'execCommand', toolArgs: { nodeId: 'node-1', command: 'uptime' }, conversationId: 'stale-copy' });
+
+  beforeEach(() => {
+    dbMocks.aiMessageFindUnique.mockReset();
+    dbMocks.aiMessageUpdateMany.mockReset();
+  });
+
+  it('hands one approval to exactly one of two concurrent decisions', async () => {
+    // Both callers read the approval before either clears it; the database lets one clear win.
+    dbMocks.aiMessageFindUnique.mockResolvedValue({ conversationId: 'conversation-1', pendingApproval: pending });
+    dbMocks.aiMessageUpdateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
+
+    const [first, second] = await Promise.all([claimPendingApproval('message-1'), claimPendingApproval('message-1')]);
+
+    expect(first).toEqual({ toolName: 'execCommand', toolArgs: { nodeId: 'node-1', command: 'uptime' }, conversationId: 'conversation-1' });
+    expect(second).toBeNull();
+    expect(dbMocks.aiMessageUpdateMany).toHaveBeenCalledWith({ where: { id: 'message-1', pendingApproval: pending }, data: { pendingApproval: null } });
+  });
+
+  it('claims nothing from a message without a readable approval', async () => {
+    dbMocks.aiMessageFindUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({ conversationId: 'c', pendingApproval: null })
+      .mockResolvedValueOnce({ conversationId: 'c', pendingApproval: '{broken' });
+    await expect(claimPendingApproval('missing')).resolves.toBeNull();
+    await expect(claimPendingApproval('decided')).resolves.toBeNull();
+    await expect(claimPendingApproval('corrupt')).resolves.toBeNull();
+    expect(dbMocks.aiMessageUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it('names the conversation only while an approval is pending', async () => {
+    dbMocks.aiMessageFindUnique.mockResolvedValueOnce({ conversationId: 'conversation-1', pendingApproval: pending })
+      .mockResolvedValueOnce({ conversationId: 'conversation-1', pendingApproval: null });
+    await expect(getPendingApprovalConversation('message-1')).resolves.toBe('conversation-1');
+    await expect(getPendingApprovalConversation('message-1')).resolves.toBeNull();
   });
 });

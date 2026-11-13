@@ -1,6 +1,8 @@
 import { Hono } from 'hono';
 import type { AppVariables } from '../types/index.js';
+import { z } from 'zod';
 import { authMiddleware } from '../middleware/auth.js';
+import { parseBody } from '../utils/validate.js';
 import {
   getDependencyHealth,
   getFleetReadiness,
@@ -19,6 +21,15 @@ const tools = [
   { name: 'magnus_codex_fleet_status', description: 'Read cached Codex CLI version, update, and ChatGPT OAuth posture.' },
 ];
 
+// Loose on purpose: MCP clients send `jsonrpc`, `id` and other members this route ignores.
+const requestSchema = z.object({
+  method: z.string().optional(),
+  params: z.object({
+    name: z.string().optional(),
+    arguments: z.record(z.string(), z.unknown()).nullish(),
+  }).nullish(),
+});
+
 mcpRouter.use('*', authMiddleware);
 
 mcpRouter.get('/', (c) => c.json({
@@ -29,7 +40,7 @@ mcpRouter.get('/', (c) => c.json({
 }));
 
 mcpRouter.post('/', async (c) => {
-  const body = await c.req.json<{ method?: string; params?: { name?: string; arguments?: Record<string, unknown> } }>();
+  const body = await parseBody(c, requestSchema);
   if (body.method === 'tools/list') {
     return c.json({ tools });
   }

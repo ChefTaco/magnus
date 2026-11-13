@@ -1,4 +1,5 @@
 import { optional } from '../utils/optional.js';
+import { pagination } from '../utils/query.js';
 /**
  * remediation.ts — Auto-remediation rule management and execution history.
  *
@@ -114,8 +115,7 @@ remediationRouter.get('/executions', async (c) => {
     ruleId: c.req.query('ruleId'),
     nodeId: c.req.query('nodeId'),
     status: c.req.query('status'),
-    page: c.req.query('page') ? Number(c.req.query('page')) : undefined,
-    pageSize: c.req.query('pageSize') ? Number(c.req.query('pageSize')) : undefined,
+    ...pagination(c, { pageSize: 50, maxPageSize: 200 }),
   };
   const result = await listExecutions({ ...optional("ruleId", params.ruleId), ...optional("nodeId", params.nodeId), ...optional("status", params.status), ...optional("page", params.page), ...optional("pageSize", params.pageSize) });
   return c.json({ data: result });

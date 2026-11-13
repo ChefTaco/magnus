@@ -2,14 +2,14 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, open, rename, unlink, lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Hono } from 'hono';
-import { safeEqual } from '../middleware/auth.js';
+import { matchesSha256Digest } from '../utils/safe-equal.js';
 import { magnusHomePath } from '../utils/magnus-home.js';
 export const securityBackupRouter = new Hono();
 let receiving = false;
 securityBackupRouter.post('/', async (c) => {
   const digest = process.env['SECURITY_BACKUP_TOKEN_SHA256'];
   const token = c.req.header('Authorization')?.replace(/^Bearer /, '') ?? '';
-  if (!digest || !token || !safeEqual(createHash('sha256').update(token).digest('hex'), digest))
+  if (!matchesSha256Digest(token, digest))
     return c.json({ error: 'Unauthorized' }, 401);
   if (receiving) return c.json({ error: 'Backup upload already active' }, 409);
   const name = c.req.header('x-backup-name') ?? '';
