@@ -7,6 +7,16 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Security
+
+- Node agent: a root agent no longer runs a Hermes executable, or runs one against a Hermes home, that another account controls as root. Hermes discovery (every heartbeat cycle), the Hermes management routes and the `hermes-cli` health check now run such an executable as the account that owns it or its home, with that account's own `HOME` and session bus. Before, any local account with a home directory could place a `hermes` file there and have the agent run it as root. A Hermes installed for a user is therefore run as that user from now on; a root-owned install with a root-owned home is unchanged. The health-check probes no longer inherit agent credentials, and `OTEL_EXPORTER_OTLP_HEADERS` is no longer passed to child processes.
+- Skills: `backup-manager` writes archives and checksums readable only by the invoking account (a default run archives `/etc`), purges only its own archives directly in the destination, and validates the retention. `news-reporter` sends the API key in a header read from stdin instead of the URL, validates its settings, bounds the request time and filters every remote field.
+
+### Fixed
+
+- Node agent: log forwarding no longer stalls for good when the server rejects a batch. Journal messages that journalctl prints as byte arrays (lines with colour escapes, for example) are decoded, and a batch the server answers with 400, 413 or 422 is dropped instead of being re-queued ahead of every later entry.
+- Node agent: a non-numeric `OTEL_FLUSH_INTERVAL_MS` or `HERMES_DISCOVERY_INTERVAL_MS` falls back to the default instead of becoming a one-millisecond timer or a rediscovery on every heartbeat. The disk probe runs `df` without a shell and does not start another while an earlier one is stuck on a dead mount. `GET /api/v1/traces?limit=` handles non-numeric and negative values.
+
 ## [2.9.1] - 2026-11-12
 
 ### Fixed
