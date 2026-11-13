@@ -1,4 +1,5 @@
 import { optional } from '../utils/optional.js';
+import { pagination } from '../utils/query.js';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import type { AppVariables } from '../types/index.js';
@@ -25,8 +26,7 @@ notificationsRouter.use('*', authMiddleware);
  */
 notificationsRouter.get('/', async (c) => {
   const params = {
-    page: Number(c.req.query('page') ?? 1),
-    pageSize: Number(c.req.query('pageSize') ?? 50),
+    ...pagination(c, { pageSize: 50, maxPageSize: 100 }),
     isRead: c.req.query('isRead') !== undefined ? c.req.query('isRead') === 'true' : undefined,
     severity: c.req.query('severity') ?? undefined,
     type: c.req.query('type') ?? undefined,

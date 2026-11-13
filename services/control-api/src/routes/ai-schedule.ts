@@ -1,4 +1,5 @@
 import { optional } from '../utils/optional.js';
+import { pagination } from '../utils/query.js';
 /**
  * ai-schedule.ts — Routes for Scheduled AI Operations.
  *
@@ -16,15 +17,21 @@ import {
   executeDueOps,
 } from '../services/ai-schedule-service.js';
 import { authMiddleware, requireRole } from '../middleware/auth.js';
+import { parseBody } from '../utils/validate.js';
+import { isCronExpression } from '../services/cron-next-run.js';
 
 export const aiScheduleRouter = new Hono();
 
 aiScheduleRouter.use('*', authMiddleware);
 
+const cronExpr = z.string().min(5).max(100).refine(isCronExpression, {
+  message: 'cronExpr must be a five-field cron expression (minute hour day-of-month month day-of-week) using numbers, *, ranges, steps and lists',
+});
+
 const CreateSchema = z.object({
   name: z.string().min(1).max(100),
   description: z.string().max(500).optional(),
-  cronExpr: z.string().min(5).max(100),
+  cronExpr,
   type: z.enum(['chat', 'analysis', 'runbook']).optional(),
   prompt: z.string().min(1).max(5000),
   nodeId: z.string().optional(),
@@ -33,7 +40,7 @@ const CreateSchema = z.object({
 const UpdateSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   description: z.string().max(500).optional(),
-  cronExpr: z.string().min(5).max(100).optional(),
+  cronExpr: cronExpr.optional(),
   prompt: z.string().min(1).max(5000).optional(),
   enabled: z.boolean().optional(),
   nodeId: z.string().nullable().optional(),
@@ -41,8 +48,7 @@ const UpdateSchema = z.object({
 
 // List scheduled ops
 aiScheduleRouter.get('/', async (c) => {
-  const page = parseInt(c.req.query('page') ?? '1', 10) || 1;
-  const limit = Math.min(parseInt(c.req.query('limit') ?? '20', 10) || 20, 100);
+  const { page, pageSize: limit } = pagination(c, { pageSize: 20, maxPageSize: 100, pageSizeParam: 'limit' });
 
   const { data, total } = await listScheduledOps(page, limit);
   return c.json({
@@ -60,8 +66,7 @@ aiScheduleRouter.get('/:id', async (c) => {
 
 // Create scheduled op
 aiScheduleRouter.post('/', requireRole('ADMIN', 'OPERATOR'), async (c) => {
-  const raw = await c.req.json();
-  const body = CreateSchema.parse(raw);
+  const body = await parseBody(c, CreateSchema);
   const user = c.get('user');
 
   const op = await createScheduledOp({ "name": body.name, "cronExpr": body.cronExpr, "prompt": body.prompt, ...optional("description", body.description), ...optional("type", body.type), ...optional("nodeId", body.nodeId), createdBy: user?.email ?? user?.userId ?? 'unknown' });
@@ -71,8 +76,7 @@ aiScheduleRouter.post('/', requireRole('ADMIN', 'OPERATOR'), async (c) => {
 
 // Update scheduled op
 aiScheduleRouter.patch('/:id', requireRole('ADMIN', 'OPERATOR'), async (c) => {
-  const raw = await c.req.json();
-  const body = UpdateSchema.parse(raw);
+  const body = await parseBody(c, UpdateSchema);
 
   const op = await updateScheduledOp(c.req.param('id')!, { ...optional("name", body.name), ...optional("description", body.description), ...optional("cronExpr", body.cronExpr), ...optional("prompt", body.prompt), ...optional("enabled", body.enabled), ...optional("nodeId", body.nodeId) });
   return c.json({ data: op });

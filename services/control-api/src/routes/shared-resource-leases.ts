@@ -18,10 +18,10 @@ import {
   settleSharedResourceLease,
   startSharedResourceLease,
 } from '../services/shared-resource-leases.js';
-import { parseBody } from '../utils/validate.js';
+import { parseBody, parseInput } from '../utils/validate.js';
 
 const leaseIdSchema = z.string().regex(/^[A-Za-z0-9_-]{16,64}$/);
-function leaseId(value: string): string { return leaseIdSchema.parse(value); }
+function leaseId(value: string): string { return parseInput(value, leaseIdSchema); }
 
 export const sharedResourceLeasesRouter = new Hono();
 sharedResourceLeasesRouter.use('*', async (c, next) => {
@@ -44,7 +44,7 @@ sharedResourceLeasesRouter.post('/reserve', requireRole('ADMIN', 'OPERATOR'), as
 
 sharedResourceLeasesRouter.get('/operation/:operationId', requireRole('ADMIN', 'OPERATOR'), async c => {
   const user = getUser(c);
-  const operationId = sharedResourceOperationIdSchema.parse(c.req.param('operationId'));
+  const operationId = parseInput(c.req.param('operationId'), sharedResourceOperationIdSchema);
   return c.json({ success: true,
     data: await recoverSharedResourceLease(operationId, user.userId, user.role === 'ADMIN') });
 });

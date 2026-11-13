@@ -10,6 +10,7 @@ import { getNodeBaseUrl } from '../utils/node-url.js';
 import { getNodeManagerSecret } from '../utils/env.js';
 import { safeEqual } from '../utils/safe-equal.js';
 import { HttpError } from '../middleware/error-handler.js';
+import { parseBody } from '../utils/validate.js';
 import { logAuditEvent } from '../services/audit-service.js';
 import { httpReceiptBody } from '../security/managed-http.js';
 import { ownerSettlementEnabled, ownerSettlementParameters, observeOwnerSettlement, settleEmbermendOwner } from '../services/embermend-settlement.js';
@@ -86,7 +87,7 @@ embermendRouter.get('/capabilities', async c => {
 });
 embermendRouter.get('/operations/:id', async c => new Response(JSON.stringify(await observed(authorize(c.req.header('authorization')), c.req.param('id'))), { headers: { 'content-type': 'application/json' } }));
 embermendRouter.post('/operations', async c => {
-  const grant = authorize(c.req.header('authorization')); const request = embermendOperationSchema.parse(await c.req.json());
+  const grant = authorize(c.req.header('authorization')); const request = await parseBody(c, embermendOperationSchema);
   if (Buffer.byteLength(JSON.stringify({ requestJson: JSON.stringify(request) })) > 96 * 1024) throw new HttpError(413, 'REQUEST_TOO_LARGE', 'Operation exceeds the declared managed request budget');
   if (request.installationId !== grant.installationId || Date.parse(request.expiresAt) <= Date.now()) throw new HttpError(409, 'EXPIRED_OR_WRONG_INSTALLATION', 'Current installation-bound request required');
   const { binding, node, client } = await target(grant, request.action.targetId);

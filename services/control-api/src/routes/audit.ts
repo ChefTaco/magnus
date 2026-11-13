@@ -1,4 +1,5 @@
 import { optional } from '../utils/optional.js';
+import { pagination } from '../utils/query.js';
 import { Hono } from 'hono';
 import type { AppVariables } from '../types/index.js';
 import { authMiddleware } from '../middleware/auth.js';
@@ -16,8 +17,7 @@ auditRouter.get('/days', async (c) => {
 
 // ── Query audit events for a given day ──
 auditRouter.get('/', async (c) => {
-  const page = Number(c.req.query('page') ?? '1');
-  const pageSize = Math.min(Number(c.req.query('pageSize') ?? '50'), 200);
+  const { page, pageSize } = pagination(c, { pageSize: 50, maxPageSize: 200 });
   const date = c.req.query('date') ?? undefined;
   const action = c.req.query('action') ?? undefined;
   const actorId = c.req.query('actorId') ?? undefined;

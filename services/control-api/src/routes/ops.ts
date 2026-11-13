@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { intQuery } from '../utils/query.js';
 import { optional } from '../utils/optional.js';
 import { applicationProbeContractDigest, getApplicationProbeCollectorStatus } from '../services/application-probes.js';
 import { lessonSchema, publishLesson, lessonSuggestions, supersedeLesson } from '../services/incident-lessons.js';
@@ -55,7 +56,7 @@ opsRouter.get('/dependency-health', async (c) => c.json({ success: true, data: a
 opsRouter.get('/readiness', async (c) => c.json({ success: true,
   data: await getFleetReadiness({ includeSecretFingerprints: getUser(c).role === 'ADMIN' }) }));
 opsRouter.get('/timeline', async (c) => {
-  const limit = Math.min(Number(c.req.query('limit') ?? '80'), 200);
+  const limit = intQuery(c, 'limit', { fallback: 80, min: 1, max: 200 });
   return c.json({ success: true, data: await getFleetTimeline(limit) });
 });
 opsRouter.get('/retention', async (c) => c.json({ success: true, data: await getRetentionSummary() }));
@@ -63,7 +64,7 @@ opsRouter.get('/trace-map', async (c) => c.json({ success: true, data: await get
 opsRouter.get('/predictive-maintenance', async (c) => c.json({ success: true, data: await getPredictiveMaintenance() }));
 opsRouter.get('/incident-summary', async (c) => {
   const nodeId = c.req.query('nodeId') ?? undefined;
-  const hours = Math.min(Number(c.req.query('hours') ?? '24'), 168);
+  const hours = intQuery(c, 'hours', { fallback: 24, min: 1, max: 168 });
   return c.json({ success: true, data: await getIncidentSummary(nodeId, hours) });
 });
 opsRouter.post('/remediation-plan/classify', async (c) => {

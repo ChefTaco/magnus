@@ -38,3 +38,21 @@ export const migrateNodeSchema = z.object({
   targetControlApiUrl: z.string().url('targetControlApiUrl must be a valid URL'),
   targetSecret: z.string().optional(),
 });
+
+// ── POST /nodes/:nodeId/provision-user, /nodes/:nodeId/change-password ──
+// The same limits the node agent applies, so a bad request is refused here with a
+// clear 400 instead of travelling to the node first.
+const linuxUsername = z.string().min(1).max(32).regex(/^[a-z][a-z0-9_-]*$/, 'username must be a lowercase Linux account name');
+const linuxPassword = z.string().min(1).max(512)
+  .refine((value) => !/[\r\n\0]/.test(value), 'password must not contain line breaks or NUL');
+
+export const provisionNodeUserSchema = z.object({
+  username: linuxUsername,
+  password: linuxPassword,
+  group: z.string().min(1).max(32).regex(/^[a-z_][a-z0-9_-]*$/, 'group must be a lowercase Linux group name').optional(),
+});
+
+export const changeNodeUserPasswordSchema = z.object({
+  username: linuxUsername,
+  password: linuxPassword,
+});

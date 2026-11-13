@@ -1,4 +1,5 @@
 import { optional } from '../utils/optional.js';
+import { intQuery, pagination } from '../utils/query.js';
 import { Hono } from 'hono';
 import type { AppVariables } from '../types/index.js';
 import { nodeForRole } from '../services/secret-views.js';
@@ -10,7 +11,7 @@ import { authMiddleware, getUser, requireRole } from '../middleware/auth.js';
 import { logAuditEvent } from '../services/audit-service.js';
 import { HttpError } from '../middleware/error-handler.js';
 import { parseBody } from '../utils/validate.js';
-import { bulkNodeTagsSchema, registerNodeSchema, updateNodeSchema } from '../schemas/nodes.js';
+import { bulkNodeTagsSchema, changeNodeUserPasswordSchema, provisionNodeUserSchema, registerNodeSchema, updateNodeSchema } from '../schemas/nodes.js';
 import { normalizeIpAddress, isUsableNodeIp } from '../utils/ip.js';
 import { deleteNodeCascade } from '../services/node-service.js';
 import { serializeStringArray, serializeRecord } from '../utils/json-fields.js';
@@ -171,8 +172,7 @@ nodesRouter.get('/', async (c) => {
   await ensureControlHostNode();
 
   const db = getDb();
-  const page = Number(c.req.query('page') ?? '1');
-  const pageSize = Math.min(Number(c.req.query('pageSize') ?? '50'), 100);
+  const { page, pageSize } = pagination(c, { pageSize: 50, maxPageSize: 100 });
   const status = c.req.query('status');
   const tag = c.req.query('tag');
   const query = (c.req.query('query') ?? '').trim();
@@ -934,7 +934,7 @@ nodesRouter.get('/:nodeId/wazuh', async (c) => {
 nodesRouter.get('/:nodeId/health/history', async (c) => {
   const db = getDb();
   const nodeId = c.req.param('nodeId')!;
-  const limit = Math.min(Number(c.req.query('limit') ?? '100'), 500);
+  const limit = intQuery(c, 'limit', { fallback: 100, min: 1, max: 500 });
 
   const snapshots = await db.healthSnapshot.findMany({
     where: { nodeId },
@@ -1079,7 +1079,7 @@ nodesRouter.post('/:nodeId/provision-user', requireRole('ADMIN', 'OPERATOR'), as
   const db = getDb();
   const user = getUser(c);
   const nodeId = c.req.param('nodeId')!;
-  const body = await c.req.json<{ username: string; password: string; group?: string }>();
+  const body = await parseBody(c, provisionNodeUserSchema);
 
   const node = await db.node.findUnique({ where: { id: nodeId } });
   if (!node) throw new HttpError(404, 'NOT_FOUND', 'Node not found');
@@ -1109,7 +1109,7 @@ nodesRouter.post('/:nodeId/change-password', requireRole('ADMIN', 'OPERATOR'), a
   const db = getDb();
   const user = getUser(c);
   const nodeId = c.req.param('nodeId')!;
-  const body = await c.req.json<{ username: string; password: string }>();
+  const body = await parseBody(c, changeNodeUserPasswordSchema);
 
   const node = await db.node.findUnique({ where: { id: nodeId } });
   if (!node) throw new HttpError(404, 'NOT_FOUND', 'Node not found');

@@ -1,4 +1,5 @@
 import { optional } from '../utils/optional.js';
+import { pagination } from '../utils/query.js';
 /**
  * assistant.ts — Routes for the AI Fleet Operations Assistant.
  *
@@ -112,7 +113,7 @@ assistantRouter.post('/chat', requireRole('ADMIN', 'OPERATOR'), async (c) => {
 
 // ── List conversations ──
 assistantRouter.get('/conversations', async (c) => {
-  const result = await listConversations({ ...optional("type", c.req.query('type')), status: c.req.query('status') ?? 'active', page: parseInt(c.req.query('page') ?? '1', 10), pageSize: parseInt(c.req.query('pageSize') ?? '20', 10), owners: ownersOf(c) });
+  const result = await listConversations({ ...optional("type", c.req.query('type')), status: c.req.query('status') ?? 'active', ...pagination(c, { pageSize: 20, maxPageSize: 50 }), owners: ownersOf(c) });
   return c.json({ success: true, data: result });
 });
 
@@ -122,8 +123,7 @@ assistantRouter.get('/conversations/:id', async (c) => {
   await requireConversation(c, id, 'read');
 
   const result = await getConversationMessages(id, {
-    page: parseInt(c.req.query('page') ?? '1', 10),
-    pageSize: parseInt(c.req.query('pageSize') ?? '50', 10),
+    ...pagination(c, { pageSize: 50, maxPageSize: 100 }),
   });
 
   return c.json({ success: true, data: result });
