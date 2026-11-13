@@ -5,6 +5,9 @@ import { errorHandler } from '../middleware/error-handler.js';
 
 const fixture = vi.hoisted(() => ({ snapshot: vi.fn() }));
 vi.mock('../utils/env.js', async original => ({ ...await original<object>(), NODE_MANAGER_SECRET: 'node-secret' }));
+vi.mock('../services/node-credential-store.js', () => ({ nodeCredentialStore: {
+  nodesClaimedBy: async () => [], nodesWithCredentials: async () => new Set<string>(),
+} }));
 vi.mock('../services/credential-rotation-service.js', async original => ({ ...await original<object>(),
   verifyWithRotation: vi.fn((_purpose: string, _active: string, token: string) => token === 'node-secret'),
 }));

@@ -1,0 +1,86 @@
+/**
+ * Authentication of server-to-agent requests: one place builds the headers for every call to a
+ * node's management API (see docs/NODE_CREDENTIALS.md).
+ *
+ * Each request is signed with the server key for exactly one node. In compat and warn mode the
+ * shared node secret is sent as well, until that node's agent has reported, in a signed heartbeat,
+ * that it pins the key this server signs with; from then on the node only receives signatures.
+ */
+import { signNodeRequest, nodeAudience, pathWithQueryOf } from '../security/node-request-auth.js';
+import { getNodeManagerSecret } from '../utils/env.js';
+import { nodeAuthMode } from './node-auth-config.js';
+import { serverSigningKey } from './node-server-key.js';
+
+const PIN_TTL_MS = 10 * 60_000;
+const pins = new Map<string, { keyIds: readonly string[]; at: number }>();
+let keyWarningAt = 0;
+
+/** Record which server keys a node's agent pins. Call only for a heartbeat that carried a valid signature. */
+export function noteAgentServerKeyPins(nodeId: string, keyIds: unknown, now = Date.now()): void {
+  const valid = Array.isArray(keyIds) ? keyIds.filter((id): id is string => typeof id === 'string' && /^[a-f0-9]{64}$/.test(id)).slice(0, 4) : [];
+  if (pins.size > 50_000) pins.clear();
+  if (valid.length > 0) pins.set(nodeId, { keyIds: valid, at: now }); else pins.delete(nodeId);
+}
+
+/** Whether the node's agent verifies this server's signatures, as far as its recent heartbeats say. */
+export function agentVerifiesServerSignatures(nodeId: string, activeKeyId: string, now = Date.now()): boolean {
+  const entry = pins.get(nodeId);
+  return entry !== undefined && now - entry.at <= PIN_TTL_MS && entry.keyIds.includes(activeKeyId);
+}
+
+/** Forget what a node advertised, for example after it refused a signature-only request. */
+export function forgetAgentServerKeyPins(nodeId: string): void {
+  pins.delete(nodeId);
+}
+
+export interface AgentRequestTarget {
+  /** The node being called. Without it a request cannot be signed and carries the shared secret only. */
+  nodeId?: string | undefined;
+  /** The shared secret to send while it is still needed; defaults to the configured one. */
+  legacyToken?: string | undefined;
+}
+
+/**
+ * Authentication headers for one request to an agent. `body` is the exact bytes that will be sent.
+ * Never log the result: it may carry the shared node secret.
+ */
+export function agentAuthHeaders(target: AgentRequestTarget, method: string, url: string | URL, body: string | Uint8Array = ''): Record<string, string> {
+  const mode = nodeAuthMode();
+  const legacy = (): Record<string, string> => ({ 'x-node-token': target.legacyToken ?? getNodeManagerSecret() });
+  if (!target.nodeId) {
+    if (mode === 'enforce') throw new Error('A request to an agent must name its node to be signed (NODE_AUTH_MODE=enforce)');
+    return legacy();
+  }
+  let signature: Record<string, string>;
+  let activeKeyId: string;
+  try {
+    const key = serverSigningKey();
+    activeKeyId = key.keyId;
+    signature = signNodeRequest({ privateKey: key.privateKey, keyId: key.keyId, nodeId: target.nodeId, audience: nodeAudience(target.nodeId),
+      method, pathWithQuery: pathWithQueryOf(url), body });
+  } catch (error) {
+    if (mode === 'enforce') throw error;
+    // Outside enforce mode a missing or unreadable server key must not stop fleet operations.
+    if (Date.now() - keyWarningAt > 10 * 60_000) {
+      keyWarningAt = Date.now();
+      console.warn(`[node-auth] requests to agents are not signed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    return legacy();
+  }
+  if (mode === 'enforce' || agentVerifiesServerSignatures(target.nodeId, activeKeyId)) return signature;
+  return { ...legacy(), ...signature };
+}
+
+/** `fetch` for a node's agent with the authentication headers added. `init.body`, when present, must be a string or bytes. */
+export function agentFetch(target: AgentRequestTarget, url: string | URL, init: RequestInit = {}): Promise<Response> {
+  const body = init.body ?? '';
+  if (typeof body !== 'string' && !(body instanceof Uint8Array)) throw new Error('A signed agent request needs a string or byte body');
+  const headers = { ...Object.fromEntries(new Headers(init.headers)), ...agentAuthHeaders(target, init.method ?? 'GET', url, body) };
+  return fetch(url, { ...init, headers });
+}
+
+/** For tests. */
+export function resetAgentAuthState(): void {
+  pins.clear();
+  keyWarningAt = 0;
+}

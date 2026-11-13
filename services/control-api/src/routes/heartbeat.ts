@@ -17,6 +17,10 @@ import { evaluateAnomalies } from '../services/anomaly-detector.js';
 import { evaluatePredictionsForHeartbeat } from '../services/prediction-service.js';
 import { recordManagedHermesState } from '../services/hermes-service.js';
 import { NODE_MANAGER_SECRET } from '../utils/env.js';
+import { assertLegacyMaySpeakFor, authenticateNode } from '../middleware/node-auth.js';
+import { nodeAuthMode, nodeAutoRegister } from '../services/node-auth-config.js';
+import { noteAgentServerKeyPins } from '../services/node-agent-auth.js';
+import { fqdnClaimMatchesNode, nodeFqdnAliases, reportIdentityMismatch } from '../services/node-credential-service.js';
 import {
   getCredentialStatus,
   secretFingerprint,
@@ -187,17 +191,11 @@ async function tryReverseDns(ipAddress: string): Promise<string | null> {
   }
 }
 
-/**
- * Validate the shared secret from the x-node-token header.
- */
-function validateSharedSecret(token: string): string {
-  if (!NODE_MANAGER_SECRET) {
-    throw new HttpError(500, 'CONFIG_ERROR', 'NODE_MANAGER_SECRET not configured on control-api');
-  }
-  if (!verifyWithRotation('NODE_MANAGER_SECRET', NODE_MANAGER_SECRET, token)) {
-    throw new HttpError(401, 'INVALID_CREDENTIALS', 'Invalid node token');
-  }
-  return secretFingerprint(token);
+/** Fingerprint of a shared secret a signed caller also sent, when it is a valid one; else null. */
+function observedSharedSecret(token: string | undefined): string | null {
+  if (!token || !NODE_MANAGER_SECRET) return null;
+  try { return verifyWithRotation('NODE_MANAGER_SECRET', NODE_MANAGER_SECRET, token) ? secretFingerprint(token) : null; }
+  catch { return null; }
 }
 
 function parseMetadata(raw: string): Record<string, unknown> {
@@ -250,15 +248,9 @@ async function resolveNodeByFqdn(fqdn: string | null, callerIp: string, candidat
 
   // ── 1. Match by FQDN against hostname or name ──
   if (fqdn) {
-    const shortName = fqdn.split('.')[0] || fqdn;
-    // Optional DNS suffix (for example a private overlay network domain) under
+    // Includes the optional DNS suffix (for example a private overlay network domain) under
     // which agents may report their FQDN while inventory stores a short name.
-    const dnsSuffix = process.env['MAGNUS_NODE_DNS_SUFFIX']?.trim().replace(/^\.+|\.+$/g, '');
-    const aliasHostnames = [
-      fqdn,
-      shortName,
-      ...(dnsSuffix ? [`${shortName}.${dnsSuffix}`] : []),
-    ];
+    const { aliases: aliasHostnames, shortName } = nodeFqdnAliases(fqdn);
     const byHostname = await db.node.findFirst({
       where: {
         status: { not: 'DECOMMISSIONED' },
@@ -328,13 +320,21 @@ async function resolveNodeByFqdn(fqdn: string | null, callerIp: string, candidat
 // ── Receive heartbeat from node agents ──
 heartbeatRouter.post('/', async (c) => {
   const db = getDb();
-  const token = c.req.header('x-node-token');
-  if (!token) throw new HttpError(401, 'INVALID_CREDENTIALS', 'Missing x-node-token');
-
-  // Validate the shared secret
-  const observedNodeManagerSecretFingerprint = validateSharedSecret(token);
+  // A node signature, or (outside enforce mode) the shared secret.
+  const auth = await authenticateNode(c, { legacyErrorCode: 'INVALID_CREDENTIALS' });
+  const observedNodeManagerSecretFingerprint = auth.method === 'legacy'
+    ? auth.tokenFingerprint : observedSharedSecret(c.req.header('x-node-token'));
+  // What the agent needs to know to move to (or repair) its own key; older agents ignore it.
+  const nodeAuthAck = { supported: true, mode: nodeAuthMode(), method: auth.method,
+    ...(auth.method === 'legacy' && auth.signatureProblem ? { problem: auth.signatureProblem } : {}) };
 
   const body = await parseBody(c, heartbeatRequestSchema) as HeartbeatRequestBody;
+  if (auth.method === 'signature' && typeof body.fqdn === 'string' && body.fqdn
+    && !fqdnClaimMatchesNode(body.fqdn, auth.node, auth.boundFqdn)) {
+    // The key decides which node this is; a different name is refused, never applied as a rename.
+    await reportIdentityMismatch(auth.node, auth.keyId, { claimedFqdn: body.fqdn, path: c.req.path });
+    throw new HttpError(403, 'NODE_IDENTITY_MISMATCH', 'The heartbeat names a host other than the one this key belongs to');
+  }
 
   // Determine FQDN — prefer agent-reported, then try reverse DNS from caller IP
   let fqdn: string | null = body.fqdn ?? null;
@@ -347,7 +347,16 @@ heartbeatRouter.post('/', async (c) => {
   const fqdnResolvedIp = fqdn ? await tryResolveFqdnToIp(fqdn) : null;
   const preferredNodeIp = selectPreferredNodeIp({ callerIp, healthNetworkIps, fqdnResolvedIp });
   const ipCandidates = uniqueNonEmpty([callerIp, ...healthNetworkIps, fqdnResolvedIp ?? '']);
-  let resolved = await resolveNodeByFqdn(fqdn, callerIp, ipCandidates);
+  if (auth.method === 'signature') {
+    // Signed, so trusted: which server keys this agent pins decides whether it still needs the shared secret.
+    const advertised = (body as { nodeAuth?: { serverKeyIds?: unknown } }).nodeAuth;
+    noteAgentServerKeyPins(auth.node.id, advertised && typeof advertised === 'object' ? advertised.serverKeyIds : undefined);
+  }
+  let resolved: ResolvedNode | null = auth.method === 'signature'
+    ? { nodeId: auth.node.id, existing: auth.node }
+    : await resolveNodeByFqdn(fqdn, callerIp, ipCandidates);
+  // The ratchet: the shared secret may not report as a node that has its own key.
+  if (auth.method === 'legacy' && resolved) await assertLegacyMaySpeakFor([resolved.nodeId]);
   const agentCertificateHostname = deriveAgentCertificateHostname(
     fqdn,
     process.env['AGENT_TLS_DOMAIN_SUFFIX'],
@@ -367,7 +376,7 @@ heartbeatRouter.post('/', async (c) => {
   // ── Auto-register unknown agents ──────────────────────────────────────────
   // Token is valid but node isn't in our DB — create a record automatically.
   // This handles migrated agents arriving at a new control node.
-  if (!resolved && (fqdn || callerIp)) {
+  if (!resolved && nodeAutoRegister() && (fqdn || callerIp)) {
     const nodeName = fqdn || preferredNodeIp || callerIp;
     const nodeHostname = fqdn || nodeName;
     const nodeIp = verifiedAgentCertificateHostname ?? preferredNodeIp ?? '0.0.0.0';
@@ -406,6 +415,7 @@ heartbeatRouter.post('/', async (c) => {
         select: { id: true, name: true, ipAddress: true, hostname: true, status: true, port: true },
       });
       if (existing) {
+        await assertLegacyMaySpeakFor([existing.id]);
         resolved = { nodeId: existing.id, existing };
       }
     }
@@ -413,7 +423,7 @@ heartbeatRouter.post('/', async (c) => {
 
   if (!resolved) {
     // Secret is valid but we truly can't identify the node — accept silently
-    return c.json({ success: true, data: { accepted: true } });
+    return c.json({ success: true, data: { accepted: true, nodeAuth: nodeAuthAck } });
   }
 
   const { nodeId, existing } = resolved;
@@ -537,7 +547,7 @@ heartbeatRouter.post('/', async (c) => {
     });
   }
 
-  await recordNodeSecretFingerprint(nodeId, observedNodeManagerSecretFingerprint);
+  if (observedNodeManagerSecretFingerprint) await recordNodeSecretFingerprint(nodeId, observedNodeManagerSecretFingerprint);
 
   if (isHermesNodeState(body.hermes)) {
     await recordManagedHermesState(nodeId, body.hermes).catch((err: unknown) => {
@@ -629,7 +639,8 @@ heartbeatRouter.post('/', async (c) => {
   const expectedVersion = AGENT_VERSION;
   const { updateAvailable } = warnOnAgentVersionMismatch({ id: nodeId, name: existing?.name ?? fqdn ?? nodeId }, body.agentVersion, expectedVersion);
 
-  return c.json({ success: true, data: { accepted: true, expectedVersion, updateAvailable } });
+  return c.json({ success: true, data: { accepted: true, expectedVersion, updateAvailable,
+    nodeAuth: { ...nodeAuthAck, nodeId } } });
 });
 
 // ── Retired Redis Streams heartbeat ingress ──

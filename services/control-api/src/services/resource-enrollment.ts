@@ -11,7 +11,8 @@ import { getDb } from '../db/index.js';
 import type { Prisma } from '../db/generated/prisma/client.js';
 import { HttpError } from '../middleware/error-handler.js';
 import { getNodeBaseUrl } from '../utils/node-url.js';
-import { getNodeManagerSecret, RESULT_SIGNING_SECRET } from '../utils/env.js';
+import { RESULT_SIGNING_SECRET } from '../utils/env.js';
+import { agentAuthHeaders } from './node-agent-auth.js';
 
 export const PARTICIPANTS = ['agent', 'api', 'dashboard', 'scheduler'] as const;
 type Participant = typeof PARTICIPANTS[number];
@@ -239,7 +240,7 @@ export async function refreshEnrollmentParticipant(nodeId: string, participant: 
       if (new URL(prepared.baseUrl).protocol !== 'https:') throw new ParticipantEvidenceError('https-endpoint-required');
       url = prepared.baseUrl.replace(/\/$/, '') + (participant === 'scheduler'
         ? '/api/v1/cron/enrollment-drain' : '/api/v1/commands/enrollment-drain');
-      headers = { 'x-node-token': getNodeManagerSecret() };
+      headers = agentAuthHeaders({ nodeId }, 'POST', url, JSON.stringify(prepared.descriptor));
     } else {
       key = dashboardEnrollmentSecret();
       let origin: URL;

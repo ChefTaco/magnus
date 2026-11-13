@@ -70,6 +70,7 @@ import { opsRouter } from './routes/ops.js';
 import { mcpRouter } from './routes/mcp.js';
 import { securityFusionRouter } from './routes/security-fusion.js';
 import { consoleRouter } from './routes/console.js';
+import { nodeEnrollmentRouter } from './routes/node-enrollment.js';
 import { resolveCorsConfiguration } from './config/cors.js';
 import { rehearsalReadOnly } from './config/rehearsal.js';
 
@@ -131,6 +132,8 @@ v1.use('/quick-command/*', rateLimitMiddleware({ windowMs: 60_000, max: 30, keyP
 v1.use('/users/*', rateLimitMiddleware({ windowMs: 60_000, max: 30, keyPrefix: 'rl:users' }));
 v1.use('/roles/*', rateLimitMiddleware({ windowMs: 60_000, max: 30, keyPrefix: 'rl:roles' }));
 v1.use('/webhooks/*', rateLimitMiddleware({ windowMs: 60_000, max: 30, keyPrefix: 'rl:webhooks' }));
+// Key binding is rare; a tight budget bounds guessing of enrollment tokens.
+v1.use('/node-enrollment/*', rateLimitMiddleware({ windowMs: 60_000, max: 60, keyPrefix: 'rl:node-enrollment' }));
 v1.use('/terminal/*', rateLimitMiddleware({ windowMs: 60_000, max: 20, keyPrefix: 'rl:terminal', failClosed: true }));
 v1.use('/hermes/*', rateLimitMiddleware({ windowMs: 60_000, max: 20, keyPrefix: 'rl:hermes' }));
 v1.use('/hermes-registry/*', rateLimitMiddleware({ windowMs: 60_000, max: 120, keyPrefix: 'rl:hermes-registry', failClosed: true }));
@@ -153,6 +156,7 @@ v1.route('/logs', logsRouter);
 v1.route('/health', healthRouter);
 v1.route('/audit', auditRouter);
 v1.route('/heartbeat', heartbeatRouter);
+v1.route('/node-enrollment', nodeEnrollmentRouter);
 v1.route('/deploy', deployRouter);
 v1.route('/discovery', discoveryRouter);
 v1.route('/quick-command', quickCommandRouter);

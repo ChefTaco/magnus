@@ -12,7 +12,7 @@ import { boundedJson } from './application-probes.js';
 import { lookup } from 'node:dns/promises';
 import { normalizeIpAddress } from '../utils/ip.js';
 import { getDb } from '../db/index.js';
-import { getNodeManagerSecret } from '../utils/env.js';
+import { agentFetch } from './node-agent-auth.js';
 
 // ── Types ──
 
@@ -83,6 +83,7 @@ function detectService(port: number, process?: string): string {
  * Falls back to empty arrays on error.
  */
 async function queryAgentConnections(
+  nodeId: string,
   nodeIp: string,
   nodePort: number,
 ): Promise<{ services: ServicePort[]; connections: NodeConnection[]; collection: DependencyNode['collection'] }> {
@@ -90,8 +91,7 @@ async function queryAgentConnections(
   const unknown = (reason: string) => ({ services: [], connections: [], collection: { status: 'unknown' as const, observedAt, reason } });
   try {
     const address = `https://${nodeIp}:${nodePort}`;
-    const resp = await fetch(`${address}/api/v1/network-info`, {
-      headers: { 'x-node-token': getNodeManagerSecret() },
+    const resp = await agentFetch({ nodeId }, `${address}/api/v1/network-info`, {
       signal: AbortSignal.timeout(5000),
     });
 
@@ -139,7 +139,7 @@ export async function buildDependencyGraph(): Promise<DependencyGraph> {
   // Query all agents in parallel
   const results = await Promise.allSettled(
     nodes.map(async (n) => {
-      const info = await queryAgentConnections(n.ipAddress, n.port);
+      const info = await queryAgentConnections(n.id, n.ipAddress, n.port);
       return { nodeId: n.id, ...info };
     }),
   );

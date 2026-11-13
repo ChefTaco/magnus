@@ -3,7 +3,8 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { canonical } from './resource-enrollment.js';
 import { getNodeBaseUrl } from '../utils/node-url.js';
-import { getNodeManagerSecret, RESULT_SIGNING_SECRET } from '../utils/env.js';
+import { RESULT_SIGNING_SECRET } from '../utils/env.js';
+import { agentFetch } from './node-agent-auth.js';
 
 const hex = z.string().regex(/^[a-f0-9]{64}$/);
 const proofSchema = z.object({ version: z.literal(1), sourceClass: z.literal('os-schedulers'),
@@ -35,7 +36,7 @@ export function verifyOsSchedulerWriterProof(raw: unknown, expected: {
     scheduleInventorySha256: receipt.scheduleInventorySha256 };
 }
 
-export async function fetchOsSchedulerWriterProof(node: { ipAddress: string; port: number },
+export async function fetchOsSchedulerWriterProof(node: { id?: string; ipAddress: string; port: number },
   nodeFqdn: string, nonce: string): Promise<unknown | null> {
   try {
     if (RESULT_SIGNING_SECRET.length < 32) return null;
@@ -43,8 +44,8 @@ export async function fetchOsSchedulerWriterProof(node: { ipAddress: string; por
     if (new URL(base).protocol !== 'https:') return null;
     const url = new URL(base + '/api/v1/cron/os-scheduler-writer-proof');
     url.search = new URLSearchParams({ nodeFqdn, nonce }).toString();
-    const response = await fetch(url, { method: 'GET', redirect: 'error', signal: AbortSignal.timeout(5000),
-      headers: { 'x-node-token': getNodeManagerSecret(), 'cache-control': 'no-store' } });
+    const response = await agentFetch({ nodeId: node.id }, url, { method: 'GET', redirect: 'error', signal: AbortSignal.timeout(5000),
+      headers: { 'cache-control': 'no-store' } });
     if (!response.ok || !response.body) return null;
     const reader = response.body.getReader(); const parts: Uint8Array[] = []; let size = 0;
     try {

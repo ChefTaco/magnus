@@ -5,7 +5,7 @@ import type { AppVariables } from '../types/index.js';
 import { authMiddleware, requireRole, getUser } from '../middleware/auth.js';
 import { getDb } from '../db/index.js';
 import { HttpError } from '../middleware/error-handler.js';
-import { getNodeManagerSecret } from '../utils/env.js';
+import { agentAuthHeaders } from '../services/node-agent-auth.js';
 import { getNodeBaseUrl } from '../utils/node-url.js';
 import { logAuditEvent } from '../services/audit-service.js';
 
@@ -40,9 +40,10 @@ driftRouter.post('/scan', requireRole('ADMIN', 'OPERATOR'), async (c) => {
   let agentResponse: { status: string; findings: unknown[]; driftCount: number };
 
   try {
+    const payload = JSON.stringify({ checks: body.checks });
     const res = await ky.post(agentUrl, {
-      json: { checks: body.checks },
-      headers: { 'x-node-token': getNodeManagerSecret() },
+      body: payload,
+      headers: { 'content-type': 'application/json', ...agentAuthHeaders({ nodeId: node.id }, 'POST', agentUrl, payload) },
       timeout: 30_000,
     }).json() as { data: typeof agentResponse };
 

@@ -22,6 +22,9 @@ import { getNodeManagerSecret } from '../utils/env.js';
 import { ensureControlHostNode } from '../services/control-host-node.js';
 import { withReadRetry } from '../db/read-retry.js';
 import { readinessOfNodes } from '../services/agent-upgrade-readiness.js';
+import { z } from 'zod';
+import { credentialDetail, credentialView, issueEnrollmentToken, resetNodeCredentials, revokeNodeCredentials } from '../services/node-credential-service.js';
+import { nodeCredentialStore } from '../services/node-credential-store.js';
 import {
   parseTailscaleNodeKeyPosture,
   summarizeTailscaleNodeKeys,
@@ -203,14 +206,16 @@ nodesRouter.get('/', async (c) => {
   // Strip token from API response — never expose node secrets to the frontend
   const viewer = getUser(c).role;
   const safeNodes = nodes.map((node) => nodeForRole(node, viewer));
-  const [readiness, health] = await Promise.all([
+  const [readiness, health, credentials] = await Promise.all([
     readinessOfNodes(safeNodes),
     withReadRetry('nodes list health', () => latestHealthSummaries(safeNodes.map((node) => node.id))),
+    withReadRetry('nodes list credentials', () => nodeCredentialStore.summaries(safeNodes.map((node) => node.id))),
   ]);
 
   return c.json({
     success: true,
-    data: safeNodes.map(node => ({ ...node, upgradeReadiness: readiness.get(node.id) ?? null, health: health.get(node.id) ?? null })),
+    data: safeNodes.map(node => ({ ...node, upgradeReadiness: readiness.get(node.id) ?? null, health: health.get(node.id) ?? null,
+      nodeCredential: credentialView(credentials.get(node.id), viewer === 'ADMIN') })),
     meta: { total, page, pageSize, hasMore: page * pageSize < total },
   });
 });
@@ -615,8 +620,37 @@ nodesRouter.get('/:nodeId', async (c) => {
   });
   if (!node) throw new HttpError(404, 'NOT_FOUND', 'Node not found');
   const safeNode = nodeForRole(node, getUser(c).role);
-  const readiness = await readinessOfNodes([safeNode]);
-  return c.json({ success: true, data: { ...safeNode, upgradeReadiness: readiness.get(safeNode.id) ?? null } });
+  const [readiness, credentials] = await Promise.all([readinessOfNodes([safeNode]), nodeCredentialStore.credentialsOfNode(safeNode.id)]);
+  return c.json({ success: true, data: { ...safeNode, upgradeReadiness: readiness.get(safeNode.id) ?? null,
+    nodeCredential: credentialView(credentials, getUser(c).role === 'ADMIN') } });
+});
+
+// ── Per-node credentials (docs/NODE_CREDENTIALS.md) ──
+nodesRouter.get('/:nodeId/credentials', requireRole('ADMIN'), async (c) => {
+  const nodeId = c.req.param('nodeId')!;
+  if (!await nodeCredentialStore.nodeById(nodeId)) throw new HttpError(404, 'NOT_FOUND', 'Node not found');
+  c.header('Cache-Control', 'no-store');
+  return c.json({ success: true, data: (await nodeCredentialStore.credentialsOfNode(nodeId)).map(credentialDetail) });
+});
+
+// A one-time token for `magnus-agent enroll --token`. Using it replaces the node's current key.
+nodesRouter.post('/:nodeId/enrollment-token', requireRole('ADMIN'), async (c) => {
+  const body = await parseBody(c, z.object({ ttlSeconds: z.number().int().min(60).max(86_400).optional() }).strict());
+  const data = await issueEnrollmentToken(c.req.param('nodeId')!, getUser(c).userId, body.ttlSeconds);
+  // The only response that ever carries this token.
+  c.header('Cache-Control', 'no-store');
+  return c.json({ success: true, data }, 201);
+});
+
+nodesRouter.post('/:nodeId/credentials/revoke', requireRole('ADMIN'), async (c) => {
+  const body = await parseBody(c, z.object({ keyId: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict());
+  return c.json({ success: true, data: await revokeNodeCredentials(c.req.param('nodeId')!, body.keyId ?? null, getUser(c).userId) });
+});
+
+// Rollback to the shared node secret for one node (not in enforce mode).
+nodesRouter.post('/:nodeId/credentials/reset', requireRole('ADMIN'), async (c) => {
+  await parseBody(c, z.object({}).strict());
+  return c.json({ success: true, data: await resetNodeCredentials(c.req.param('nodeId')!, getUser(c).userId) });
 });
 
 // ── Register a new node ──
@@ -659,7 +693,10 @@ nodesRouter.post('/register', requireRole('ADMIN', 'OPERATOR'), async (c) => {
     details: { name: body.name, hostname: body.hostname },
   });
 
-  // The only response that ever carries this token: no cache may keep it.
+  // A one-time token for `magnus-agent enroll --token` on the new host.
+  const enrollment = await issueEnrollmentToken(node.id, user.userId);
+
+  // The only response that ever carries these tokens: no cache may keep it.
   c.header('Cache-Control', 'no-store');
   return c.json(
     {
@@ -667,6 +704,8 @@ nodesRouter.post('/register', requireRole('ADMIN', 'OPERATOR'), async (c) => {
       data: {
         nodeId: node.id,
         token,
+        enrollmentToken: enrollment.token,
+        enrollmentTokenExpiresAt: enrollment.expiresAt,
         controlApiUrl: process.env['CONTROL_API_URL'] ?? 'https://localhost:4000',
       },
     },

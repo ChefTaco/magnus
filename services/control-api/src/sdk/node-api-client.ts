@@ -2,6 +2,7 @@ import type { HiveSkillsTargetPosture, HiveSkillsSyncInput } from '@hivemagnus/m
 import { embermendOperationSchema, embermendNodeCapabilitiesSchema, embermendNativeResultSchema, type EmbermendOperation } from '@hivemagnus/magnus-contracts/embermend';
 import { createHash, randomUUID } from 'node:crypto';
 import { assertLiveExecution } from '../config/rehearsal.js';
+import { agentAuthHeaders, forgetAgentServerKeyPins } from '../services/node-agent-auth.js';
 import { MANAGED_CLAIM_HEADER, credentialMutationIdentity, httpIdentity, httpReceiptBody, managedHttpRequestSchema } from '../security/managed-http.js';
 import { nativeCompletionDescriptor, nativeCompletionResourceKey } from '../security/native-completion-registry.js';
 import { COMMAND_COMPLETION_REGISTRY, COMMAND_COMPLETION_REGISTRY_SHA256, commandCompletionDescriptor } from '../security/command-completion-registry.js';
@@ -79,7 +80,10 @@ function verifiedReconciliation(raw: unknown, commandId: string, expected: Expec
 
 export interface NodeApiClientOptions {
   baseUrl: string;
+  /** The shared node secret, sent only while the node still needs it (services/node-agent-auth.ts). */
   nodeToken: string;
+  /** Inventory id of the node being called; requests are signed for it. Defaults to `resourceNodeId`. */
+  nodeId?: string;
   timeout?: number;
   resourceNodeId?: string;
   resourceActorId?: string;
@@ -253,13 +257,19 @@ export class NodeApiClient {
     if (options.resourceNodeId) this.resourceContext = { nodeId: options.resourceNodeId,
       actorId: options.resourceActorId ?? 'system:control-api', baseUrl: options.baseUrl,
       ...(options.resourceScope ? { scope: options.resourceScope } : {}) };
+    const target = { nodeId: options.nodeId ?? options.resourceNodeId, legacyToken: options.nodeToken };
+    // Sign the exact bytes of each request for this node; see services/node-agent-auth.ts.
+    const authenticate = async ({ request }: { request: Request }): Promise<void> => {
+      const body = request.body ? new Uint8Array(await request.clone().arrayBuffer()) : '';
+      for (const [name, value] of Object.entries(agentAuthHeaders(target, request.method, request.url, body))) request.headers.set(name, value);
+    };
+    const forgetPinsOnRefusal = ({ response }: AfterResponseState): void => {
+      if (response.status === 401 && target.nodeId) forgetAgentServerKeyPins(target.nodeId);
+    };
     this.api = ky.create({
       prefix: `${options.baseUrl}/api/v1`,
       timeout: options.timeout ?? 15_000,
-      headers: {
-        'x-node-token': options.nodeToken,
-      },
-      hooks: { beforeRequest: [() => assertLiveExecution()], afterResponse: [rejectUnprivilegedAgent] },
+      hooks: { beforeRequest: [() => assertLiveExecution(), authenticate], afterResponse: [rejectUnprivilegedAgent, forgetPinsOnRefusal] },
     });
   }
 

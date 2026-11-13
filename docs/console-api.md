@@ -11,8 +11,8 @@ moved without updating it.
 | Class | Meaning | Rows | At the ingress |
 |---|---|---|---|
 | `browser` | A person's console drives it with a user token | 147 | Allow the exact method and path |
-| `machine` | Agents, services and integrations, with their own credentials | 82 | Deny |
-| `exclude` | Reachable with a user token, but no console needs it, or it was written for a server-side caller | 142 | Deny until a feature needs it and it is reviewed |
+| `machine` | Agents, services and integrations, with their own credentials | 86 | Deny |
+| `exclude` | Reachable with a user token, but no console needs it, or it was written for a server-side caller | 146 | Deny until a feature needs it and it is reviewed |
 | `retired` | Always answers 404 or 410 | 64 | Deny |
 
 The `Wave 1` column marks routes whose request and response shapes are published in
@@ -252,7 +252,8 @@ The server enforces these by role, so they hold for a raw response and not only 
 | Readiness `secretFingerprint` | `match`, `state` and both fingerprints | `match` and `state` |
 | `nodeManagerSecretFingerprint` in node `metadata` | Yes | Removed; `nodeManagerSecretState` stays |
 | Hermes `apiServerKeyFingerprint`, `keyFingerprint` | Yes, with `apiServerKeyConfigured`, `keyConfigured` | The `Configured` boolean only |
-| Node `token` | Only in the `POST /api/v1/nodes/register` response | Same, for `OPERATOR`. `VIEWER` is refused |
+| Node `token`, `enrollmentToken` | Only in the `POST /api/v1/nodes/register` response | Same, for `OPERATOR`. `VIEWER` is refused |
+| `nodeCredential.keyFingerprint` on a node | Yes | Absent; `nodeCredential.state` stays |
 
 A `PATCH` below `ADMIN` merges environment values, because that caller only saw key names. A key left
 out or left blank keeps its value, so sending back a redacted response changes nothing. Setting a value
@@ -482,6 +483,10 @@ Each row is a non-browser route that a broader `browser` pattern also matches. D
 | GET | `/api/v1/health/watchdog` | machine | `public` | Public off-host watchdog signal. |
 | POST | `/api/v1/heartbeat` | machine | `node-token` | Agent heartbeat with the shared node credential. |
 | GET | `/api/v1/heartbeat/stream/stats` | machine | `user:any` | Heartbeat surface kept machine-only by instruction, though mission-control reads it server-side and tolerates its absence. |
+| POST | `/api/v1/node-enrollment/enroll` | machine | `enrollment-token` | An agent binds its node key with a one-time enrollment token. See [NODE_CREDENTIALS.md](NODE_CREDENTIALS.md). |
+| POST | `/api/v1/node-enrollment/legacy-upgrade` | machine | `node-token` | An existing agent binds its first node key with the shared node credential. |
+| POST | `/api/v1/node-enrollment/rotate` | machine | `node-signature` | An agent replaces its node key, signed with the key it replaces. |
+| GET | `/api/v1/node-enrollment/server-key` | machine | `public` | Public keys agents pin, and the state of the node-credential migration. |
 | GET | `/api/v1/hermes-registry/artifacts/:kind/:slug/:revision` | machine | `service-digest:hermes-registry-client` | Hermes registry, machine-only by instruction. |
 | POST | `/api/v1/hermes-registry/capture` | machine | `service-digest:hermes-registry-client` | Hermes registry, machine-only by instruction. |
 | POST | `/api/v1/hermes-registry/clients` | machine | `user:ADMIN` | Hermes registry, machine-only by instruction. |
@@ -630,6 +635,10 @@ Each row is a non-browser route that a broader `browser` pattern also matches. D
 | GET | `/api/v1/hermes/profiles/:id/api-server/status` | exclude | `user:any` | No call site: an unused client wrapper only. Add when a console feature needs it. |
 | POST | `/api/v1/nodes/:nodeId/change-password` | exclude | `user:ADMIN\|OPERATOR` | Handles OS passwords in the body; no console caller. |
 | POST | `/api/v1/nodes/:nodeId/provision-user` | exclude | `user:ADMIN\|OPERATOR` | Handles OS passwords in the body; no console caller. |
+| GET | `/api/v1/nodes/:nodeId/credentials` | exclude | `user:ADMIN` | Node key administration; no console caller yet. |
+| POST | `/api/v1/nodes/:nodeId/credentials/reset` | exclude | `user:ADMIN` | Node key administration; no console caller yet. |
+| POST | `/api/v1/nodes/:nodeId/credentials/revoke` | exclude | `user:ADMIN` | Node key administration; no console caller yet. |
+| POST | `/api/v1/nodes/:nodeId/enrollment-token` | exclude | `user:ADMIN` | Returns a one-time enrollment token; no console caller yet. |
 | POST | `/api/v1/nodes/:nodeId/repair-address` | exclude | `user:ADMIN\|OPERATOR` | No call site: an unused client wrapper only. Add when a console feature needs it. |
 | GET | `/api/v1/nodes/:nodeId/wazuh` | exclude | `user:any` | No call site: an unused client wrapper only. Add when a console feature needs it. |
 | GET | `/api/v1/nodes/compare` | exclude | `user:any` | No dashboard call site. Add when a console feature needs it. |

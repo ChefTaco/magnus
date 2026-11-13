@@ -5,6 +5,7 @@ export type NotificationType =
   | 'node.upgrade_not_ready'
   | 'node.degraded'
   | 'node.recovered'
+  | 'node.credential'
   | 'command.failed'
   | 'deploy.failed'
   | 'upgrade.failed'

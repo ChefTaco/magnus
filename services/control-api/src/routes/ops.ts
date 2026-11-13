@@ -4,7 +4,7 @@ import { optional } from '../utils/optional.js';
 import { applicationProbeContractDigest, getApplicationProbeCollectorStatus } from '../services/application-probes.js';
 import { lessonSchema, publishLesson, lessonSuggestions, supersedeLesson } from '../services/incident-lessons.js';
 import { exportIncidentEvidence } from '../services/incident-evidence.js';
-import { getNodeManagerSecret } from '../utils/env.js';
+import { agentFetch } from '../services/node-agent-auth.js';
 import { getNodeBaseUrl } from '../utils/node-url.js';
 import { describeTransportFailure } from '../utils/safe-errors.js';
 import { Hono } from 'hono';
@@ -252,7 +252,7 @@ opsRouter.get('/storage-evidence/:nodeId', requireRole('ADMIN', 'OPERATOR'), asy
   const audit = (success: boolean) => logAuditEvent({ action: 'storage.investigate', actorId: getUser(c).userId, targetType: 'node', targetId: nodeId, details: { operation: 'storage-evidence', readOnly: true, success } });
   let response: Response;
   try {
-    response = await fetch(`${getNodeBaseUrl(node.ipAddress, node.port)}/api/v1/storage-evidence?${new URLSearchParams({ mount })}`, { headers: { 'x-node-token': getNodeManagerSecret() }, signal: AbortSignal.timeout(15000), redirect: 'error' });
+    response = await agentFetch({ nodeId }, `${getNodeBaseUrl(node.ipAddress, node.port)}/api/v1/storage-evidence?${new URLSearchParams({ mount })}`, { signal: AbortSignal.timeout(15000), redirect: 'error' });
   } catch (error) {
     await audit(false);
     throw new HttpError(502, 'NODE_UNREACHABLE', `Could not reach the agent on ${node.name}: ${describeTransportFailure(error)}. Check that the agent is running and that this server can reach its port.`);
