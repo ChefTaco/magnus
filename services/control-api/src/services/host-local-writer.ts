@@ -7,6 +7,9 @@ import { canonical } from './resource-enrollment.js';
 import { getNodeBaseUrl } from '../utils/node-url.js';
 import { RESULT_SIGNING_SECRET } from '../utils/env.js';
 import { agentFetch } from './node-agent-auth.js';
+import type { NodeEvidencePolicy } from './node-evidence-policy.js';
+import { evidenceSignatureSchema } from '../schemas/node-evidence.js';
+import { hostLocalWriterSigningPayload } from '../security/node-evidence.js';
 
 const hex = z.string().regex(/^[a-f0-9]{64}$/);
 const proofSchema = z.object({ version: z.literal(1), sourceClass: z.literal('host-local-mutations'),
@@ -14,17 +17,17 @@ const proofSchema = z.object({ version: z.literal(1), sourceClass: z.literal('ho
   epoch: z.number().int().positive(), barrierId: z.string().guid(), nonce: z.string().guid(),
   observedAt: z.number().int().positive(), active: z.number().int().nonnegative(),
   unknown: z.number().int().nonnegative(), mutationInventorySha256: hex,
-  admissionFenceSha256: hex, signature: hex }).strict();
+  admissionFenceSha256: hex, signature: hex,
+  nodeSignature: evidenceSignatureSchema.optional() }).strict();
 export type HostLocalWriterProof = z.infer<typeof proofSchema>;
-const DOMAIN = 'magnus.host-local-writer.v1\n';
 
 export function verifyHostLocalWriterProof(raw: unknown, expected: {
   nodeId: string; nodeFqdn: string; nonce: string; epoch: number; barrierId: string | null;
-}, now = Date.now()): { ownerReceiptSha256: string; admissionFenceSha256: string;
+}, now: number, policy: NodeEvidencePolicy): { ownerReceiptSha256: string; admissionFenceSha256: string;
   mutationInventorySha256: string } | null {
   const parsed = proofSchema.safeParse(raw);
-  if (!parsed.success || RESULT_SIGNING_SECRET.length < 32) return null;
-  const { signature, ...receipt } = parsed.data;
+  if (!parsed.success || policy.nodeId !== expected.nodeId) return null;
+  const { signature, nodeSignature, ...receipt } = parsed.data;
   if (receipt.nodeId !== expected.nodeId || receipt.nodeFqdn !== expected.nodeFqdn
     || receipt.nonce !== expected.nonce || receipt.epoch !== expected.epoch
     || receipt.barrierId !== expected.barrierId || receipt.active !== 0 || receipt.unknown !== 0
@@ -32,8 +35,10 @@ export function verifyHostLocalWriterProof(raw: unknown, expected: {
   const exactFence = createHash('sha256').update(canonical({ nodeId: expected.nodeId,
     nodeFqdn: expected.nodeFqdn, epoch: expected.epoch, barrierId: expected.barrierId })).digest('hex');
   if (receipt.admissionFenceSha256 !== exactFence) return null;
-  const signed = createHmac('sha256', RESULT_SIGNING_SECRET).update(DOMAIN + canonical(receipt)).digest();
-  if (!timingSafeEqual(signed, Buffer.from(signature, 'hex'))) return null;
+  const payload = hostLocalWriterSigningPayload(receipt);
+  // The node key signs the proof; the shared result key is the fallback for older agents.
+  if (!policy.verify('host-local-writer', payload, nodeSignature, () => RESULT_SIGNING_SECRET.length >= 32
+    && timingSafeEqual(createHmac('sha256', RESULT_SIGNING_SECRET).update(payload).digest(), Buffer.from(signature, 'hex')))) return null;
   return { ownerReceiptSha256: createHash('sha256').update(canonical(parsed.data)).digest('hex'),
     admissionFenceSha256: receipt.admissionFenceSha256,
     mutationInventorySha256: receipt.mutationInventorySha256 };

@@ -10,6 +10,9 @@ import { httpIdentity as agentHttpIdentity } from '../../../../packages/agent/sr
 import { nativeCompletionDescriptor } from '../security/native-completion-registry.js';
 import { nativeCompletionDescriptor as agentNativeCompletionDescriptor } from '../../../../packages/agent/src/security/native-completion-registry.js';
 import { COMMAND_COMPLETION_REGISTRY_SHA256 } from '../security/command-completion-registry.js';
+// Evidence policy: a node without a key, so the shared result key applies (docs/NODE_CREDENTIALS.md).
+vi.mock('../services/node-credential-store.js', async () => ({ nodeCredentialStore: (await import('../services/node-credential-test-fixture.js')).createFakeCredentialStore().store }));
+
 const secret = 'cross-wire-receipt-test-signing-secret-32-characters';
 const mocks = vi.hoisted(() => ({ admit: vi.fn(), mark: vi.fn(), fail: vi.fn(), settle: vi.fn(),
   correlateNoEffect: vi.fn() }));

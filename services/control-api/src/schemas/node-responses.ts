@@ -4,6 +4,7 @@
  */
 
 import { z } from 'zod';
+import { evidenceSignatureSchema } from './node-evidence.js';
 
 export const commandFenceSchema = z.object({
   version: z.literal(1), resourceKey: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9:._-]{0,199}$/),
@@ -23,6 +24,8 @@ export const commandResultSchema = z.object({
   coordination: commandFenceSchema.extend({ requestSha256: z.string().regex(/^[a-f0-9]{64}$/) }).optional(),
   completion: z.object({ registryVersion: z.literal(1), registrySha256: z.string().regex(/^[a-f0-9]{64}$/),
     descriptorId: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/) }).strict().optional(),
+  // Ed25519 signature by the node key (docs/NODE_CREDENTIALS.md); absent from older agents.
+  nodeSignature: evidenceSignatureSchema.optional(),
 });
 
 // ── Quick-command response envelope ──

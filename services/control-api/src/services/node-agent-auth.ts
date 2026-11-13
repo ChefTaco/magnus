@@ -10,6 +10,8 @@ import { signNodeRequest, nodeAudience, pathWithQueryOf } from '../security/node
 import { getNodeManagerSecret } from '../utils/env.js';
 import { nodeAuthMode } from './node-auth-config.js';
 import { serverSigningKey } from './node-server-key.js';
+import { nodeCredentialStore } from './node-credential-store.js';
+import { recordLegacyUse } from './node-legacy-use.js';
 
 const PIN_TTL_MS = 10 * 60_000;
 const pins = new Map<string, { keyIds: readonly string[]; at: number }>();
@@ -26,6 +28,21 @@ export function noteAgentServerKeyPins(nodeId: string, keyIds: unknown, now = Da
 export function agentVerifiesServerSignatures(nodeId: string, activeKeyId: string, now = Date.now()): boolean {
   const entry = pins.get(nodeId);
   return entry !== undefined && now - entry.at <= PIN_TTL_MS && entry.keyIds.includes(activeKeyId);
+}
+
+const evidenceSigning = new Map<string, boolean>();
+/**
+ * Record whether the agent holding `keyId` signs its evidence with it. Call only for a heartbeat that
+ * carried a valid signature by that key. Writes only when the value changes.
+ */
+export function noteAgentEvidenceSigning(keyId: string, signs: boolean, now = new Date()): void {
+  if (evidenceSigning.get(keyId) === signs) return;
+  if (evidenceSigning.size > 50_000) evidenceSigning.clear();
+  evidenceSigning.set(keyId, signs);
+  void nodeCredentialStore.setEvidenceSigning(keyId, signs, now).catch((error: unknown) => {
+    evidenceSigning.delete(keyId);
+    console.warn(`[node-auth] could not record evidence signing of a node key: ${error instanceof Error ? error.message : String(error)}`);
+  });
 }
 
 /** Forget what a node advertised, for example after it refused a signature-only request. */
@@ -65,9 +82,11 @@ export function agentAuthHeaders(target: AgentRequestTarget, method: string, url
       keyWarningAt = Date.now();
       console.warn(`[node-auth] requests to agents are not signed: ${error instanceof Error ? error.message : String(error)}`);
     }
+    recordLegacyUse(target.nodeId, 'outbound', 'unsigned: server key unavailable');
     return legacy();
   }
   if (mode === 'enforce' || agentVerifiesServerSignatures(target.nodeId, activeKeyId)) return signature;
+  recordLegacyUse(target.nodeId, 'outbound', `${method.toUpperCase()} ${pathWithQueryOf(url).split('?')[0]}`);
   return { ...legacy(), ...signature };
 }
 
@@ -82,5 +101,6 @@ export function agentFetch(target: AgentRequestTarget, url: string | URL, init: 
 /** For tests. */
 export function resetAgentAuthState(): void {
   pins.clear();
+  evidenceSigning.clear();
   keyWarningAt = 0;
 }

@@ -1,6 +1,8 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { participantWorkKindSchema } from './resource-participant-reconciliation.js';
+import { evidenceSignatureSchema } from './node-evidence.js';
+import { nodeSessionReceiptSigningPayload as sharedNodeSessionReceiptSigningPayload } from '../security/node-evidence.js';
 
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/);
 const millis = z.number().int().positive().max(8_640_000_000_000_000);
@@ -37,37 +39,13 @@ function refineReceipt(value: { cgroup: string; unit: string; startedAt: number;
   if (value.startedAt > value.deadline) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['startedAt'], message: 'session started after its authority expired' });
 }
 export const nodeSessionReceiptUnsignedSchema = nodeSessionReceiptBaseSchema.superRefine(refineReceipt);
-export const nodeSessionReceiptSchema = nodeSessionReceiptBaseSchema.extend({ signature: sha256 }).superRefine(refineReceipt);
+export const nodeSessionReceiptSchema = nodeSessionReceiptBaseSchema.extend({ signature: sha256,
+  nodeSignature: evidenceSignatureSchema.optional() }).superRefine(refineReceipt);
 
 export type NodeSessionReceipt = z.infer<typeof nodeSessionReceiptSchema>;
 
 export function nodeSessionReceiptSigningPayload(value: Omit<NodeSessionReceipt, 'signature'>): string {
-  return JSON.stringify({
-    domain: 'magnus.node-session-terminal.v1',
-    version: value.version,
-    workId: value.workId,
-    nodeId: value.nodeId,
-    nodeFqdn: value.nodeFqdn,
-    participant: value.participant,
-    ownerId: value.ownerId,
-    kind: value.kind,
-    operationSha256: value.operationSha256,
-    requestSha256: value.requestSha256,
-    fence: value.fence,
-    deadline: value.deadline,
-    bootId: value.bootId,
-    unit: value.unit,
-    invocationId: value.invocationId,
-    cgroup: value.cgroup,
-    startedAt: value.startedAt,
-    terminalAt: value.terminalAt,
-    disposition: value.disposition,
-    resultSha256: value.resultSha256,
-    completionRegistrySha256: value.completionRegistrySha256,
-    completionDescriptorId: value.completionDescriptorId,
-    groupEmpty: value.groupEmpty,
-    effectBoundary: value.effectBoundary,
-  });
+  return sharedNodeSessionReceiptSigningPayload(value);
 }
 
 export function canonicalNodeSessionReceipt(value: NodeSessionReceipt): string {

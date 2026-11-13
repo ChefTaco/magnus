@@ -27,7 +27,7 @@ vi.mock('../services/audit-service.js', async (original) => ({ ...await original
   logAuditEvent: vi.fn(async (event: unknown) => { fixture.audit.push(event); }) }));
 vi.mock('../services/node-credential-store.js', () => ({ nodeCredentialStore: {
   nodeById: async () => ({ id: 'node-new', name: 'node-new', hostname: 'node-new.example.com', ipAddress: '192.0.2.11', port: 4100, status: 'PROVISIONING' }),
-  createEnrollmentToken: async () => undefined, credentialsOfNode: async () => [], summaries: async () => new Map(),
+  createEnrollmentToken: async () => undefined, credentialsOfNode: async () => [], summaries: async () => new Map(), legacyUse: async () => [],
 } }));
 vi.mock('../services/managed-cron.js', async (original) => ({ ...await original<object>(), cronMutationMode: async () => 'legacy' }));
 vi.mock('../sdk/index.js', () => ({ NodeApiClient: class {

@@ -1,6 +1,10 @@
 import { createHmac } from 'node:crypto';
 import { HTTPError } from 'ky';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { verifyNodeDecision } from './server-authorization.js';
+// Evidence policy: a node without a key, so the shared result key applies (docs/NODE_CREDENTIALS.md).
+vi.mock('./node-credential-store.js', async () => ({ nodeCredentialStore: (await import('./node-credential-test-fixture.js')).createFakeCredentialStore().store }));
+
 
 type Lease = { commandId: string; nodeId: string; state: string; label: string | null; completionDescriptorId: string | null;
   requestSha256: string; coordinationJson: string; acquiredAt: Date; dispatchedAt: Date | null; deadline: Date;
@@ -10,6 +14,7 @@ const state = vi.hoisted(() => ({
   leases: new Map<string, Lease>(),
   audit: [] as Array<{ action: string; actorId: string; details: Record<string, unknown> }>,
   receipt: vi.fn(), reconcile: vi.fn(), inventory: vi.fn(), recover: vi.fn(),
+  decisions: { serverSignatures: false, hmac: true },
 }));
 vi.mock('../db/index.js', () => ({ getDb: () => ({
   commandResourceLease: {
@@ -32,6 +37,7 @@ vi.mock('../sdk/node-api-client.js', async original => {
     getCommandReceipt(commandId: string, expected: unknown) { return state.receipt(commandId, expected); }
     reconcileCommandReceipt(assertion: unknown, expected: unknown) { return state.reconcile(assertion, expected); }
     getArdentState() { return state.inventory(); }
+    async decisionCapabilities() { return state.decisions; }
   }
   return { ...actual, NodeApiClient };
 });
@@ -103,6 +109,26 @@ describe('Ardent command owners', () => {
       details: expect.objectContaining({ nodeId: 'node-1', outcome: 'settled', disposition: 'effects_verified', reason: decision.reason, decisionId: result.decisionId }) })]);
   });
 
+  it('signs the decision with the server key for an agent that verifies it, without the shared reconciliation key', async () => {
+    vi.stubEnv('COMMAND_RECONCILIATION_SECRET', '');
+    state.decisions = { serverSignatures: true, hmac: false };
+    try {
+      state.receipt.mockResolvedValue({ commandId: 'native-1', requestSha256: 'a'.repeat(64), state: 'unknown' });
+      state.reconcile.mockImplementation(async () => { settle('signed-reconciliation:effects_verified'); return { state: 'reconciled' }; });
+      const result = await owners.reconcileArdentCommandOwner('node-1', 'native-1', decision, actor, NOW);
+      expect(result).toMatchObject({ outcome: 'settled' });
+      const [assertion] = state.reconcile.mock.calls[0]! as [Record<string, unknown>];
+      expect(assertion['signature']).toBeUndefined();
+      const { serverSignature, ...unsigned } = assertion as { serverSignature: { nodeId: string; keyId: string } };
+      expect(serverSignature).toMatchObject({ alg: 'ed25519', nodeId: 'node-1' });
+      // The decision verifies for node-1 only, with this server's key.
+      expect(verifyNodeDecision('node-1', 'command-reconciliation', commandReconciliationSigningPayload(unsigned as never), assertion)).toBe(true);
+      expect(verifyNodeDecision('node-2', 'command-reconciliation', commandReconciliationSigningPayload(unsigned as never), assertion)).toBe(false);
+      expect(verifyNodeDecision('node-1', 'command-reconciliation', commandReconciliationSigningPayload({ ...unsigned, disposition: 'no_effect_verified' } as never),
+        assertion)).toBe(false);
+    } finally { state.decisions = { serverSignatures: false, hmac: true }; }
+  });
+
   it('settles from the node\'s own result or decision without signing anything', async () => {
     state.receipt.mockImplementation(async () => { settle('signed-command-result'); return { state: 'completed' }; });
     expect(await owners.reconcileArdentCommandOwner('node-1', 'native-1', decision, actor, NOW)).toMatchObject({ outcome: 'settled', receipt: 'completed', decisionId: null });
@@ -141,7 +167,7 @@ describe('Ardent command owners', () => {
     vi.stubEnv('COMMAND_RECONCILIATION_SECRET', RECONCILE_KEY);
     state.reconcile.mockRejectedValue(new Error('Node does not support explicit command reconciliation'));
     await expect(owners.reconcileArdentCommandOwner('node-1', 'native-1', decision, actor, NOW)).rejects.toMatchObject({ code: 'RECONCILIATION_UNAVAILABLE',
-      message: expect.stringMatching(/node agent has no COMMAND_RECONCILIATION_SECRET/) });
+      message: expect.stringMatching(/accepts neither a server-signed decision/) });
     expect(state.leases.get('native-1')!.state).toBe('unknown');
   });
 });

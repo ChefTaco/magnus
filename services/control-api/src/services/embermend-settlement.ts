@@ -1,16 +1,16 @@
 /** Explicitly reviewed ownership settlement. Historical outcome stays unknown. */
-import { createHash, createHmac } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { embermendCanonical, embermendOperationSchema, embermendSettlementSchema, type EmbermendOperation } from '@hivemagnus/magnus-contracts/embermend';
 import { getDb } from '../db/index.js';
 import { NodeApiClient, commandReconciliationSigningPayload, commandReconciliationSchema } from '../sdk/node-api-client.js';
-import { RESULT_SIGNING_SECRET, getNodeManagerSecret } from '../utils/env.js';
+import { commandReconciliationKey, decisionIdentity, serverCanSignDecisions, signNodeDecision } from './server-authorization.js';
 import { assertLiveExecution } from '../config/rehearsal.js';
 import { logAuditEvent } from './audit-service.js';
 const hash = (value: unknown): string => createHash('sha256').update(embermendCanonical(value)).digest('hex');
+/** Whether this server can sign a settlement decision at all: with its node-auth key, or the shared reconciliation key. */
 export function ownerSettlementEnabled(): boolean {
-  const secret = process.env['COMMAND_RECONCILIATION_SECRET'] ?? '';
-  return secret.length >= 32 && secret !== RESULT_SIGNING_SECRET && secret !== getNodeManagerSecret();
+  return serverCanSignDecisions() || commandReconciliationKey() !== null;
 }
 export function ownerSettlementParameters(request: EmbermendOperation) {
   if (request.action.version !== 'execution-settle.v1' || request.action.class !== 'recovery' || request.action.targetKind !== 'host' || request.action.disruption !== 'none') throw new Error('Exact ownership recovery action required');
@@ -34,7 +34,7 @@ export async function observeOwnerSettlement(integrationId: string, request: Emb
   if (!retained.success) return undefined;
   const receipt = await client.getCommandReceipt(original.commandId, { nodeFqdn: node.hostname, requestSha256: parameters.nativeRequestDigest });
   if (receipt.state !== 'reconciled') return undefined;
-  if (receipt.reconciliation.signature !== retained.data.assertion.signature) {
+  if (decisionIdentity(receipt.reconciliation) !== decisionIdentity(retained.data.assertion)) {
     // The immutable native slot accepted another explicit decision. That proves
     // this decision did not take effect and can never be applied later.
     const result = { originalOperationId: parameters.originalOperationId, originalOutcome: 'unknown', superseded: true, winningRecoveryOperationId: receipt.reconciliation.decisionId, nativeCommandId: original.commandId, reconciliation: receipt.reconciliation };
@@ -49,13 +49,19 @@ export async function observeOwnerSettlement(integrationId: string, request: Emb
 export async function settleEmbermendOwner(integrationId: string, request: EmbermendOperation, node: { id: string; hostname: string }, client: NodeApiClient): Promise<void> {
   assertLiveExecution();
   if (!ownerSettlementEnabled() || Date.parse(request.expiresAt) <= Date.now()) throw new Error('Current recovery authority required');
+  // A server-signed decision for an agent with a node key; the shared reconciliation key for older agents.
+  const decisions = await client.decisionCapabilities();
+  if (!decisions.serverSignatures && !(decisions.hmac && commandReconciliationKey() !== null)) throw new Error('Current recovery authority required');
   const { parameters, original, lease } = await originalOwner(integrationId, request, node);
   if (lease.state !== 'unknown') throw new Error('Only an expired unknown owner can be explicitly settled');
   const before = await client.getCommandReceipt(original.commandId, { nodeFqdn: node.hostname, requestSha256: parameters.nativeRequestDigest });
   if (before.state !== 'unknown') throw new Error('Native execution is active or already settled');
   const coordination = z.object({ version: z.literal(1), resourceKey: z.string(), fence: z.string(), expiresAt: z.number() }).strict().parse(JSON.parse(lease.coordinationJson));
   const unsigned = { nodeFqdn: node.hostname, commandId: original.commandId, requestSha256: parameters.nativeRequestDigest, coordination, disposition: parameters.disposition, evidenceSha256: hash(request), approvalRef: request.authorizationRef, decisionId: request.operationId, expiresAt: Math.min(Date.parse(request.expiresAt), Date.now() + 240000) };
-  const assertion = commandReconciliationSchema.parse({ ...unsigned, signature: createHmac('sha256', process.env['COMMAND_RECONCILIATION_SECRET'] ?? '').update(commandReconciliationSigningPayload(unsigned)).digest('hex') });
+  const signed = signNodeDecision(node.id, 'command-reconciliation', unsigned, commandReconciliationSigningPayload(unsigned),
+    { agentVerifiesServerSignatures: decisions.serverSignatures });
+  if (!signed) throw new Error('No reconciliation authority the node accepts');
+  const assertion = commandReconciliationSchema.parse(signed);
   await logAuditEvent({ action: 'embermend.owner_settlement', actorId: 'service:embermend:' + integrationId, targetType: 'command', targetId: original.commandId, details: { recoveryOperationId: request.operationId, originalOperationId: parameters.originalOperationId, authorizationRef: request.authorizationRef, evidenceId: parameters.evidenceId, originalOutcome: 'unknown' } });
   // An audit refusal precedes delivery authority. Commit the exact decision
   // before delivery; a restart only reads this decision.

@@ -1,0 +1,198 @@
+{
+  "comment": "Cross-wire vectors for node-evidence.ts. Payloads were checked against the implementations they replaced; keys are throwaway and only public keys are kept. Both packages run them.",
+  "nodeId": "node-a",
+  "nodeKey": {
+    "publicKey": "MCowBQYDK2VwAyEAQWMeY/vDATKdEHWMjGduGmb37UOrAVn/9DaL53/viu0=",
+    "keyId": "7680ac1f215bf8f402fad2ea1b6dd1e040e5142bf590d5a9374472ea49009306"
+  },
+  "serverKey": {
+    "publicKey": "MCowBQYDK2VwAyEAA1GobW+wnQReZSXtXPMjVnvwswC6D7BwVRbaEpXmKms=",
+    "keyId": "490ef53fe9121a2047b3f55c3e4859850a6fdd0a2f091edef945d6058c0ab9c6"
+  },
+  "evidence": [
+    {
+      "name": "command result (v3)",
+      "kind": "command-result",
+      "payload": "{\"version\":3,\"commandId\":\"cmd-1\",\"exitCode\":0,\"durationMs\":12,\"stdoutSha256\":\"dc51b8c96c2d745df3bd5590d990230a482fd247123599548e0632fdbf97fc22\",\"stderrSha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"truncated\":false,\"coordination\":{\"version\":1,\"resourceKey\":\"node:node-a:ardent\",\"fence\":\"7\",\"expiresAt\":1794000060000,\"requestSha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"completion\":{\"registryVersion\":1,\"registrySha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"descriptorId\":\"ardent-action\"}}",
+      "signingInput": "magnus.node-evidence.v1\ncommand-result\nnode-a\n7680ac1f215bf8f402fad2ea1b6dd1e040e5142bf590d5a9374472ea49009306\n{\"version\":3,\"commandId\":\"cmd-1\",\"exitCode\":0,\"durationMs\":12,\"stdoutSha256\":\"dc51b8c96c2d745df3bd5590d990230a482fd247123599548e0632fdbf97fc22\",\"stderrSha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"truncated\":false,\"coordination\":{\"version\":1,\"resourceKey\":\"node:node-a:ardent\",\"fence\":\"7\",\"expiresAt\":1794000060000,\"requestSha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"completion\":{\"registryVersion\":1,\"registrySha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"descriptorId\":\"ardent-action\"}}",
+      "signature": {
+        "alg": "ed25519",
+        "v": 1,
+        "nodeId": "node-a",
+        "keyId": "7680ac1f215bf8f402fad2ea1b6dd1e040e5142bf590d5a9374472ea49009306",
+        "sig": "oL2nOJ0JBiXLx9qwndTaEIC83uIIAI7KNfzOHeUwRUBPVfyF6mMYTymCgU2OxK-7wV_dCGIb8SnerE9Q0EVcBA"
+      }
+    },
+    {
+      "name": "command result (v2)",
+      "kind": "command-result",
+      "payload": "{\"version\":2,\"commandId\":\"cmd-1\",\"exitCode\":0,\"durationMs\":12,\"stdoutSha256\":\"dc51b8c96c2d745df3bd5590d990230a482fd247123599548e0632fdbf97fc22\",\"stderrSha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"truncated\":false,\"coordination\":{\"version\":1,\"resourceKey\":\"node:node-a:ardent\",\"fence\":\"7\",\"expiresAt\":1794000060000,\"requestSha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}}",
+      "signingInput": "magnus.node-evidence.v1\ncommand-result\nnode-a\n7680ac1f215bf8f402fad2ea1b6dd1e040e5142bf590d5a9374472ea49009306\n{\"version\":2,\"commandId\":\"cmd-1\",\"exitCode\":0,\"durationMs\":12,\"stdoutSha256\":\"dc51b8c96c2d745df3bd5590d990230a482fd247123599548e0632fdbf97fc22\",\"stderrSha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"truncated\":false,\"coordination\":{\"version\":1,\"resourceKey\":\"node:node-a:ardent\",\"fence\":\"7\",\"expiresAt\":1794000060000,\"requestSha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}}",
+      "signature": {
+        "alg": "ed25519",
+        "v": 1,
+        "nodeId": "node-a",
+        "keyId": "7680ac1f215bf8f402fad2ea1b6dd1e040e5142bf590d5a9374472ea49009306",
+        "sig": "rE3JLhViQzwNwtYqQzsypjo61rYZOhRoC5f-lgB8fXuvuiuon_6FyUt-UjJBWZ-S3DWnP2XR95gfELebPSY8AA"
+      }
+    },
+    {
+      "name": "command refusal",
+      "kind": "command-refusal",
+      "payload": "{\"domain\":\"magnus.command-refusal.v1\",\"commandId\":\"cmd-1\",\"requestSha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"code\":\"RESOURCE_BUSY\",\"highWater\":null,\"nodeFqdn\":\"node-a.example.com\",\"leaseId\":\"lease-1\"}",
+      "signingInput": "magnus.node-evidence.v1\ncommand-refusal\nnode-a\n7680ac1f215bf8f402fad2ea1b6dd1e040e5142bf590d5a9374472ea49009306\n{\"domain\":\"magnus.command-refusal.v1\",\"commandId\":\"cmd-1\",\"requestSha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"code\":\"RESOURCE_BUSY\",\"highWater\":null,\"nodeFqdn\":\"node-a.example.com\",\"leaseId\":\"lease-1\"}",
+      "signature": {
+        "alg": "ed25519",
+        "v": 1,
+        "nodeId": "node-a",
+        "keyId": "7680ac1f215bf8f402fad2ea1b6dd1e040e5142bf590d5a9374472ea49009306",
+        "sig": "777SDTyysWsg8HGjPz5c7qOCs2CHSj_GwgRAhxUMMhYomhymuSlHlfY1Mr8CzZmF_azo2Y6ygu0Vbh8xzkfNCQ"
+      }
+    },
+    {
+      "name": "command absence",
+      "kind": "command-absence",
+      "payload": "{\"domain\":\"magnus.command-absence.v1\",\"commandId\":\"cmd-1\",\"nodeFqdn\":\"node-a.example.com\",\"nonce\":\"0f8fad5b-d9cb-469f-a165-70867728950e\",\"ledgerExists\":true,\"receipt\":false,\"activeLock\":false,\"resourceKey\":\"node:node-a:ardent\",\"fenceHighWater\":\"7\",\"markerState\":\"present\",\"markerNodeId\":\"node-a\",\"admissionFailedFence\":null}",
+      "signingInput": "magnus.node-evidence.v1\ncommand-absence\nnode-a\n7680ac1f215bf8f402fad2ea1b6dd1e040e5142bf590d5a9374472ea49009306\n{\"domain\":\"magnus.command-absence.v1\",\"commandId\":\"cmd-1\",\"nodeFqdn\":\"node-a.example.com\",\"nonce\":\"0f8fad5b-d9cb-469f-a165-70867728950e\",\"ledgerExists\":true,\"receipt\":false,\"activeLock\":false,\"resourceKey\":\"node:node-a:ardent\",\"fenceHighWater\":\"7\",\"markerState\":\"present\",\"markerNodeId\":\"node-a\",\"admissionFailedFence\":null}",
+      "signature": {
+        "alg": "ed25519",
+        "v": 1,
+        "nodeId": "node-a",
+        "keyId": "7680ac1f215bf8f402fad2ea1b6dd1e040e5142bf590d5a9374472ea49009306",
+        "sig": "QsPq4pgzONbUxbBsBejYIvy799rNthKZ8zYjpXY86hNWwl2BJ1i8lA0aJ03O9b-106HBrwBfFXnSc3wERDzGDg"
+      }
+    },
+    {
+      "name": "fence proof",
+      "kind": "fence-proof",
+      "payload": "{\"domain\":\"magnus.fence-high-water.v1\",\"nonce\":\"0f8fad5b-d9cb-469f-a165-70867728950e\",\"nodeFqdn\":\"node-a.example.com\",\"fenceHighWater\":{\"a:key\":\"9\",\"z:key\":\"3\"}}",
+      "signingInput": "magnus.node-evidence.v1\nfence-proof\nnode-a\n7680ac1f215bf8f402fad2ea1b6dd1e040e5142bf590d5a9374472ea49009306\n{\"domain\":\"magnus.fence-high-water.v1\",\"nonce\":\"0f8fad5b-d9cb-469f-a165-70867728950e\",\"nodeFqdn\":\"node-a.example.com\",\"fenceHighWater\":{\"a:key\":\"9\",\"z:key\":\"3\"}}",
+      "signature": {
+        "alg": "ed25519",
+        "v": 1,
+        "nodeId": "node-a",
+        "keyId": "7680ac1f215bf8f402fad2ea1b6dd1e040e5142bf590d5a9374472ea49009306",
+        "sig": "nuRjSEAYe9V5ii25AWms6wx8mzFNVemgKQU6kIWBPq8QyuB879ATOQCLoU94VLun1HvnWveJI1mq4Nw8UDAOBQ"
+      }
+    },
+    {
+      "name": "node session receipt",
+      "kind": "node-session-receipt",
+      "payload": "{\"domain\":\"magnus.node-session-terminal.v1\",\"version\":1,\"workId\":\"7c9e6679-7425-40de-944b-e07fc1f90ae7\",\"nodeId\":\"node-a\",\"nodeFqdn\":\"node-a.example.com\",\"participant\":\"api\",\"ownerId\":\"16fd2706-8baf-433b-82eb-8c7fada847da\",\"kind\":\"terminal-http\",\"operationSha256\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",\"requestSha256\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"fence\":\"3\",\"deadline\":1794000600000,\"bootId\":\"886313e1-3b8a-5372-9b90-0c9aee199e5d\",\"unit\":\"magnus-exec-ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff.service\",\"invocationId\":\"11111111111111111111111111111111\",\"cgroup\":\"/system.slice/magnus-exec-ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff.service\",\"startedAt\":1794000000000,\"terminalAt\":1794000001000,\"disposition\":\"succeeded\",\"resultSha256\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"completionRegistrySha256\":\"3333333333333333333333333333333333333333333333333333333333333333\",\"completionDescriptorId\":\"diagnostic\",\"groupEmpty\":true,\"effectBoundary\":\"bounded-node-process\"}",
+      "signingInput": "magnus.node-evidence.v1\nnode-session-receipt\nnode-a\n7680ac1f215bf8f402fad2ea1b6dd1e040e5142bf590d5a9374472ea49009306\n{\"domain\":\"magnus.node-session-terminal.v1\",\"version\":1,\"workId\":\"7c9e6679-7425-40de-944b-e07fc1f90ae7\",\"nodeId\":\"node-a\",\"nodeFqdn\":\"node-a.example.com\",\"participant\":\"api\",\"ownerId\":\"16fd2706-8baf-433b-82eb-8c7fada847da\",\"kind\":\"terminal-http\",\"operationSha256\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",\"requestSha256\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"fence\":\"3\",\"deadline\":1794000600000,\"bootId\":\"886313e1-3b8a-5372-9b90-0c9aee199e5d\",\"unit\":\"magnus-exec-ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff.service\",\"invocationId\":\"11111111111111111111111111111111\",\"cgroup\":\"/system.slice/magnus-exec-ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff.service\",\"startedAt\":1794000000000,\"terminalAt\":1794000001000,\"disposition\":\"succeeded\",\"resultSha256\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"completionRegistrySha256\":\"3333333333333333333333333333333333333333333333333333333333333333\",\"completionDescriptorId\":\"diagnostic\",\"groupEmpty\":true,\"effectBoundary\":\"bounded-node-process\"}",
+      "signature": {
+        "alg": "ed25519",
+        "v": 1,
+        "nodeId": "node-a",
+        "keyId": "7680ac1f215bf8f402fad2ea1b6dd1e040e5142bf590d5a9374472ea49009306",
+        "sig": "4C56E-kvM7L8SRD7NXIVsKAjK8D0csPKQxErVDxnKGQrV90ASy43R5XfLPLqFNEoIkR9NARdiVtSwAkMJgsMBA"
+      }
+    },
+    {
+      "name": "agent drain receipt",
+      "kind": "enrollment-drain",
+      "payload": "magnus.resource-enrollment.v1\n{\"activeCount\":0,\"barrierId\":\"6fa459ea-ee8a-3ca4-894e-db77e160355e\",\"challengeId\":\"9b2e0c1a-4f3e-4c55-8a4e-2b1d6f0e7c11\",\"epoch\":2,\"evidenceSha256\":\"4444444444444444444444444444444444444444444444444444444444444444\",\"expiresAt\":1794000030000,\"nodeFqdn\":\"node-a.example.com\",\"nodeId\":\"node-a\",\"participant\":\"agent\",\"status\":\"drained\",\"unknownCount\":0,\"version\":1}",
+      "signingInput": "magnus.node-evidence.v1\nenrollment-drain\nnode-a\n7680ac1f215bf8f402fad2ea1b6dd1e040e5142bf590d5a9374472ea49009306\nmagnus.resource-enrollment.v1\n{\"activeCount\":0,\"barrierId\":\"6fa459ea-ee8a-3ca4-894e-db77e160355e\",\"challengeId\":\"9b2e0c1a-4f3e-4c55-8a4e-2b1d6f0e7c11\",\"epoch\":2,\"evidenceSha256\":\"4444444444444444444444444444444444444444444444444444444444444444\",\"expiresAt\":1794000030000,\"nodeFqdn\":\"node-a.example.com\",\"nodeId\":\"node-a\",\"participant\":\"agent\",\"status\":\"drained\",\"unknownCount\":0,\"version\":1}",
+      "signature": {
+        "alg": "ed25519",
+        "v": 1,
+        "nodeId": "node-a",
+        "keyId": "7680ac1f215bf8f402fad2ea1b6dd1e040e5142bf590d5a9374472ea49009306",
+        "sig": "2Z6XsPtSNBBLltGvNlO9qPW5Uw_dP1xEJpQ_Gmcioy1Ve5ZgqMa3s7Mv_GK6V3GJAb0-BdDXDTLHoa3k2sQdBA"
+      }
+    },
+    {
+      "name": "scheduler drain receipt",
+      "kind": "scheduler-drain",
+      "payload": "magnus.resource-enrollment.v1\n{\"activeCount\":0,\"barrierId\":\"6fa459ea-ee8a-3ca4-894e-db77e160355e\",\"challengeId\":\"9b2e0c1a-4f3e-4c55-8a4e-2b1d6f0e7c11\",\"epoch\":2,\"evidenceSha256\":\"4444444444444444444444444444444444444444444444444444444444444444\",\"expiresAt\":1794000030000,\"externalBlockers\":[],\"nodeFqdn\":\"node-a.example.com\",\"nodeId\":\"node-a\",\"participant\":\"scheduler\",\"scope\":\"managed\",\"status\":\"drained\",\"unknownCount\":0,\"version\":1}",
+      "signingInput": "magnus.node-evidence.v1\nscheduler-drain\nnode-a\n7680ac1f215bf8f402fad2ea1b6dd1e040e5142bf590d5a9374472ea49009306\nmagnus.resource-enrollment.v1\n{\"activeCount\":0,\"barrierId\":\"6fa459ea-ee8a-3ca4-894e-db77e160355e\",\"challengeId\":\"9b2e0c1a-4f3e-4c55-8a4e-2b1d6f0e7c11\",\"epoch\":2,\"evidenceSha256\":\"4444444444444444444444444444444444444444444444444444444444444444\",\"expiresAt\":1794000030000,\"externalBlockers\":[],\"nodeFqdn\":\"node-a.example.com\",\"nodeId\":\"node-a\",\"participant\":\"scheduler\",\"scope\":\"managed\",\"status\":\"drained\",\"unknownCount\":0,\"version\":1}",
+      "signature": {
+        "alg": "ed25519",
+        "v": 1,
+        "nodeId": "node-a",
+        "keyId": "7680ac1f215bf8f402fad2ea1b6dd1e040e5142bf590d5a9374472ea49009306",
+        "sig": "h8yDE7_RaqR5GQ-A_lczyUcT5oDNE35mh02lLjRyngnaD5hMVrc88EW7MI7hYnZPyTLIKq-cDPS0pyw7kYbMAQ"
+      }
+    },
+    {
+      "name": "host-local writer proof",
+      "kind": "host-local-writer",
+      "payload": "magnus.host-local-writer.v1\n{\"active\":0,\"admissionFenceSha256\":\"6666666666666666666666666666666666666666666666666666666666666666\",\"barrierId\":\"6fa459ea-ee8a-3ca4-894e-db77e160355e\",\"epoch\":2,\"mutationInventorySha256\":\"5555555555555555555555555555555555555555555555555555555555555555\",\"nodeFqdn\":\"node-a.example.com\",\"nodeId\":\"node-a\",\"nonce\":\"0f8fad5b-d9cb-469f-a165-70867728950e\",\"observedAt\":1794000000000,\"sourceClass\":\"host-local-mutations\",\"unknown\":0,\"version\":1}",
+      "signingInput": "magnus.node-evidence.v1\nhost-local-writer\nnode-a\n7680ac1f215bf8f402fad2ea1b6dd1e040e5142bf590d5a9374472ea49009306\nmagnus.host-local-writer.v1\n{\"active\":0,\"admissionFenceSha256\":\"6666666666666666666666666666666666666666666666666666666666666666\",\"barrierId\":\"6fa459ea-ee8a-3ca4-894e-db77e160355e\",\"epoch\":2,\"mutationInventorySha256\":\"5555555555555555555555555555555555555555555555555555555555555555\",\"nodeFqdn\":\"node-a.example.com\",\"nodeId\":\"node-a\",\"nonce\":\"0f8fad5b-d9cb-469f-a165-70867728950e\",\"observedAt\":1794000000000,\"sourceClass\":\"host-local-mutations\",\"unknown\":0,\"version\":1}",
+      "signature": {
+        "alg": "ed25519",
+        "v": 1,
+        "nodeId": "node-a",
+        "keyId": "7680ac1f215bf8f402fad2ea1b6dd1e040e5142bf590d5a9374472ea49009306",
+        "sig": "eWEyKDl-tISoF2NewuCXX_ZkJ04UzcVwezAHmmKfmmil5UMtqXwOSQQofApYcz708pQ1UWCf3MWCnugecC2eBQ"
+      }
+    },
+    {
+      "name": "os scheduler writer proof",
+      "kind": "os-scheduler-writer",
+      "payload": "magnus.os-scheduler-writer.v1\n{\"active\":0,\"admissionFenceSha256\":\"6666666666666666666666666666666666666666666666666666666666666666\",\"barrierId\":\"6fa459ea-ee8a-3ca4-894e-db77e160355e\",\"epoch\":2,\"mutationInventorySha256\":\"5555555555555555555555555555555555555555555555555555555555555555\",\"nodeFqdn\":\"node-a.example.com\",\"nodeId\":\"node-a\",\"nonce\":\"0f8fad5b-d9cb-469f-a165-70867728950e\",\"observedAt\":1794000000000,\"sourceClass\":\"os-schedulers\",\"unknown\":0,\"version\":1}",
+      "signingInput": "magnus.node-evidence.v1\nos-scheduler-writer\nnode-a\n7680ac1f215bf8f402fad2ea1b6dd1e040e5142bf590d5a9374472ea49009306\nmagnus.os-scheduler-writer.v1\n{\"active\":0,\"admissionFenceSha256\":\"6666666666666666666666666666666666666666666666666666666666666666\",\"barrierId\":\"6fa459ea-ee8a-3ca4-894e-db77e160355e\",\"epoch\":2,\"mutationInventorySha256\":\"5555555555555555555555555555555555555555555555555555555555555555\",\"nodeFqdn\":\"node-a.example.com\",\"nodeId\":\"node-a\",\"nonce\":\"0f8fad5b-d9cb-469f-a165-70867728950e\",\"observedAt\":1794000000000,\"sourceClass\":\"os-schedulers\",\"unknown\":0,\"version\":1}",
+      "signature": {
+        "alg": "ed25519",
+        "v": 1,
+        "nodeId": "node-a",
+        "keyId": "7680ac1f215bf8f402fad2ea1b6dd1e040e5142bf590d5a9374472ea49009306",
+        "sig": "9BYsDZcjCXk7kiD_CR05bNO4RdFUtoX8u_xEPLHpJoxYGKUbddYiLLdtthtwebzxvS797Czc6O3hG_vHmSADBw"
+      }
+    },
+    {
+      "name": "cron stage receipt",
+      "kind": "cron-stage-receipt",
+      "payload": "{\"domain\":\"magnus.cron-enrollment-stage-receipt.v1\",\"nodeFqdn\":\"node-a.example.com\",\"name\":\"backup\",\"jobId\":\"7777777777777777777777777777777777777777777777777777777777777777\",\"revision\":1,\"specSha256\":\"8888888888888888888888888888888888888888888888888888888888888888\",\"operationId\":\"3f2504e0-4f89-41d3-9a0c-0305e82c3301\",\"staged\":true,\"enabled\":false}",
+      "signingInput": "magnus.node-evidence.v1\ncron-stage-receipt\nnode-a\n7680ac1f215bf8f402fad2ea1b6dd1e040e5142bf590d5a9374472ea49009306\n{\"domain\":\"magnus.cron-enrollment-stage-receipt.v1\",\"nodeFqdn\":\"node-a.example.com\",\"name\":\"backup\",\"jobId\":\"7777777777777777777777777777777777777777777777777777777777777777\",\"revision\":1,\"specSha256\":\"8888888888888888888888888888888888888888888888888888888888888888\",\"operationId\":\"3f2504e0-4f89-41d3-9a0c-0305e82c3301\",\"staged\":true,\"enabled\":false}",
+      "signature": {
+        "alg": "ed25519",
+        "v": 1,
+        "nodeId": "node-a",
+        "keyId": "7680ac1f215bf8f402fad2ea1b6dd1e040e5142bf590d5a9374472ea49009306",
+        "sig": "3PcLT4E-uG-2f-wtC0oPWjrqIke6aXUiSgTqj9EGC8p1SyGMNcy0HMiJldLwzzTW3BnCIuVk77DmQfzNRCBbAA"
+      }
+    },
+    {
+      "name": "scheduler settlement receipt",
+      "kind": "scheduler-settlement-receipt",
+      "payload": "{\"domain\":\"magnus.scheduler-source-reconciliation-receipt.v2\",\"version\":1,\"sourceIdentityVersion\":2,\"nodeId\":\"node-a\",\"nodeFqdn\":\"node-a.example.com\",\"epoch\":2,\"barrierId\":\"6fa459ea-ee8a-3ca4-894e-db77e160355e\",\"kind\":\"USER_CRONTAB\",\"sourceSha256\":\"9999999999999999999999999999999999999999999999999999999999999999\",\"count\":1,\"disposition\":\"no_effect_verified\",\"evidenceSha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"approvalRef\":\"change-1\",\"decisionId\":\"1b4e28ba-2fa1-11d2-883f-0016d3cca427\",\"expiresAt\":1794000300000,\"settled\":true,\"replayed\":false}",
+      "signingInput": "magnus.node-evidence.v1\nscheduler-settlement-receipt\nnode-a\n7680ac1f215bf8f402fad2ea1b6dd1e040e5142bf590d5a9374472ea49009306\n{\"domain\":\"magnus.scheduler-source-reconciliation-receipt.v2\",\"version\":1,\"sourceIdentityVersion\":2,\"nodeId\":\"node-a\",\"nodeFqdn\":\"node-a.example.com\",\"epoch\":2,\"barrierId\":\"6fa459ea-ee8a-3ca4-894e-db77e160355e\",\"kind\":\"USER_CRONTAB\",\"sourceSha256\":\"9999999999999999999999999999999999999999999999999999999999999999\",\"count\":1,\"disposition\":\"no_effect_verified\",\"evidenceSha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"approvalRef\":\"change-1\",\"decisionId\":\"1b4e28ba-2fa1-11d2-883f-0016d3cca427\",\"expiresAt\":1794000300000,\"settled\":true,\"replayed\":false}",
+      "signature": {
+        "alg": "ed25519",
+        "v": 1,
+        "nodeId": "node-a",
+        "keyId": "7680ac1f215bf8f402fad2ea1b6dd1e040e5142bf590d5a9374472ea49009306",
+        "sig": "-45gJFxHV-fBoITW16v_pXBLx7D8fYTpewAoZcszUIwk6JgLioXbbn4NvnX_RUAmYkBfl0-AOAs4L_VzamFaBw"
+      }
+    }
+  ],
+  "authorizations": [
+    {
+      "name": "command reconciliation",
+      "kind": "command-reconciliation",
+      "payload": "{\"domain\":\"magnus.command-reconciliation.v1\",\"nodeFqdn\":\"node-a.example.com\",\"commandId\":\"cmd-1\",\"requestSha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"coordination\":{\"version\":1,\"resourceKey\":\"node:node-a:ardent\",\"fence\":\"7\",\"expiresAt\":1794000060000},\"disposition\":\"no_effect_verified\",\"evidenceSha256\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"approvalRef\":\"user:admin\",\"decisionId\":\"decision-1\",\"expiresAt\":1794000300000}",
+      "signingInput": "magnus.server-authorization.v1\ncommand-reconciliation\nnode-a\n490ef53fe9121a2047b3f55c3e4859850a6fdd0a2f091edef945d6058c0ab9c6\n{\"domain\":\"magnus.command-reconciliation.v1\",\"nodeFqdn\":\"node-a.example.com\",\"commandId\":\"cmd-1\",\"requestSha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"coordination\":{\"version\":1,\"resourceKey\":\"node:node-a:ardent\",\"fence\":\"7\",\"expiresAt\":1794000060000},\"disposition\":\"no_effect_verified\",\"evidenceSha256\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"approvalRef\":\"user:admin\",\"decisionId\":\"decision-1\",\"expiresAt\":1794000300000}",
+      "signature": {
+        "alg": "ed25519",
+        "v": 1,
+        "nodeId": "node-a",
+        "keyId": "490ef53fe9121a2047b3f55c3e4859850a6fdd0a2f091edef945d6058c0ab9c6",
+        "sig": "tyVlZSk5RQqw20t5DQmIofGWBuhXNHTqhvPltdz0NqnWt0k7-0E236_Av8oILWOSI_za8bH_EQgtRzNIKP-kDQ"
+      }
+    },
+    {
+      "name": "cron enrollment stage",
+      "kind": "cron-enrollment-stage",
+      "payload": "{\"domain\":\"magnus.cron-enrollment-stage.v1\",\"version\":1,\"nodeId\":\"node-a\",\"nodeFqdn\":\"node-a.example.com\",\"specSha256\":\"ed50196abdb5765ba53566e62eee2da40c102060fd25ec08dcf8f281360d7165\",\"operationId\":\"3f2504e0-4f89-41d3-9a0c-0305e82c3301\",\"expiresAt\":1794000060000}",
+      "signingInput": "magnus.server-authorization.v1\ncron-enrollment-stage\nnode-a\n490ef53fe9121a2047b3f55c3e4859850a6fdd0a2f091edef945d6058c0ab9c6\n{\"domain\":\"magnus.cron-enrollment-stage.v1\",\"version\":1,\"nodeId\":\"node-a\",\"nodeFqdn\":\"node-a.example.com\",\"specSha256\":\"ed50196abdb5765ba53566e62eee2da40c102060fd25ec08dcf8f281360d7165\",\"operationId\":\"3f2504e0-4f89-41d3-9a0c-0305e82c3301\",\"expiresAt\":1794000060000}",
+      "signature": {
+        "alg": "ed25519",
+        "v": 1,
+        "nodeId": "node-a",
+        "keyId": "490ef53fe9121a2047b3f55c3e4859850a6fdd0a2f091edef945d6058c0ab9c6",
+        "sig": "pBljjvGQuPIsW8D1f5X4XbMGypb8wPzFSgRf1F5E21S8SjtOsWeNBmt9wmQtSnusz447M_YsmPRu_tjm5XX5Bg"
+      }
+    }
+  ]
+}

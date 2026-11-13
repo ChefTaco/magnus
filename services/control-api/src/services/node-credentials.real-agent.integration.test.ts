@@ -61,6 +61,8 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('per-node credentials: the re
       MAGNUS_EXECUTION_SUPERVISOR_ENABLED: 'false', MAGNUS_AGENT_PRIVILEGED: 'false', NODE_AUTH_MODE: 'compat',
       CREDENTIAL_ROTATION_KEY: 'node-credentials-rotation-fixture-at-least-32-characters', CREDENTIAL_ROTATION_STATE_PATH: join(root, 'rotation.json'),
       NODE_AUTH_SERVER_KEY_PATH: join(root, 'server-state/server-signing-key.json') })) vi.stubEnv(name, value);
+    // This test is the server process: it may create its key, as the server does at start-up.
+    (await import('./node-server-key.js')).allowServerKeyCreation();
     db = (await import('../db/index.js')).getDb();
     agentAuth = await import('../../../../packages/agent/src/node-auth.js');
     agentEnrollment = await import('../../../../packages/agent/src/node-enrollment.js');
@@ -88,6 +90,7 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('per-node credentials: the re
   afterAll(async () => {
     if (db) {
       await db.notification.deleteMany({ where: { nodeId: { in: [nodeId, oldNodeId] } } });
+      await db.nodeLegacyCredentialUse.deleteMany({ where: { nodeId: { in: [nodeId, oldNodeId] } } });
       await db.healthSnapshot.deleteMany({ where: { nodeId: { in: [nodeId, oldNodeId] } } });
       await db.agent.deleteMany({ where: { nodeId: { in: [nodeId, oldNodeId] } } });
       await db.node.deleteMany({ where: { id: { in: [nodeId, oldNodeId] } } });
@@ -245,5 +248,77 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('per-node credentials: the re
     expect(await nodeCredentialStore.bindFirst({ nodeId: temporary, keyId: key.keyId, publicKey: key.publicKey, boundFqdn: '' }, 'LEGACY_UPGRADE')).toBe('bound');
     await db.node.delete({ where: { id: temporary } });
     expect(await db.nodeCredential.count({ where: { keyId: key.keyId } })).toBe(0);
+  });
+  // ── Phase 2: signed evidence, the evidence ratchet and agent-side enforce ──
+  const declaringHeartbeat = (nodeAuthExtra: Record<string, unknown>) => {
+    const pins = agentIdentity.boundNodeIdentity()!.binding.serverKeys.map(key => key.keyId);
+    const beat = heartbeat(nodeFqdn, {}, { nodeAuth: { serverKeyIds: pins, ...nodeAuthExtra } });
+    const { 'x-node-token': _legacy, ...signature } = agentAuth.controlApiAuthHeaders('POST', 'https://control.example.com/api/v1/heartbeat', beat.body);
+    return beat.send(signature);
+  };
+  const trace = async (target = nodeId) => {
+    const { agentFetch } = await import('./node-agent-auth.js');
+    const nonce = randomUUID();
+    const response = await agentFetch({ nodeId: target }, `https://127.0.0.1:41100/api/v1/commands/receipts/cmd-${prefix}/trace?nonce=${nonce}&resourceKey=node:${nodeId}`);
+    return { response, nonce };
+  };
+
+  it('12. the server announces node evidence; the agent then signs it and says so, which turns the evidence ratchet on', async () => {
+    const ack = await declaringHeartbeat({});
+    const nodeAuth = ((await ack.json()) as { data: { nodeAuth: { evidence?: number } } }).data.nodeAuth;
+    expect(nodeAuth.evidence).toBe(1);
+    agentEnrollment.onHeartbeatAcknowledged(nodeAuth as never);
+    agentIdentity.resetNodeIdentityCache();
+    expect(agentIdentity.boundNodeIdentity()!.binding.serverEvidence).toBe(true);
+    expect((await declaringHeartbeat({ evidence: 1 })).status).toBe(200);
+    const keyId = agentIdentity.boundNodeIdentity()!.keyId;
+    await vi.waitFor(async () => expect((await db.nodeCredential.findUniqueOrThrow({ where: { keyId } })).evidenceSigning).toBe(true));
+    // A shared-secret heartbeat cannot change it: the node is closed to the secret.
+    expect((await heartbeat(nodeFqdn, { 'x-node-token': nodeKey }, { nodeAuth: { evidence: 0 } }).send()).status).toBe(401);
+  });
+
+  it('13. evidence from the real agent verifies with its node key, for this node only, and HMAC-only copies are refused', async () => {
+    const { response } = await trace();
+    expect(response.status).toBe(200);
+    const absence = ((await response.json()) as { data: Record<string, unknown> & { signature: string; nodeSignature?: unknown } }).data;
+    expect(absence.nodeSignature).toMatchObject({ alg: 'ed25519', nodeId, keyId: agentIdentity.boundNodeIdentity()!.keyId });
+    const { commandAbsenceSigningPayload } = await import('../security/node-evidence.js');
+    const { nodeEvidencePolicy, resultKeyHmac } = await import('./node-evidence-policy.js');
+    const { signature, nodeSignature, ...unsigned } = absence;
+    const payload = commandAbsenceSigningPayload(unsigned as never);
+    const policy = await nodeEvidencePolicy(nodeId);
+    expect(policy.check('command-absence', payload, nodeSignature, resultKeyHmac(payload, signature))).toEqual({ ok: true, method: 'ed25519' });
+    // The genuine HMAC alone no longer speaks for this node: its agent signs evidence.
+    expect(policy.check('command-absence', payload, undefined, resultKeyHmac(payload, signature))).toEqual({ ok: false, reason: 'HMAC_REFUSED' });
+    // The same signed evidence presented as another node's is refused.
+    expect((await nodeEvidencePolicy(oldNodeId)).check('command-absence', payload, nodeSignature, resultKeyHmac(payload, signature)))
+      .toEqual({ ok: false, reason: 'WRONG_NODE' });
+    // A node without a key (an older agent) is still judged by the HMAC, and the use is counted.
+    expect((await nodeEvidencePolicy(oldNodeId)).check('command-absence', payload, undefined, resultKeyHmac(payload, signature))).toEqual({ ok: true, method: 'hmac' });
+    const { flushLegacyUse } = await import('./node-legacy-use.js');
+    await flushLegacyUse();
+    expect(await db.nodeLegacyCredentialUse.findMany({ where: { nodeId: oldNodeId } })).toEqual(expect.arrayContaining([
+      expect.objectContaining({ channel: 'evidence', lastDetail: 'command-absence' }), expect.objectContaining({ channel: 'request' })]));
+  });
+
+  it('14. agent-side enforce: the real agent refuses the shared secret on its API and still accepts the server it pins', async () => {
+    vi.stubEnv('NODE_AUTH_MODE', 'enforce');
+    try {
+      const shared = await agentApp.request('https://127.0.0.1:41100/api/v1/commands/mutation-inventory', { headers: { 'x-node-token': nodeKey } });
+      expect(shared.status).toBe(401);
+      expect(await errorCode(shared)).toBe('NODE_SIGNATURE_REQUIRED');
+      const { response } = await trace();
+      expect(response.status).toBe(200);
+      const { selfSignedHealthCheckHeaders } = await import('../../../../packages/agent/src/acceptance.js');
+      expect((await agentApp.request('https://127.0.0.1:41100/api/v1/health/check', { headers: selfSignedHealthCheckHeaders() })).status).not.toBe(401);
+    } finally { vi.stubEnv('NODE_AUTH_MODE', 'compat'); }
+  });
+
+  it('15. an agent that stops signing evidence (a downgrade) lifts the ratchet with its own signed heartbeat', async () => {
+    expect((await declaringHeartbeat({})).status).toBe(200);
+    const keyId = agentIdentity.boundNodeIdentity()!.keyId;
+    await vi.waitFor(async () => expect((await db.nodeCredential.findUniqueOrThrow({ where: { keyId } })).evidenceSigning).toBe(false));
+    const { nodeEvidencePolicy } = await import('./node-evidence-policy.js');
+    expect((await nodeEvidencePolicy(nodeId)).requiresNodeSignature).toBe(false);
   });
 });

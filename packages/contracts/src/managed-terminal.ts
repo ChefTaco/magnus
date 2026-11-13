@@ -33,10 +33,13 @@ export const managedTerminalReceiptSchema = managedTerminalAuthoritySchema.exten
   cgroup: z.string().regex(/^\/system\.slice\/magnus-terminal-[a-f0-9]{64}\.service$/),
   startedAt: z.number().int().positive(), terminalAt: z.number().int().positive(),
   groupEmpty: z.literal(true), signature: digest,
+  // Ed25519 signature by the node key (docs/NODE_CREDENTIALS.md); the server verifies it, older agents omit it.
+  nodeSignature: z.object({ alg: z.literal('ed25519'), v: z.literal(1), nodeId: z.string().max(128), keyId: z.string().max(64),
+    sig: z.string().max(86) }).strict().optional(),
 }).strict().refine(value => value.cgroup.endsWith('/' + value.unit)
   && value.startedAt <= value.deadline && value.startedAt <= value.terminalAt);
 export type ManagedTerminalReceipt = z.infer<typeof managedTerminalReceiptSchema>;
-export function managedTerminalReceiptPayload(value: Omit<ManagedTerminalReceipt, 'signature'>): string {
+export function managedTerminalReceiptPayload(value: Omit<ManagedTerminalReceipt, 'signature' | 'nodeSignature'>): string {
   // Fixed order regardless of the JSON transport's property order.
   const authority = managedTerminalAuthoritySchema.parse(Object.fromEntries(
     Object.keys(managedTerminalAuthoritySchema.shape).map(key => [key, value[key as keyof typeof value]])));

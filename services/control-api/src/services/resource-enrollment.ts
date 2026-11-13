@@ -13,6 +13,9 @@ import { HttpError } from '../middleware/error-handler.js';
 import { getNodeBaseUrl } from '../utils/node-url.js';
 import { RESULT_SIGNING_SECRET } from '../utils/env.js';
 import { agentAuthHeaders } from './node-agent-auth.js';
+import { nodeEvidencePolicy } from './node-evidence-policy.js';
+import { evidenceSignatureSchema } from '../schemas/node-evidence.js';
+import { canonicalEvidenceJson, enrollmentReceiptSigningPayload } from '../security/node-evidence.js';
 
 export const PARTICIPANTS = ['agent', 'api', 'dashboard', 'scheduler'] as const;
 type Participant = typeof PARTICIPANTS[number];
@@ -20,12 +23,9 @@ type Tx = Prisma.TransactionClient;
 const HELD = ['reserved', 'running', 'unknown'];
 const digest = (value: unknown) => createHash('sha256').update(canonical(value)).digest('hex');
 export function canonical(value: unknown): string {
-  if (Array.isArray(value)) return '[' + value.map(canonical).join(',') + ']';
-  if (value && typeof value === 'object') return '{' + Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
-    .map(([key, item]) => JSON.stringify(key) + ':' + canonical(item)).join(',') + '}';
-  return JSON.stringify(value);
+  return canonicalEvidenceJson(value);
 }
-export function enrollmentSigningPayload(value: unknown): string { return 'magnus.resource-enrollment.v1\n' + canonical(value); }
+export function enrollmentSigningPayload(value: unknown): string { return enrollmentReceiptSigningPayload(value); }
 function fail(code: string, message: string): never { throw new HttpError(409, code, message); }
 /** Read-only predicate shared with upgrade eligibility: the enrollment row admits resource execution. */
 export function enrollmentIsComplete(row: { state: string; nodeFqdn: string } | null | undefined, nodeFqdn: string): boolean {
@@ -136,7 +136,8 @@ export const drainDescriptorSchema = z.object({ version: z.literal(1), participa
   barrierId: z.string().guid(), challengeId: z.string().guid(), expiresAt: z.number().int().positive() }).strict();
 export const drainReceiptSchema = drainDescriptorSchema.extend({ status: z.enum(['drained', 'pending']),
   activeCount: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER), unknownCount: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-  evidenceSha256: z.string().regex(/^[a-f0-9]{64}$/), signature: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
+  evidenceSha256: z.string().regex(/^[a-f0-9]{64}$/), signature: z.string().regex(/^[a-f0-9]{64}$/),
+  nodeSignature: evidenceSignatureSchema.optional() }).strict();
 const hex = z.string().regex(/^[a-f0-9]{64}$/);
 const schedulerExternalSourceSchema = z.object({ identityVersion: z.literal(2), kind: z.string().regex(/^[A-Z_]{1,80}$/),
   sourceSha256: hex, count: z.number().int().positive().max(1_000_000) }).strict();
@@ -146,7 +147,8 @@ const EXTERNAL_SCHEDULER_KINDS = new Set(['LEGACY_OR_UNSUPPORTED_CRONTAB', 'SYST
 export const schedulerBoundaryReceiptSchema = drainDescriptorSchema.extend({ participant: z.literal('scheduler'),
   scope: z.literal('magnus-managed-scheduler-only'), status: z.enum(['managed-drained', 'pending']),
   activeCount: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER), unknownCount: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-  externalBlockers: z.array(schedulerExternalSourceSchema).max(1024), evidenceSha256: hex, signature: hex }).strict();
+  externalBlockers: z.array(schedulerExternalSourceSchema).max(1024), evidenceSha256: hex, signature: hex,
+  nodeSignature: evidenceSignatureSchema.optional() }).strict();
 export const schedulerBoundaryAttestationSchema = z.object({ version: z.literal(1), scope: z.literal('magnus-managed-scheduler-only'),
   nodeId: z.string().min(1).max(128), nodeFqdn: z.string().min(1).max(253), epoch: z.number().int().positive(),
   barrierId: z.string().guid(), challengeId: z.string().guid(), receiptSha256: hex, externalBlockersSha256: hex,
@@ -235,8 +237,8 @@ export async function refreshEnrollmentParticipant(nodeId: string, participant: 
   try {
     let url: string; let headers: Record<string, string>; let key: string;
     if (participant === 'agent' || participant === 'scheduler') {
+      // The node key signs these receipts; the shared result key is only the fallback for older agents.
       key = RESULT_SIGNING_SECRET;
-      if (key.length < 32) throw new ParticipantEvidenceError('receipt-credential-unavailable');
       if (new URL(prepared.baseUrl).protocol !== 'https:') throw new ParticipantEvidenceError('https-endpoint-required');
       url = prepared.baseUrl.replace(/\/$/, '') + (participant === 'scheduler'
         ? '/api/v1/cron/enrollment-drain' : '/api/v1/commands/enrollment-drain');
@@ -257,14 +259,17 @@ export async function refreshEnrollmentParticipant(nodeId: string, participant: 
     const parsed = participant === 'scheduler' ? schedulerBoundaryReceiptSchema.safeParse(raw) : drainReceiptSchema.safeParse(raw);
     if (!parsed.success) throw new ParticipantEvidenceError('participant-receipt-invalid');
     receipt = parsed.data;
-    const { signature, ...unsigned } = receipt;
+    const { signature, nodeSignature, ...unsigned } = receipt;
     const { status: _status, activeCount: _active, unknownCount: _unknown, evidenceSha256: _evidence,
       ...remaining } = unsigned;
     const descriptor = participant === 'scheduler'
       ? (({ scope: _scope, externalBlockers: _externalBlockers, ...value }) => value)(remaining as typeof remaining & { scope: string; externalBlockers: unknown })
       : remaining;
-    if (canonical(descriptor) !== canonical(prepared.descriptor) || receipt.expiresAt <= Date.now()
-      || !timingSafeEqual(Buffer.from(signature, 'hex'), createHmac('sha256', key).update(enrollmentSigningPayload(unsigned)).digest()))
+    const payload = enrollmentSigningPayload(unsigned);
+    const hmac = () => key.length >= 32 && timingSafeEqual(Buffer.from(signature, 'hex'), createHmac('sha256', key).update(payload).digest());
+    const authentic = participant === 'dashboard' ? nodeSignature === undefined && hmac()
+      : (await nodeEvidencePolicy(nodeId)).verify(participant === 'scheduler' ? 'scheduler-drain' : 'enrollment-drain', payload, nodeSignature, hmac);
+    if (canonical(descriptor) !== canonical(prepared.descriptor) || receipt.expiresAt <= Date.now() || !authentic)
       throw new ParticipantEvidenceError('participant-receipt-unauthenticated');
   } catch (error) {
     // No raw provider error/body is exposed, only a fixed cause (and the participant's own code, if it sent one).
@@ -326,6 +331,7 @@ export async function acceptSchedulerBoundaryAttestation(nodeId: string, raw: un
   const expected = createHmac('sha256', reconciliationSecret()).update(schedulerBoundaryAttestationSigningPayload(unsigned)).digest();
   if (!timingSafeEqual(expected, Buffer.from(signature, 'hex')))
     throw new HttpError(403, 'SCHEDULER_BOUNDARY_EVIDENCE_INVALID', 'Scheduler boundary review signature is invalid');
+  const policy = await nodeEvidencePolicy(nodeId);
   return getDb().$transaction(async tx => {
     await lockResourceNode(tx, nodeId);
     const { node, row } = await identity(tx, nodeId);
@@ -333,8 +339,10 @@ export async function acceptSchedulerBoundaryAttestation(nodeId: string, raw: un
     let receipt: z.infer<typeof schedulerBoundaryReceiptSchema>;
     try { receipt = schedulerBoundaryReceiptSchema.parse(JSON.parse(ack?.receiptJson ?? 'null')); }
     catch (error) { warnEvidence('scheduler receipt', nodeId, error); fail('SCHEDULER_BOUNDARY_EVIDENCE_INVALID', 'Current signed scheduler receipt is required'); }
-    const { signature: receiptSignature, ...receiptUnsigned } = receipt;
-    const signed = createHmac('sha256', RESULT_SIGNING_SECRET).update(enrollmentSigningPayload(receiptUnsigned)).digest();
+    const { signature: receiptSignature, nodeSignature: receiptNodeSignature, ...receiptUnsigned } = receipt;
+    const receiptPayload = enrollmentSigningPayload(receiptUnsigned);
+    const receiptAuthentic = policy.verify('scheduler-drain', receiptPayload, receiptNodeSignature, () => RESULT_SIGNING_SECRET.length >= 32
+      && timingSafeEqual(createHmac('sha256', RESULT_SIGNING_SECRET).update(receiptPayload).digest(), Buffer.from(receiptSignature, 'hex')));
     const central = await participantSnapshot(tx, nodeId, 'scheduler');
     const externalKeys = receipt.externalBlockers.map(source => source.kind + ':' + source.sourceSha256);
     if (row?.state !== 'draining' || !row.barrierId || nodeId !== assertion.nodeId || node.hostname !== assertion.nodeFqdn
@@ -349,7 +357,7 @@ export async function acceptSchedulerBoundaryAttestation(nodeId: string, raw: un
       || assertion.receiptSha256 !== createHash('sha256').update(ack.receiptJson!).digest('hex')
       || assertion.externalBlockersSha256 !== digest(receipt.externalBlockers)
       || assertion.observedAt < row.startedAt!.getTime() || assertion.observedAt < Date.now() - 300_000
-      || assertion.observedAt > Date.now() + 60_000 || !timingSafeEqual(signed, Buffer.from(receiptSignature, 'hex'))
+      || assertion.observedAt > Date.now() + 60_000 || !receiptAuthentic
       || central.activeCount !== 0 || central.unknownCount !== 0
       || await tx.managedCronOccurrence.count({ where: { nodeId, state: { not: 'completed' } } }))
       fail('SCHEDULER_BOUNDARY_EVIDENCE_INVALID', 'Scheduler review does not bind current fenced work and observed external sources');
@@ -391,6 +399,7 @@ export async function acceptApiDrainAttestation(nodeId: string, raw: unknown) {
   });
 }
 export async function completeEnrollment(nodeId: string) {
+  const policy = await nodeEvidencePolicy(nodeId);
   return getDb().$transaction(async tx => {
     await lockResourceNode(tx, nodeId);
     const { node, row } = await identity(tx, nodeId);
@@ -409,9 +418,11 @@ export async function completeEnrollment(nodeId: string) {
           .parse(JSON.parse(ack.receiptJson ?? 'null')); }
         catch (error) { warnEvidence('reviewed scheduler receipt', nodeId, error); fail('RESOURCE_DRAIN_INCOMPLETE', 'Reviewed scheduler receipt is unavailable'); }
         const { receipt, assertion } = reviewed;
-        const { signature: nodeSignature, ...nodeUnsigned } = receipt;
+        const { signature: nodeHmac, nodeSignature, ...nodeUnsigned } = receipt;
         const { signature: reviewSignature, ...reviewUnsigned } = assertion;
-        const nodeSigned = createHmac('sha256', RESULT_SIGNING_SECRET).update(enrollmentSigningPayload(nodeUnsigned)).digest();
+        const nodePayload = enrollmentSigningPayload(nodeUnsigned);
+        const nodeAuthentic = policy.verify('scheduler-drain', nodePayload, nodeSignature, () => RESULT_SIGNING_SECRET.length >= 32
+          && timingSafeEqual(createHmac('sha256', RESULT_SIGNING_SECRET).update(nodePayload).digest(), Buffer.from(nodeHmac, 'hex')));
         const reviewSigned = createHmac('sha256', reconciliationSecret()).update(schedulerBoundaryAttestationSigningPayload(reviewUnsigned)).digest();
         const rawReceipt = JSON.stringify(receipt);
         if (receipt.nodeId !== nodeId || receipt.nodeFqdn !== node.hostname || receipt.epoch !== row.epoch
@@ -423,7 +434,7 @@ export async function completeEnrollment(nodeId: string) {
           || assertion.barrierId !== row.barrierId || assertion.challengeId !== ack.challengeId
           || assertion.receiptSha256 !== createHash('sha256').update(rawReceipt).digest('hex')
           || assertion.externalBlockersSha256 !== digest(receipt.externalBlockers)
-          || !timingSafeEqual(nodeSigned, Buffer.from(nodeSignature, 'hex'))
+          || !nodeAuthentic
           || !timingSafeEqual(reviewSigned, Buffer.from(reviewSignature, 'hex')))
           fail('RESOURCE_DRAIN_INCOMPLETE', 'Stored scheduler boundary failed current reviewed verification');
         continue;
@@ -433,20 +444,21 @@ export async function completeEnrollment(nodeId: string) {
         ? apiDrainAttestationSchema.parse(JSON.parse(ack.receiptJson ?? 'null'))
         : drainReceiptSchema.parse(JSON.parse(ack.receiptJson ?? 'null')); }
       catch (error) { warnEvidence(`${participant} receipt`, nodeId, error); fail('RESOURCE_DRAIN_INCOMPLETE', 'Stored participant receipt is unavailable'); }
-      const { signature, ...unsigned } = receipt;
+      const { signature, nodeSignature, ...unsigned } = receipt as typeof receipt & { nodeSignature?: unknown };
       if (participant === 'dashboard') await assertDashboardStillAbsent(tx, nodeId);
       const key = participant === 'dashboard' ? dashboardReceiptKey()
         : participant === 'api' ? reconciliationSecret() : RESULT_SIGNING_SECRET;
       const payload = participant === 'api'
         ? apiDrainAttestationSigningPayload(unsigned as Omit<z.infer<typeof apiDrainAttestationSchema>, 'signature'>)
         : enrollmentSigningPayload(unsigned);
-      const signed = createHmac('sha256', key).update(payload).digest();
+      const hmac = () => key.length >= 32 && timingSafeEqual(createHmac('sha256', key).update(payload).digest(), Buffer.from(signature, 'hex'));
+      // Only the agent's receipt is node evidence; the API and console receipts are signed by their own keys.
+      const authentic = participant === 'agent' ? policy.verify('enrollment-drain', payload, nodeSignature, hmac) : nodeSignature === undefined && hmac();
       if (receipt.participant !== participant || receipt.nodeId !== nodeId || receipt.nodeFqdn !== node.hostname
         || receipt.epoch !== row.epoch || receipt.barrierId !== row.barrierId
         || receipt.challengeId !== ack.challengeId || receipt.expiresAt !== ack.challengeExpiresAt.getTime()
         || receipt.status !== 'drained' || receipt.activeCount !== 0 || receipt.unknownCount !== 0
-        || receipt.evidenceSha256 !== ack.evidenceSha256
-        || !timingSafeEqual(signed, Buffer.from(signature, 'hex')))
+        || receipt.evidenceSha256 !== ack.evidenceSha256 || !authentic)
         fail('RESOURCE_DRAIN_INCOMPLETE', 'Stored participant receipt failed exact current drain verification');
     }
     if (await tx.commandResourceLease.count({ where: { nodeId, state: { in: HELD } } })

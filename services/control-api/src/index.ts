@@ -66,7 +66,9 @@ const { CONTROL_API_VERSION } = await import('./config/version.js');
  */
 async function announceNodeAuth(): Promise<void> {
   try {
-    const { serverSigningKey } = await import('./services/node-server-key.js');
+    const { allowServerKeyCreation, serverSigningKey } = await import('./services/node-server-key.js');
+    // Only the server creates its key; command-line processes use the file it made.
+    allowServerKeyCreation();
     const { legacyUpgradeWindow } = await import('./services/node-credential-service.js');
     const { nodeAuthMode } = await import('./services/node-auth-config.js');
     const { keyFingerprint } = await import('./security/node-request-auth.js');

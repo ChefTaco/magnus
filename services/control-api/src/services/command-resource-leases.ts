@@ -17,7 +17,8 @@ import { HttpError } from '../middleware/error-handler.js';
 import { commandRequestDigest, type CommandRequest } from '../security/command-request.js';
 import { commandFenceSchema } from '../schemas/node-responses.js';
 import type { SignedCommandResult } from '../security/command-result-signature.js';
-import { commandAbsenceSigningPayload, commandRefusalSigningPayload, verifyCommandEvidence, verifyCommandResultSignature, type CommandAbsence, type CommandRefusal } from '../security/command-result-signature.js';
+import { commandAbsenceSigningPayload, commandRefusalSigningPayload, commandResultSigningPayload, verifyCommandResultSignature, type CommandAbsence, type CommandRefusal } from '../security/command-result-signature.js';
+import { nodeEvidencePolicy, resultKeyHmac, type NodeEvidencePolicy } from './node-evidence-policy.js';
 import { RESULT_SIGNING_SECRET, RESULT_SIGNING_PREVIOUS_SECRET } from '../utils/env.js';
 import { getNodeBaseUrl } from '../utils/node-url.js';
 import { COMMAND_COMPLETION_REGISTRY, COMMAND_COMPLETION_REGISTRY_SHA256, commandCompletionDescriptor } from '../security/command-completion-registry.js';
@@ -207,9 +208,11 @@ export async function markResourceDispatched(admission: ResourceAdmission, verif
 }
 
 /** The agent's signed word that this exact request did not start and has no receipt. Unsigned or mismatched words prove nothing. */
-function refusalBindsLease(row: { id: string; commandId: string; requestSha256: string }, nodeFqdn: string, refusal: CommandRefusal): boolean {
-  return refusal.commandId === row.commandId && refusal.requestSha256 === row.requestSha256 && refusal.leaseId === row.id && refusal.nodeFqdn === nodeFqdn
-    && verifyCommandEvidence(commandRefusalSigningPayload(refusal), refusal.signature, RESULT_SIGNING_SECRET, RESULT_SIGNING_PREVIOUS_SECRET);
+function refusalBindsLease(row: { id: string; commandId: string; requestSha256: string }, nodeFqdn: string, refusal: CommandRefusal,
+  policy: NodeEvidencePolicy): boolean {
+  if (refusal.commandId !== row.commandId || refusal.requestSha256 !== row.requestSha256 || refusal.leaseId !== row.id || refusal.nodeFqdn !== nodeFqdn) return false;
+  const payload = commandRefusalSigningPayload(refusal);
+  return policy.verify('command-refusal', payload, refusal.nodeSignature, resultKeyHmac(payload, refusal.signature));
 }
 
 /**
@@ -219,11 +222,12 @@ function refusalBindsLease(row: { id: string; commandId: string; requestSha256: 
  */
 export async function failResourceCommand(admission: ResourceAdmission, refusal?: CommandRefusal): Promise<boolean> {
   const db = getDb();
+  const policy = refusal ? await nodeEvidencePolicy(admission.nodeId) : null;
   return db.$transaction(async tx => {
     const row = await tx.commandResourceLease.findUnique({ where: { id: admission.leaseId } });
     if (!row || row.state === 'released') return false;
     const notSent = row.state === 'reserved';
-    const refused = !notSent && refusal !== undefined && refusalBindsLease(row, admission.nodeFqdn, refusal);
+    const refused = !notSent && refusal !== undefined && policy !== null && refusalBindsLease(row, admission.nodeFqdn, refusal, policy);
     if (refusal && !notSent && !refused) console.warn(`[resource-leases] refusal for ${row.commandId} does not verify; the lease stays uncertain`);
     const changed = await tx.commandResourceLease.updateMany({ where: { id: row.id, state: row.state }, data: notSent
       ? { state: 'released', settledAt: new Date(), settlement: 'not-dispatched',
@@ -303,8 +307,9 @@ export async function recoverAbsentLeases(nodeId: string, nodeFqdn: string, trac
     }
     // An agent without this route keeps the current behaviour: held until reconciled.
     if (!answer) { results.push({ commandId, outcome: 'unsupported' }); continue; }
+    const absencePayload = commandAbsenceSigningPayload(answer);
     if (answer.commandId !== commandId || answer.nonce !== nonce || answer.nodeFqdn !== nodeFqdn || answer.resourceKey !== coordination.resourceKey
-      || !verifyCommandEvidence(commandAbsenceSigningPayload(answer), answer.signature, RESULT_SIGNING_SECRET, RESULT_SIGNING_PREVIOUS_SECRET)) {
+      || !(await nodeEvidencePolicy(nodeId)).verify('command-absence', absencePayload, answer.nodeSignature, resultKeyHmac(absencePayload, answer.signature))) {
       console.warn(`[resource-leases] trace of ${commandId} does not verify; the lease stays held`);
       results.push({ commandId, outcome: 'unverified', code: 'LEDGER_EVIDENCE_INCONSISTENT', detail: 'the signed answer does not bind this command, node and nonce' });
       continue;
@@ -376,7 +381,8 @@ export async function settleResourceResult(commandId: string, result: SignedComm
     : native || scheduler ? result.completion === undefined : false;
   if (!authorityMatches)
     throw new HttpError(409, 'RESOURCE_EVIDENCE_INVALID', 'Command lacks its exact registered whole-effect evidence');
-  if (!verifyCommandResultSignature(result, RESULT_SIGNING_SECRET, RESULT_SIGNING_PREVIOUS_SECRET)
+  if (!(await nodeEvidencePolicy(row.nodeId)).verify('command-result', commandResultSigningPayload(result), result.nodeSignature,
+    () => verifyCommandResultSignature(result, RESULT_SIGNING_SECRET, RESULT_SIGNING_PREVIOUS_SECRET))
     || result.commandId !== commandId || result.coordination?.requestSha256 !== row.requestSha256
     || JSON.stringify(result.coordination && { version: result.coordination.version, resourceKey: result.coordination.resourceKey,
       fence: result.coordination.fence, expiresAt: result.coordination.expiresAt }) !== row.coordinationJson)
@@ -399,13 +405,11 @@ export async function settleResourceResult(commandId: string, result: SignedComm
 /** Adopt the node's already verified explicit reconciliation receipt. A local
  * timeout, command status, heartbeat or arbitrary evidence URL never releases. */
 export async function settleResourceReconciliation(nodeId: string, assertion: import('../sdk/node-api-client.js').CommandReconciliationAssertion): Promise<void> {
-  const { createHmac, timingSafeEqual } = await import('node:crypto');
   const { commandReconciliationSigningPayload, commandReconciliationSchema } = await import('../sdk/node-api-client.js');
-  const { getNodeManagerSecret } = await import('../utils/env.js');
+  const { verifyNodeDecision } = await import('./server-authorization.js');
   const value = commandReconciliationSchema.parse(assertion);
-  const secret = process.env['COMMAND_RECONCILIATION_SECRET'] ?? '';
-  if (secret.length < 32 || secret === RESULT_SIGNING_SECRET || secret === getNodeManagerSecret()
-    || !timingSafeEqual(createHmac('sha256', secret).update(commandReconciliationSigningPayload(value)).digest(), Buffer.from(value.signature, 'hex')))
+  // This server's own decision for this node: the server-key signature, or (agents without a node key) the HMAC.
+  if (!verifyNodeDecision(nodeId, 'command-reconciliation', commandReconciliationSigningPayload(value), value))
     throw new HttpError(403, 'RESOURCE_EVIDENCE_INVALID', 'Explicit reconciliation signature is invalid');
   const db = getDb();
   await db.$transaction(async tx => {

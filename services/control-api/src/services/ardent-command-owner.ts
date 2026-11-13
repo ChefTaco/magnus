@@ -24,14 +24,14 @@
  *    it under its execution lock. The lease settles only when the node acknowledges
  *    that exact decision.
  */
-import { createHash, createHmac, randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { HTTPError } from 'ky';
 import type { ArdentCommandOwner, ArdentCommandReconcile, ArdentCommandReconcileResult } from '@hivemagnus/magnus-contracts';
 import { getDb } from '../db/index.js';
 import { HttpError } from '../middleware/error-handler.js';
 import { commandFenceSchema } from '../schemas/node-responses.js';
 import { commandReconciliationSigningPayload, managedCommandOf, NodeApiClient, type CommandReceipt } from '../sdk/node-api-client.js';
-import { API_SECRET, getNodeManagerSecret, RESULT_SIGNING_PREVIOUS_SECRET, RESULT_SIGNING_SECRET } from '../utils/env.js';
+import { getNodeManagerSecret } from '../utils/env.js';
 import { getNodeBaseUrl } from '../utils/node-url.js';
 import { recoverNodeLeases } from './agent-upgrade-preflight.js';
 import { logAuditEvent } from './audit-service.js';
@@ -65,13 +65,8 @@ export async function ardentCommandOwners(nodeIds: readonly string[]): Promise<M
   return owners;
 }
 
-/** The dedicated reconciliation key, or null when it is missing or reuses another credential. */
-export function commandReconciliationKey(): string | null {
-  const secret = process.env['COMMAND_RECONCILIATION_SECRET'] ?? '';
-  const others = [RESULT_SIGNING_SECRET, RESULT_SIGNING_PREVIOUS_SECRET, getNodeManagerSecret(), process.env['NODE_MANAGER_SECRET_PREVIOUS'] ?? '',
-    process.env['RESOURCE_PARTICIPANT_RECONCILIATION_SECRET'] ?? '', API_SECRET];
-  return secret.length >= 32 && !others.some(value => value && value === secret) ? secret : null;
-}
+import { commandReconciliationKey, signNodeDecision } from './server-authorization.js';
+export { commandReconciliationKey };
 
 /** How a held owner reads to a person: the action and profile when known, else the command. */
 export function describeOwner(owner: Pick<ArdentCommandOwner, 'commandId' | 'action' | 'profile'>): string {
@@ -164,8 +159,10 @@ async function decide(nodeId: string, commandId: string, input: ArdentCommandRec
   if (receipt.state === 'completed' || receipt.state === 'reconciled') return settled(receipt.state);
   if (receipt.state === 'running') throw new HttpError(409, 'COMMAND_IN_PROGRESS', 'The node agent is still executing the command');
 
-  const key = commandReconciliationKey();
-  if (!key) throw new HttpError(409, 'RECONCILIATION_UNAVAILABLE', 'Set an independent COMMAND_RECONCILIATION_SECRET (32+ characters) on the server and the node agent to record a decision about an unknown outcome');
+  // The agent verifies a decision signed with the server key once it has a node key; older agents need the shared HMAC key.
+  const decisions = await client.decisionCapabilities().catch(() => ({ serverSignatures: false, hmac: true }));
+  if (!decisions.serverSignatures && commandReconciliationKey() === null)
+    throw new HttpError(409, 'RECONCILIATION_UNAVAILABLE', 'The node agent has no node key yet; set an independent COMMAND_RECONCILIATION_SECRET (32+ characters) on the server and the node agent to record a decision about an unknown outcome');
   const inventory = await client.getArdentState(10_000).then(reply => JSON.stringify(reply.data ?? null), (error: unknown) => `unavailable: ${error instanceof Error ? error.message : String(error)}`);
   const decisionId = randomUUID();
   const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -175,13 +172,15 @@ async function decide(nodeId: string, commandId: string, input: ArdentCommandRec
   const unsigned = { nodeFqdn: node.hostname, commandId, requestSha256: lease.requestSha256,
     coordination: commandFenceSchema.parse(JSON.parse(lease.coordinationJson)), disposition: input.disposition, evidenceSha256,
     approvalRef: `magnus:ardent-command-reconcile:${decisionId}`, decisionId, expiresAt: Date.now() + 120_000 };
-  const assertion = { ...unsigned, signature: createHmac('sha256', key).update(commandReconciliationSigningPayload(unsigned)).digest('hex') };
+  const assertion = signNodeDecision(nodeId, 'command-reconciliation', unsigned, commandReconciliationSigningPayload(unsigned),
+    { agentVerifiesServerSignatures: decisions.serverSignatures });
+  if (!assertion) throw new HttpError(409, 'RECONCILIATION_UNAVAILABLE', 'No signing authority is available for this node');
   try {
     await client.reconcileCommandReceipt(assertion, expected);
   } catch (error: unknown) {
     const text = (error instanceof Error ? error.message : String(error)).slice(0, 200);
     if (/does not support explicit command reconciliation/.test(text))
-      throw new HttpError(409, 'RECONCILIATION_UNAVAILABLE', 'The node agent has no COMMAND_RECONCILIATION_SECRET; set the same key there as on the server');
+      throw new HttpError(409, 'RECONCILIATION_UNAVAILABLE', 'The node agent accepts neither a server-signed decision (it has no node key) nor the server\'s COMMAND_RECONCILIATION_SECRET; set the same key there as on the server');
     if (error instanceof HTTPError) {
       const body = await error.response.clone().json().catch(() => null) as { error?: { code?: unknown; message?: unknown } } | null;
       const code = typeof body?.error?.code === 'string' ? body.error.code : `HTTP_${error.response.status}`;

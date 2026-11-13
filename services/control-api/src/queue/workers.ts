@@ -19,7 +19,8 @@ import {
 import { safeParse } from '../utils/validate.js';
 import { commandFenceSchema, commandResultSchema } from '../schemas/node-responses.js';
 import { incMetric } from '../routes/metrics.js';
-import { verifyCommandResultSignature } from '../security/command-result-signature.js';
+import { commandResultSigningPayload, verifyCommandResultSignature } from '../security/command-result-signature.js';
+import { nodeEvidencePolicy } from '../services/node-evidence-policy.js';
 
 // ─── Command execution queue ───
 
@@ -198,14 +199,11 @@ export function startCommandWorker(): Worker<CommandJobPayload> {
           throw new Error('Command result commandId does not match the dispatched command');
         }
 
-        // Verify HMAC signature to detect tampered results
-        if (!verifyCommandResultSignature(
-          result,
-          RESULT_SIGNING_SECRET,
-          RESULT_SIGNING_PREVIOUS_SECRET,
-        )) {
-          console.warn(`[CommandWorker] HMAC verification failed for command ${commandId}`);
-          throw new Error('HMAC signature verification failed — result may be tampered');
+        // Verify the node's signature (or, for agents without a node key, the HMAC) to detect tampered results
+        if (!(await nodeEvidencePolicy(commandRecord.nodeId)).verify('command-result', commandResultSigningPayload(result),
+          result.nodeSignature, () => verifyCommandResultSignature(result, RESULT_SIGNING_SECRET, RESULT_SIGNING_PREVIOUS_SECRET))) {
+          console.warn(`[CommandWorker] result signature verification failed for command ${commandId}`);
+          throw new Error('Result signature verification failed — result may be tampered');
         }
 
         incMetric('commandsCompleted');

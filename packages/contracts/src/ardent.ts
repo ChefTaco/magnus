@@ -95,7 +95,7 @@ export const ArdentFleetInstallationSchema = ArdentNodeStateSchema.extend({
   reachable: z.boolean(), error: z.string().nullable(),
   /** Command owners held on the node, oldest first. Absent from servers older than this field. */
   commandOwners: z.array(ArdentCommandOwnerSchema).optional(),
-  /** Whether this server can sign a reconciliation decision (COMMAND_RECONCILIATION_SECRET). The node agent needs the same key. */
+  /** Whether this server can sign a reconciliation decision: with its node-auth key (agents with a node key), or COMMAND_RECONCILIATION_SECRET (older agents need the same key). */
   commandReconciliation: z.object({ configured: z.boolean() }).optional(),
 });
 export type ArdentFleetInstallation = z.infer<typeof ArdentFleetInstallationSchema>;

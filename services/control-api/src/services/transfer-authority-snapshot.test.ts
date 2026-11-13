@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+// Evidence policy: a node without a key, so the shared result key applies (docs/NODE_CREDENTIALS.md).
+vi.mock('./node-credential-store.js', async () => ({ nodeCredentialStore: (await import('./node-credential-test-fixture.js')).createFakeCredentialStore().store }));
+
 
 const fixture = vi.hoisted(() => {
   const tx = {
@@ -128,7 +131,7 @@ describe('release authority inventory', () => {
     expect(proof.transferAuthorityComplete).toBe(false);
     expect(fixture.verifyProof).toHaveBeenCalledWith({ signed: true }, expect.objectContaining({
       nodeId: 'node-1', epoch: 2, barrierId: 'barrier', nonce: 'nonce',
-    }), expect.any(Number));
+    }), expect.any(Number), expect.objectContaining({ nodeId: 'node-1' }));
   });
 
   it('promotes only an exact signed OS scheduler source proof under enrollment', async () => {
@@ -144,6 +147,6 @@ describe('release authority inventory', () => {
     expect(proof.independentWritersCovered).toBe(false);
     expect(fixture.verifySchedulerProof).toHaveBeenCalledWith({ signed: true }, expect.objectContaining({
       nodeId: 'node-1', epoch: 2, barrierId: 'barrier', nonce: 'nonce',
-    }), expect.any(Number));
+    }), expect.any(Number), expect.objectContaining({ nodeId: 'node-1' }));
   });
 });

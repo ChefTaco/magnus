@@ -71,6 +71,7 @@ import { mcpRouter } from './routes/mcp.js';
 import { securityFusionRouter } from './routes/security-fusion.js';
 import { consoleRouter } from './routes/console.js';
 import { nodeEnrollmentRouter } from './routes/node-enrollment.js';
+import { nodeCredentialsRouter } from './routes/node-credentials.js';
 import { resolveCorsConfiguration } from './config/cors.js';
 import { rehearsalReadOnly } from './config/rehearsal.js';
 
@@ -157,6 +158,7 @@ v1.route('/health', healthRouter);
 v1.route('/audit', auditRouter);
 v1.route('/heartbeat', heartbeatRouter);
 v1.route('/node-enrollment', nodeEnrollmentRouter);
+v1.route('/node-credentials', nodeCredentialsRouter);
 v1.route('/deploy', deployRouter);
 v1.route('/discovery', discoveryRouter);
 v1.route('/quick-command', quickCommandRouter);

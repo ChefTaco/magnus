@@ -81,6 +81,11 @@ integrations table together.
   (`agentFetch()`, `agentAuthHeaders()`, or `NodeApiClient` with a node id); never set `x-node-token`
   by hand. `security/node-request-auth.ts` must stay byte-identical with the agent's copy. See
   `docs/NODE_CREDENTIALS.md`.
+- Evidence an agent signs (results, refusals, receipts, proofs) is verified through
+  `services/node-evidence-policy.ts` (`nodeEvidencePolicy(nodeId).verify(kind, payload, nodeSignature, hmacCheck)`),
+  never by checking `RESULT_SIGNING_SECRET` alone, and decisions the server makes for one node through
+  `services/server-authorization.ts`. Canonical payloads live in `security/node-evidence.ts`, byte-identical
+  with the agent's copy and pinned by `node-evidence.vectors.json`; a new evidence kind goes there first.
 - Compare secrets with the constant-time helpers. Store only SHA-256 digests of
   credentials that other services present.
 - Required secrets fail fast at startup; never add a fallback secret value or a

@@ -2,6 +2,7 @@ import type { Context, Env, Hono } from 'hono';
 import { createHealth, type HealthCheck, type HealthResponse } from '@hivemagnus/hive-common/health';
 import { getDb } from '../db/index.js';
 import { getRedis } from '../queue/redis.js';
+import { nodeCredentialReadinessCheck } from '../services/node-credential-summary.js';
 
 /**
  * Readiness dependencies. PostgreSQL is required; Redis only delays queued work, so its loss
@@ -10,6 +11,8 @@ import { getRedis } from '../queue/redis.js';
 export const readinessChecks: readonly HealthCheck[] = [
   { name: 'database', check: async () => { await getDb().$queryRaw`SELECT 1`; } },
   { name: 'redis', critical: false, check: async () => (await getRedis().ping()) === 'PONG' },
+  // NODE_AUTH_MODE=warn: fails (degraded, still 200) while anything blocks enforce mode; passes otherwise.
+  { name: 'node-credentials', critical: false, check: () => nodeCredentialReadinessCheck() },
 ];
 
 /**

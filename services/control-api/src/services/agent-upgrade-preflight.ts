@@ -7,9 +7,10 @@
 import type { AgentSelfUpgradeStatus, AgentUpgradePreflight } from '@hivemagnus/magnus-contracts';
 import { randomUUID } from 'node:crypto';
 import { getDb } from '../db/client.js';
-import { fenceProofSigningPayload, verifyCommandEvidence } from '../security/command-result-signature.js';
+import { fenceProofSigningPayload } from '../security/command-result-signature.js';
+import { nodeEvidencePolicy, resultKeyHmac } from './node-evidence-policy.js';
 import { NodeApiClient } from '../sdk/node-api-client.js';
-import { getNodeManagerSecret, RESULT_SIGNING_PREVIOUS_SECRET, RESULT_SIGNING_SECRET } from '../utils/env.js';
+import { getNodeManagerSecret } from '../utils/env.js';
 import { getNodeBaseUrl } from '../utils/node-url.js';
 import { advanceCommandFence, checkReportedFence, fenceIsAhead, isOwnFenceKey } from './command-fence-repair.js';
 import { recoverAbsentLeases, type LeaseRecovery } from './command-resource-leases.js';
@@ -146,8 +147,9 @@ export async function preflightNode(target: PreflightTarget, query: PreflightQue
     if (answer.status !== 'ok') return { status: answer.status, checkedAt, problems: [], detail: answer.detail };
     const problems = evaluatePreflight(answer.report, { nodeId: target.nodeId, hostname: target.hostname, managed: target.managed, generations: await generationsOf(target.nodeId) });
     const proof = answer.report.fenceProof;
-    const fencesVerified = Boolean(proof && proof.nonce === nonce && proof.nodeFqdn.toLowerCase() === target.hostname.toLowerCase() && verifyCommandEvidence(
-      fenceProofSigningPayload({ nonce, nodeFqdn: proof.nodeFqdn, fenceHighWater: answer.report.fenceHighWater ?? {} }), proof.signature, RESULT_SIGNING_SECRET, RESULT_SIGNING_PREVIOUS_SECRET));
+    const fencePayload = proof ? fenceProofSigningPayload({ nonce, nodeFqdn: proof.nodeFqdn, fenceHighWater: answer.report.fenceHighWater ?? {} }) : '';
+    const fencesVerified = Boolean(proof && proof.nonce === nonce && proof.nodeFqdn.toLowerCase() === target.hostname.toLowerCase()
+      && (await nodeEvidencePolicy(node.id)).verify('fence-proof', fencePayload, proof.nodeSignature, resultKeyHmac(fencePayload, proof.signature)));
     return { status: preflightStatus(problems), checkedAt, problems, report: answer.report, fencesVerified };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);

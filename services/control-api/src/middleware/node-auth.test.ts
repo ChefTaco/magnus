@@ -28,7 +28,8 @@ const { assertNodeClaims, nodeAuth, nodeAuthOf, resetNodeAuthState } = await imp
 const { managedCronRouter } = await import('../routes/managed-cron.js');
 const { nodeEnrollmentRouter } = await import('../routes/node-enrollment.js');
 const { serverSigningKey } = await import('../services/node-server-key.js');
-const { issueEnrollmentToken, resetNodeCredentials, revokeNodeCredentials, resetNodeCredentialServiceState, peerMatchesNode } = await import('../services/node-credential-service.js');
+const { approvePendingBinding, issueEnrollmentToken, listPendingBindings, rejectPendingBinding, resetNodeCredentials, revokeNodeCredentials, resetNodeCredentialServiceState,
+  peerMatchesNode } = await import('../services/node-credential-service.js');
 const { generateSigningKey } = await import('../security/node-request-auth.js');
 
 const app = new Hono().onError(errorHandler);
@@ -116,7 +117,59 @@ describe('legacy upgrade: an existing node binds its first key', () => {
     expect(response.status).toBe(403);
     expect(await code(response)).toBe('PEER_ADDRESS_MISMATCH');
     expect(fake.state.credentials).toHaveLength(0);
-    expect(fixture.audit[0]).toMatchObject({ action: 'node.credential.bind_refused', details: { reason: 'PEER_ADDRESS_MISMATCH', peerAddress: '192.0.2.20' } });
+    expect(fixture.audit).toEqual(expect.arrayContaining([expect.objectContaining({ action: 'node.credential.bind_refused',
+      details: expect.objectContaining({ reason: 'PEER_ADDRESS_MISMATCH', peerAddress: '192.0.2.20' }) })]));
+  });
+
+  it('keeps a binding refused for its address for an administrator, who can approve it once', async () => {
+    fixture.peer = '192.0.2.20';
+    const key = fixtureAgentKey();
+    expect((await upgrade(key, 'node-a.example.com')).status).toBe(403);
+    expect((await upgrade(key, 'node-a.example.com')).status).toBe(403);
+    const [pending] = await listPendingBindings({ status: 'PENDING' });
+    expect(pending).toMatchObject({ nodeId: 'node-a', nodeName: 'node-a.example.com', keyId: key.keyId, peerAddress: '192.0.2.20',
+      recordedAddress: '192.0.2.10', status: 'PENDING', attempts: 2 });
+    expect(fixture.audit.filter(event => event.action === 'node.credential.binding_pending')).toHaveLength(1);
+    expect(fixture.notifications[0]).toMatchObject({ metadata: expect.objectContaining({ pendingBindingId: pending!.id }) });
+    // Approved: the key is the node's first credential, and the agent's next attempt learns its binding.
+    expect(await approvePendingBinding(pending!.id, 'admin-1')).toMatchObject({ status: 'APPROVED', decidedBy: 'admin-1' });
+    expect(fake.state.credentials).toEqual([expect.objectContaining({ nodeId: 'node-a', keyId: key.keyId, status: 'ACTIVE', origin: 'LEGACY_UPGRADE' })]);
+    expect(fixture.audit.map(event => event.action)).toEqual(expect.arrayContaining(['node.credential.binding_approve', 'node.credential.bind']));
+    const retry = await upgrade(key, 'node-a.example.com');
+    expect(retry.status).toBe(200);
+    expect(((await retry.json()) as { data: { nodeId: string } }).data.nodeId).toBe('node-a');
+    // A decision is made once; another agent's key is not bound by it.
+    await expect(approvePendingBinding(pending!.id, 'admin-1')).rejects.toMatchObject({ code: 'PENDING_BINDING_DECIDED' });
+    expect((await upgrade(fixtureAgentKey(), 'node-a.example.com')).status).toBe(403);
+  });
+
+  it('rejects a pending binding, refuses approval when the node has a key by now, and in enforce mode', async () => {
+    fixture.peer = '192.0.2.20';
+    const [first, second] = [fixtureAgentKey(), fixtureAgentKey()];
+    await upgrade(first, 'node-a.example.com');
+    await upgrade(second, 'node-a.example.com');
+    const pending = await listPendingBindings({ status: 'PENDING' });
+    const byKey = (key: AgentKey) => pending.find(entry => entry.keyId === key.keyId)!;
+    expect(await rejectPendingBinding(byKey(first).id, 'admin-1', 'not this host')).toMatchObject({ status: 'REJECTED', decisionReason: 'not this host' });
+    await expect(approvePendingBinding(byKey(first).id, 'admin-1')).rejects.toMatchObject({ code: 'PENDING_BINDING_DECIDED' });
+    process.env['NODE_AUTH_MODE'] = 'enforce';
+    await expect(approvePendingBinding(byKey(second).id, 'admin-1')).rejects.toMatchObject({ code: 'NODE_AUTH_ENFORCED' });
+    delete process.env['NODE_AUTH_MODE'];
+    fixture.peer = '192.0.2.10';
+    expect((await upgrade(fixtureAgentKey(), 'node-a.example.com')).status).toBe(200);
+    await expect(approvePendingBinding(byKey(second).id, 'admin-1')).rejects.toMatchObject({ code: 'NODE_CREDENTIAL_EXISTS' });
+    expect(fixture.audit.map(event => event.action)).toContain('node.credential.binding_reject');
+  });
+
+  it('answers an approved binding even after the upgrade window closed', async () => {
+    fixture.peer = '192.0.2.20';
+    const key = fixtureAgentKey();
+    await upgrade(key, 'node-a.example.com');
+    await approvePendingBinding((await listPendingBindings())[0]!.id, 'admin-1');
+    process.env['NODE_AUTH_LEGACY_UPGRADE_UNTIL'] = '2000-01-01T00:00:00Z';
+    resetNodeCredentialServiceState();
+    expect((await upgrade(key, 'node-a.example.com')).status).toBe(200);
+    expect(await code(await upgrade(fixtureAgentKey(), 'node-b.example.com'))).toBe('LEGACY_UPGRADE_CLOSED');
   });
 
   it('matches a peer to a recorded host name through DNS, and a loopback peer only to this host', async () => {
@@ -432,5 +485,66 @@ describe('enrollment with a one-time token', () => {
     expect(await code(await enroll(first.token, fixtureAgentKey()))).toBe('ENROLLMENT_TOKEN_INVALID');
     expect((await enroll(second.token, fixtureAgentKey())).status).toBe(200);
     await expect(issueEnrollmentToken('missing', 'admin')).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+describe('shared-credential accounting and the fleet summary', () => {
+  it('counts each shared-secret request per node it names, and once a node signs, nothing more', async () => {
+    const { pendingLegacyUse, resetLegacyUseState } = await import('../services/node-legacy-use.js');
+    resetLegacyUseState();
+    expect((await post('/api/v1/probe', { nodeFqdn: 'node-b.example.com' }, { 'x-node-token': SECRET })).status).toBe(200);
+    expect((await post('/api/v1/probe', { nodeId: 'node-b' }, { 'x-node-token': SECRET })).status).toBe(200);
+    expect((await post('/api/v1/probe', {}, { 'x-node-token': SECRET })).status).toBe(200);
+    expect(pendingLegacyUse()).toEqual([expect.objectContaining({ nodeId: 'node-b', channel: 'request', count: 2, detail: '/api/v1/probe' })]);
+    const key = fixtureAgentKey();
+    expect((await upgrade(key, 'node-a.example.com')).status).toBe(200);
+    expect((await signedProbe(key, 'node-a', { nodeId: 'node-a' })).status).toBe(200);
+    expect(pendingLegacyUse().some(entry => entry.nodeId === 'node-a')).toBe(false);
+  });
+
+  it('reports what blocks enforce mode, and nothing once every node signs and the shared secret is unused', async () => {
+    const { nodeCredentialFleetSummary } = await import('../services/node-credential-summary.js');
+    const { resetLegacyUseState } = await import('../services/node-legacy-use.js');
+    resetLegacyUseState();
+    await post('/api/v1/probe', { nodeId: 'node-b' }, { 'x-node-token': SECRET });
+    const key = fixtureAgentKey();
+    await upgrade(key, 'node-a.example.com');
+    let summary = await nodeCredentialFleetSummary();
+    expect(summary).toMatchObject({ mode: 'compat', enforceReady: false, nodes: { total: 2, active: 1, none: 1, revoked: 0, evidenceSigning: 0 },
+      legacyUse: { nodes: 1, request: 1 } });
+    expect(summary.serverKey?.keyId).toBe(serverKeyId);
+    expect(summary.blockers.map(blocker => blocker.code)).toEqual(['NODES_WITHOUT_KEY', 'NODES_NOT_SIGNING_EVIDENCE', 'RECENT_SHARED_SECRET_USE']);
+    expect(summary.blockers[0]).toMatchObject({ count: 1, nodes: [{ id: 'node-b', name: 'node-b.example.com' }] });
+    // node-b binds and both agents sign evidence; the old use of the shared secret ages out of the window.
+    fixture.peer = '192.0.2.20';
+    const other = fixtureAgentKey();
+    await upgrade(other, 'node-b.example.com');
+    for (const entry of fake.state.credentials) entry.evidenceSigning = true;
+    for (const entry of fake.state.legacy) entry.lastUsedAt = new Date(Date.now() - 25 * 60 * 60 * 1000);
+    summary = await nodeCredentialFleetSummary();
+    expect(summary).toMatchObject({ enforceReady: true, blockers: [], nodes: { active: 2, evidenceSigning: 2 } });
+  });
+
+  it('fails the readiness check only in warn mode, while anything blocks enforce', async () => {
+    const { nodeCredentialReadinessCheck, resetNodeCredentialSummaryState } = await import('../services/node-credential-summary.js');
+    resetNodeCredentialSummaryState();
+    expect(await nodeCredentialReadinessCheck()).toBe(true);
+    process.env['NODE_AUTH_MODE'] = 'warn';
+    expect(await nodeCredentialReadinessCheck()).toBe(false);
+  });
+});
+
+describe('downgrade guard', () => {
+  it('names the reset an older agent needs first, and nothing for a release that keeps the key', async () => {
+    const { credentialDowngradeCheck } = await import('../services/node-credential-service.js');
+    expect(await credentialDowngradeCheck('node-a', '2.9.1')).toMatchObject({ action: 'none', nodeHasCredentials: false });
+    await upgrade(fixtureAgentKey(), 'node-a.example.com');
+    expect(await credentialDowngradeCheck('node-a', '2.9.1')).toMatchObject({ action: 'reset-credentials', targetKnowsNodeKeys: false,
+      nodeHasCredentials: true, resetPath: '/api/v1/nodes/node-a/credentials/reset' });
+    expect(await credentialDowngradeCheck('node-a', '2.10.0')).toMatchObject({ action: 'none', targetKnowsNodeKeys: true });
+    process.env['NODE_AUTH_MODE'] = 'enforce';
+    expect(await credentialDowngradeCheck('node-a', '2.9.1')).toMatchObject({ action: 'enroll-instead', resetPath: null });
+    await expect(credentialDowngradeCheck('node-a', 'latest')).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    await expect(credentialDowngradeCheck('node-x', '2.9.1')).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 });

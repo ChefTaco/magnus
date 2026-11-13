@@ -55,6 +55,14 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('browser contract against rea
       token: `node-${randomUUID()}`, status: 'ONLINE', lastHeartbeatAt: now, tags: '["fixture"]', metadata: '{"fixture":true}',
     } });
     await db.agent.create({ data: { nodeId, version: '1.2.3', status: 'RUNNING', capabilities: '[]' } });
+    // Per-node credentials: a bound key, a refused binding waiting for an administrator, and counted shared-secret use.
+    const { generateSigningKey } = await import('../security/node-request-auth.js');
+    const [bound, pendingKey] = [generateSigningKey(), generateSigningKey()];
+    await db.nodeCredential.create({ data: { nodeId, keyId: bound.keyId, publicKey: bound.publicKey, origin: 'LEGACY_UPGRADE',
+      boundFqdn: `${prefix}.example.com`, evidenceSigning: true, evidenceSigningAt: now } });
+    await db.nodePendingBinding.create({ data: { nodeId, keyId: pendingKey.keyId, publicKey: pendingKey.publicKey, fqdn: `${prefix}.example.com`,
+      peerAddress: '198.51.100.20', recordedAddress: '192.0.2.10' } });
+    await db.nodeLegacyCredentialUse.create({ data: { nodeId, channel: 'outbound', count: 3, lastDetail: 'GET /api/v1/files' } });
     await db.healthSnapshot.create({ data: {
       nodeId, cpuUsagePercent: 12.5, cpuCores: 4, cpuLoadAverage: '[0.1,0.2,0.3]', memoryTotalBytes: 8_000_000_000n,
       memoryUsedBytes: 4_000_000_000n, memoryPercent: 50, swapTotalBytes: 0n, swapUsedBytes: 0n,
@@ -195,6 +203,9 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('browser contract against rea
     '/topology': '/topology',
     '/ardent/agents/operations/{id}': `/ardent/agents/operations/${operationId}`,
     '/agents/{agentRef}/identity': `/agents/${nodeId}~default/identity`,
+    '/node-credentials/downgrade-check': `/node-credentials/downgrade-check?nodeId=${nodeId}&to=2.9.1`,
+    '/node-credentials/summary': '/node-credentials/summary',
+    '/node-credentials/pending-bindings': '/node-credentials/pending-bindings',
   };
   const NOT_RUN_HERE = new Set([
     '/assistant/insights', // model provider

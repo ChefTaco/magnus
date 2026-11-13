@@ -1,15 +1,18 @@
 /** In-memory stand-in for node-credential-store.ts, with the same first-writer-wins and one-time-token rules. Tests only. */
 import { generateSigningKey, privateKeyFromPem, serverAudience, signEnrollmentProof, signNodeRequest, type EnrollmentPurpose } from '../security/node-request-auth.js';
-import type { CredentialNode, CredentialRow, NewCredential, NodeCredentialOrigin } from './node-credential-store.js';
+import type { CredentialNode, CredentialRow, LegacyChannel, LegacyUseRow, NewCredential, NodeCredentialOrigin, PendingBindingRow,
+  PendingBindingStatus } from './node-credential-store.js';
+import { signNodeEvidence, type NodeEvidenceKind } from '../security/node-evidence.js';
 
 interface Token { id: string; tokenSha256: string; nodeId: string; expiresAt: Date; usedAt: Date | null; usedKeyId: string | null; createdBy: string }
 
 export function createFakeCredentialStore() {
-  const state = { nodes: [] as CredentialNode[], credentials: [] as CredentialRow[], tokens: [] as Token[], startedAt: new Date(), touched: [] as string[] };
+  const state = { nodes: [] as CredentialNode[], credentials: [] as CredentialRow[], tokens: [] as Token[], startedAt: new Date(), touched: [] as string[],
+    pending: [] as PendingBindingRow[], legacy: [] as LegacyUseRow[] };
   let sequence = 0;
   const add = (input: NewCredential, origin: NodeCredentialOrigin): void => {
     state.credentials.push({ id: `cred-${++sequence}`, ...input, status: 'ACTIVE', origin, createdAt: new Date(), lastUsedAt: null,
-      retireAt: null, revokedAt: null, revokedBy: null });
+      retireAt: null, revokedAt: null, revokedBy: null, evidenceSigning: false, evidenceSigningAt: null });
   };
   const keyTaken = (keyId: string) => state.credentials.some(entry => entry.keyId === keyId);
   const store = {
@@ -87,11 +90,65 @@ export function createFakeCredentialStore() {
       if (credential) credential.lastUsedAt = at;
     },
     async legacyUpgradeStartedAt() { return state.startedAt; },
+    async setEvidenceSigning(keyId: string, value: boolean, at: Date) {
+      for (const entry of state.credentials) if (entry.keyId === keyId && entry.evidenceSigning !== value) {
+        entry.evidenceSigning = value; entry.evidenceSigningAt = value ? at : null;
+      }
+    },
+    async recordPendingBinding(input: { nodeId: string; keyId: string; publicKey: string; fqdn: string; peerAddress: string; recordedAddress: string; now: Date }) {
+      const existing = state.pending.find(entry => entry.nodeId === input.nodeId && entry.keyId === input.keyId);
+      if (existing) {
+        existing.attempts++; existing.lastSeenAt = input.now;
+        if (existing.status === 'PENDING') Object.assign(existing, { peerAddress: input.peerAddress, recordedAddress: input.recordedAddress, fqdn: input.fqdn });
+        return { row: existing, created: false };
+      }
+      const row: PendingBindingRow = { id: `pending-${++sequence}`, nodeId: input.nodeId, keyId: input.keyId, publicKey: input.publicKey, fqdn: input.fqdn,
+        peerAddress: input.peerAddress, recordedAddress: input.recordedAddress, status: 'PENDING', attempts: 1, createdAt: input.now, lastSeenAt: input.now,
+        decidedAt: null, decidedBy: null, decisionReason: null };
+      state.pending.push(row);
+      return { row, created: true };
+    },
+    async pendingBindings(filter: { status?: PendingBindingStatus; nodeId?: string } = {}) {
+      return state.pending.filter(entry => (!filter.status || entry.status === filter.status) && (!filter.nodeId || entry.nodeId === filter.nodeId));
+    },
+    async pendingBinding(id: string) { return state.pending.find(entry => entry.id === id) ?? null; },
+    async approvePendingBinding(id: string, actorId: string, now: Date) {
+      const row = state.pending.find(entry => entry.id === id) ?? null;
+      if (!row || row.status !== 'PENDING') return { outcome: 'not-pending' as const, row };
+      if (state.credentials.some(entry => entry.nodeId === row.nodeId)) return { outcome: 'exists' as const, row };
+      if (keyTaken(row.keyId)) return { outcome: 'key-in-use' as const, row: null };
+      add({ nodeId: row.nodeId, keyId: row.keyId, publicKey: row.publicKey, boundFqdn: row.fqdn }, 'LEGACY_UPGRADE');
+      Object.assign(row, { status: 'APPROVED', decidedAt: now, decidedBy: actorId });
+      for (const other of state.pending) if (other !== row && other.nodeId === row.nodeId && other.status === 'PENDING')
+        Object.assign(other, { status: 'REJECTED', decidedAt: now, decidedBy: actorId, decisionReason: 'another key was approved' });
+      return { outcome: 'bound' as const, row };
+    },
+    async rejectPendingBinding(id: string, actorId: string, reason: string | null, now: Date) {
+      const row = state.pending.find(entry => entry.id === id);
+      if (!row || row.status !== 'PENDING') return null;
+      Object.assign(row, { status: 'REJECTED', decidedAt: now, decidedBy: actorId, decisionReason: reason });
+      return row;
+    },
+    async addLegacyUse(entries: Array<{ nodeId: string; channel: LegacyChannel; count: number; first: Date; last: Date; detail: string | null }>) {
+      for (const entry of entries) {
+        if (!state.nodes.some(node => node.id === entry.nodeId)) continue;
+        const row = state.legacy.find(item => item.nodeId === entry.nodeId && item.channel === entry.channel);
+        if (row) { row.count += entry.count; row.lastUsedAt = entry.last; row.lastDetail = entry.detail; }
+        else state.legacy.push({ nodeId: entry.nodeId, channel: entry.channel, count: entry.count, firstUsedAt: entry.first, lastUsedAt: entry.last, lastDetail: entry.detail });
+      }
+    },
+    async legacyUse(nodeIds?: string[]) { return state.legacy.filter(row => !nodeIds || nodeIds.includes(row.nodeId)); },
+    async fleet() {
+      return state.nodes.filter(node => node.status !== 'DECOMMISSIONED')
+        .map(node => ({ ...node, credentials: state.credentials.filter(entry => entry.nodeId === node.id) }));
+    },
     async summaries(nodeIds: string[]) {
       return new Map(nodeIds.map(id => [id, state.credentials.filter(entry => entry.nodeId === id)] as const).filter(([, rows]) => rows.length > 0));
     },
   };
-  return { state, store, reset(): void { state.nodes = []; state.credentials = []; state.tokens = []; state.startedAt = new Date(); state.touched = []; } };
+  return { state, store, reset(): void {
+    state.nodes = []; state.credentials = []; state.tokens = []; state.startedAt = new Date(); state.touched = []; state.pending = []; state.legacy = [];
+  } };
 }
 
 export function fixtureNode(id: string, hostname: string, ipAddress: string, overrides: Partial<CredentialNode> = {}): CredentialNode {
@@ -110,5 +167,7 @@ export function fixtureAgentKey() {
       signNodeRequest({ privateKey, keyId: key.keyId, nodeId: input.nodeId, audience: serverAudience(input.serverKeyId),
         method: input.method ?? 'POST', pathWithQuery: input.path, body: input.body ?? '',
         ...(input.now === undefined ? {} : { now: input.now }), ...(input.nonce === undefined ? {} : { nonce: input.nonce }) }),
+    /** Evidence signed as an agent of this release signs it. */
+    evidence: (nodeId: string, kind: NodeEvidenceKind, payload: string) => signNodeEvidence(privateKey, key.keyId, nodeId, kind, payload),
   };
 }

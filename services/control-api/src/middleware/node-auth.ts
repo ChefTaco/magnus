@@ -18,6 +18,7 @@ import { nodeAuthMode } from '../services/node-auth-config.js';
 import { fqdnClaimMatchesNode, reportIdentityMismatch } from '../services/node-credential-service.js';
 import { nodeCredentialStore, type CredentialNode } from '../services/node-credential-store.js';
 import { serverAudiences } from '../services/node-server-key.js';
+import { recordLegacyUse, recordUnattributedLegacyUse } from '../services/node-legacy-use.js';
 import { NODE_MANAGER_SECRET } from '../utils/env.js';
 
 export type NodeAuthContext =
@@ -139,6 +140,9 @@ export async function assertNodeClaims(c: Context, claims: NodeClaims): Promise<
   }
   const claimed = await nodeCredentialStore.nodesClaimedBy({ ...(nodeId ? { nodeId } : {}), ...(fqdn ? { fqdn } : {}) });
   await assertLegacyMaySpeakFor(claimed.map(node => node.id));
+  // Accounting: which node still speaks with the shared secret (docs/NODE_CREDENTIALS.md, legacy use).
+  if (claimed.length === 1) recordLegacyUse(claimed[0]!.id, 'request', c.req.path);
+  else recordUnattributedLegacyUse(c.req.path);
   return null;
 }
 
