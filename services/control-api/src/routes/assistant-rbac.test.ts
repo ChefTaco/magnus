@@ -3,7 +3,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppVariables } from '../types/index.js';
 import { HttpError, errorHandler } from '../middleware/error-handler.js';
 
-const { approveToolCall } = vi.hoisted(() => ({ approveToolCall: vi.fn() }));
+const { approveToolCall, rejectToolCall, claimPendingApproval, getPendingApprovalConversation, getConversationAccess, executeAiTool } = vi.hoisted(() => ({
+  approveToolCall: vi.fn(), rejectToolCall: vi.fn(), claimPendingApproval: vi.fn(), getPendingApprovalConversation: vi.fn(),
+  getConversationAccess: vi.fn(), executeAiTool: vi.fn(),
+}));
 
 vi.mock('../middleware/auth.js', () => ({
   authMiddleware: async (c: { req: { header(name: string): string | undefined }; set(key: string, value: unknown): void }, next: () => Promise<void>) => {
@@ -44,14 +47,17 @@ vi.mock('../services/ai-assistant-service.js', () => ({
   getModelProfiles: vi.fn(),
   updateModelProfiles: vi.fn(),
   approveToolCall,
-  rejectToolCall: vi.fn(),
+  rejectToolCall,
+  claimPendingApproval,
+  getPendingApprovalConversation,
   createConversationShare: vi.fn(),
   forkConversation: vi.fn(),
   getSharedConversation: vi.fn(),
   conversationOwners: vi.fn(() => ['test-user']),
-  getConversationAccess: vi.fn(async () => 'owner'),
+  getConversationAccess,
 }));
-vi.mock('../services/ai-tools.js', () => ({ executeAiTool: vi.fn() }));
+vi.mock('../services/audit-service.js', () => ({ logAuditEvent: vi.fn() }));
+vi.mock('../services/ai-tools.js', () => ({ executeAiTool }));
 vi.mock('../services/ai-insights-service.js', () => ({
   generateInsights: vi.fn(),
   listPinnedInsights: vi.fn(),
@@ -74,7 +80,11 @@ function createApp(): Hono<AppVariables> {
 }
 
 describe('assistant route authorization', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getConversationAccess.mockResolvedValue('owner');
+    getPendingApprovalConversation.mockResolvedValue(null);
+  });
 
   it.each([
     ['POST', '/assistant/chat'],
@@ -116,5 +126,46 @@ describe('assistant route authorization', () => {
 
     expect(response.status).toBe(200);
     expect(approveToolCall).toHaveBeenCalledWith('message-1', 'test@example.test');
+  });
+
+  it.each(['approve', 'reject', 'confirm'])('hides a pending tool call in someone else\'s conversation from %s', async (decision) => {
+    getPendingApprovalConversation.mockResolvedValue('conversation-of-another-user');
+    getConversationAccess.mockResolvedValue(null);
+    const response = await createApp().request(`/assistant/messages/message-1/${decision}`, {
+      method: 'POST',
+      headers: { 'x-test-role': 'OPERATOR' },
+    });
+
+    expect(response.status).toBe(404);
+    expect(getConversationAccess).toHaveBeenCalledWith('conversation-of-another-user', ['test-user']);
+    expect(approveToolCall).not.toHaveBeenCalled();
+    expect(rejectToolCall).not.toHaveBeenCalled();
+    expect(claimPendingApproval).not.toHaveBeenCalled();
+    expect(executeAiTool).not.toHaveBeenCalled();
+  });
+
+  it('lets any operator decide a pending tool call in the shared heartbeat conversation', async () => {
+    getPendingApprovalConversation.mockResolvedValue('heartbeat-conversation');
+    getConversationAccess.mockResolvedValue('shared');
+    approveToolCall.mockResolvedValue({ conversationId: 'heartbeat-conversation' });
+    const response = await createApp().request('/assistant/messages/message-1/approve', {
+      method: 'POST',
+      headers: { 'x-test-role': 'OPERATOR' },
+    });
+
+    expect(response.status).toBe(200);
+    expect(approveToolCall).toHaveBeenCalledOnce();
+  });
+
+  it('answers 404 without running anything when a confirmation was already taken', async () => {
+    getPendingApprovalConversation.mockResolvedValue('conversation-1');
+    claimPendingApproval.mockResolvedValue(null);
+    const response = await createApp().request('/assistant/messages/message-1/confirm', {
+      method: 'POST',
+      headers: { 'x-test-role': 'OPERATOR' },
+    });
+
+    expect(response.status).toBe(404);
+    expect(executeAiTool).not.toHaveBeenCalled();
   });
 });

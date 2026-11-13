@@ -942,12 +942,19 @@ registerTool('getNodeDetails', async (args) => {
 
 // ── Skill Execution Tools ──
 
+/** A skill name or action that is safe to place in the node-side shell command. */
+const SKILL_SHELL_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+
 registerTool('runSkill', async (args) => {
   const nodeId = String(args['nodeId'] ?? '');
   const skillName = String(args['skillName'] ?? '');
   const action = String(args['action'] ?? 'run');
 
   if (!nodeId || !skillName) return { error: 'nodeId and skillName are required' };
+  // Both values become part of a shell command on the node, and both come from the model.
+  if (!SKILL_SHELL_NAME.test(skillName) || !SKILL_SHELL_NAME.test(action)) {
+    return { error: 'skillName and action may contain only letters, digits, dots, underscores and hyphens' };
+  }
 
   const db = getDb();
   const node = await db.node.findUnique({

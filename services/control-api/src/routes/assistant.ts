@@ -49,6 +49,8 @@ import {
   getModelProfiles,
   updateModelProfiles,
   approveToolCall,
+  claimPendingApproval,
+  getPendingApprovalConversation,
   rejectToolCall,
   createConversationShare,
   forkConversation,
@@ -57,6 +59,7 @@ import {
   getConversationAccess,
 } from '../services/ai-assistant-service.js';
 import { executeAiTool } from '../services/ai-tools.js';
+import { logAuditEvent } from '../services/audit-service.js';
 import { generateInsights, listPinnedInsights, pinInsight, unpinInsight } from '../services/ai-insights-service.js';
 import { exportConversation } from '../services/ai-export-service.js';
 import { clearScratchpad, listScratchpadEntries } from '../services/ai-scratchpad-service.js';
@@ -344,9 +347,20 @@ assistantRouter.post('/chat/stream', requireRole('ADMIN', 'OPERATOR'), async (c)
 
 // ── Tool call approval/rejection ──
 
+/**
+ * A pending tool call is decided by someone who can read its conversation: the owner, or any
+ * operator for the shared fleet heartbeat. Anyone else gets 404, as for the conversation itself.
+ * A message with nothing pending is left to the handler, which reports that.
+ */
+async function requirePendingApprovalAccess(c: Context<AppVariables>, messageId: string): Promise<void> {
+  const conversationId = await getPendingApprovalConversation(messageId);
+  if (conversationId) await requireConversation(c, conversationId, 'read');
+}
+
 assistantRouter.post('/messages/:id/approve', requireRole('ADMIN', 'OPERATOR'), async (c) => {
   const id = c.req.param('id')!;
   const user = c.get('user');
+  await requirePendingApprovalAccess(c, id);
   try {
     const result = await approveToolCall(id, user?.email ?? user?.userId ?? 'unknown');
     return c.json({ success: true, data: result });
@@ -361,6 +375,7 @@ assistantRouter.post('/messages/:id/approve', requireRole('ADMIN', 'OPERATOR'), 
 assistantRouter.post('/messages/:id/reject', requireRole('ADMIN', 'OPERATOR'), async (c) => {
   const id = c.req.param('id')!;
   const user = c.get('user');
+  await requirePendingApprovalAccess(c, id);
   try {
     const result = await rejectToolCall(id, user?.email ?? user?.userId ?? 'unknown');
     return c.json({ success: true, data: result });
@@ -376,24 +391,20 @@ assistantRouter.post('/messages/:id/reject', requireRole('ADMIN', 'OPERATOR'), a
 
 assistantRouter.post('/messages/:id/confirm', requireRole('ADMIN', 'OPERATOR'), async (c) => {
   const id = c.req.param('id')!;
-  const db = (await import('../db/index.js')).getDb();
-  const message = await db.aiMessage.findUnique({ where: { id } });
-
-  if (!message?.pendingApproval) {
+  const user = c.get('user');
+  await requirePendingApprovalAccess(c, id);
+  const approval = await claimPendingApproval(id);
+  if (!approval) {
     throw new HttpError(404, 'NOT_FOUND', 'No pending command to confirm');
   }
 
-  let approval: { toolName: string; toolArgs: Record<string, unknown>; conversationId: string };
-  try {
-    approval = JSON.parse(message.pendingApproval);
-  } catch {
-    throw new HttpError(400, 'VALIDATION_ERROR', 'Invalid pending approval data');
-  }
-
-  // Clear the pending approval
-  await db.aiMessage.update({
-    where: { id },
-    data: { pendingApproval: null },
+  await logAuditEvent({
+    action: 'assistant.tool_approval',
+    actorId: user?.email ?? user?.userId ?? 'unknown',
+    actorType: 'user',
+    targetType: 'ai_message',
+    targetId: id,
+    details: { toolName: approval.toolName, conversationId: approval.conversationId, decision: 'confirmed' },
   });
 
   // If this was a natural command, execute it via execCommand with the preview data
