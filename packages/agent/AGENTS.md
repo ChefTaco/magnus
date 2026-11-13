@@ -17,7 +17,7 @@ that the agent can inspect and manage when they are configured.
 | Framework | Hono v4 on `@hono/node-server` |
 | Runtime | Node.js `^24.22.3 \|\| ^26.13.1`, ESM |
 | Language | TypeScript strict, NodeNext imports with `.js` extensions |
-| Auth | `x-node-token` shared secret; signed command results |
+| Auth | Per-node Ed25519 request signatures (`src/security/node-request-auth.ts`), with the `x-node-token` shared secret still accepted and sent during the migration; signed command results |
 | TLS | Verified outbound TLS through `verifiedFetch()` / `controlApiFetch()`; optional `CONTROL_API_CA_PATH` |
 
 ## Commands
@@ -73,6 +73,14 @@ deploy/                 example systemd units
   processes never inherit agent credentials (`utils/child-env.ts`).
 - `src/security/native-completion-registry.ts` must stay byte-identical with
   the server's copy. The server pins its SHA-256 in a test.
+- `src/security/node-request-auth.ts` is the request-signature wire contract and must stay
+  byte-identical with the server's copy; both packages run the same vectors
+  (`services/control-api/src/security/node-request-auth.vectors.json`). The launcher never imports it.
+- Every request to the Control API that carries the node credential goes through `nodeApiFetch()` or
+  `controlApiAuthHeaders()` in `src/node-auth.ts`. Never set `x-node-token` by hand in a new sender.
+- The node key (`identity/node.key`, `src/security/node-identity.ts`) is never logged, returned,
+  sent or placed in an environment variable. File and drift routes must keep refusing the
+  `identity` directory. An agent must not bind a key while its self-upgrade is on trial.
 - `launcher/launcher.mjs` is copied onto nodes by `install-service`. A
   confirmed self-upgrade replaces it only when the new copy declares a higher
   `LAUNCHER_PROTOCOL` and answers `--protocol`. Keep it dependency-free and

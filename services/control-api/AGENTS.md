@@ -74,6 +74,13 @@ integrations table together.
 
 - Never return node tokens, SSH credentials, environment maps, passwords, API
   keys, private keys or raw request bodies. Redact request, error and log metadata.
+- Agent-to-server routes authenticate through `middleware/node-auth.ts` (`nodeAuth()` or
+  `authenticateNode()`), and every one of them calls `assertNodeClaims()` with the node its body
+  names: a signed caller may only name its own node, and the shared secret may not name a node that
+  has a credential. Server-to-agent requests get their headers from `services/node-agent-auth.ts`
+  (`agentFetch()`, `agentAuthHeaders()`, or `NodeApiClient` with a node id); never set `x-node-token`
+  by hand. `security/node-request-auth.ts` must stay byte-identical with the agent's copy. See
+  `docs/NODE_CREDENTIALS.md`.
 - Compare secrets with the constant-time helpers. Store only SHA-256 digests of
   credentials that other services present.
 - Required secrets fail fast at startup; never add a fallback secret value or a

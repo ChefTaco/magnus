@@ -179,6 +179,10 @@ local tarballs with `MAGNUS_AGENT_UPGRADE_SOURCE_DIR`. See
 ```text
 magnus-agent [start] [--env-file <path>]          Start the agent (default)
 magnus-agent check [--json] [--env-file <path>]   Validate configuration without starting
+magnus-agent enroll --token <token>               Bind a new node key with a one-time enrollment token
+magnus-agent identity show [--json]               Print the node id and key fingerprints (never the key)
+magnus-agent identity rotate                      Replace the node key
+magnus-agent identity reset                       Remove the node key and return to the shared node secret
 magnus-agent env-schema                           Print the configuration schema as JSON
 magnus-agent --help | --version
 ```
@@ -194,7 +198,8 @@ and `magnus-agent env-schema` prints them as JSON.
 | Variable | Purpose |
 | --- | --- |
 | `CONTROL_API_URL` | magnus-server Control API (required) |
-| `NODE_MANAGER_SECRET` | Node credential shared with the server (required, 32+ characters) |
+| `NODE_MANAGER_SECRET` | Node credential shared with the server (required, 32+ characters). The agent also creates its own node key in `$AGENT_INSTALL_DIR/identity` and binds it automatically; see [per-node credentials](https://github.com/ChefTaco/magnus/blob/main/docs/NODE_CREDENTIALS.md) |
+| `NODE_AUTH_MODE` | Reserved (`compat`, `warn`, `enforce`); the agent behaves as `compat` in this release |
 | `RESULT_SIGNING_SECRET` | Independent result-signing key (required, 32+ characters) |
 | `TLS_CERT_PATH` / `TLS_KEY_PATH` | Listener TLS, required in production |
 | `HOST_FQDN` | Host identity override (default `hostname --fqdn`) |

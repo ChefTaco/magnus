@@ -9,8 +9,8 @@ import { Hono } from 'hono';
 import { managedTerminalActionSchema, managedTerminalAuthoritySchema, managedTerminalReceiptPayload,
   managedTerminalReceiptSchema, type ManagedTerminalAuthority, type ManagedTerminalAction,
   type ManagedTerminalReceipt, type ManagedTerminalSize } from '@hivemagnus/magnus-contracts';
-import { CONTROL_API_URL, HOST_FQDN, NODE_MANAGER_SECRET, RESULT_SIGNING_SECRET, MAGNUS_EXECUTION_SUPERVISOR_ENABLED } from '../env.js';
-import { controlApiFetch } from '../tls.js';
+import { CONTROL_API_URL, HOST_FQDN, RESULT_SIGNING_SECRET, MAGNUS_EXECUTION_SUPERVISOR_ENABLED } from '../env.js';
+import { nodeApiFetch } from '../node-auth.js';
 import { requirePrivileged } from '../privileged.js';
 import { logger } from '../utils/logger.js';
 import { SystemdSupervisorBackend, type UnitObservation } from './execution-supervisor.js';
@@ -71,9 +71,9 @@ export function terminalFailureReason(error: unknown): string {
 }
 
 async function authorityRequest(path: string, body: unknown): Promise<Record<string, unknown>> {
-  const response = await controlApiFetch(CONTROL_API_URL.replace(/\/$/, '') + '/api/v1/resource-leases/enrollment/' + path,
+  const response = await nodeApiFetch(CONTROL_API_URL.replace(/\/$/, '') + '/api/v1/resource-leases/enrollment/' + path,
     { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(5000),
-      headers: { 'content-type': 'application/json', 'x-node-token': NODE_MANAGER_SECRET }, body: JSON.stringify(body) });
+      headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   if (response.status !== 200) throw new Error('Terminal authority unavailable');
   const envelope = await response.json() as { success?: boolean; data?: Record<string, unknown> };
   if (!envelope.success || !envelope.data) throw new Error('Terminal authority unavailable');

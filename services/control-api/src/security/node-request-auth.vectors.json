@@ -1,0 +1,91 @@
+{
+  "comment": "Cross-wire vectors for node-request-auth.ts. Generated once from throwaway keys; only public keys are kept. Both packages run them.",
+  "nodeKey": {
+    "publicKey": "MCowBQYDK2VwAyEAuTLWO3ubOBYKFJs1C95oHTJS1mTE2M4CK1a+/lrJ43o=",
+    "keyId": "30e06bd3ec72f7e0aee3e35a0acf584f6597d747883a650f383cbe59cecb61fd",
+    "fingerprint": "30e0:6bd3:ec72:f7e0"
+  },
+  "serverKey": {
+    "publicKey": "MCowBQYDK2VwAyEAcgDKU+mzBq+1cWnuNiWMvqJqr1Yk8y+jycFTu5o5jDM=",
+    "keyId": "c3bd4d978558bd4e88f4292c0c112f93ccf412e46a760db58f0f168b3bae9d40"
+  },
+  "requests": [
+    {
+      "name": "agent to server heartbeat",
+      "direction": "agent-to-server",
+      "publicKey": "MCowBQYDK2VwAyEAuTLWO3ubOBYKFJs1C95oHTJS1mTE2M4CK1a+/lrJ43o=",
+      "keyId": "30e06bd3ec72f7e0aee3e35a0acf584f6597d747883a650f383cbe59cecb61fd",
+      "audience": "server:c3bd4d978558bd4e88f4292c0c112f93ccf412e46a760db58f0f168b3bae9d40",
+      "nodeId": "node_fixture-1",
+      "method": "POST",
+      "pathWithQuery": "/api/v1/heartbeat",
+      "body": "{\"fqdn\":\"node-1.example.com\",\"agentVersion\":\"2.10.0\"}",
+      "bodySha256": "ce9cf2aeeeb467185025b2d04e34c8b25667345ff8619dc7ddb23c533793d573",
+      "now": 1794000000000,
+      "canonical": "magnus.node-request.v1\nPOST\n/api/v1/heartbeat\nserver:c3bd4d978558bd4e88f4292c0c112f93ccf412e46a760db58f0f168b3bae9d40\nnode_fixture-1\n1794000000000\nAAAAAAAAAAAAAAAAAAAAAAAA\nce9cf2aeeeb467185025b2d04e34c8b25667345ff8619dc7ddb23c533793d573",
+      "headers": {
+        "x-magnus-node-id": "node_fixture-1",
+        "x-magnus-key-id": "30e06bd3ec72f7e0aee3e35a0acf584f6597d747883a650f383cbe59cecb61fd",
+        "x-magnus-timestamp": "1794000000000",
+        "x-magnus-nonce": "AAAAAAAAAAAAAAAAAAAAAAAA",
+        "x-magnus-signature": "A_J2BZMvMjEEc-DfN8N0yRiW5mCaig5lXicLDwBXtlB5PEWZZEoSTg1orXpU1KFSkswggQMvtU8BV5m76FftAg"
+      }
+    },
+    {
+      "name": "server to agent read with a query and no body",
+      "direction": "server-to-agent",
+      "publicKey": "MCowBQYDK2VwAyEAcgDKU+mzBq+1cWnuNiWMvqJqr1Yk8y+jycFTu5o5jDM=",
+      "keyId": "c3bd4d978558bd4e88f4292c0c112f93ccf412e46a760db58f0f168b3bae9d40",
+      "audience": "node:node_fixture-1",
+      "nodeId": "node_fixture-1",
+      "method": "GET",
+      "pathWithQuery": "/api/v1/storage-evidence?mount=%2Fvar%2Flib&x=a+b",
+      "body": "",
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "now": 1794000000000,
+      "canonical": "magnus.node-request.v1\nGET\n/api/v1/storage-evidence?mount=%2Fvar%2Flib&x=a+b\nnode:node_fixture-1\nnode_fixture-1\n1794000000000\nBBBBBBBBBBBBBBBBBBBBBBBB\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "headers": {
+        "x-magnus-node-id": "node_fixture-1",
+        "x-magnus-key-id": "c3bd4d978558bd4e88f4292c0c112f93ccf412e46a760db58f0f168b3bae9d40",
+        "x-magnus-timestamp": "1794000000000",
+        "x-magnus-nonce": "BBBBBBBBBBBBBBBBBBBBBBBB",
+        "x-magnus-signature": "0hlX-iV__yvsYlu4YFpIR9yhfKVlCeQ8eAEwQE3CU3LZaT6us3Pk3D0OReFBxC_DLs7nkAgf1UQ88g3y1I-4AQ"
+      }
+    },
+    {
+      "name": "server to agent mutation with a UTF-8 body",
+      "direction": "server-to-agent",
+      "publicKey": "MCowBQYDK2VwAyEAcgDKU+mzBq+1cWnuNiWMvqJqr1Yk8y+jycFTu5o5jDM=",
+      "keyId": "c3bd4d978558bd4e88f4292c0c112f93ccf412e46a760db58f0f168b3bae9d40",
+      "audience": "node:node_fixture-1",
+      "nodeId": "node_fixture-1",
+      "method": "post",
+      "pathWithQuery": "/api/v1/files/write",
+      "body": "{\"path\":\"/srv/app/naïve.txt\",\"content\":\"héllo ✓\\n\"}",
+      "bodySha256": "1b7d981920516f0eedfea152fae946f1404af061e9ec3d6fa4cedfdaa767a0e4",
+      "now": 1794000000000,
+      "canonical": "magnus.node-request.v1\nPOST\n/api/v1/files/write\nnode:node_fixture-1\nnode_fixture-1\n1794000000000\nCCCCCCCCCCCCCCCCCCCCCCCC\n1b7d981920516f0eedfea152fae946f1404af061e9ec3d6fa4cedfdaa767a0e4",
+      "headers": {
+        "x-magnus-node-id": "node_fixture-1",
+        "x-magnus-key-id": "c3bd4d978558bd4e88f4292c0c112f93ccf412e46a760db58f0f168b3bae9d40",
+        "x-magnus-timestamp": "1794000000000",
+        "x-magnus-nonce": "CCCCCCCCCCCCCCCCCCCCCCCC",
+        "x-magnus-signature": "Xb7i5oH5iwkEYrKdBL1jN8jSOKtipLQxKsne0f8VGXIR8j39BvIfo4qjIM9Y3vkP6YDkRBOk6gSOpcHQmWm8DQ"
+      }
+    }
+  ],
+  "enrollment": [
+    {
+      "name": "legacy upgrade proof (the FQDN is signed in lower case)",
+      "purpose": "legacy-upgrade",
+      "publicKey": "MCowBQYDK2VwAyEAuTLWO3ubOBYKFJs1C95oHTJS1mTE2M4CK1a+/lrJ43o=",
+      "fqdn": "Node-1.Example.com",
+      "binding": "-",
+      "timestamp": "1794000000000",
+      "nonce": "DDDDDDDDDDDDDDDDDDDDDDDD",
+      "signature": "TSwLnSDo7yy_W2d6qdr8xzWgQUln5sxEE-mkjwVkb6Ytg2WnNTD_h5e69OLVInleABIIkTttU0xev3Kb_cnlDw",
+      "now": 1794000000000,
+      "payload": "magnus.node-enrollment.v1\nlegacy-upgrade\n30e06bd3ec72f7e0aee3e35a0acf584f6597d747883a650f383cbe59cecb61fd\nnode-1.example.com\n-\n1794000000000\nDDDDDDDDDDDDDDDDDDDDDDDD"
+    }
+  ]
+}

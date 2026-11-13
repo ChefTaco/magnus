@@ -3,7 +3,8 @@
 #
 #   1. `magnus init` the published FROM release (default 1.0.3) as system services
 #   2. `magnus upgrade` to the working tree's packed release: migrations, health, runtime version
-#   3. install an agent with `install-service --unprivileged`; it enrolls and reports itself
+#   3. install an agent with `install-service --unprivileged`; it enrolls, reports itself and binds its own
+#      node key, after which the shared node secret can no longer report as that node
 #   4. pre-seed a high fence on the agent: `agents doctor --heal` moves the server past it;
 #      `magnus-server agents upgrade` to a synthetic release: confirmed
 #   5. upgrade to a synthetic agent that never heartbeats: the launcher reverts it
@@ -148,6 +149,22 @@ wait_for() { # description, seconds, command...
 }
 agent_ready() { server_cli agents upgrade --allow-prerelease --to $AGENT_OK --integrity "sha512-$(printf 'A%.0s' {1..86})==" --dry-run 2>/dev/null | grep -q "will upgrade"; }
 wait_for "the agent to enroll with the launcher layout" 120 agent_ready
+
+step "The agent binds its own node key, and the shared secret can no longer report as that node"
+bound_node() { psql_url "$DATABASE_URL" "SELECT n.hostname FROM node_credentials c JOIN nodes n ON n.id = c.\"nodeId\" WHERE c.status = 'ACTIVE' AND c.origin = 'LEGACY_UPGRADE'" | json 'v.length === 1 ? v[0].hostname : (() => { throw new Error("not bound") })()'; }
+wait_for "the agent to bind its node key" 120 bound_node
+BOUND_HOST=$(bound_node)
+[[ $(sudo stat -c %a "$AGENT_DIR/identity/node.key") == 600 ]] || fail "the node key is not mode 0600"
+# Captured first: `grep -q` closing a pipe early would fail the pipeline under pipefail.
+JOURNAL=$(sudo journalctl -u magnus-agent-e2e -u magnus-server --no-pager)
+grep -q "Node key bound" <<<"$JOURNAL" || fail "the agent did not log its key binding"
+grep -q "PRIVATE KEY" <<<"$JOURNAL" && fail "a private key reached the journal"
+heartbeat_as() { curl -sk -o /dev/null -w '%{http_code}' -X POST -H "x-node-token: $(secret NODE_MANAGER_SECRET)" -H 'content-type: application/json' \
+  -d "{\"agentVersion\":\"$VERSION\",\"fqdn\":\"$1\"}" "https://127.0.0.1:$SERVER_PORT/api/v1/heartbeat"; }
+[[ $(heartbeat_as "$BOUND_HOST") == 401 ]] || fail "the shared node secret still reports as a node that has its own key"
+signed_heartbeat() { [[ $(psql_url "$DATABASE_URL" "SELECT count(*)::int AS n FROM node_credentials WHERE \"lastUsedAt\" IS NOT NULL" | json 'v[0].n') == 1 ]]; }
+wait_for "a signed heartbeat from the agent" 90 signed_heartbeat
+agent_ready || fail "the server cannot reach the agent after it bound its key"
 
 synthetic() { node "$ROOT/scripts/e2e/synthetic-release.mjs" --from "$PACKS" --out "$SYNTH" "$@" >/dev/null; chmod -R a+rX "$SYNTH"; }
 integrity() { node -e "const c=require('node:crypto');console.log('sha512-'+c.createHash('sha512').update(require('node:fs').readFileSync(process.argv[1])).digest('base64'))" "$1"; }

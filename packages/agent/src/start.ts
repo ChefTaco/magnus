@@ -81,6 +81,8 @@ if (ENABLE_NODE_MANAGEMENT) {
   const { startLogCollector, ENABLE_LOG_FORWARDING } = await import('./collectors/log-collector.js');
   const { startOtlpExporter } = await import('./collectors/otel-collector.js');
   startHeartbeatLoop();
+  const { startNodeIdentityMaintenance } = await import('./node-enrollment.js');
+  startNodeIdentityMaintenance();
   const { agentPrivileged } = await import('./privileged.js');
   if (agentPrivileged()) {
     const { startCredentialRenewal } = await import('./credential-renewal.js');

@@ -13,8 +13,7 @@ import { authMiddleware, requireRole } from '../middleware/auth.js';
 import { Hono } from 'hono';
 import { getDb } from '../db/index.js';
 import { HttpError } from '../middleware/error-handler.js';
-import { NODE_MANAGER_SECRET } from '../utils/env.js';
-import { verifyWithRotation } from '../services/credential-rotation-service.js';
+import { assertNodeClaims, authenticateNode } from '../middleware/node-auth.js';
 import { resourceLeasesRequested } from '../services/command-resource-leases.js';
 import { readOwnershipHistory, stickyEnrollmentObserved } from '../services/resource-ownership.js';
 import { activateArdentScope, ardentScopeActivationEvidence, ardentScopeActivationSchema, assertArdentScope, inspectArdentScope } from '../services/ardent-scope-enrollment.js';
@@ -28,10 +27,6 @@ import { assertNodeAdmissionOpen, closeNodeAdmission, inspectNodeAdmission, rele
 import { parseBody } from '../utils/validate.js';
 import { managedTerminalActionSchema, managedTerminalAuthoritySchema, managedTerminalReceiptSchema } from '@hivemagnus/magnus-contracts';
 import { claimManagedTerminal, relayManagedTerminal, settleManagedTerminal } from '../services/managed-terminal.js';
-function nodeCredential(token: string): void {
-  if (!token || !NODE_MANAGER_SECRET || !verifyWithRotation('NODE_MANAGER_SECRET', NODE_MANAGER_SECRET, token))
-    throw new HttpError(401, 'UNAUTHORIZED', 'Node credential required');
-}
 function workId(value: string | undefined): string {
   const parsed = z.string().guid().safeParse(value);
   if (!parsed.success) throw new HttpError(400, 'INVALID_WORK_ID', 'A work UUID is required');
@@ -40,8 +35,9 @@ function workId(value: string | undefined): string {
 export const resourceLeasesRouter = new Hono();
 resourceLeasesRouter.use('*', async (c, next) => { c.header('Cache-Control', 'no-store'); await next(); });
 resourceLeasesRouter.post('/enrollment/terminal-claim', async c => {
-  nodeCredential(c.req.header('x-node-token') ?? '');
+  await authenticateNode(c);
   const input = await parseBody(c, z.object({ authority: managedTerminalAuthoritySchema, nonce: z.string().guid() }).strict());
+  await assertNodeClaims(c, { nodeId: input.authority.nodeId, fqdn: input.authority.nodeFqdn });
   const data = await claimManagedTerminal(input.authority, input.nonce);
   await logAuditEvent({ action: 'resource.terminal.claim', actorType: 'agent', actorId: 'node:' + input.authority.nodeId,
     targetType: 'resource-participant-work', targetId: data.workId,
@@ -49,8 +45,9 @@ resourceLeasesRouter.post('/enrollment/terminal-claim', async c => {
   return c.json({ success: true, data });
 });
 resourceLeasesRouter.post('/enrollment/terminal-receipt', async c => {
-  nodeCredential(c.req.header('x-node-token') ?? '');
+  await authenticateNode(c);
   const input = await parseBody(c, managedTerminalReceiptSchema);
+  await assertNodeClaims(c, { nodeId: input.nodeId, fqdn: input.nodeFqdn });
   const data = await settleManagedTerminal(input);
   await logAuditEvent({ action: 'resource.terminal.complete', actorType: 'agent', actorId: 'node:' + input.nodeId,
     targetType: 'resource-participant-work', targetId: data.workId,
@@ -63,8 +60,9 @@ resourceLeasesRouter.post('/enrollment/dashboard/terminal/:workId', async c => {
   return c.json({ success: true, data: await relayManagedTerminal(workId(c.req.param('workId')), input.ownerId, input.operation) });
 });
 resourceLeasesRouter.post('/transfer/authority-snapshot', async c => {
-  nodeCredential(c.req.header('x-node-token') ?? '');
+  await authenticateNode(c);
   const input = await parseBody(c, z.object({ nodeFqdn: z.string().min(1).max(253), nonce: z.string().guid() }).strict());
+  await assertNodeClaims(c, { fqdn: input.nodeFqdn });
   return c.json({ success: true, data: await transferAuthoritySnapshot(input.nodeFqdn, input.nonce) });
 });
 resourceLeasesRouter.get('/admission/:nodeId', authMiddleware, requireRole('ADMIN', 'OPERATOR'), async c => {
@@ -85,10 +83,9 @@ resourceLeasesRouter.post('/admission/:nodeId/release', authMiddleware, requireR
   return c.json({ success: true, data });
 });
 resourceLeasesRouter.post('/claim', async c => {
-  const token = c.req.header('x-node-token') ?? '';
-  if (!token || !NODE_MANAGER_SECRET || !verifyWithRotation('NODE_MANAGER_SECRET', NODE_MANAGER_SECRET, token))
-    throw new HttpError(401, 'UNAUTHORIZED', 'Node credential required');
+  await authenticateNode(c);
   const body = await parseBody(c, resourceClaimSchema);
+  await assertNodeClaims(c, { nodeId: body.nodeId, fqdn: body.nodeFqdn });
   const db = getDb();
   await db.$transaction(async tx => {
     await lockResourceNode(tx, body.nodeId);
@@ -118,8 +115,9 @@ resourceLeasesRouter.post('/claim', async c => {
  * It can only observe/adopt the original node journal; it cannot enter a handler
  * or create another effect, and therefore remains valid after deadline expiry. */
 resourceLeasesRouter.post('/recovery-claim', async c => {
-  nodeCredential(c.req.header('x-node-token') ?? '');
+  await authenticateNode(c);
   const body = await parseBody(c, resourceClaimSchema);
+  await assertNodeClaims(c, { nodeId: body.nodeId, fqdn: body.nodeFqdn });
   const db = getDb();
   await db.$transaction(async tx => {
     await lockResourceNode(tx, body.nodeId);
@@ -151,10 +149,9 @@ resourceLeasesRouter.get('/ssh-admission', authMiddleware, requireRole('ADMIN', 
 // This read is an admission decision, never cacheable discovery. The node holds
 // its legacy-inflight barrier until the admitted handler has finished.
 resourceLeasesRouter.post('/legacy-admission', async c => {
-  const token = c.req.header('x-node-token') ?? '';
-  if (!token || !NODE_MANAGER_SECRET || !verifyWithRotation('NODE_MANAGER_SECRET', NODE_MANAGER_SECRET, token))
-    throw new HttpError(401, 'UNAUTHORIZED', 'Node credential required');
+  await authenticateNode(c);
   const body = await parseBody(c, legacyAdmissionRequestSchema);
+  await assertNodeClaims(c, { fqdn: body.nodeFqdn });
   const db = getDb();
   const matches = await db.node.findMany({ where: { hostname: body.nodeFqdn }, select: { id: true, hostname: true }, take: 2 });
   const node = matches.length === 1 ? matches[0] : undefined;
@@ -177,14 +174,16 @@ resourceLeasesRouter.post('/legacy-admission', async c => {
 
 // Versioned drain status is separate from strict legacy-admission v1.
 resourceLeasesRouter.post('/enrollment/node-status', async c => {
-  nodeCredential(c.req.header('x-node-token') ?? '');
+  await authenticateNode(c);
   const input = await parseBody(c, z.object({ nodeFqdn: z.string().min(1).max(253), nonce: z.string().guid() }).strict());
+  await assertNodeClaims(c, { fqdn: input.nodeFqdn });
   c.header('Cache-Control', 'no-store');
   return c.json({ success: true, data: await nodeEnrollmentStatus(input.nodeFqdn, input.nonce) });
 });
 resourceLeasesRouter.post('/enrollment/scheduler-status', async c => {
-  nodeCredential(c.req.header('x-node-token') ?? '');
+  await authenticateNode(c);
   const input = await parseBody(c, z.object({ nodeFqdn: z.string().min(1).max(253), nonce: z.string().guid() }).strict());
+  await assertNodeClaims(c, { fqdn: input.nodeFqdn });
   c.header('Cache-Control', 'no-store');
   return c.json({ success: true, data: await nodeEnrollmentStatus(input.nodeFqdn, input.nonce, 'scheduler') });
 });
@@ -213,8 +212,9 @@ resourceLeasesRouter.post('/enrollment/dashboard/work/:workId/finish', async c =
   return c.json({ success: true, data });
 });
 resourceLeasesRouter.post('/enrollment/work/:workId/node-receipt', async c => {
-  nodeCredential(c.req.header('x-node-token') ?? '');
+  await authenticateNode(c);
   const input = await parseBody(c, nodeSessionReceiptSchema);
+  await assertNodeClaims(c, { nodeId: input.nodeId, fqdn: input.nodeFqdn });
   if (input.workId !== workId(c.req.param('workId')))
     throw new HttpError(400, 'INVALID_WORK_ID', 'Path and node receipt work IDs differ');
   const data = await settleParticipantWorkFromNodeReceipt(input);

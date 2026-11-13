@@ -199,6 +199,11 @@ export const envSchema = z.object({
   // Managed Hermes Agent fleet configuration (all optional)
   MAGNUS_HERMES_REGISTRY_ENABLED: booleanEnvSchema,
   MAGNUS_REGISTRY_DEPLOY_HOSTS: z.string().default(''),
+  // Per-node credentials (docs/NODE_CREDENTIALS.md)
+  NODE_AUTH_MODE: z.enum(['compat', 'warn', 'enforce']).default('compat'),
+  NODE_AUTH_LEGACY_UPGRADE_UNTIL: z.string().refine(value => !Number.isNaN(new Date(value).getTime()), 'must be an ISO 8601 date').optional(),
+  NODE_AUTH_SERVER_KEY_PATH: z.string().min(1).optional(),
+  NODE_AUTO_REGISTER: z.enum(['true', 'false']).default('true').transform((value) => value === 'true'),
   MAGNUS_NODE_DNS_SUFFIX: z
     .string()
     .regex(/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i)

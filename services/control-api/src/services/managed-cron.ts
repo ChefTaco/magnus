@@ -150,7 +150,7 @@ export async function stageLegacyCronForEnrollment(cronJobId: string,
   const assertion = { ...unsigned, signature: createHmac('sha256', secret)
     .update(cronEnrollmentStageSigningPayload(unsigned)).digest('hex') };
   const client = new NodeApiClient({ baseUrl: getNodeBaseUrl(candidate.node.ipAddress, candidate.node.port),
-    nodeToken: getNodeManagerSecret() });
+    nodeId: candidate.node.id, nodeToken: getNodeManagerSecret() });
   const staged = await client.stageManagedCronForEnrollment(assertion);
   if (!staged.success) return fail('Node did not acknowledge disabled legacy scheduler conversion');
   const ack = cronEnrollmentStageReceiptSchema.parse(staged.data);
@@ -359,7 +359,7 @@ export async function reconcileForeignSchedulerSource(raw: SchedulerSourceSettle
       fail('Scheduler reconciliation target or drain barrier differs');
     return node;
   });
-  const client = new NodeApiClient({ baseUrl: getNodeBaseUrl(node.ipAddress, node.port), nodeToken: getNodeManagerSecret() });
+  const client = new NodeApiClient({ baseUrl: getNodeBaseUrl(node.ipAddress, node.port), nodeId: node.id, nodeToken: getNodeManagerSecret() });
   const response = await client.reconcileSchedulerSource(assertion);
   if (!response.success) return fail('Node rejected scheduler source reconciliation');
   const ack = schedulerSourceSettlementAckSchema.parse(response.data);

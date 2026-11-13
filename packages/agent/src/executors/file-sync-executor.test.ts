@@ -37,6 +37,20 @@ describe('file routes', () => {
       expect((await read(path)).status).toBe(403);
   });
 
+  it('never serves, lists into or overwrites the node identity key', async () => {
+    await mkdir(join(agentRoot, 'identity'));
+    await writeFile(join(agentRoot, 'identity/node.key'), 'fixture-key-material', { mode: 0o600 });
+    await symlink(join(agentRoot, 'identity/node.key'), join(dir, 'link-to-key'));
+    for (const path of [join(agentRoot, 'identity/node.key'), join(agentRoot, 'identity'), join(dir, 'link-to-key')]) {
+      const response = await read(path);
+      expect(response.status).toBe(403);
+      expect(await response.text()).not.toContain('fixture-key-material');
+    }
+    const write = await routes.fileRoutes.request('/write', { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ filePath: join(agentRoot, 'identity/node.key'), content: 'x' }) });
+    expect(write.status).toBe(403);
+  });
+
   it('blocks only whole path segments', async () => {
     expect((await read('/devices-not-dev')).status).not.toBe(403);
   });

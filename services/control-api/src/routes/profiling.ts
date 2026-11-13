@@ -4,7 +4,7 @@ import type { AppVariables } from '../types/index.js'
 import { authMiddleware, requireRole } from '../middleware/auth.js'
 import { getDb } from '../db/index.js'
 import { HttpError } from '../middleware/error-handler.js'
-import { getNodeManagerSecret } from '../utils/env.js'
+import { agentFetch } from '../services/node-agent-auth.js'
 import { SENTINEL_NODE_IDS } from '../utils/sentinel-nodes.js'
 
 export const profilingRouter = new Hono<AppVariables>()
@@ -25,8 +25,7 @@ profilingRouter.get('/:nodeId', requireRole('ADMIN', 'OPERATOR'), async (c) => {
   const agentUrl = `https://${node.ipAddress}:${node.port}${path}`
 
   try {
-    const res = await fetch(agentUrl, {
-      headers: { 'x-node-token': getNodeManagerSecret() },
+    const res = await agentFetch({ nodeId: node.id }, agentUrl, {
       signal: AbortSignal.timeout(10_000),
     })
 
@@ -63,8 +62,7 @@ profilingRouter.get('/', requireRole('ADMIN', 'OPERATOR'), async (c) => {
 
   const results = await Promise.allSettled(
     nodes.map(async (node) => {
-      const res = await fetch(`https://${node.ipAddress}:${node.port}/api/v1/profiling`, {
-        headers: { 'x-node-token': getNodeManagerSecret() },
+      const res = await agentFetch({ nodeId: node.id }, `https://${node.ipAddress}:${node.port}/api/v1/profiling`, {
         signal: AbortSignal.timeout(10_000),
       })
 

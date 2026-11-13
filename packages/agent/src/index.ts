@@ -15,6 +15,10 @@ Usage:
   magnus-agent acceptance [--json] [--wait-seconds 60]  Verify native health and recent accepted heartbeat
   magnus-agent env-schema                           Print the configuration schema as JSON
   magnus-agent install-service [--unprivileged]     (root, once) Versioned layout, upgrade launcher and systemd unit
+  magnus-agent enroll --token <token>               Bind a new node key with a one-time enrollment token
+  magnus-agent identity show [--json]               Print this node's id and key fingerprints (never the key)
+  magnus-agent identity rotate                      Replace the node key (signed with the key it replaces)
+  magnus-agent identity reset                       Remove the node key and return to the shared node secret
   magnus-agent --help | --version
 
 Options:
@@ -101,6 +105,52 @@ export async function main(argv: string[]): Promise<number | null> {
         console.log(report.ok ? 'Configuration OK' : errors.map(error => `  - ${error}`).join('\n'));
       }
       return report.ok ? 0 : 1;
+    }
+    case 'enroll': {
+      const tokenIndex = cli.rest.indexOf('--token');
+      const token = tokenIndex >= 0 ? cli.rest[tokenIndex + 1] : cli.rest.find(arg => arg.startsWith('--token='))?.slice('--token='.length);
+      if (!token || cli.rest.length > 2) return fail('usage: magnus-agent enroll --token <token>');
+      config({ path: resolve(process.env['AGENT_INSTALL_DIR'] ?? process.cwd(), '.env'), quiet: true });
+      const { enrollWithToken } = await import('./node-enrollment.js');
+      const result = await enrollWithToken(token);
+      if (!result.ok) return fail(`enrollment failed: ${result.reason}`);
+      console.log(`Enrolled as node ${result.nodeId}.`);
+      console.log(`  node key fingerprint:   ${result.keyFingerprint}`);
+      console.log(`  server key fingerprint: ${result.serverKeyFingerprint}`);
+      console.log('A running agent picks the new key up within a few seconds; no restart is needed.');
+      return 0;
+    }
+    case 'identity': {
+      const [action, ...extra] = cli.rest;
+      config({ path: resolve(process.env['AGENT_INSTALL_DIR'] ?? process.cwd(), '.env'), quiet: true });
+      if (action === 'show' && extra.every(arg => arg === '--json')) {
+        const { describeNodeIdentity } = await import('./node-enrollment.js');
+        const identity = describeNodeIdentity();
+        if (extra.includes('--json')) console.log(JSON.stringify(identity, null, 2));
+        else if (identity.state === 'none') console.log('No node key: this agent uses the shared node secret.');
+        else if (identity.state === 'unbound') console.log(`Node key ${identity.keyFingerprint} exists but the Control API has not bound it yet.`);
+        else {
+          console.log(`Node ${identity.nodeId} (${identity.origin}, bound ${identity.boundAt})`);
+          console.log(`  node key fingerprint:    ${identity.keyFingerprint}`);
+          console.log(`  pinned server key(s):    ${(identity.serverKeyFingerprints ?? []).join(', ')}`);
+        }
+        return 0;
+      }
+      if (action === 'rotate' && extra.length === 0) {
+        const { rotateNodeKey } = await import('./node-enrollment.js');
+        const result = await rotateNodeKey();
+        if (!result.ok) return fail(`rotation failed: ${result.reason}`);
+        console.log(`Node key rotated. New fingerprint: ${result.keyFingerprint}. The previous key stays valid until ${result.retiresAt}.`);
+        return 0;
+      }
+      if (action === 'reset' && extra.length === 0) {
+        const { resetNodeIdentity } = await import('./security/node-identity.js');
+        console.log(resetNodeIdentity()
+          ? 'Node key removed. This agent now uses the shared node secret.\nThe Control API still refuses the shared secret for this node until an administrator resets its credentials\n(POST /api/v1/nodes/<id>/credentials/reset) or issues an enrollment token.'
+          : 'There was no node key to remove.');
+        return 0;
+      }
+      return fail('usage: magnus-agent identity show [--json] | rotate | reset');
     }
     case 'install-service': {
       const { installService } = await import('./upgrade/install-service.js');

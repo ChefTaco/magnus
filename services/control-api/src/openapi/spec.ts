@@ -72,6 +72,7 @@ import {
   changePasswordSchema,
 } from '../schemas/users.js';
 import { CONTROL_API_VERSION } from '../config/version.js';
+import { enrollRequestSchema, legacyUpgradeRequestSchema, rotateRequestSchema } from '../schemas/node-enrollment.js';
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
@@ -157,6 +158,16 @@ function pp(name: string, description: string) {
 }
 
 const apiSecretAuth = [{ apiSecret: [] }];
+/** Agent routes: a node signature, or the shared node secret while NODE_AUTH_MODE is not enforce. */
+const nodeAuthSecurity = [{ nodeSignature: [] }, { nodeToken: [] }];
+const nodeCredentialView = { type: 'object', description: 'Per-node credential state. `none`: shared node secret only; `active`: the node has its own key and the shared secret is refused for it; `revoked`: it must be enrolled again.',
+  properties: { state: { type: 'string', enum: ['none', 'active', 'revoked'] }, origin: { type: 'string', nullable: true, enum: ['ENROLLMENT_TOKEN', 'LEGACY_UPGRADE', 'ROTATION', null] },
+    boundAt: { type: 'string', format: 'date-time', nullable: true }, lastUsedAt: { type: 'string', format: 'date-time', nullable: true },
+    keyFingerprint: { type: 'string', nullable: true, description: 'ADMIN only: first 16 hex characters of the key id.' } } };
+const nodeBinding = { type: 'object', properties: { nodeId: { type: 'string' }, nodeName: { type: 'string' }, keyId: { type: 'string', description: 'SHA-256 of the bound public key (SPKI DER), hex.' },
+  serverKeys: { type: 'array', description: 'Server keys the agent pins.', items: { type: 'object', properties: { keyId: { type: 'string' }, publicKey: { type: 'string', description: 'Ed25519 SPKI DER, base64.' }, status: { type: 'string', enum: ['active', 'next'] } } } },
+  mode: { type: 'string', enum: ['compat', 'warn', 'enforce'] } } };
+const requestBody = (schema: ZodSchema) => ({ required: true, content: { 'application/json': { schema: zod(schema) } } });
 const sharedResourceAuth = [{ sharedResourceBearer: [] }, { apiSecret: [] }, { bearerAuth: [] }];
 const nodeTokenAuth = [{ nodeToken: [] }];
 
@@ -296,6 +307,7 @@ const componentSchemas: Record<string, JsonSchema> = {
       metadata: { type: 'string', description: 'JSON-encoded object' },
       roleId: { type: 'string', nullable: true },
       lastHeartbeatAt: { type: 'string', format: 'date-time', nullable: true },
+      nodeCredential: nodeCredentialView,
       createdAt: { type: 'string', format: 'date-time' },
       updatedAt: { type: 'string', format: 'date-time' },
       agent: { type: 'object', nullable: true, properties: { version: { type: 'string' }, status: { type: 'string' } } },
@@ -776,13 +788,15 @@ const paths: Record<string, Record<string, unknown>> = {
     post: {
       tags: ['Nodes'],
       summary: 'Register node',
-      description: 'Manually register a new fleet node. Returns the node record and a signed JWT node token for agent authentication.',
+      description: 'Manually register a new fleet node. The reply carries, once and with `Cache-Control: no-store`, the legacy node `token` and a one-time `enrollmentToken` for `magnus-agent enroll --token` on the new host.',
       security: apiSecretAuth,
       requestBody: jsonBody('RegisterNode'),
       responses: {
         201: success('Node registered', {
           type: 'object',
-          properties: { node: ref('Node'), token: { type: 'string', description: 'Signed JWT for agent auth' } },
+          properties: { nodeId: { type: 'string' }, token: { type: 'string', description: 'Legacy node token (not used for authentication)' },
+            enrollmentToken: { type: 'string', description: 'One-time enrollment token' }, enrollmentTokenExpiresAt: { type: 'string', format: 'date-time' },
+            controlApiUrl: { type: 'string' } },
         }),
         400: err400,
         401: err401,
@@ -831,6 +845,52 @@ const paths: Record<string, Record<string, unknown>> = {
         404: err404,
       },
     },
+  },
+  '/nodes/{nodeId}/credentials': {
+    get: { tags: ['Nodes'], summary: 'List a node\'s credentials (ADMIN)', description: 'Key ids, fingerprints, status, origin and use times. Never key material.',
+      security: apiSecretAuth, parameters: [pp('nodeId', 'Node ID')],
+      responses: { 200: success('Credentials, newest first', { type: 'array', items: { type: 'object', properties: { keyId: { type: 'string' }, keyFingerprint: { type: 'string' },
+        status: { type: 'string', enum: ['ACTIVE', 'RETIRING', 'REVOKED'] }, origin: { type: 'string' }, boundFqdn: { type: 'string' }, createdAt: { type: 'string', format: 'date-time' },
+        lastUsedAt: { type: 'string', format: 'date-time', nullable: true }, retireAt: { type: 'string', format: 'date-time', nullable: true },
+        revokedAt: { type: 'string', format: 'date-time', nullable: true }, revokedBy: { type: 'string', nullable: true } } } }), 401: err401, 403: err403, 404: err404 } },
+  },
+  '/nodes/{nodeId}/credentials/revoke': {
+    post: { tags: ['Nodes'], summary: 'Revoke a node\'s key (ADMIN)', description: 'Revokes one key (`keyId`) or every valid key. The agent is refused, also with the shared secret, until it is enrolled with a new token.',
+      security: apiSecretAuth, parameters: [pp('nodeId', 'Node ID')],
+      requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', properties: { keyId: { type: 'string', pattern: '^[a-f0-9]{64}$' } }, additionalProperties: false } } } },
+      responses: { 200: success('Keys revoked', { type: 'object', properties: { revoked: { type: 'integer' } } }), 401: err401, 403: err403, 404: err404 } },
+  },
+  '/nodes/{nodeId}/credentials/reset': {
+    post: { tags: ['Nodes'], summary: 'Return a node to the shared node secret (ADMIN)', description: 'Rollback: removes the node\'s credential records so it is accepted with `x-node-token` again. Refused with 409 while `NODE_AUTH_MODE=enforce`.',
+      security: apiSecretAuth, parameters: [pp('nodeId', 'Node ID')],
+      requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', additionalProperties: false } } } },
+      responses: { 200: success('Credentials removed', { type: 'object', properties: { removed: { type: 'integer' } } }), 401: err401, 403: err403, 404: err404, 409: err409 } },
+  },
+  '/nodes/{nodeId}/enrollment-token': {
+    post: { tags: ['Nodes'], summary: 'Issue a one-time enrollment token (ADMIN)', description: 'For `magnus-agent enroll --token`. Only its SHA-256 is stored; an earlier unused token of the node is withdrawn. Using it replaces the node\'s current key.',
+      security: apiSecretAuth, parameters: [pp('nodeId', 'Node ID')],
+      requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', properties: { ttlSeconds: { type: 'integer', minimum: 60, maximum: 86400, default: 3600 } }, additionalProperties: false } } } },
+      responses: { 201: success('Token issued (shown once, no-store)', { type: 'object', properties: { token: { type: 'string' }, expiresAt: { type: 'string', format: 'date-time' } } }), 401: err401, 403: err403, 404: err404 } },
+  },
+  '/node-enrollment/server-key': {
+    get: { tags: ['Heartbeat'], summary: 'Server keys agents pin, and the state of the node-credential migration', description: 'Public. Agents read it over the verified TLS connection they send their credentials on.', security: [],
+      responses: { 200: success('Server public keys', { type: 'object', properties: { keys: nodeBinding.properties.serverKeys, mode: nodeBinding.properties.mode,
+        legacyUpgrade: { type: 'object', properties: { open: { type: 'boolean' }, until: { type: 'string', format: 'date-time' } } } } }) } },
+  },
+  '/node-enrollment/legacy-upgrade': {
+    post: { tags: ['Heartbeat'], summary: 'An existing agent binds its first node key', description: 'Authenticated by the shared node secret plus a proof of possession of the submitted key. Binds only when the node exists, has no credential yet, the caller\'s socket address is the address recorded for the node, and the upgrade window is open. Idempotent for the same key.',
+      security: nodeTokenAuth, requestBody: requestBody(legacyUpgradeRequestSchema),
+      responses: { 200: success('Key bound', nodeBinding), 400: err400, 401: err401, 403: err403, 404: err404, 409: err409, 410: { description: 'The legacy upgrade is closed', content: { 'application/json': { schema: ref('ApiError') } } } } },
+  },
+  '/node-enrollment/enroll': {
+    post: { tags: ['Heartbeat'], summary: 'An agent binds a node key with a one-time enrollment token', description: 'The token is the authorization; the proof of possession covers its SHA-256. Replaces the node\'s previous key.', security: [],
+      requestBody: requestBody(enrollRequestSchema),
+      responses: { 200: success('Key bound', nodeBinding), 400: err400, 401: err401, 409: err409 } },
+  },
+  '/node-enrollment/rotate': {
+    post: { tags: ['Heartbeat'], summary: 'An agent replaces its node key', description: 'Signed with the key being replaced, which stays valid for 24 hours.', security: [{ nodeSignature: [] }],
+      requestBody: requestBody(rotateRequestSchema),
+      responses: { 200: success('Key rotated', { ...nodeBinding, properties: { ...nodeBinding.properties, retiresAt: { type: 'string', format: 'date-time' } } }), 400: err400, 401: err401, 409: err409 } },
   },
   '/nodes/{nodeId}/repair-address': {
     post: {
@@ -931,8 +991,8 @@ const paths: Record<string, Record<string, unknown>> = {
     post: {
       tags: ['Heartbeat'],
       summary: 'Agent heartbeat',
-      description: 'Receives periodic heartbeats from fleet agents. Auto-registers unknown agents. Uses shared-secret auth via `x-node-token` header (not JWT).',
-      security: nodeTokenAuth,
+      description: 'Receives periodic heartbeats from fleet agents. Authenticated by a node signature (`x-magnus-*` headers) or, while `NODE_AUTH_MODE` is not `enforce`, the shared secret in `x-node-token`. The shared secret is refused for a node that has its own key, and adds an unknown agent to the inventory unless `NODE_AUTO_REGISTER=false`. The reply carries `nodeAuth` (mode and the method that was accepted).',
+      security: nodeAuthSecurity,
       requestBody: {
         required: true,
         description: 'Agent identification + health data',
@@ -1019,18 +1079,18 @@ const paths: Record<string, Record<string, unknown>> = {
         503: { description: 'Dedicated participant credential or schema unavailable' } } },
   },
   '/resource-leases/enrollment/node-status': {
-    post: { tags: ['Commands'], summary: 'Node credential: versioned authoritative enrollment status', security: nodeTokenAuth,
+    post: { tags: ['Commands'], summary: 'Node credential: versioned authoritative enrollment status', security: nodeAuthSecurity,
       description: 'Durable enrollment coordination only; never execution approval. Responses are uncached. Participant credentials are distinct from operator and node credentials.',
       requestBody: { required: true, content: { 'application/json': { schema: zod(zSchema.object({ nodeFqdn: zSchema.string().min(1).max(253), nonce: zSchema.string().guid() }).strict()) } } },
       responses: { 200: success('Authoritative durable status'), 400: err400, 401: err401, 403: err403, 404: err404, 409: err409, 503: { description: 'Dedicated participant configuration unavailable' } } },
   },
   '/resource-leases/enrollment/terminal-claim': {
-    post: { tags: ['Commands'], summary: 'Node credential: consume the exact full-node terminal grant once', security: nodeTokenAuth,
+    post: { tags: ['Commands'], summary: 'Node credential: consume the exact full-node terminal grant once', security: nodeAuthSecurity,
       requestBody: { required: true, content: { 'application/json': { schema: zod(zSchema.object({ authority: managedTerminalAuthoritySchema, nonce: zSchema.string().guid() }).strict()) } } },
       responses: { 200: success('Single-use terminal authority'), 400: err400, 401: err401, 409: err409 } },
   },
   '/resource-leases/enrollment/terminal-receipt': {
-    post: { tags: ['Commands'], summary: 'Node credential: settle a stopped restricted terminal process group', security: nodeTokenAuth,
+    post: { tags: ['Commands'], summary: 'Node credential: settle a stopped restricted terminal process group', security: nodeAuthSecurity,
       requestBody: { required: true, content: { 'application/json': { schema: zod(managedTerminalReceiptSchema) } } },
       responses: { 200: success('Original terminal owner released'), 400: err400, 401: err401, 409: err409 } },
   },
@@ -1042,7 +1102,7 @@ const paths: Record<string, Record<string, unknown>> = {
       responses: { 200: success('Bounded terminal bytes or lifecycle metadata'), 400: err400, 401: err401, 409: err409 } },
   },
   '/resource-leases/transfer/authority-snapshot': {
-    post: { tags: ['Commands'], summary: 'Node credential: read-only lease and writer inventory', security: nodeTokenAuth,
+    post: { tags: ['Commands'], summary: 'Node credential: read-only lease and writer inventory', security: nodeAuthSecurity,
       description: 'Counts held command leases, participant writers, unsettled managed cron occurrences, and global shared leases under the shared-admission and canonical node locks. Reports node and Control API shared-admission fence state. Independent writers and OS schedules remain outside this fence; zero counts are not handover authority.',
       requestBody: { required: true, content: { 'application/json': { schema: zod(zSchema.object({ nodeFqdn: zSchema.string().min(1).max(253), nonce: zSchema.string().guid() }).strict()) } } },
       responses: { 200: success('Incomplete authority inventory'), 400: err400, 401: err401, 409: err409 } },
@@ -1158,19 +1218,19 @@ const paths: Record<string, Record<string, unknown>> = {
   '/resource-leases/claim': {
     post: { tags: ['Commands'], summary: 'Confirm an existing exact resource owner (node credential)',
       description: 'Does not create ownership or grant remediation approval. Requires a running, unexpired owner bound to the node, command digest and fence.',
-      security: nodeTokenAuth, requestBody: jsonBody('ResourceClaim'),
+      security: nodeAuthSecurity, requestBody: jsonBody('ResourceClaim'),
       responses: { 200: success('Exact admitted claim'), 400: err400, 401: err401, 409: err409 } },
   },
   '/resource-leases/recovery-claim': {
     post: { tags: ['Commands'], summary: 'Confirm exact retained skill-publication recovery (node credential)',
       description: 'Does not create, revive or dispatch ownership. It permits only evidence recovery for the original native skill-install request after the node has retained the matching local receipt.',
-      security: nodeTokenAuth, requestBody: jsonBody('ResourceClaim'),
+      security: nodeAuthSecurity, requestBody: jsonBody('ResourceClaim'),
       responses: { 200: success('Exact recovery claim'), 400: err400, 401: err401, 409: err409 } },
   },
   '/resource-leases/legacy-admission': {
     post: { tags: ['Commands'], summary: 'Check exact legacy node admission (node credential)',
       description: 'Uncached nonce-bound decision. Denies if enrollment is enabled or any sticky lease history exists, including a first reservation rejected during preflight. Node must hold its local legacy-inflight barrier until execution ends.',
-      security: nodeTokenAuth, requestBody: jsonBody('ResourceLegacyAdmission'),
+      security: nodeAuthSecurity, requestBody: jsonBody('ResourceLegacyAdmission'),
       responses: { 200: success('Authoritative enrollment decision'), 400: err400, 401: err401, 409: err409 } },
   },
   '/resource-leases/ssh-admission': {
@@ -2941,7 +3001,8 @@ export function buildOpenApiSpec() {
         'Most endpoints require authentication via one of:\n' +
         '- **API Secret** — `x-api-secret` header (injected by the dashboard proxy)\n' +
         '- **JWT Bearer** — `Authorization: Bearer <token>` (HS256, from `/auth/login`)\n' +
-        '- **Node Token** — `x-node-token` header (shared secret for agent heartbeats)\n\n' +
+        '- **Node Signature** — `x-magnus-*` headers (per-node Ed25519 key; see docs/NODE_CREDENTIALS.md)\n' +
+        '- **Node Token** — `x-node-token` header (shared secret for agents without their own key)\n\n' +
         '## RBAC Roles\n\n' +
         '| Role | Access |\n' +
         '|------|--------|\n' +
@@ -2988,7 +3049,13 @@ export function buildOpenApiSpec() {
           type: 'apiKey',
           in: 'header',
           name: 'x-node-token',
-          description: 'Shared secret for agent heartbeat authentication (`NODE_MANAGER_SECRET`).',
+          description: 'Shared node secret (`NODE_MANAGER_SECRET`). Accepted while `NODE_AUTH_MODE` is not `enforce`, and never for a node that has its own key.',
+        },
+        nodeSignature: {
+          type: 'apiKey',
+          in: 'header',
+          name: 'x-magnus-signature',
+          description: 'Ed25519 signature of a node key over `magnus.node-request.v1`, method, path and query, audience (`server:<server key id>`), node id, timestamp, nonce and the SHA-256 of the body. Sent with `x-magnus-node-id`, `x-magnus-key-id`, `x-magnus-timestamp` (Unix milliseconds, within 60 seconds) and `x-magnus-nonce` (single use). See docs/NODE_CREDENTIALS.md.',
         },
         hermesRegistryToken: { type: 'apiKey', in: 'header', name: 'x-hermes-registry-token',
           description: 'Distinct bearer bound to one enrolled node and Hermes installation; hosts in `MAGNUS_REGISTRY_SUBMIT_ONLY_HOSTS` have submission-only scope.' },

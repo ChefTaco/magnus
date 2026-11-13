@@ -18,6 +18,27 @@ describe('drift collector', () => {
     await expect(import('node:fs/promises').then(fs => fs.access(marker))).rejects.toThrow();
   });
 
+  it('is not an oracle for the node identity key, directly or through a link', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'drift-identity-'));
+    const previous = process.env['AGENT_INSTALL_DIR'];
+    process.env['AGENT_INSTALL_DIR'] = dir;
+    try {
+      const { mkdir, symlink } = await import('node:fs/promises');
+      await mkdir(join(dir, 'identity'));
+      await writeFile(join(dir, 'identity/node.key'), 'fixture-key-material');
+      await symlink(join(dir, 'identity/node.key'), join(dir, 'link'));
+      const findings = await runDriftScan({ checks: [
+        { type: 'file', name: join(dir, 'identity/node.key'), expected: 'fixture' },
+        { type: 'file', name: join(dir, 'link'), expected: `sha256:${'0'.repeat(64)}` },
+        { type: 'file', name: join(dir, 'identity/node.key'), expected: 'exists' },
+      ] });
+      expect(findings.map(f => [f.actual, f.status])).toEqual([['protected', 'error'], ['protected', 'error'], ['protected', 'error']]);
+    } finally {
+      if (previous === undefined) delete process.env['AGENT_INSTALL_DIR']; else process.env['AGENT_INSTALL_DIR'] = previous;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('hashes and matches file content without shelling out', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'drift-'));
     try {

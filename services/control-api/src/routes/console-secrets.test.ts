@@ -25,6 +25,10 @@ vi.mock('../utils/env.js', async (original) => ({ ...await original<object>(),
 }));
 vi.mock('../services/audit-service.js', async (original) => ({ ...await original<object>(),
   logAuditEvent: vi.fn(async (event: unknown) => { fixture.audit.push(event); }) }));
+vi.mock('../services/node-credential-store.js', () => ({ nodeCredentialStore: {
+  nodeById: async () => ({ id: 'node-new', name: 'node-new', hostname: 'node-new.example.com', ipAddress: '192.0.2.11', port: 4100, status: 'PROVISIONING' }),
+  createEnrollmentToken: async () => undefined, credentialsOfNode: async () => [], summaries: async () => new Map(),
+} }));
 vi.mock('../services/managed-cron.js', async (original) => ({ ...await original<object>(), cronMutationMode: async () => 'legacy' }));
 vi.mock('../sdk/index.js', () => ({ NodeApiClient: class {
   async syncCronJob() { return undefined; }
@@ -184,11 +188,15 @@ describe('node registration token', () => {
     spies.forEach((spy) => spy.mockRestore());
     expect(status).toBe(201);
     expect(headers.get('Cache-Control')).toBe('no-store');
-    const { data } = JSON.parse(text) as { data: { token: string } };
+    const { data } = JSON.parse(text) as { data: { token: string; enrollmentToken: string; enrollmentTokenExpiresAt: string } };
     expect(data.token).toMatch(/^node-/);
-    expect(JSON.stringify(fixture.audit)).not.toContain(data.token);
-    expect(fixture.audit.length).toBe(1);
-    expect(logged.join('\n')).not.toContain(data.token);
+    expect(data.enrollmentToken).toMatch(/^mne_[A-Za-z0-9_-]{43}$/);
+    expect(Date.parse(data.enrollmentTokenExpiresAt)).toBeGreaterThan(Date.now());
+    for (const secret of [data.token, data.enrollmentToken]) {
+      expect(JSON.stringify(fixture.audit)).not.toContain(secret);
+      expect(logged.join('\n')).not.toContain(secret);
+    }
+    expect((fixture.audit as Array<{ action: string }>).map((event) => event.action).sort()).toEqual(['node.enrollment_token.issue', 'node.register']);
   });
 
   it.each(['VIEWER', 'OPERATOR'] as const)('hides secret fingerprints in node metadata from %s', async (role) => {

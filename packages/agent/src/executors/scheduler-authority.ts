@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { freshSchedulerStatus, schedulerStatusSchema } from './scheduler-status.js';
 /** Fresh fixed-endpoint authority and the existing signed supervisor/command ledger. */
-import { CONTROL_API_URL, HOST_FQDN, NODE_MANAGER_SECRET, RESULT_SIGNING_SECRET, MAGNUS_EXECUTION_SUPERVISOR_ENABLED } from '../env.js';
-import { controlApiFetch } from '../tls.js';
+import { CONTROL_API_URL, HOST_FQDN, RESULT_SIGNING_SECRET, MAGNUS_EXECUTION_SUPERVISOR_ENABLED } from '../env.js';
+import { nodeApiFetch } from '../node-auth.js';
 import { CommandLedger, commandRequestDigest } from './command-ledger.js';
 import { ExecutionSupervisor } from './execution-supervisor.js';
 import { signCommandResult } from '../security/command-result-signature.js';
@@ -10,9 +10,9 @@ import { managedClaimSchema } from '../security/managed-http.js';
 import type { SchedulerAuthority, SchedulerOccurrence } from './managed-scheduler.js';
 
 export async function schedulerPost(path: string, body: unknown): Promise<Record<string, unknown>> {
-  const response = await controlApiFetch(CONTROL_API_URL.replace(/\/+$/, '') + '/api/v1/' + path, {
+  const response = await nodeApiFetch(CONTROL_API_URL.replace(/\/+$/, '') + '/api/v1/' + path, {
     method: 'POST', redirect: 'error', signal: AbortSignal.timeout(5000),
-    headers: { 'content-type': 'application/json', 'x-node-token': NODE_MANAGER_SECRET, 'cache-control': 'no-store' }, body: JSON.stringify(body),
+    headers: { 'content-type': 'application/json', 'cache-control': 'no-store' }, body: JSON.stringify(body),
   });
   if (!response.ok) throw new Error('Scheduler authority unavailable or rejected');
   const reader = response.body?.getReader(); if (!reader) throw new Error('Scheduler authority response absent');

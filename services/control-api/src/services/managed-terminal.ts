@@ -6,7 +6,8 @@ import { HttpError } from '../middleware/error-handler.js';
 import { lockResourceNode } from './resource-node-lock.js';
 import { assertNodeAdmissionOpen } from './admission-fence.js';
 import { getNodeBaseUrl } from '../utils/node-url.js';
-import { getNodeManagerSecret, RESULT_SIGNING_SECRET } from '../utils/env.js';
+import { RESULT_SIGNING_SECRET } from '../utils/env.js';
+import { agentFetch } from './node-agent-auth.js';
 import { hasFreshOnlineHealth } from './resource-node-health.js';
 
 const sha = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -76,8 +77,8 @@ export async function relayManagedTerminal(workId: string, ownerId: string, acti
   const url = getNodeBaseUrl(node.ipAddress, node.port).replace(/\/$/, '') + '/api/v1/terminal/session';
   if (new URL(url).protocol !== 'https:') fail();
   try {
-  const response = await fetch(url, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(15_000),
-    headers: { 'content-type': 'application/json', 'x-node-token': getNodeManagerSecret() },
+  const response = await agentFetch({ nodeId: node.id }, url, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(15_000),
+    headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ authority: terminalAuthority(work), ...action }) });
   // The agent limits a read to 24 KiB before base64 encoding. Other replies are metadata only.
   const reader = response.body?.getReader(); const chunks: Uint8Array[] = []; let size = 0;

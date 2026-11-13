@@ -2,7 +2,10 @@ import ky from 'ky';
 import { logger } from './utils/logger.js';
 import { AGENT_VERSION } from './version.js';
 import { collectSystemHealth } from './collectors/health-collector.js';
-import { NODE_MANAGER_SECRET as NODE_TOKEN, CONTROL_API_URL, HOST_FQDN } from './env.js';
+import { CONTROL_API_URL, HOST_FQDN } from './env.js';
+import { controlApiAuthHeaders, noteControlApiResponse } from './node-auth.js';
+import { onHeartbeatAcknowledged } from './node-enrollment.js';
+import { boundNodeIdentity } from './security/node-identity.js';
 import { controlApiFetch } from './tls.js';
 import { startSpan, formatTraceparent } from './collectors/otel-collector.js';
 import { collectHermesState } from './executors/hermes-manager.js';
@@ -123,8 +126,10 @@ export function startHeartbeatLoop(): void {
 
       const selfUpgrade = await heartbeatSelfUpgrade();
       posting = true;
-      await ky.post(`${CONTROL_API_URL}/api/v1/heartbeat`, {
-        json: {
+      const identity = boundNodeIdentity();
+      const heartbeatUrl = `${CONTROL_API_URL}/api/v1/heartbeat`;
+      // Serialized here so the signature covers the exact bytes sent.
+      const payload = JSON.stringify({
           agentVersion: AGENT_VERSION,
           uptimeSeconds: process.uptime(),
           status: 'healthy',
@@ -141,15 +146,23 @@ export function startHeartbeatLoop(): void {
           ...(hermes ? { hermes } : {}),
           nodeVersion: process.version,
           selfUpgrade,
-        },
+          // Which server keys this agent pins: the server stops sending it the shared secret once it signs with one of them.
+          ...(identity ? { nodeAuth: { serverKeyIds: identity.binding.serverKeys.map(key => key.keyId) } } : {}),
+      });
+      await ky.post(heartbeatUrl, {
+        body: payload,
         headers: {
-          'x-node-token': NODE_TOKEN,
+          'content-type': 'application/json',
+          ...controlApiAuthHeaders('POST', heartbeatUrl, payload),
           'traceparent': formatTraceparent(span.traceId, span.spanId),
         },
         timeout: 10_000,
+        retry: 0,
         fetch: controlApiFetch,
+        hooks: { afterResponse: [({ response }) => { noteControlApiResponse(response); }] },
       }).json<unknown>().then((raw) => {
         const resp = parseHeartbeatAcknowledgement(raw);
+        onHeartbeatAcknowledged(resp.data.nodeAuth);
         // The first accepted heartbeat from a version on trial confirms the upgrade.
         if (resp.data?.accepted && confirmTrial(AGENT_VERSION)) logger.info(`Self-upgrade to ${AGENT_VERSION} confirmed`);
         if (resp.data?.updateAvailable && resp.data.expectedVersion) {
