@@ -27,4 +27,19 @@ describe('assistant tools', () => {
     const outcome = await executeAiTool({ name: 'runSkill', arguments: { nodeId: 'node-1', skillName, action } });
     expect(outcome.result).toEqual({ error: expect.stringContaining('may contain only') });
   });
+
+  it.each(['.env', 'config/server.env.local', '.npmrc', 'certs/server.key', 'tls/fullchain.pem', 'state/credential-rotations.json',
+    'backups/2026-11-13.dump', 'data/app.sqlite', '.ssh/id_ed25519', 'keys/deploy_id_rsa', '../outside.txt', '/etc/passwd'])(
+    'never read or list the secret-bearing path %j', async (path) => {
+      const read = await executeAiTool({ name: 'readFile', arguments: { path } });
+      const write = await executeAiTool({ name: 'writeFile', arguments: { path, content: 'x' } });
+      expect(read.result).toEqual({ error: expect.stringContaining('Access denied') });
+      expect(write.result).toEqual({ error: expect.stringContaining('Access denied') });
+    });
+
+  it('still read ordinary workspace files', async () => {
+    const read = await executeAiTool({ name: 'readFile', arguments: { path: 'package.json' } });
+    expect(read.result).toMatchObject({ path: 'package.json', content: expect.stringContaining('@hivemagnus/magnus-server') });
+  });
 });
+

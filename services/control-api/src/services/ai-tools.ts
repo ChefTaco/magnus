@@ -450,14 +450,24 @@ registerTool('getNodeLogs', async (args) => {
 
 // ── File Tools ──
 
+/**
+ * Files the assistant never reads, lists or writes: the same kinds the repository refuses to
+ * commit. File contents go to the model provider, which may be a hosted service.
+ */
+const BLOCKED_PATH_PARTS = ['.env', '.npmrc', 'node_modules', '.git', 'prisma/magnus.db', 'certs', 'state', 'artifacts', 'backups', '.ssh'];
+const BLOCKED_FILE_NAME = /(?:\.(?:pem|key|crt|p12|pfx|jks|db|sqlite|sqlite3|dump)|(?:^|[_-])id_(?:rsa|ed25519|ecdsa))$/i;
+
 function isPathSafe(targetPath: string): boolean {
   const resolved = resolve(WORKSPACE_ROOT, targetPath);
   const rel = relative(WORKSPACE_ROOT, resolved);
   // Must stay within workspace and not traverse up
   if (rel.startsWith('..') || resolve(resolved) !== resolved) return false;
   // Block access to sensitive files
-  const blocked = ['.env', 'node_modules', '.git', 'prisma/magnus.db'];
-  return !blocked.some((b) => rel.includes(b));
+  const segments = rel.split(/[\\/]/);
+  if (BLOCKED_FILE_NAME.test(segments.at(-1) ?? '')) return false;
+  return !BLOCKED_PATH_PARTS.some((blocked) => (blocked.includes('/') || blocked.startsWith('.')
+    ? rel.includes(blocked)
+    : segments.includes(blocked)));
 }
 
 registerTool('readFile', async (args) => {
