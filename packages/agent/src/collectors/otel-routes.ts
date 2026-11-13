@@ -13,8 +13,10 @@ export const otelRoutes = new Hono();
 
 // ── Recent spans ──
 otelRoutes.get('/', (c) => {
-  const limit = parseInt(c.req.query('limit') ?? '100', 10);
-  const spans = getRecentSpans(Math.min(limit, 500));
+  const requested = Number.parseInt(c.req.query('limit') ?? '100', 10);
+  // A missing, non-numeric or negative limit must not turn into `slice(0, NaN)` or a negative end index.
+  const limit = Number.isInteger(requested) && requested > 0 ? Math.min(requested, 500) : 100;
+  const spans = getRecentSpans(limit);
   return c.json({ success: true, data: { spans, count: spans.length } });
 });
 

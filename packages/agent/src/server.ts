@@ -13,6 +13,8 @@ import { tracingMiddleware } from './collectors/otel-middleware.js';
 import { getHeartbeatStatus } from './agent.js';
 import { ARDENT_AGENT_CAPABILITIES } from './ardent-capabilities.js';
 import { controlApiFetch } from './tls.js';
+import { childEnvironment } from './utils/child-env.js';
+import { ownerExecution } from './utils/owner-exec.js';
 
 import type { HealthCheck } from './types/index.js';
 
@@ -29,10 +31,14 @@ function secretFingerprint(value: string): string | null {
   return createHash('sha256').update(value).digest('hex').slice(0, 12);
 }
 
-async function commandCheck(name: string, command: string, args: string[] = []): Promise<HealthCheck> {
+async function commandCheck(name: string, command: string, args: string[] = [],
+  identity: { uid?: number; gid?: number; cwd?: string; env?: Record<string, string> } = {}): Promise<HealthCheck> {
   const started = performance.now();
   try {
-    const { stdout } = await execFileAsync(command, args, { timeout: 2500 });
+    // Probes never inherit agent credentials, and run as `identity` when one is given.
+    const { stdout } = await execFileAsync(command, args, { timeout: 2500, env: childEnvironment(identity.env),
+      ...(identity.uid !== undefined && identity.gid !== undefined ? { uid: identity.uid, gid: identity.gid } : {}),
+      ...(identity.cwd ? { cwd: identity.cwd } : {}) });
     return {
       name,
       status: 'pass',
@@ -59,7 +65,11 @@ export function hermesCliCandidates(env: NodeJS.ProcessEnv = process.env): strin
 async function hermesCliCheck(): Promise<HealthCheck> {
   let last: HealthCheck | null = null;
   for (const command of hermesCliCandidates()) {
-    const result = await commandCheck('hermes-cli', command, ['--version']);
+    // A Hermes CLI inside its owner's home runs as that owner, never as root.
+    const execution = await ownerExecution(command);
+    const result: HealthCheck = execution.ok
+      ? await commandCheck('hermes-cli', execution.command, ['--version'], execution)
+      : { name: 'hermes-cli', status: 'fail', latencyMs: 0, message: execution.reason };
     if (result.status === 'pass') return result;
     last = result;
   }
@@ -116,11 +126,11 @@ export async function createApp(): Promise<Hono> {
     const fsStart = performance.now();
     let fsOk = false;
     try {
-      const { writeFileSync, unlinkSync } = await import('node:fs');
-      const probe = `/tmp/.magnus-health-${Date.now()}`;
-      writeFileSync(probe, 'ok');
-      unlinkSync(probe);
-      fsOk = true;
+      // A private directory: a predictable name in /tmp would let another account point a root write at any file.
+      const { mkdtemp, rm, writeFile } = await import('node:fs/promises');
+      const directory = await mkdtemp('/tmp/.magnus-health-');
+      try { await writeFile(`${directory}/probe`, 'ok', { flag: 'wx' }); fsOk = true; }
+      finally { await rm(directory, { recursive: true, force: true }); }
     } catch {}
     const fsLatency = performance.now() - fsStart;
     checks.push({

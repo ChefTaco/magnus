@@ -62,6 +62,12 @@ echo "=== News Reporter ==="
 : "${NEWS_CATEGORY:=general}"
 : "${NEWS_PAGE_SIZE:=10}"
 
+# These values become URL parameters: accept only what the API defines.
+[[ "${NEWS_COUNTRY}" =~ ^[a-z]{2}$ ]] || { echo "ERROR: NEWS_COUNTRY must be a two-letter country code" >&2; exit 2; }
+[[ "${NEWS_CATEGORY}" =~ ^[a-z]{1,32}$ ]] || { echo "ERROR: NEWS_CATEGORY must be a lowercase word" >&2; exit 2; }
+[[ "${NEWS_PAGE_SIZE}" =~ ^[0-9]{1,3}$ ]] || { echo "ERROR: NEWS_PAGE_SIZE must be a number" >&2; exit 2; }
+[[ "${NEWSAPI_KEY}" =~ ^[A-Za-z0-9_-]{8,128}$ ]] || { echo "ERROR: NEWSAPI_KEY has an unexpected format" >&2; exit 2; }
+
 NODE_NAME="$(hostname)"
 DATE_STAMP="$(date +%Y-%m-%d)"
 TIME_STAMP="$(date +%H%M%S)"
@@ -80,16 +86,18 @@ mkdir -p "${REPORT_DIR}" "${RAW_DIR}"
 
 # ── Fetch headlines from NewsAPI ──
 echo "--- Fetching Headlines ---"
-API_URL="https://newsapi.org/v2/top-headlines?country=${NEWS_COUNTRY}&category=${NEWS_CATEGORY}&pageSize=${NEWS_PAGE_SIZE}&apiKey=${NEWSAPI_KEY}"
+API_URL="https://newsapi.org/v2/top-headlines?country=${NEWS_COUNTRY}&category=${NEWS_CATEGORY}&pageSize=${NEWS_PAGE_SIZE}"
 
-HTTP_CODE=$(curl -s -o "${RAW_DIR}/response.json" -w "%{http_code}" "${API_URL}" 2>/dev/null) || {
+# The key goes in a header read from stdin, so it is never in the process list or the URL.
+HTTP_CODE=$(printf 'X-Api-Key: %s\n' "${NEWSAPI_KEY}" | curl -s --max-time 30 -H @- -o "${RAW_DIR}/response.json" -w "%{http_code}" "${API_URL}" 2>/dev/null) || {
   echo "ERROR: Failed to reach NewsAPI"
   exit 1
 }
 
 if [[ "${HTTP_CODE}" != "200" ]]; then
   echo "ERROR: NewsAPI returned HTTP ${HTTP_CODE}"
-  cat "${RAW_DIR}/response.json" 2>/dev/null || true
+  # The error body is remote text: show only its filtered message.
+  jq -r '.message // empty' "${RAW_DIR}/response.json" 2>/dev/null | "${SCRIPT_DIR}/prompt-filter.sh" || true
   exit 1
 fi
 
@@ -127,10 +135,15 @@ for i in $(seq 0 $((ARTICLE_COUNT - 1))); do
   CONTENT=$(jq -r ".articles[${i}].content // \"\"" "${RAW_DIR}/response.json")
 
   # Sanitize each field through the prompt injection filter
-  TITLE=$(echo "${TITLE}" | "${SCRIPT_DIR}/prompt-filter.sh")
-  DESCRIPTION=$(echo "${DESCRIPTION}" | "${SCRIPT_DIR}/prompt-filter.sh")
-  CONTENT=$(echo "${CONTENT}" | "${SCRIPT_DIR}/prompt-filter.sh")
-  AUTHOR=$(echo "${AUTHOR}" | "${SCRIPT_DIR}/prompt-filter.sh")
+  TITLE=$(printf '%s\n' "${TITLE}" | "${SCRIPT_DIR}/prompt-filter.sh")
+  DESCRIPTION=$(printf '%s\n' "${DESCRIPTION}" | "${SCRIPT_DIR}/prompt-filter.sh")
+  CONTENT=$(printf '%s\n' "${CONTENT}" | "${SCRIPT_DIR}/prompt-filter.sh")
+  AUTHOR=$(printf '%s\n' "${AUTHOR}" | "${SCRIPT_DIR}/prompt-filter.sh")
+  # Every remote field is filtered, not only the long ones.
+  SOURCE=$(printf '%s\n' "${SOURCE}" | "${SCRIPT_DIR}/prompt-filter.sh")
+  [[ "${PUBLISHED}" =~ ^[0-9TZ:.+-]{1,40}$ ]] || PUBLISHED=""
+  # A link target that could close the Markdown link and carry text is dropped.
+  [[ "${URL}" =~ ^https?://[^[:space:]\(\)\<\>\"]{1,2000}$ ]] || URL=""
 
   {
     echo "## $((i + 1)). ${TITLE}"

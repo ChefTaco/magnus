@@ -14,6 +14,7 @@
  */
 
 import { randomBytes } from 'node:crypto';
+import { positiveIntegerEnv } from '../utils/env-number.js';
 
 // ── Configuration ──
 
@@ -21,7 +22,7 @@ const SERVICE_NAME = process.env['OTEL_SERVICE_NAME'] ?? 'magnus-agent';
 const OTLP_ENDPOINT = process.env['OTEL_EXPORTER_OTLP_ENDPOINT'] ?? '';
 const OTLP_HEADERS = parseOtlpHeaders(process.env['OTEL_EXPORTER_OTLP_HEADERS'] ?? '');
 const MAX_SPANS = Math.max(1, Math.floor(Number(process.env['OTEL_MAX_BUFFER_SPANS'] ?? '1000')) || 1000);
-const FLUSH_INTERVAL_MS = Number(process.env['OTEL_FLUSH_INTERVAL_MS'] ?? '30000');
+const FLUSH_INTERVAL_MS = positiveIntegerEnv('OTEL_FLUSH_INTERVAL_MS', 30_000);
 const ENABLED = process.env['OTEL_ENABLED'] !== 'false';
 
 function parseOtlpHeaders(raw: string): Record<string, string> {
@@ -179,7 +180,7 @@ export function parseTraceparent(header: string | undefined): { traceId: string;
   if (parts.length < 4 || parts[0] !== '00') return null;
   const traceId = parts[1]!;
   const spanId = parts[2]!;
-  if (traceId.length !== 32 || spanId.length !== 16) return null;
+  if (!/^[0-9a-f]{32}$/.test(traceId) || !/^[0-9a-f]{16}$/.test(spanId)) return null;
   return { traceId, spanId };
 }
 
@@ -315,7 +316,7 @@ async function flushToOtlp(): Promise<void> {
 
   try {
     const url = `${OTLP_ENDPOINT.replace(/\/+$/, '')}/v1/traces`;
-    await fetch(url, {
+    const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -324,6 +325,8 @@ async function flushToOtlp(): Promise<void> {
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(10_000),
     });
+    // An unread body keeps its connection checked out until it is collected.
+    await response.body?.cancel().catch(() => {});
   } catch (err) {
     console.error('[otel] Failed to export spans:', err instanceof Error ? err.message : err);
   }

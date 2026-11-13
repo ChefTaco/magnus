@@ -108,27 +108,53 @@ function priorityToLevel(priority: string): string {
   }
 }
 
-/** Parse a journald JSON line into a LogEntry. */
-function parseJournalLine(line: string): LogEntry | null {
+const MAX_MESSAGE_CHARS = 16_384;
+
+/**
+ * A journald JSON field as text. journalctl prints a field holding bytes that
+ * are not printable UTF-8 (colour escapes, for example) as an array of byte
+ * values, and an oversized field as null.
+ */
+export function journalText(value: unknown): string | null {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value) && value.every(byte => Number.isInteger(byte) && byte >= 0 && byte <= 255)) {
+    return Buffer.from(value as number[]).toString('utf8');
+  }
+  return null;
+}
+
+/** Parse a journald JSON line into a LogEntry. Entries the ingest endpoint would reject are dropped here. */
+export function parseJournalLine(line: string): LogEntry | null {
   try {
-    const j = JSON.parse(line) as Record<string, string>;
+    const j = JSON.parse(line) as Record<string, unknown>;
+    // NUL cannot be stored, and an unbounded line must not fill a batch.
+    const message = journalText(j['MESSAGE'])?.replaceAll('\u0000', '').slice(0, MAX_MESSAGE_CHARS);
+    if (!message) return null;
+    const unit = journalText(j['_SYSTEMD_UNIT']);
+    const realtime = journalText(j['__REALTIME_TIMESTAMP']);
     return {
       nodeId,
-      source: j['_SYSTEMD_UNIT'] ?? j['SYSLOG_IDENTIFIER'] ?? 'system',
-      level: priorityToLevel(j['PRIORITY'] ?? '6'),
-      message: j['MESSAGE'] ?? '',
+      source: unit ?? journalText(j['SYSLOG_IDENTIFIER']) ?? 'system',
+      level: priorityToLevel(journalText(j['PRIORITY']) ?? '6'),
+      message,
       metadata: {
-        hostname: j['_HOSTNAME'] ?? getFqdn(),
-        unit: j['_SYSTEMD_UNIT'] ?? '',
-        pid: j['_PID'] ?? '',
+        hostname: journalText(j['_HOSTNAME']) ?? getFqdn(),
+        unit: unit ?? '',
+        pid: journalText(j['_PID']) ?? '',
       },
-      timestamp: j['__REALTIME_TIMESTAMP']
-        ? new Date(parseInt(j['__REALTIME_TIMESTAMP'], 10) / 1000).toISOString()
+      timestamp: realtime
+        ? new Date(parseInt(realtime, 10) / 1000).toISOString()
         : new Date().toISOString(),
     };
   } catch {
     return null;
   }
+}
+
+/** The server refused the batch itself: sending the same entries again cannot succeed. */
+export function batchRejected(error: unknown): boolean {
+  const status = (error as { response?: { status?: number } } | null)?.response?.status;
+  return status === 400 || status === 413 || status === 422;
 }
 
 /** Flush queued log entries to the control API. */
@@ -145,6 +171,11 @@ async function flushOnce(): Promise<void> {
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    if (batchRejected(err)) {
+      // Re-queuing a rejected batch at the head would block every later entry for good.
+      logger.error('LogCollector: Batch rejected by the control API, dropping it', { error: msg, batchSize: batch.length });
+      return;
+    }
     logger.warn('LogCollector: Failed to ship batch, re-queuing', {
       error: msg,
       batchSize: batch.length,

@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   BoundedLogQueue,
+  batchRejected,
+  parseJournalLine,
   singleFlight,
   type LogEntry,
 } from './log-collector.js';
@@ -63,5 +65,30 @@ describe('log flush single flight', () => {
     await threshold;
     await flush();
     expect(operation).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('journal line parsing', () => {
+  it('decodes a message journalctl printed as a byte array', () => {
+    const bytes = [...Buffer.from('\u001b[31mfailed\u001b[0m')];
+    const parsed = parseJournalLine(JSON.stringify({ MESSAGE: bytes, _SYSTEMD_UNIT: 'fixture.service', PRIORITY: '3' }));
+    expect(parsed).toMatchObject({ message: '\u001b[31mfailed\u001b[0m', source: 'fixture.service', level: 'error' });
+  });
+
+  it('drops entries without a text message and bounds long ones', () => {
+    expect(parseJournalLine(JSON.stringify({ MESSAGE: null }))).toBeNull();
+    expect(parseJournalLine(JSON.stringify({ MESSAGE: { nested: true } }))).toBeNull();
+    expect(parseJournalLine('not json')).toBeNull();
+    expect(parseJournalLine(JSON.stringify({ MESSAGE: `a\u0000${'b'.repeat(40_000)}` }))?.message).toHaveLength(16_384);
+  });
+});
+
+describe('rejected batches', () => {
+  it('treats only a refusal of the batch itself as final', () => {
+    expect(batchRejected({ response: { status: 400 } })).toBe(true);
+    expect(batchRejected({ response: { status: 413 } })).toBe(true);
+    expect(batchRejected({ response: { status: 401 } })).toBe(false);
+    expect(batchRejected({ response: { status: 503 } })).toBe(false);
+    expect(batchRejected(new Error('fetch failed'))).toBe(false);
   });
 });

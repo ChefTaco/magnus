@@ -10,6 +10,7 @@ import { inspectHiveMemToken, type HiveMemTokenPosture } from './hivemem-token.j
 import { parseGatewayStatusText } from './hermes-gateway-status.js';
 import { childEnvironment } from '../utils/child-env.js';
 import { armChildTimeout } from '../utils/child-timeout.js';
+import { ownerExecution } from '../utils/owner-exec.js';
 
 const OFFICIAL_INSTALL_SCRIPT =
   'https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh';
@@ -288,9 +289,12 @@ function run(command: string, args: string[], options: {
   env?: NodeJS.ProcessEnv;
   timeoutMs?: number;
   stdin?: string;
+  /** Run as this account instead of the agent's own (root only). */
+  identity?: { uid: number; gid: number; cwd?: string };
 } = {}): Promise<CommandResult> {
   return new Promise((complete) => {
-    const proc = spawn(command, args, { env: childEnvironment(options.env), stdio: ['pipe', 'pipe', 'pipe'] });
+    const proc = spawn(command, args, { env: childEnvironment(options.env), stdio: ['pipe', 'pipe', 'pipe'],
+      ...(options.identity ? { uid: options.identity.uid, gid: options.identity.gid, ...(options.identity.cwd ? { cwd: options.identity.cwd } : {}) } : {}) });
     let stdout = '';
     let stderr = '';
     let timedOut = false;
@@ -310,6 +314,26 @@ function run(command: string, args: string[], options: {
   });
 }
 
+/**
+ * Run a Hermes executable against a Hermes home. A root agent runs it as the
+ * account that controls the executable or the home, never as root on that
+ * account's behalf: both are code the account can replace.
+ */
+async function runHermesBinary(bin: string, home: string, args: string[], options: {
+  env?: NodeJS.ProcessEnv;
+  timeoutMs?: number;
+  stdin?: string;
+} = {}): Promise<CommandResult> {
+  const execution = await ownerExecution(bin, { home });
+  if (!execution.ok) return { code: execution.code, stdout: '', stderr: execution.reason };
+  return run(execution.command, args, {
+    ...options,
+    env: { HERMES_HOME: home, ...options.env, ...execution.env },
+    ...(execution.uid !== undefined && execution.gid !== undefined
+      ? { identity: { uid: execution.uid, gid: execution.gid, ...(execution.cwd ? { cwd: execution.cwd } : {}) } } : {}),
+  });
+}
+
 async function runHermes(
   options: { hermesHome: string; hermesBin: string },
   args: string[],
@@ -317,7 +341,7 @@ async function runHermes(
   stdin?: string,
 ): Promise<CommandResult> {
   const resolved = target(options);
-  return run(resolved.bin, args, { env: { HERMES_HOME: resolved.home, COLUMNS: '240' }, timeoutMs, ...(stdin === undefined ? {} : { stdin }) });
+  return runHermesBinary(resolved.bin, resolved.home, args, { env: { COLUMNS: '240' }, timeoutMs, ...(stdin === undefined ? {} : { stdin }) });
 }
 
 async function collectHermesSkills(options: { hermesHome: string; hermesBin: string }): Promise<HermesSkillState[]> {
@@ -402,8 +426,8 @@ async function discoverRuntimeTarget(requested: { hermesHome: string; hermesBin:
     const homeDetected = await looksLikeHermesHome(home);
     if (homeDetected && !firstHomeOnly) firstHomeOnly = home;
     for (const bin of binCandidates(requested.hermesBin, home)) {
-      const versionResult = await run(bin, ['version'], { env: { HERMES_HOME: home }, timeoutMs: 10_000 });
-      const fallbackVersion = versionResult.code === 0 ? null : await run(bin, ['--version'], { env: { HERMES_HOME: home }, timeoutMs: 10_000 });
+      const versionResult = await runHermesBinary(bin, home, ['version'], { timeoutMs: 10_000 });
+      const fallbackVersion = versionResult.code === 0 ? null : await runHermesBinary(bin, home, ['--version'], { timeoutMs: 10_000 });
       if (versionResult.code === 0 || fallbackVersion?.code === 0) {
         return {
           requested: { hermesHome: home, hermesBin: bin },
