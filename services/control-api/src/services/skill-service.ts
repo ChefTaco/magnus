@@ -22,18 +22,44 @@ export interface SkillDetail extends SkillManifest {
 // ─── Helpers ───
 
 import { getSkillsDir as getPackageSkillsDir } from '@hivemagnus/magnus-skills';
+import { SKILL_FILE_NAME_PATTERN, SKILL_NAME_PATTERN } from '../schemas/skills.js';
 
 /** Skills directory — uses SKILLS_DIR env var or the magnus-skills package path */
 export function getSkillsDir(): string {
   return process.env['SKILLS_DIR'] ?? getPackageSkillsDir();
 }
 
-function manifestPath(skillName: string): string {
-  return path.join(getSkillsDir(), skillName, 'manifest.json');
+const SAFE_VERSION_TEXT = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/;
+
+/** One path segment: no separator, no NUL, and neither `.` nor `..`. */
+function isPathSegment(value: string): boolean {
+  return value.length > 0 && value.length <= 255 && value !== '.' && value !== '..' && !/[/\\\0]/.test(value);
 }
 
+/** Refused before any path is built, so a name can never reach outside the skills directory. */
+export class InvalidSkillPathError extends Error {
+  readonly status = 400;
+  readonly code = 'VALIDATION_ERROR';
+}
+
+/**
+ * The directory of one skill. The name is one plain path segment, so the result is always a
+ * direct child of the skills directory. Names from older installs may hold dots or spaces and
+ * stay readable; path separators, `.` and `..` are never accepted.
+ */
 function skillDir(skillName: string): string {
+  if (!isPathSegment(skillName)) throw new InvalidSkillPathError('Invalid skill name');
   return path.join(getSkillsDir(), skillName);
+}
+
+function manifestPath(skillName: string): string {
+  return path.join(skillDir(skillName), 'manifest.json');
+}
+
+/** A file directly inside a skill directory. */
+function skillFilePath(skillName: string, fileName: string): string {
+  if (!isPathSegment(fileName)) throw new InvalidSkillPathError('Invalid skill file name');
+  return path.join(skillDir(skillName), fileName);
 }
 
 async function readManifest(skillName: string): Promise<SkillManifest> {
@@ -94,11 +120,7 @@ export async function getSkill(name: string): Promise<SkillDetail | null> {
 /** Read a specific file from a skill directory. */
 export async function getSkillFile(skillName: string, fileName: string): Promise<string | null> {
   try {
-    const filePath = path.join(skillDir(skillName), fileName);
-    // Prevent directory traversal
-    const resolved = path.resolve(filePath);
-    if (!resolved.startsWith(path.resolve(skillDir(skillName)))) return null;
-    return await fs.readFile(filePath, 'utf-8');
+    return await fs.readFile(skillFilePath(skillName, fileName), 'utf-8');
   } catch {
     return null;
   }
@@ -114,7 +136,12 @@ export async function createSkill(data: {
   dependencies?: string[];
   tags?: string[];
 }): Promise<SkillDetail> {
+  if (!SKILL_NAME_PATTERN.test(data.name)) throw new InvalidSkillPathError('A skill name may contain only letters, digits, underscores and hyphens');
   const dir = skillDir(data.name);
+  // Resolved before anything is created, so a refused entry point leaves no half-made skill.
+  const entryPoint = data.entryPoint ?? 'run.sh';
+  if (!SKILL_FILE_NAME_PATTERN.test(entryPoint)) throw new InvalidSkillPathError('Invalid skill entry point');
+  const entryPath = skillFilePath(data.name, entryPoint);
 
   // Ensure directory doesn't already exist
   try {
@@ -140,11 +167,12 @@ export async function createSkill(data: {
   await writeManifest(data.name, manifest);
 
   // Create a stub entry point if it doesn't exist
-  const entryPath = path.join(dir, manifest.entryPoint);
   try {
     await fs.access(entryPath);
   } catch {
-    await fs.writeFile(entryPath, `#!/usr/bin/env bash\nset -euo pipefail\n\n# ${data.name} — entry point\necho "${data.name} v${data.version}"\n`, 'utf-8');
+    // The script quotes the name and version, so only text that is safe inside a shell string goes in.
+    const label = SAFE_VERSION_TEXT.test(data.version) ? `${data.name} v${data.version}` : data.name;
+    await fs.writeFile(entryPath, `#!/usr/bin/env bash\nset -euo pipefail\n\n# ${data.name} — entry point\necho "${label}"\n`, 'utf-8');
     await fs.chmod(entryPath, 0o755);
   }
 
@@ -162,7 +190,10 @@ export async function updateSkill(
   if (data.version !== undefined) manifest.version = data.version;
   if (data.description !== undefined) manifest.description = data.description;
   if (data.author !== undefined) manifest.author = data.author;
-  if (data.entryPoint !== undefined) manifest.entryPoint = data.entryPoint;
+  if (data.entryPoint !== undefined) {
+    if (!SKILL_FILE_NAME_PATTERN.test(data.entryPoint)) throw new InvalidSkillPathError('Invalid skill entry point');
+    manifest.entryPoint = data.entryPoint;
+  }
   if (data.dependencies !== undefined) manifest.dependencies = data.dependencies;
   if (data.tags !== undefined) manifest.tags = data.tags;
 
@@ -178,13 +209,7 @@ export async function updateSkillFile(
   fileName: string,
   content: string,
 ): Promise<void> {
-  const filePath = path.join(skillDir(skillName), fileName);
-  // Prevent directory traversal
-  const resolved = path.resolve(filePath);
-  if (!resolved.startsWith(path.resolve(skillDir(skillName)))) {
-    throw new Error('Invalid file path');
-  }
-  await fs.writeFile(filePath, content, 'utf-8');
+  await fs.writeFile(skillFilePath(skillName, fileName), content, 'utf-8');
 }
 
 /** Delete a skill directory entirely. */
