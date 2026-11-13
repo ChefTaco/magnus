@@ -67,6 +67,7 @@ export const agentEnvCatalog: EnvVarSpec[] = [
   { name: 'LOG_UNITS', required: false, secret: false, group: 'logging', description: 'Comma-separated systemd units whose logs are forwarded.' },
   { name: 'OTEL_ENABLED', required: false, secret: false, default: 'true', group: 'logging', description: 'Set to false to disable trace export. Export runs only when OTEL_EXPORTER_OTLP_ENDPOINT is set.' },
   { name: 'OTEL_EXPORTER_OTLP_ENDPOINT', required: false, secret: false, group: 'logging', description: 'OTLP/HTTP endpoint for traces.' },
+  { name: 'OTEL_EXPORTER_OTLP_HEADERS', required: false, secret: true, group: 'logging', description: 'Comma-separated name=value headers sent with every trace export, for example a collector Authorization header. Never passed to child processes.' },
   { name: 'SKILLS_DIR', required: false, secret: false, default: '/opt/magnus-agent/skills', group: 'skills', description: 'Primary directory for published skills.' },
   { name: 'SKILLS_EXTRA_DIRS', required: false, secret: false, group: 'skills', description: 'Additional colon-separated skill directories to inventory.' },
   { name: 'HERMES_USER', required: false, secret: false, group: 'hermes', description: 'Local account that owns Hermes Agent. Enables Hermes inspection and management.' },

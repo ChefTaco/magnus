@@ -1,5 +1,8 @@
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { parseDiskOutput } from './health-collector.js';
+import { collectDisks, parseDiskOutput } from './health-collector.js';
 
 describe('parseDiskOutput', () => {
   it('keeps local, network, and Unraid user-share filesystems', () => {
@@ -26,4 +29,32 @@ describe('parseDiskOutput', () => {
 
     expect(disks.map((disk) => disk.mountPoint)).toEqual(['/boot/efi']);
   });
+});
+
+describe('collectDisks', () => {
+  it('does not start another probe while an earlier one has not exited', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'magnus-df-'));
+    try {
+      const probe = join(directory, 'df');
+      await writeFile(probe, `#!/bin/sh
+echo started >> "${directory}/starts"
+sleep 1
+echo 'Filesystem Type 1B-blocks Used Avail Use% Mounted on'
+echo '/dev/sda2 ext4 1000 400 600 40% /'
+`);
+      await chmod(probe, 0o755);
+      const first = collectDisks(probe, 10_000);
+      await new Promise(resolve => setTimeout(resolve, 300));
+      // The earlier probe is still running: the last known result is reported at once.
+      await expect(collectDisks(probe, 10_000)).resolves.toEqual([]);
+      expect((await first).map(disk => disk.mountPoint)).toEqual(['/']);
+      expect((await readFile(join(directory, 'starts'), 'utf8')).trim().split('\n')).toHaveLength(1);
+      // Once it has exited, the next collection probes again.
+      await new Promise(resolve => setTimeout(resolve, 50));
+      expect((await collectDisks(probe, 10_000)).map(disk => disk.mountPoint)).toEqual(['/']);
+      expect((await readFile(join(directory, 'starts'), 'utf8')).trim().split('\n')).toHaveLength(2);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, 20_000);
 });
