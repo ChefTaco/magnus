@@ -75,11 +75,16 @@ async function notify(node: { id: string; name: string }, severity: 'info' | 'wa
 }
 
 const refusalAudits = new Map<string, number>();
-/** Audit a refusal at most once an hour per node and reason: a retrying agent must not flood the chain. */
+/**
+ * Audit a refusal once per node and reason in a period: an agent that retries for weeks (a binding
+ * refused every hour, a mismatched heartbeat every 30 seconds) must not flood the chain or the inbox.
+ * A refused binding is reported daily, a signed request that names another node hourly.
+ */
 async function auditRefusal(action: 'node.credential.bind_refused' | 'node.credential.identity_mismatch', node: { id: string; name: string } | null,
   reason: string, details: Record<string, unknown>, now = Date.now()): Promise<boolean> {
   const id = `${action}:${node?.id ?? '-'}:${reason}`;
-  if ((refusalAudits.get(id) ?? 0) > now - 60 * 60 * 1000) return false;
+  const period = action === 'node.credential.bind_refused' ? 24 * 60 * 60 * 1000 : 60 * 60 * 1000;
+  if ((refusalAudits.get(id) ?? 0) > now - period) return false;
   if (refusalAudits.size > 5000) refusalAudits.clear();
   refusalAudits.set(id, now);
   await logAuditEvent({ action, actorType: 'agent', actorId: node ? `node:${node.id}` : 'node:unknown', targetType: 'node',
