@@ -358,7 +358,9 @@ export const agentUpgradePreflightSchema = z.object({
   managedEnrollment: agentManagedEnrollmentSchema.nullable().optional().catch(null),
   managedEnrollmentState: agentMarkerStateSchema.optional().catch(undefined),
   /** `fenceHighWater`, signed by the agent for this nonce. Only a verified proof can move a server generation. */
-  fenceProof: z.object({ nonce: z.string().max(64), nodeFqdn: z.string().max(253), signature: z.string().regex(/^[a-f0-9]{64}$/) }).optional().catch(undefined),
+  // nodeSignature: Ed25519 by the node key (docs/NODE_CREDENTIALS.md); the server verifies it, so it is kept as received.
+  fenceProof: z.object({ nonce: z.string().max(64), nodeFqdn: z.string().max(253), signature: z.string().regex(/^[a-f0-9]{64}$/),
+    nodeSignature: z.unknown().optional() }).optional().catch(undefined),
   engines: z.object({
     node: z.string().max(64),
     range: z.string().max(200).nullable(),

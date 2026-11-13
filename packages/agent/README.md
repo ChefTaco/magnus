@@ -180,6 +180,7 @@ local tarballs with `MAGNUS_AGENT_UPGRADE_SOURCE_DIR`. See
 magnus-agent [start] [--env-file <path>]          Start the agent (default)
 magnus-agent check [--json] [--env-file <path>]   Validate configuration without starting
 magnus-agent enroll --token <token>               Bind a new node key with a one-time enrollment token
+magnus-agent enroll --token-file <path|->         The same, reading the token from a file or standard input (-), off the process table
 magnus-agent identity show [--json]               Print the node id and key fingerprints (never the key)
 magnus-agent identity rotate                      Replace the node key
 magnus-agent identity reset                       Remove the node key and return to the shared node secret
@@ -199,7 +200,7 @@ and `magnus-agent env-schema` prints them as JSON.
 | --- | --- |
 | `CONTROL_API_URL` | magnus-server Control API (required) |
 | `NODE_MANAGER_SECRET` | Node credential shared with the server (required, 32+ characters). The agent also creates its own node key in `$AGENT_INSTALL_DIR/identity` and binds it automatically; see [per-node credentials](https://github.com/ChefTaco/magnus/blob/main/docs/NODE_CREDENTIALS.md) |
-| `NODE_AUTH_MODE` | Reserved (`compat`, `warn`, `enforce`); the agent behaves as `compat` in this release |
+| `NODE_AUTH_MODE` | `compat` (default): the shared node secret is accepted on this agent's API. `warn`: also logged. `enforce`: once the node has a bound key, only requests signed by the pinned server key are accepted (see [agent-side enforce](https://github.com/ChefTaco/magnus/blob/main/docs/NODE_CREDENTIALS.md#agent-side-enforce)) |
 | `RESULT_SIGNING_SECRET` | Independent result-signing key (required, 32+ characters) |
 | `TLS_CERT_PATH` / `TLS_KEY_PATH` | Listener TLS, required in production |
 | `HOST_FQDN` | Host identity override (default `hostname --fqdn`) |

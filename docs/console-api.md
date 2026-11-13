@@ -10,7 +10,7 @@ moved without updating it.
 
 | Class | Meaning | Rows | At the ingress |
 |---|---|---|---|
-| `browser` | A person's console drives it with a user token | 147 | Allow the exact method and path |
+| `browser` | A person's console drives it with a user token | 152 | Allow the exact method and path |
 | `machine` | Agents, services and integrations, with their own credentials | 86 | Deny |
 | `exclude` | Reachable with a user token, but no console needs it, or it was written for a server-side caller | 146 | Deny until a feature needs it and it is reviewed |
 | `retired` | Always answers 404 or 410 | 64 | Deny |
@@ -374,6 +374,11 @@ unless these rows change. `POST /api/v1/hermes/deploy` is retired and always ans
 | POST | `/api/v1/library/files/move` | browser | `user:ADMIN\|OPERATOR` |  |
 | POST | `/api/v1/logs/query` | browser | `user:any` | yes |
 | GET | `/api/v1/logs/stream` | browser | `user:any` | yes Stream |
+| GET | `/api/v1/node-credentials/downgrade-check` | browser | `user:ADMIN\|OPERATOR` | yes |
+| GET | `/api/v1/node-credentials/pending-bindings` | browser | `user:ADMIN` | yes |
+| POST | `/api/v1/node-credentials/pending-bindings/:id/approve` | browser | `user:ADMIN` | yes |
+| POST | `/api/v1/node-credentials/pending-bindings/:id/reject` | browser | `user:ADMIN` | yes |
+| GET | `/api/v1/node-credentials/summary` | browser | `user:ADMIN\|OPERATOR` | yes |
 | GET | `/api/v1/nodes` | browser | `user:any` | yes |
 | DELETE | `/api/v1/nodes/:nodeId` | browser | `user:ADMIN` | yes |
 | GET | `/api/v1/nodes/:nodeId` | browser | `user:any` | yes |

@@ -19,7 +19,8 @@ import { recordManagedHermesState } from '../services/hermes-service.js';
 import { NODE_MANAGER_SECRET } from '../utils/env.js';
 import { assertLegacyMaySpeakFor, authenticateNode } from '../middleware/node-auth.js';
 import { nodeAuthMode, nodeAutoRegister } from '../services/node-auth-config.js';
-import { noteAgentServerKeyPins } from '../services/node-agent-auth.js';
+import { noteAgentEvidenceSigning, noteAgentServerKeyPins } from '../services/node-agent-auth.js';
+import { recordLegacyUse, recordUnattributedLegacyUse } from '../services/node-legacy-use.js';
 import { fqdnClaimMatchesNode, nodeFqdnAliases, reportIdentityMismatch } from '../services/node-credential-service.js';
 import {
   getCredentialStatus,
@@ -325,7 +326,8 @@ heartbeatRouter.post('/', async (c) => {
   const observedNodeManagerSecretFingerprint = auth.method === 'legacy'
     ? auth.tokenFingerprint : observedSharedSecret(c.req.header('x-node-token'));
   // What the agent needs to know to move to (or repair) its own key; older agents ignore it.
-  const nodeAuthAck = { supported: true, mode: nodeAuthMode(), method: auth.method,
+  // `evidence: 1`: this server verifies evidence signed with the node key (an agent signs it only once told so).
+  const nodeAuthAck = { supported: true, mode: nodeAuthMode(), method: auth.method, evidence: 1,
     ...(auth.method === 'legacy' && auth.signatureProblem ? { problem: auth.signatureProblem } : {}) };
 
   const body = await parseBody(c, heartbeatRequestSchema) as HeartbeatRequestBody;
@@ -349,14 +351,20 @@ heartbeatRouter.post('/', async (c) => {
   const ipCandidates = uniqueNonEmpty([callerIp, ...healthNetworkIps, fqdnResolvedIp ?? '']);
   if (auth.method === 'signature') {
     // Signed, so trusted: which server keys this agent pins decides whether it still needs the shared secret.
-    const advertised = (body as { nodeAuth?: { serverKeyIds?: unknown } }).nodeAuth;
+    const advertised = (body as { nodeAuth?: { serverKeyIds?: unknown; evidence?: unknown } }).nodeAuth;
     noteAgentServerKeyPins(auth.node.id, advertised && typeof advertised === 'object' ? advertised.serverKeyIds : undefined);
+    // The evidence ratchet follows what the key's own agent says: on while it signs its evidence, off
+    // again after a downgrade to an agent that does not. Only a signed heartbeat can change it.
+    noteAgentEvidenceSigning(auth.keyId, Boolean(advertised && typeof advertised === 'object' && advertised.evidence === 1));
   }
   let resolved: ResolvedNode | null = auth.method === 'signature'
     ? { nodeId: auth.node.id, existing: auth.node }
     : await resolveNodeByFqdn(fqdn, callerIp, ipCandidates);
   // The ratchet: the shared secret may not report as a node that has its own key.
   if (auth.method === 'legacy' && resolved) await assertLegacyMaySpeakFor([resolved.nodeId]);
+  if (auth.method === 'legacy') {
+    if (resolved) recordLegacyUse(resolved.nodeId, 'request', 'heartbeat'); else recordUnattributedLegacyUse('heartbeat');
+  }
   const agentCertificateHostname = deriveAgentCertificateHostname(
     fqdn,
     process.env['AGENT_TLS_DOMAIN_SUFFIX'],

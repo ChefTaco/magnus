@@ -154,6 +154,18 @@ export function doctorLines(report: Report): string[] {
 const nodeLine = (node: Run['nodes'][number]) =>
   `  ${node.name}: ${node.state}${node.detail ? ` (${node.code ? `${node.code}: ` : ''}${node.detail})` : node.code ? ` (${node.code})` : ''}`;
 
+/** Which server key this process signs agent requests with: compare it with the server's start-up line. */
+export async function describeAgentSigning(): Promise<string> {
+  const { serverSigningKey, serverSigningKeyPath } = await import('../services/node-server-key.js');
+  const { keyFingerprint } = await import('../security/node-request-auth.js');
+  const { nodeAuthMode } = await import('../services/node-auth-config.js');
+  try {
+    return `node-auth mode=${nodeAuthMode()} server-key=${keyFingerprint(serverSigningKey().keyId)} (${serverSigningKeyPath()})`;
+  } catch (error) {
+    return `node-auth mode=${nodeAuthMode()}: requests to agents are not signed: ${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+
 export async function commandAgents(args: readonly string[]): Promise<number> {
   const options = parseAgentsArgs(args);
   if (options === 'help') {
@@ -163,6 +175,7 @@ export async function commandAgents(args: readonly string[]): Promise<number> {
   const { getDb, disconnectDb } = await import('../db/client.js');
   const { disconnectRedis } = await import('../queue/redis.js');
   const service = await import('../services/agent-upgrade-service.js');
+  console.error(await describeAgentSigning());
   try {
     if (options.stop) {
       const run = await service.stopUpgradeRun(options.stop, 'system:magnus-server-cli');

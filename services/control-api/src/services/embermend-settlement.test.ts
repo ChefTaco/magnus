@@ -6,6 +6,9 @@ vi.mock('../db/index.js', () => ({ getDb: () => ({ embermendOperation: db.operat
 vi.mock('../utils/env.js', async original => ({ ...await original<object>(), RESULT_SIGNING_SECRET: 'fixture-result-signing-secret-000000000000', getNodeManagerSecret: () => 'fixture-node-management-secret-0000000000' }));
 vi.mock('./audit-service.js', () => ({ logAuditEvent: vi.fn(async () => undefined) }));
 import { settleEmbermendOwner, observeOwnerSettlement } from './embermend-settlement.js';
+// Evidence policy: a node without a key, so the shared result key applies (docs/NODE_CREDENTIALS.md).
+vi.mock('./node-credential-store.js', async () => ({ nodeCredentialStore: (await import('./node-credential-test-fixture.js')).createFakeCredentialStore().store }));
+
 const node = { id: 'fixture-node', hostname: 'node.example.com' };
 const original = () => embermendOperationSchema.parse({ operationId: 'original', planId: 'original-plan', planRevision: 1, planDigest: 'a'.repeat(64), installationId: 'fixture-installation', authorizationRef: 'original-approval', expiresAt: new Date(Date.now() - 600000).toISOString(), action: { id: 'reboot', version: 'reboot.v1', class: 'reboot', targetId: 'fixture-target', targetKind: 'host', requiredCapabilities: ['embermend:reboot.v1'], parameters: {}, preconditions: { environment: 'lab' }, dependsOn: [], verificationIds: [], recovery: 'Separate approval', expectedRevision: null, patchDigest: null, disruption: 'reboot' } });
 const request = () => embermendOperationSchema.parse({ ...original(), operationId: 'recovery', planId: 'recovery-plan', authorizationRef: 'recovery-approval', expiresAt: new Date(Date.now() + 240000).toISOString(), action: { ...original().action, id: 'settle', version: 'execution-settle.v1', class: 'recovery', disruption: 'none', requiredCapabilities: ['embermend:execution-settle.v1'], parameters: { originalOperationId: 'original', originalRequestDigest: 'b'.repeat(64), nativeCommandId: 'original-command', nativeRequestDigest: 'c'.repeat(64), evidenceId: 'review', evidenceDigest: 'd'.repeat(64), disposition: 'effects_verified', originalOutcome: 'unknown' } } });
@@ -15,6 +18,7 @@ let retained: unknown;
 const client = () => new NodeApiClient({ baseUrl: 'http://127.0.0.1:4100', nodeToken: 'fixture-node-management-secret-0000000000' });
 const receipt = (): CommandReceipt => acknowledged && assertion ? { commandId: 'original-command', requestSha256: 'c'.repeat(64), state: 'reconciled', reconciliation: assertion } : { commandId: 'original-command', requestSha256: 'c'.repeat(64), state: 'unknown' };
 beforeEach(() => {
+  vi.spyOn(NodeApiClient.prototype, 'decisionCapabilities').mockResolvedValue({ serverSignatures: false, hmac: true });
   vi.stubEnv('COMMAND_RECONCILIATION_SECRET', 'fixture-separate-reconciliation-secret-00000'); vi.stubEnv('HIVE_REHEARSAL', 'false');
   assertion = undefined; acknowledged = false; retained = null; vi.clearAllMocks();
   db.operation.findUnique.mockResolvedValue({ id: 'original-row', operationId: 'original', commandId: 'original-command', requestDigest: 'b'.repeat(64), nodeId: node.id, request: original(), state: 'unknown' });

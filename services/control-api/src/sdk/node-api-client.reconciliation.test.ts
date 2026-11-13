@@ -2,6 +2,9 @@ import { createHmac } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NodeApiClient, commandReconciliationSigningPayload, type CommandReconciliationAssertion } from './node-api-client.js';
 import { commandReconciliationSigningPayload as agentPayload, verifyCommandReconciliation as agentVerify } from '../../../../packages/agent/src/security/command-result-signature.js';
+// Evidence policy: a node without a key, so the shared result key applies (docs/NODE_CREDENTIALS.md).
+vi.mock('../services/node-credential-store.js', async () => ({ nodeCredentialStore: (await import('../services/node-credential-test-fixture.js')).createFakeCredentialStore().store }));
+
 
 const key = 'cross-wire-dedicated-reconciliation-secret-at-least-32-bytes';
 const resultKey = 'cross-wire-dedicated-result-secret-at-least-32-bytes';

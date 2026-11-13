@@ -1,6 +1,9 @@
 import { z } from 'zod';
 import { Agent, fetch as undiciFetch } from 'undici';
 import { verifiedTlsOptions } from './tls.js';
+import { selfAudience } from './node-auth.js';
+import { boundNodeIdentity } from './security/node-identity.js';
+import { signNodeRequest } from './security/node-request-auth.js';
 
 const optionsSchema = z.object({
   selfUrl: z.url().refine((value) => {
@@ -56,6 +59,8 @@ export async function probeAgentAcceptance(
     fetch?: typeof fetch;
     now?: () => number;
     sleep?: (milliseconds: number) => Promise<void>;
+    /** Headers that sign one probe request with this node's own key; called per attempt (fresh nonce). */
+    selfSign?: () => Record<string, string>;
   } = {},
 ): Promise<AgentAcceptanceResult> {
   const parsed = optionsSchema.safeParse(raw);
@@ -79,7 +84,8 @@ export async function probeAgentAcceptance(
     do {
       try {
         const response = await request(new URL('/api/v1/health/check', options.selfUrl), {
-          headers: { 'x-node-token': options.credential },
+          // Signed with this node's key when it has one: an agent in NODE_AUTH_MODE=enforce refuses the shared secret alone.
+          headers: { 'x-node-token': options.credential, ...(overrides.selfSign?.() ?? {}) },
           redirect: 'error',
           signal: AbortSignal.timeout(5000),
         });
@@ -134,6 +140,18 @@ export async function probeAgentAcceptance(
   }
 }
 
+/**
+ * Signature headers for `GET /api/v1/health/check` made with this node's own key (audience
+ * `self:<nodeId>`), or none while the node has no bound key. The running agent accepts such a
+ * request on the health check only. Reads the key from `$AGENT_INSTALL_DIR/identity`.
+ */
+export function selfSignedHealthCheckHeaders(now = Date.now()): Record<string, string> {
+  const identity = boundNodeIdentity();
+  if (!identity) return {};
+  return signNodeRequest({ privateKey: identity.privateKey, keyId: identity.keyId, nodeId: identity.binding.nodeId,
+    audience: selfAudience(identity.binding.nodeId), method: 'GET', pathWithQuery: '/api/v1/health/check', body: '', now });
+}
+
 export async function runAgentAcceptance(
   arguments_: string[],
   env: NodeJS.ProcessEnv,
@@ -155,5 +173,5 @@ export async function runAgentAcceptance(
     expectedVersion,
     waitSeconds,
     ...(env['MAGNUS_AGENT_SELF_CA_PATH'] ? { caPath: env['MAGNUS_AGENT_SELF_CA_PATH'] } : {}),
-  });
+  }, { selfSign: () => selfSignedHealthCheckHeaders() });
 }

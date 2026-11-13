@@ -114,6 +114,8 @@ model Node {
   engineeringMetricSamples EngineeringMetricSample[]
   credentials NodeCredential[]
   enrollmentTokens NodeEnrollmentToken[]
+  pendingBindings NodePendingBinding[]
+  legacyCredentialUse NodeLegacyCredentialUse[]
 
   @@index([status])
   @@index([ipAddress])
@@ -2301,6 +2303,9 @@ model NodeCredential {
   retireAt   DateTime?
   revokedAt  DateTime?
   revokedBy  String?
+  // The agent holding this key signs its evidence with it (from its signed heartbeat).
+  evidenceSigning   Boolean   @default(false)
+  evidenceSigningAt DateTime?
 
   node Node @relation(fields: [nodeId], references: [id], onDelete: Cascade)
 
@@ -2332,4 +2337,45 @@ model NodeAuthState {
   legacyUpgradeStartedAt DateTime @default(now())
 
   @@map("node_auth_state")
+}
+
+/// An automatic key binding refused for a peer-address mismatch, waiting for an administrator.
+model NodePendingBinding {
+  id              String    @id @default(cuid())
+  nodeId          String
+  keyId           String
+  publicKey       String
+  fqdn            String
+  peerAddress     String
+  recordedAddress String
+  // PENDING | APPROVED | REJECTED
+  status          String    @default("PENDING")
+  attempts        Int       @default(1)
+  createdAt       DateTime  @default(now())
+  lastSeenAt      DateTime  @default(now())
+  decidedAt       DateTime?
+  decidedBy       String?
+  decisionReason  String?
+
+  node Node @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@unique([nodeId, keyId])
+  @@index([status])
+  @@map("node_pending_bindings")
+}
+
+/// Use of the shared node secret or shared result key for one node, per channel (request | evidence | outbound).
+model NodeLegacyCredentialUse {
+  nodeId      String
+  channel     String
+  count       Int      @default(0)
+  firstUsedAt DateTime @default(now())
+  lastUsedAt  DateTime @default(now())
+  lastDetail  String?
+
+  node Node @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@id([nodeId, channel])
+  @@index([lastUsedAt])
+  @@map("node_legacy_credential_use")
 }

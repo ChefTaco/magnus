@@ -8,7 +8,8 @@ import { lstat, mkdir, open, readdir, rename, unlink } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
 import { HOST_FQDN, NODE_MANAGER_SECRET, RESULT_SIGNING_SECRET } from '../env.js';
-import { verifyCommandResult, verifyCommandReconciliation, type CommandReconciliationAssertion } from '../security/command-result-signature.js';
+import { commandReconciliationSigningPayload, verifyCommandResult, verifyCommandReconciliation, type CommandReconciliationAssertion } from '../security/command-result-signature.js';
+import { verifyServerDecision } from '../security/evidence-signing.js';
 import { MANAGED_HTTP_COMMAND } from '../security/managed-http.js';
 
 export const commandFenceSchema = z.object({
@@ -52,8 +53,11 @@ export const commandReconciliationSchema = z.object({
   approvalRef: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9:._/-]{0,199}$/),
   decisionId: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/),
   expiresAt: z.number().int().positive().max(8_640_000_000_000_000),
-  signature: z.string().regex(/^[a-f0-9]{64}$/),
-}).strict();
+  // COMMAND_RECONCILIATION_SECRET HMAC (older servers) and/or the server key's signature for this node.
+  signature: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  serverSignature: z.object({ alg: z.literal('ed25519'), v: z.literal(1), nodeId: z.string().max(128), keyId: z.string().max(64),
+    sig: z.string().max(86) }).strict().optional(),
+}).strict().refine(value => value.signature !== undefined || value.serverSignature !== undefined);
 const lockSchema = z.object({ commandId: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/),
   nonce: z.string().guid(), pid: z.number().int().positive() }).strict();
 const receiptSchema = z.object({
@@ -224,9 +228,12 @@ export class CommandLedger {
     commandReconciliationSchema.parse(assertion);
     const expected = row.coordination;
     const actual = assertion.coordination;
-    if (!verifyCommandReconciliation(assertion, this.authority.reconciliationSecret)
-      || this.authority.reconciliationSecret === this.authority.resultSecret
-      || this.authority.reconciliationSecret === NODE_MANAGER_SECRET
+    // A decision signed for this node with a pinned server key, or (older servers) the shared reconciliation key.
+    const secret = this.authority.reconciliationSecret;
+    const authentic = verifyServerDecision('command-reconciliation', commandReconciliationSigningPayload(assertion), assertion.serverSignature,
+      () => typeof assertion.signature === 'string' && verifyCommandReconciliation({ ...assertion, signature: assertion.signature }, secret)
+        && secret !== this.authority.resultSecret && secret !== NODE_MANAGER_SECRET);
+    if (!authentic
       || assertion.nodeFqdn !== this.authority.nodeFqdn || assertion.commandId !== row.commandId
       || assertion.requestSha256 !== row.requestSha256
       || (expected ? !actual || expected.version !== actual.version || expected.resourceKey !== actual.resourceKey
@@ -248,7 +255,8 @@ export class CommandLedger {
       this.checkReconciliation(row, assertion, row.state !== 'reconciled');
       if (row.state === 'completed') throw new CommandAdmissionError('INVALID_RECONCILIATION', 'Command already has a completed result');
       if (row.state === 'reconciled') {
-        if (row.reconciliation?.signature !== assertion.signature) throw new CommandAdmissionError('INVALID_RECONCILIATION', 'Command already has another reconciliation decision');
+        // The same decision: the same HMAC, or (server-key only) the same server signature.
+        if ((row.reconciliation?.signature ?? row.reconciliation?.serverSignature?.sig) !== (assertion.signature ?? assertion.serverSignature?.sig)) throw new CommandAdmissionError('INVALID_RECONCILIATION', 'Command already has another reconciliation decision');
       } else {
         const lock = lockSchema.parse(await this.read<unknown>('active.lock'));
         if (lock.commandId !== assertion.commandId) throw new CommandAdmissionError('INVALID_RECONCILIATION', 'Command does not own the unresolved execution slot');

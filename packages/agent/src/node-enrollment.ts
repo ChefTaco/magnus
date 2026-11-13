@@ -11,7 +11,7 @@
 import { createHash } from 'node:crypto';
 import { CONTROL_API_URL, HOST_FQDN, NODE_MANAGER_SECRET } from './env.js';
 import { nodeApiFetch, nodeAuthNow, noteControlApiResponse, onControlApiStatus } from './node-auth.js';
-import { boundNodeIdentity, ensureNodeKey, loadNodeIdentity, replaceNodeIdentity, saveNodeBinding, savePinnedServerKeys, type NodeBinding,
+import { boundNodeIdentity, ensureNodeKey, loadNodeIdentity, replaceNodeIdentity, saveNodeBinding, savePinnedServerKeys, saveServerEvidenceSupport, type NodeBinding,
   type PinnedServerKey } from './security/node-identity.js';
 import { generateSigningKey, keyFingerprint, keyIdOfSpki, privateKeyFromPem, signEnrollmentProof } from './security/node-request-auth.js';
 import { controlApiFetch } from './tls.js';
@@ -22,7 +22,9 @@ import { AGENT_VERSION } from './version.js';
 const base = (): string => CONTROL_API_URL.replace(/\/+$/, '');
 const fqdn = (): string => HOST_FQDN.trim().toLowerCase();
 
-export interface HeartbeatNodeAuth { supported?: boolean | undefined; mode?: string | undefined; method?: string | undefined; problem?: string | undefined }
+export interface HeartbeatNodeAuth { supported?: boolean | undefined; mode?: string | undefined; method?: string | undefined; problem?: string | undefined;
+  /** 1: the server verifies evidence signed with the node key. */
+  evidence?: number | undefined }
 export type UpgradeOutcome =
   | { state: 'bound'; nodeId: string }
   | { state: 'retry'; reason: string; retryInMs: number };
@@ -120,6 +122,9 @@ export async function attemptLegacyUpgrade(): Promise<UpgradeOutcome> {
  * than node credentials, which leaves this agent on the shared secret until the server is upgraded.
  */
 export function onHeartbeatAcknowledged(nodeAuth: HeartbeatNodeAuth | undefined, now = Date.now()): void {
+  // Sign evidence with the node key only for a server that verifies it; a server downgrade turns it off again.
+  try { saveServerEvidenceSupport(nodeAuth?.evidence === 1); }
+  catch (error) { logger.warn(`Could not record whether the server verifies node evidence: ${error instanceof Error ? error.message : String(error)}`); }
   if (!nodeAuth?.supported || inFlight || now < nextAttemptAt) return;
   let bound = false;
   try { bound = Boolean(loadNodeIdentity()?.binding); }

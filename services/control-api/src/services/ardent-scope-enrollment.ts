@@ -9,6 +9,7 @@ import { apiDrainAttestationSchema, apiDrainAttestationSigningPayload, canonical
 import { lockResourceNode, resourceNodeIdentity } from './resource-node-lock.js';
 import { reconciliationSecret } from './resource-participant-work.js';
 import { RESULT_SIGNING_SECRET } from '../utils/env.js';
+import { nodeEvidencePolicy } from './node-evidence-policy.js';
 
 type Tx = Prisma.TransactionClient;
 const PARTICIPANTS = ['agent', 'api', 'dashboard'] as const;
@@ -56,19 +57,22 @@ async function receiptHash(tx: Tx, nodeId: string, nodeFqdn: string, epoch: numb
   let receipt: z.infer<typeof drainReceiptSchema> | z.infer<typeof apiDrainAttestationSchema>;
   try { receipt = participant === 'api' ? apiDrainAttestationSchema.parse(JSON.parse(ack.receiptJson))
     : drainReceiptSchema.parse(JSON.parse(ack.receiptJson)); } catch { fail(); }
-  const { signature, ...unsigned } = receipt;
+  const { signature, nodeSignature, ...unsigned } = receipt as typeof receipt & { nodeSignature?: unknown };
   if (participant === 'dashboard') await assertDashboardStillAbsent(tx, nodeId);
   const key = participant === 'api' ? reconciliationSecret()
     : participant === 'dashboard' ? dashboardReceiptKey() : RESULT_SIGNING_SECRET;
   const payload = participant === 'api'
     ? apiDrainAttestationSigningPayload(unsigned as Omit<z.infer<typeof apiDrainAttestationSchema>, 'signature'>)
     : enrollmentSigningPayload(unsigned);
-  const expected = createHmac('sha256', key).update(payload).digest();
+  const hmac = () => key.length >= 32 && timingSafeEqual(createHmac('sha256', key).update(payload).digest(), Buffer.from(signature, 'hex'));
+  // Only the agent's receipt is node evidence (node key, or the shared result key for older agents).
+  const authentic = participant === 'agent'
+    ? (await nodeEvidencePolicy(nodeId)).verify('enrollment-drain', payload, nodeSignature, hmac) : nodeSignature === undefined && hmac();
   if (receipt.participant !== participant || receipt.nodeId !== nodeId || receipt.nodeFqdn !== nodeFqdn
     || receipt.epoch !== epoch || receipt.barrierId !== barrierId
     || receipt.challengeId !== ack.challengeId || receipt.expiresAt !== ack.challengeExpiresAt.getTime()
     || receipt.status !== 'drained' || receipt.activeCount !== 0 || receipt.unknownCount !== 0
-    || receipt.evidenceSha256 !== ack.evidenceSha256 || !timingSafeEqual(expected, Buffer.from(signature, 'hex'))) fail();
+    || receipt.evidenceSha256 !== ack.evidenceSha256 || !authentic) fail();
   return sha256(ack.receiptJson);
 }
 

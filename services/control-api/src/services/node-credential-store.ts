@@ -8,7 +8,17 @@ export interface CredentialNode { id: string; name: string; hostname: string; ip
 export interface CredentialRow {
   id: string; nodeId: string; keyId: string; publicKey: string; status: NodeCredentialStatus; origin: NodeCredentialOrigin;
   boundFqdn: string; createdAt: Date; lastUsedAt: Date | null; retireAt: Date | null; revokedAt: Date | null; revokedBy: string | null;
+  /** The agent holding this key signs its evidence with it, as its last signed heartbeat said. */
+  evidenceSigning: boolean; evidenceSigningAt: Date | null;
 }
+export type PendingBindingStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
+export interface PendingBindingRow {
+  id: string; nodeId: string; keyId: string; publicKey: string; fqdn: string; peerAddress: string; recordedAddress: string;
+  status: PendingBindingStatus; attempts: number; createdAt: Date; lastSeenAt: Date; decidedAt: Date | null; decidedBy: string | null;
+  decisionReason: string | null;
+}
+export type LegacyChannel = 'request' | 'evidence' | 'outbound';
+export interface LegacyUseRow { nodeId: string; channel: LegacyChannel; count: number; firstUsedAt: Date; lastUsedAt: Date; lastDetail: string | null }
 export interface NewCredential { nodeId: string; keyId: string; publicKey: string; boundFqdn: string }
 export type BindOutcome = 'bound' | 'same' | 'exists' | 'key-in-use';
 export type TokenBindOutcome = 'bound' | 'same' | 'invalid' | 'expired' | 'used' | 'key-in-use';
@@ -157,6 +167,101 @@ export const nodeCredentialStore = {
       await tx.nodeEnrollmentToken.deleteMany({ where: { nodeId } });
       return (await tx.nodeCredential.deleteMany({ where: { nodeId } })).count;
     });
+  },
+
+  /** Record what the agent holding this key said in a signed heartbeat about signing its evidence. */
+  async setEvidenceSigning(keyId: string, value: boolean, at: Date): Promise<void> {
+    await getDb().nodeCredential.updateMany({ where: { keyId, evidenceSigning: !value },
+      data: { evidenceSigning: value, evidenceSigningAt: value ? at : null } });
+  },
+
+  /** Remember a refused automatic binding for an administrator; repeated attempts update one row. */
+  async recordPendingBinding(input: { nodeId: string; keyId: string; publicKey: string; fqdn: string; peerAddress: string; recordedAddress: string; now: Date }):
+    Promise<{ row: PendingBindingRow; created: boolean }> {
+    const db = getDb();
+    const existing = await db.nodePendingBinding.findUnique({ where: { nodeId_keyId: { nodeId: input.nodeId, keyId: input.keyId } } });
+    if (existing) {
+      const row = await db.nodePendingBinding.update({ where: { id: existing.id }, data: { attempts: { increment: 1 }, lastSeenAt: input.now,
+        ...(existing.status === 'PENDING' ? { peerAddress: input.peerAddress, recordedAddress: input.recordedAddress, fqdn: input.fqdn } : {}) } });
+      return { row: row as PendingBindingRow, created: false };
+    }
+    try {
+      const row = await db.nodePendingBinding.create({ data: { nodeId: input.nodeId, keyId: input.keyId, publicKey: input.publicKey, fqdn: input.fqdn,
+        peerAddress: input.peerAddress, recordedAddress: input.recordedAddress, createdAt: input.now, lastSeenAt: input.now } });
+      // Bounded: at most 10 open requests per node; the oldest go first.
+      const open = await db.nodePendingBinding.findMany({ where: { nodeId: input.nodeId, status: 'PENDING' }, orderBy: { lastSeenAt: 'desc' }, skip: 10, select: { id: true } });
+      if (open.length > 0) await db.nodePendingBinding.deleteMany({ where: { id: { in: open.map(entry => entry.id) } } });
+      return { row: row as PendingBindingRow, created: true };
+    } catch (error) {
+      if (!uniqueViolation(error)) throw error;
+      const row = await db.nodePendingBinding.findUniqueOrThrow({ where: { nodeId_keyId: { nodeId: input.nodeId, keyId: input.keyId } } });
+      return { row: row as PendingBindingRow, created: false };
+    }
+  },
+
+  async pendingBindings(filter: { status?: PendingBindingStatus; nodeId?: string } = {}): Promise<PendingBindingRow[]> {
+    return (await getDb().nodePendingBinding.findMany({ where: { ...(filter.status ? { status: filter.status } : {}), ...(filter.nodeId ? { nodeId: filter.nodeId } : {}) },
+      orderBy: { lastSeenAt: 'desc' }, take: 200 })) as PendingBindingRow[];
+  },
+
+  async pendingBinding(id: string): Promise<PendingBindingRow | null> {
+    return (await getDb().nodePendingBinding.findUnique({ where: { id } })) as PendingBindingRow | null;
+  },
+
+  /**
+   * Approve: bind the pending key as the node's first credential, in one transaction with the
+   * decision. Refused when the node has a credential by now (first writer wins, as for the agent).
+   */
+  async approvePendingBinding(id: string, actorId: string, now: Date): Promise<{ outcome: 'bound' | 'exists' | 'key-in-use' | 'not-pending'; row: PendingBindingRow | null }> {
+    try {
+      return await getDb().$transaction(async tx => {
+        const pending = await tx.nodePendingBinding.findUnique({ where: { id } });
+        if (!pending) return { outcome: 'not-pending' as const, row: null };
+        await lockNode(tx, pending.nodeId);
+        const current = await tx.nodePendingBinding.findUnique({ where: { id } });
+        if (!current || current.status !== 'PENDING') return { outcome: 'not-pending' as const, row: current as PendingBindingRow | null };
+        if (await tx.nodeCredential.count({ where: { nodeId: current.nodeId } }) > 0) return { outcome: 'exists' as const, row: current as PendingBindingRow };
+        await tx.nodeCredential.create({ data: { nodeId: current.nodeId, keyId: current.keyId, publicKey: current.publicKey,
+          boundFqdn: current.fqdn, origin: 'LEGACY_UPGRADE', status: 'ACTIVE' } });
+        const row = await tx.nodePendingBinding.update({ where: { id }, data: { status: 'APPROVED', decidedAt: now, decidedBy: actorId } });
+        // Any other open request for the node is moot now.
+        await tx.nodePendingBinding.updateMany({ where: { nodeId: current.nodeId, status: 'PENDING', id: { not: id } },
+          data: { status: 'REJECTED', decidedAt: now, decidedBy: actorId, decisionReason: 'another key was approved' } });
+        return { outcome: 'bound' as const, row: row as PendingBindingRow };
+      });
+    } catch (error) {
+      if (uniqueViolation(error)) return { outcome: 'key-in-use', row: null };
+      throw error;
+    }
+  },
+
+  async rejectPendingBinding(id: string, actorId: string, reason: string | null, now: Date): Promise<PendingBindingRow | null> {
+    const changed = await getDb().nodePendingBinding.updateMany({ where: { id, status: 'PENDING' },
+      data: { status: 'REJECTED', decidedAt: now, decidedBy: actorId, decisionReason: reason } });
+    if (changed.count !== 1) return null;
+    return (await getDb().nodePendingBinding.findUnique({ where: { id } })) as PendingBindingRow | null;
+  },
+
+  /** Add counted uses of a shared credential; one upsert per node and channel. */
+  async addLegacyUse(entries: Array<{ nodeId: string; channel: LegacyChannel; count: number; first: Date; last: Date; detail: string | null }>): Promise<void> {
+    const db = getDb();
+    const known = new Set((await db.node.findMany({ where: { id: { in: [...new Set(entries.map(entry => entry.nodeId))] } }, select: { id: true } })).map(node => node.id));
+    for (const entry of entries) {
+      if (!known.has(entry.nodeId)) continue;
+      await db.nodeLegacyCredentialUse.upsert({ where: { nodeId_channel: { nodeId: entry.nodeId, channel: entry.channel } },
+        create: { nodeId: entry.nodeId, channel: entry.channel, count: entry.count, firstUsedAt: entry.first, lastUsedAt: entry.last, lastDetail: entry.detail },
+        update: { count: { increment: entry.count }, lastUsedAt: entry.last, lastDetail: entry.detail } });
+    }
+  },
+
+  async legacyUse(nodeIds?: string[]): Promise<LegacyUseRow[]> {
+    return (await getDb().nodeLegacyCredentialUse.findMany({ where: nodeIds ? { nodeId: { in: nodeIds } } : {}, orderBy: { lastUsedAt: 'desc' } })) as LegacyUseRow[];
+  },
+
+  /** Inventory nodes that are not decommissioned, with their credential rows, for the fleet summary. */
+  async fleet(): Promise<Array<CredentialNode & { credentials: CredentialRow[] }>> {
+    const nodes = await getDb().node.findMany({ where: { status: { not: 'DECOMMISSIONED' } }, select: { ...nodeSelect, credentials: true } });
+    return nodes.map(node => ({ ...node, credentials: node.credentials.map(row) }));
   },
 
   async touch(keyId: string, at: Date): Promise<void> {

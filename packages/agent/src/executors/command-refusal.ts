@@ -2,6 +2,7 @@ import { HOST_FQDN, RESULT_SIGNING_SECRET } from '../env.js';
 import { commandRefusalSigningPayload, signCommandEvidence } from '../security/command-result-signature.js';
 import { logger } from '../utils/logger.js';
 import { commandLedger } from './command-executor.js';
+import { nodeEvidenceFields } from '../security/evidence-signing.js';
 
 /**
  * The error body of a refusal. Only with a local proof that the request did
@@ -20,7 +21,8 @@ export async function refusalError(request: { commandId: string; requestSha256: 
     if (trace.receipt || trace.activeLock) return base;
     const unsigned = { commandId: request.commandId, requestSha256: request.requestSha256, code, highWater: details.highWater?.fence ?? null, nodeFqdn: HOST_FQDN, leaseId: request.leaseId };
     return { ...base, dispatched: false, executed: false,
-      refusal: { ...unsigned, signature: signCommandEvidence(commandRefusalSigningPayload(unsigned), RESULT_SIGNING_SECRET) } };
+      refusal: { ...unsigned, signature: signCommandEvidence(commandRefusalSigningPayload(unsigned), RESULT_SIGNING_SECRET),
+        ...nodeEvidenceFields('command-refusal', commandRefusalSigningPayload(unsigned)) } };
   } catch (error) {
     logger.warn(`Refusal of ${request.commandId} (${code}) stays uncertain: ${error instanceof Error ? error.message : String(error)}`);
     return base;

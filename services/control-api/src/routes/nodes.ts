@@ -206,16 +206,17 @@ nodesRouter.get('/', async (c) => {
   // Strip token from API response — never expose node secrets to the frontend
   const viewer = getUser(c).role;
   const safeNodes = nodes.map((node) => nodeForRole(node, viewer));
-  const [readiness, health, credentials] = await Promise.all([
+  const [readiness, health, credentials, legacy] = await Promise.all([
     readinessOfNodes(safeNodes),
     withReadRetry('nodes list health', () => latestHealthSummaries(safeNodes.map((node) => node.id))),
     withReadRetry('nodes list credentials', () => nodeCredentialStore.summaries(safeNodes.map((node) => node.id))),
+    withReadRetry('nodes list legacy credential use', () => nodeCredentialStore.legacyUse(safeNodes.map((node) => node.id))),
   ]);
 
   return c.json({
     success: true,
     data: safeNodes.map(node => ({ ...node, upgradeReadiness: readiness.get(node.id) ?? null, health: health.get(node.id) ?? null,
-      nodeCredential: credentialView(credentials.get(node.id), viewer === 'ADMIN') })),
+      nodeCredential: credentialView(credentials.get(node.id), viewer === 'ADMIN', legacy.filter(row => row.nodeId === node.id)) })),
     meta: { total, page, pageSize, hasMore: page * pageSize < total },
   });
 });
@@ -620,9 +621,10 @@ nodesRouter.get('/:nodeId', async (c) => {
   });
   if (!node) throw new HttpError(404, 'NOT_FOUND', 'Node not found');
   const safeNode = nodeForRole(node, getUser(c).role);
-  const [readiness, credentials] = await Promise.all([readinessOfNodes([safeNode]), nodeCredentialStore.credentialsOfNode(safeNode.id)]);
+  const [readiness, credentials, legacy] = await Promise.all([readinessOfNodes([safeNode]), nodeCredentialStore.credentialsOfNode(safeNode.id),
+    nodeCredentialStore.legacyUse([safeNode.id])]);
   return c.json({ success: true, data: { ...safeNode, upgradeReadiness: readiness.get(safeNode.id) ?? null,
-    nodeCredential: credentialView(credentials, getUser(c).role === 'ADMIN') } });
+    nodeCredential: credentialView(credentials, getUser(c).role === 'ADMIN', legacy) } });
 });
 
 // ── Per-node credentials (docs/NODE_CREDENTIALS.md) ──

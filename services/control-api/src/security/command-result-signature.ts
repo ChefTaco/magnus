@@ -1,5 +1,10 @@
 // Parsed optional wire fields may be undefined; signing still omits them identically.
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, timingSafeEqual } from 'node:crypto';
+import { commandAbsenceSigningPayload, commandRefusalSigningPayload, commandResultSigningPayload,
+  fenceProofSigningPayload } from './node-evidence.js';
+
+// The canonical payloads live in node-evidence.ts, shared byte-for-byte with the agent.
+export { commandAbsenceSigningPayload, commandRefusalSigningPayload, commandResultSigningPayload, fenceProofSigningPayload };
 
 export interface SignedCommandResult {
   commandId: string;
@@ -11,25 +16,8 @@ export interface SignedCommandResult {
   coordination?: { version: 1; resourceKey: string; fence: string; expiresAt: number; requestSha256: string } | undefined;
   completion?: { registryVersion:1; registrySha256:string; descriptorId:string } | undefined;
   signature: string;
-}
-
-export function commandResultSigningPayload(result: Omit<SignedCommandResult, 'signature'>): string {
-  return JSON.stringify({
-    version: result.completion ? 3 : result.coordination ? 2 : 1,
-    commandId: result.commandId,
-    exitCode: result.exitCode,
-    durationMs: result.durationMs,
-    stdoutSha256: createHash('sha256').update(result.stdout).digest('hex'),
-    stderrSha256: createHash('sha256').update(result.stderr).digest('hex'),
-    truncated: result.truncated,
-    ...(result.coordination ? { coordination: {
-      version: result.coordination.version, resourceKey: result.coordination.resourceKey,
-      fence: result.coordination.fence, expiresAt: result.coordination.expiresAt,
-      requestSha256: result.coordination.requestSha256,
-    } } : {}),
-    ...(result.completion ? { completion: { registryVersion: result.completion.registryVersion,
-      registrySha256: result.completion.registrySha256, descriptorId: result.completion.descriptorId } } : {}),
-  });
+  /** Ed25519 signature by the node key; checked by services/node-evidence-policy.ts. */
+  nodeSignature?: unknown;
 }
 
 export function verifyCommandResultSignature(
@@ -62,11 +50,7 @@ export interface CommandRefusal {
   nodeFqdn: string;
   leaseId: string;
   signature: string;
-}
-
-export function commandRefusalSigningPayload(refusal: Omit<CommandRefusal, 'signature'>): string {
-  return JSON.stringify({ domain: 'magnus.command-refusal.v1', commandId: refusal.commandId, requestSha256: refusal.requestSha256,
-    code: refusal.code, highWater: refusal.highWater, nodeFqdn: refusal.nodeFqdn, leaseId: refusal.leaseId });
+  nodeSignature?: unknown;
 }
 
 /**
@@ -88,18 +72,7 @@ export interface CommandAbsence {
   /** The fence of this command's durable record of a failed admission, if it has one. */
   admissionFailedFence: string | null;
   signature: string;
-}
-
-export function commandAbsenceSigningPayload(absence: Omit<CommandAbsence, 'signature'>): string {
-  return JSON.stringify({ domain: 'magnus.command-absence.v1', commandId: absence.commandId, nodeFqdn: absence.nodeFqdn, nonce: absence.nonce,
-    ledgerExists: absence.ledgerExists, receipt: absence.receipt, activeLock: absence.activeLock, resourceKey: absence.resourceKey,
-    fenceHighWater: absence.fenceHighWater, markerState: absence.markerState, markerNodeId: absence.markerNodeId, admissionFailedFence: absence.admissionFailedFence });
-}
-
-/** The fence high-water a preflight reports, bound to the node and a fresh nonce. Only this can move a server generation. */
-export function fenceProofSigningPayload(proof: { nonce: string; nodeFqdn: string; fenceHighWater: Readonly<Record<string, string>> }): string {
-  return JSON.stringify({ domain: 'magnus.fence-high-water.v1', nonce: proof.nonce, nodeFqdn: proof.nodeFqdn,
-    fenceHighWater: Object.fromEntries(Object.entries(proof.fenceHighWater).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) });
+  nodeSignature?: unknown;
 }
 
 /** HMAC check of a signed refusal or absence payload against the active or previous result key. */

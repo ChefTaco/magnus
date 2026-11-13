@@ -5,22 +5,25 @@ import { canonical } from './resource-enrollment.js';
 import { getNodeBaseUrl } from '../utils/node-url.js';
 import { RESULT_SIGNING_SECRET } from '../utils/env.js';
 import { agentFetch } from './node-agent-auth.js';
+import type { NodeEvidencePolicy } from './node-evidence-policy.js';
+import { evidenceSignatureSchema } from '../schemas/node-evidence.js';
+import { osSchedulerWriterSigningPayload } from '../security/node-evidence.js';
 
 const hex = z.string().regex(/^[a-f0-9]{64}$/);
 const proofSchema = z.object({ version: z.literal(1), sourceClass: z.literal('os-schedulers'),
   nodeId: z.string().min(1).max(128), nodeFqdn: z.string().min(1).max(253),
   epoch: z.number().int().positive(), barrierId: z.string().guid(), nonce: z.string().guid(),
   observedAt: z.number().int().positive(), active: z.literal(0), unknown: z.literal(0),
-  scheduleInventorySha256: hex, admissionFenceSha256: hex, signature: hex }).strict();
-const DOMAIN = 'magnus.os-scheduler-writer.v1\n';
+  scheduleInventorySha256: hex, admissionFenceSha256: hex, signature: hex,
+  nodeSignature: evidenceSignatureSchema.optional() }).strict();
 
 export function verifyOsSchedulerWriterProof(raw: unknown, expected: {
   nodeId: string; nodeFqdn: string; nonce: string; epoch: number; barrierId: string | null;
-}, now = Date.now()): { ownerReceiptSha256: string; admissionFenceSha256: string;
+}, now: number, policy: NodeEvidencePolicy): { ownerReceiptSha256: string; admissionFenceSha256: string;
   scheduleInventorySha256: string } | null {
   const parsed = proofSchema.safeParse(raw);
-  if (!parsed.success || RESULT_SIGNING_SECRET.length < 32) return null;
-  const { signature, ...receipt } = parsed.data;
+  if (!parsed.success || policy.nodeId !== expected.nodeId) return null;
+  const { signature, nodeSignature, ...receipt } = parsed.data;
   if (receipt.nodeId !== expected.nodeId || receipt.nodeFqdn !== expected.nodeFqdn
     || receipt.nonce !== expected.nonce || receipt.epoch !== expected.epoch
     || receipt.barrierId !== expected.barrierId || now - receipt.observedAt < -1000
@@ -29,8 +32,10 @@ export function verifyOsSchedulerWriterProof(raw: unknown, expected: {
     nodeId: expected.nodeId, nodeFqdn: expected.nodeFqdn, epoch: expected.epoch,
     barrierId: expected.barrierId })).digest('hex');
   if (receipt.admissionFenceSha256 !== exactFence) return null;
-  const signed = createHmac('sha256', RESULT_SIGNING_SECRET).update(DOMAIN + canonical(receipt)).digest();
-  if (!timingSafeEqual(signed, Buffer.from(signature, 'hex'))) return null;
+  const payload = osSchedulerWriterSigningPayload(receipt);
+  // The node key signs the proof; the shared result key is the fallback for older agents.
+  if (!policy.verify('os-scheduler-writer', payload, nodeSignature, () => RESULT_SIGNING_SECRET.length >= 32
+    && timingSafeEqual(createHmac('sha256', RESULT_SIGNING_SECRET).update(payload).digest(), Buffer.from(signature, 'hex')))) return null;
   return { ownerReceiptSha256: createHash('sha256').update(canonical(parsed.data)).digest('hex'),
     admissionFenceSha256: receipt.admissionFenceSha256,
     scheduleInventorySha256: receipt.scheduleInventorySha256 };

@@ -1,5 +1,5 @@
 {
-  "summary": "Per-node credentials, phase 1: each node agent gets its own Ed25519 key, the server signs its requests to agents, and existing nodes move over by themselves. The shared node secret keeps working and is refused only for a node that has its own key. One additive migration; see docs/NODE_CREDENTIALS.md before downgrading an agent that has bound a key.",
+  "summary": "Per-node credentials, phases 1 and 2: each node agent gets its own Ed25519 key, the server signs its requests to agents, existing nodes move over by themselves, node evidence (command results, refusals, absences, fence proofs, drain, writer, session and terminal receipts) is signed with the node key, and command reconciliation decisions with the server key. The shared node secret keeps working and is refused only for a node that has its own key; an agent can refuse it on its own API with NODE_AUTH_MODE=enforce. Two additive migrations; see docs/NODE_CREDENTIALS.md before downgrading an agent that has bound a key.",
   "breaking": false,
   "newRequiredEnv": [],
   "newOptionalEnv": [
@@ -7,8 +7,8 @@
     { "name": "NODE_AUTH_LEGACY_UPGRADE_UNTIL", "component": "server", "secret": false, "description": "ISO 8601 date until which existing agents may bind their first node key with the shared node secret. Unset means 30 days after the first start." },
     { "name": "NODE_AUTH_SERVER_KEY_PATH", "component": "server", "secret": false, "description": "File holding the server's Ed25519 signing key (mode 0600, created on first start). Default $MAGNUS_HOME/state/node-auth/server-signing-key.json." },
     { "name": "NODE_AUTO_REGISTER", "component": "server", "secret": false, "description": "Add unknown agents that present the shared node secret to the inventory (default true)." },
-    { "name": "NODE_AUTH_MODE", "component": "agent", "secret": false, "description": "Reserved: compat, warn or enforce; the agent behaves as compat in this release." }
+    { "name": "NODE_AUTH_MODE", "component": "agent", "secret": false, "description": "compat (default) or warn: the agent accepts the shared node secret on its own API (warn logs each use); enforce: once the node has a bound key, requests that carry only the shared secret are refused, and reconciliation decisions must be signed by the server key." }
   ],
   "removedEnv": [],
-  "migrations": ["20261113120000_node_credentials"]
+  "migrations": ["20261113120000_node_credentials", "20261114090000_node_credentials_phase2"]
 }

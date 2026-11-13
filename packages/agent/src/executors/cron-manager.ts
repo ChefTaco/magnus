@@ -16,6 +16,8 @@ import { readdir, readFile } from 'node:fs/promises';
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { stableCodePath } from '../upgrade/stable-path.js';
 import { logger } from '../utils/logger.js';
+import { nodeEvidenceFields, verifyServerDecision } from '../security/evidence-signing.js';
+import { osSchedulerWriterSigningPayload, schedulerSourceSettlementReceiptPayload as settlementReceiptPayload } from '../security/node-evidence.js';
 
 /** Routes answer with a fixed code; the cause goes to the log. */
 const warnCause = (what: string, error: unknown) => logger.warn(`${what} failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -78,6 +80,12 @@ export function managedCronEntryAbsent(raw: string, job: ManagedCronJob): boolea
 
 cronRoutes.route('/', schedulerDrainRoutes({ scheduler, inventory: { wrapper: managedCronLine } }));
 
+/** A retained settlement receipt as it leaves this agent: stored with its HMAC, signed with the node key on the way out. */
+function withSettlementEvidence<T extends { receiptSignature: string }>(receipt: T): T {
+  const { receiptSignature: _signature, nodeSignature: _stale, ...unsigned } = receipt as T & { nodeSignature?: unknown };
+  return { ...receipt, ...nodeEvidenceFields('scheduler-settlement-receipt', settlementReceiptPayload(unsigned)) };
+}
+
 export const OS_SCHEDULER_WRITER_DOMAIN = 'magnus.os-scheduler-writer.v1\n';
 const writerProofRequest = z.object({ nodeFqdn: z.string().min(1).max(253), nonce: z.string().guid() }).strict();
 
@@ -103,10 +111,10 @@ cronRoutes.get('/os-scheduler-writer-proof', async c => {
       scheduleInventorySha256: createHash('sha256').update(canonicalSchedulerEvidence(observed)).digest('hex'),
       admissionFenceSha256: createHash('sha256').update(canonicalSchedulerEvidence({
         sourceClass: 'os-schedulers', ...identity })).digest('hex') };
-    const signature = createHmac('sha256', RESULT_SIGNING_SECRET)
-      .update(OS_SCHEDULER_WRITER_DOMAIN + canonicalSchedulerEvidence(receipt)).digest('hex');
+    const payload = osSchedulerWriterSigningPayload(receipt);
+    const signature = createHmac('sha256', RESULT_SIGNING_SECRET).update(payload).digest('hex');
     c.header('Cache-Control', 'no-store');
-    return c.json({ success: true, data: { ...receipt, signature } });
+    return c.json({ success: true, data: { ...receipt, signature, ...nodeEvidenceFields('os-scheduler-writer', payload) } });
   } catch (error) { warnCause('Writer proof', error); return c.json({ success: false, error: { code: 'WRITER_PROOF_UNAVAILABLE' } }, 409); }
 });
 
@@ -164,14 +172,16 @@ cronRoutes.post('/enrollment-stage', async c => {
   const secret = process.env['COMMAND_RECONCILIATION_SECRET'] ?? '';
   const conflicting = [NODE_MANAGER_SECRET, process.env['NODE_MANAGER_SECRET_PREVIOUS'] ?? '', RESULT_SIGNING_SECRET,
     process.env['RESULT_SIGNING_PREVIOUS_SECRET'] ?? ''];
+  const hmacKeyUsable = secret.length >= 32 && !conflicting.some(value => value && value === secret);
   if (!parsed.success || parsed.data.nodeFqdn !== HOST_FQDN || parsed.data.spec.nodeFqdn !== HOST_FQDN
-    || parsed.data.expiresAt <= Date.now() || parsed.data.expiresAt > Date.now() + 300_000 || secret.length < 32
-    || conflicting.some(value => value && value === secret))
+    || parsed.data.expiresAt <= Date.now() || parsed.data.expiresAt > Date.now() + 300_000)
     return c.json({ success: false, error: { code: 'CRON_ENROLLMENT_STAGE_INVALID' } }, 403);
-  const { signature, ...assertion } = parsed.data;
-  const expected = createHmac('sha256', secret).update(cronEnrollmentStageSigningPayload(assertion)).digest();
-  if (!timingSafeEqual(expected, Buffer.from(signature, 'hex')))
-    return c.json({ success: false, error: { code: 'CRON_ENROLLMENT_STAGE_INVALID' } }, 403);
+  const { signature, serverSignature, ...assertion } = parsed.data;
+  // Signed for this node with a server key this agent pins, or (older servers) the shared reconciliation key.
+  const authentic = verifyServerDecision('cron-enrollment-stage', cronEnrollmentStageSigningPayload(assertion), serverSignature,
+    () => hmacKeyUsable && typeof signature === 'string'
+      && timingSafeEqual(createHmac('sha256', secret).update(cronEnrollmentStageSigningPayload(assertion)).digest(), Buffer.from(signature, 'hex')));
+  if (!authentic) return c.json({ success: false, error: { code: 'CRON_ENROLLMENT_STAGE_INVALID' } }, 403);
   try {
     const job = makeCronJob(parsed.data.spec);
     await scheduler.locked(async () => {
@@ -182,8 +192,9 @@ cronRoutes.post('/enrollment-stage', async c => {
     });
     const receipt = { nodeFqdn: HOST_FQDN, name: job.spec.name, jobId: job.jobId, revision: job.spec.revision,
       specSha256: job.specSha256, operationId: parsed.data.operationId, staged: true as const, enabled: false as const };
-    return c.json({ success: true, data: { ...receipt, receiptSignature: createHmac('sha256', RESULT_SIGNING_SECRET)
-      .update(cronEnrollmentStageReceiptPayload(receipt)).digest('hex') } });
+    const receiptPayload = cronEnrollmentStageReceiptPayload(receipt);
+    return c.json({ success: true, data: { ...receipt, receiptSignature: createHmac('sha256', RESULT_SIGNING_SECRET).update(receiptPayload).digest('hex'),
+      ...nodeEvidenceFields('cron-stage-receipt', receiptPayload) } });
   } catch (error) {
     warnCause('Enrollment stage', error);
     return c.json({ success: false, error: { code: 'CRON_ENROLLMENT_STAGE_CONFLICT' } }, 409);
@@ -195,7 +206,7 @@ cronRoutes.get('/source-reconciliation/:decisionId', async c => {
     const receipt = await scheduler.settlementReceipt(c.req.param('decisionId'));
     if (!receipt) return c.json({ success: false, error: { code: 'SCHEDULER_RECONCILIATION_NOT_FOUND' } }, 404);
     c.header('Cache-Control', 'no-store');
-    return c.json({ success: true, data: receipt });
+    return c.json({ success: true, data: withSettlementEvidence(receipt) });
   } catch (error) { warnCause('Scheduler reconciliation lookup', error); return c.json({ success: false, error: { code: 'SCHEDULER_RECONCILIATION_NOT_FOUND' } }, 404); }
 });
 
@@ -220,13 +231,13 @@ cronRoutes.post('/source-reconciliation', async c => {
       if (!('sourceIdentityVersion' in retained)
         || schedulerSourceSettlementSigningPayload(retained) !== schedulerSourceSettlementSigningPayload(assertion))
         throw new Error('Scheduler settlement decision was reused');
-      c.header('Cache-Control', 'no-store'); return c.json({ success: true, data: retained });
+      c.header('Cache-Control', 'no-store'); return c.json({ success: true, data: withSettlementEvidence(retained) });
     }
     if (parsed.data.expiresAt <= Date.now() || parsed.data.expiresAt > Date.now() + 300_000)
       return c.json({ success: false, error: { code: 'SCHEDULER_RECONCILIATION_INVALID' } }, 403);
     const settled = await scheduler.settleForeignSource(parsed.data, receipt => createHmac('sha256', RESULT_SIGNING_SECRET)
       .update(schedulerSourceSettlementReceiptPayload(receipt)).digest('hex'));
-    c.header('Cache-Control', 'no-store'); return c.json({ success: true, data: settled.receipt });
+    c.header('Cache-Control', 'no-store'); return c.json({ success: true, data: withSettlementEvidence(settled.receipt) });
   } catch (error) {
     warnCause('Scheduler reconciliation', error);
     return c.json({ success: false, error: { code: 'SCHEDULER_RECONCILIATION_CONFLICT' } }, 409);

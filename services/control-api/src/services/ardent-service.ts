@@ -7,6 +7,7 @@ import { getNodeManagerSecret } from '../utils/env.js';
 import { SENTINEL_NODE_IDS } from '../utils/sentinel-nodes.js';
 import { HttpError } from '../middleware/error-handler.js';
 import { ardentCommandOwners, commandReconciliationKey } from './ardent-command-owner.js';
+import { serverCanSignDecisions } from './server-authorization.js';
 import { ardentHiveMemCredentialStatuses } from './ardent-hivemem-renewal.js';
 
 type NodeTarget = { id: string; name: string; hostname: string; ipAddress: string; port: number };
@@ -87,7 +88,8 @@ async function withCommandOwners(installations: ArdentFleetInstallation[]): Prom
   const nodeIds = installations.map(item => item.nodeId);
   const owners = await ardentCommandOwners(nodeIds);
   const credentials = await ardentHiveMemCredentialStatuses(nodeIds);
-  const commandReconciliation = { configured: commandReconciliationKey() !== null };
+  // Agents with a node key verify decisions signed with the server key; older ones need COMMAND_RECONCILIATION_SECRET.
+  const commandReconciliation = { configured: commandReconciliationKey() !== null || serverCanSignDecisions() };
   return installations.map(item => ({ ...item, commandOwners: owners.get(item.nodeId) ?? [], commandReconciliation,
     profiles: item.profiles.map(profile => ({ ...profile, hivemem: credentials.get(`${item.nodeId}:${profile.id}`) ?? null })) }));
 }

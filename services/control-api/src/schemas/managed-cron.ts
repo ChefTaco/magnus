@@ -1,6 +1,7 @@
 /** Exact node scheduler wire schema; cross-package tests guard canonical digest parity. */
-import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import * as sharedEvidence from '../security/node-evidence.js';
+import { evidenceSignatureSchema } from './node-evidence.js';
 export const managedCronSchema = z.object({
   nodeFqdn: z.string().min(1).max(253),
   name: z.string().min(1).max(128).regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/),
@@ -21,13 +22,13 @@ export type ManagedCronSpec = z.infer<typeof managedCronSchema>;
 export const cronEnrollmentStageSchema = z.object({
   version: z.literal(1), nodeId: z.string().min(1).max(128), nodeFqdn: z.string().min(1).max(253),
   spec: managedCronSchema, operationId: z.string().guid(), expiresAt: z.number().int().positive(),
-  signature: z.string().regex(/^[a-f0-9]{64}$/),
+  // COMMAND_RECONCILIATION_SECRET HMAC for agents without a node key; serverSignature for those with one.
+  signature: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  serverSignature: evidenceSignatureSchema.optional(),
 }).strict();
 export type CronEnrollmentStage = z.infer<typeof cronEnrollmentStageSchema>;
-export function cronEnrollmentStageSigningPayload(value: Omit<CronEnrollmentStage, 'signature'>): string {
-  return JSON.stringify({ domain: 'magnus.cron-enrollment-stage.v1', version: value.version, nodeId: value.nodeId,
-    nodeFqdn: value.nodeFqdn, specSha256: createHash('sha256').update(JSON.stringify(value.spec)).digest('hex'),
-    operationId: value.operationId, expiresAt: value.expiresAt });
+export function cronEnrollmentStageSigningPayload(value: Omit<CronEnrollmentStage, 'signature' | 'serverSignature'>): string {
+  return sharedEvidence.cronEnrollmentStageSigningPayload(value);
 }
 export const managedCronRegistrationSchema = z.object({
   revision: z.number().int().positive().max(2147483647),
@@ -48,9 +49,10 @@ export type ManagedCronIdentity = z.infer<typeof managedCronIdentitySchema>;
 export const cronEnrollmentStageReceiptSchema = managedCronIdentitySchema.extend({
   operationId: z.string().guid(), staged: z.literal(true), enabled: z.literal(false),
   receiptSignature: z.string().regex(/^[a-f0-9]{64}$/),
+  nodeSignature: evidenceSignatureSchema.optional(),
 }).strict();
-export function cronEnrollmentStageReceiptPayload(value: Omit<z.infer<typeof cronEnrollmentStageReceiptSchema>, 'receiptSignature'>): string {
-  return JSON.stringify({ domain: 'magnus.cron-enrollment-stage-receipt.v1', ...value });
+export function cronEnrollmentStageReceiptPayload(value: Omit<z.infer<typeof cronEnrollmentStageReceiptSchema>, 'receiptSignature' | 'nodeSignature'>): string {
+  return sharedEvidence.cronEnrollmentStageReceiptPayload(value);
 }
 
 export const managedCronStageAckSchema = managedCronIdentitySchema.extend({
@@ -83,6 +85,7 @@ export const schedulerSourceSettlementSchema = z.object({
 export type SchedulerSourceSettlement = z.infer<typeof schedulerSourceSettlementSchema>;
 export const schedulerSourceSettlementAckSchema = schedulerSourceSettlementSchema.omit({ signature: true }).extend({
   settled: z.literal(true), replayed: z.boolean(), receiptSignature: z.string().regex(/^[a-f0-9]{64}$/),
+  nodeSignature: evidenceSignatureSchema.optional(),
 }).strict();
 
 export function schedulerSourceSettlementSigningPayload(value: Omit<SchedulerSourceSettlement, 'signature'>): string {
@@ -93,8 +96,8 @@ export function schedulerSourceSettlementSigningPayload(value: Omit<SchedulerSou
     evidenceSha256: value.evidenceSha256, approvalRef: value.approvalRef, decisionId: value.decisionId,
     expiresAt: value.expiresAt });
 }
-export function schedulerSourceSettlementReceiptPayload(value: Omit<z.infer<typeof schedulerSourceSettlementAckSchema>, 'receiptSignature'>): string {
-  return JSON.stringify({ domain: 'magnus.scheduler-source-reconciliation-receipt.v2', ...value });
+export function schedulerSourceSettlementReceiptPayload(value: Omit<z.infer<typeof schedulerSourceSettlementAckSchema>, 'receiptSignature' | 'nodeSignature'>): string {
+  return sharedEvidence.schedulerSourceSettlementReceiptPayload(value);
 }
 
 function scheduleFields(schedule: string): Array<Set<number>> {

@@ -3,9 +3,9 @@
 // With no arguments it starts the agent. Commands are imported lazily so that
 // `--env-file` is loaded before any module reads the environment.
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { config } from 'dotenv';
-import { parseCli, type ParsedCli } from './cli-args.js';
+import { enrollmentTokenFrom, parseCli, type ParsedCli } from './cli-args.js';
 
 const USAGE = `Magnus Agent: node daemon that enrolls with a magnus-server and manages this host.
 
@@ -16,6 +16,7 @@ Usage:
   magnus-agent env-schema                           Print the configuration schema as JSON
   magnus-agent install-service [--unprivileged]     (root, once) Versioned layout, upgrade launcher and systemd unit
   magnus-agent enroll --token <token>               Bind a new node key with a one-time enrollment token
+  magnus-agent enroll --token-file <path|->         The same, reading the token from a file or standard input (-)
   magnus-agent identity show [--json]               Print this node's id and key fingerprints (never the key)
   magnus-agent identity rotate                      Replace the node key (signed with the key it replaces)
   magnus-agent identity reset                       Remove the node key and return to the shared node secret
@@ -67,6 +68,8 @@ export async function main(argv: string[]): Promise<number | null> {
 
   switch (cli.command) {
     case 'acceptance': {
+      // The node key lives next to the .env: the probe signs with it (an agent in enforce mode needs that).
+      if (!process.env['AGENT_INSTALL_DIR'] && cli.envFile) process.env['AGENT_INSTALL_DIR'] = dirname(resolve(cli.envFile));
       const { runAgentAcceptance } = await import('./acceptance.js');
       const result = await runAgentAcceptance(cli.rest, process.env, version());
       if (cli.rest.includes('--json')) console.log(JSON.stringify(result));
@@ -107,9 +110,10 @@ export async function main(argv: string[]): Promise<number | null> {
       return report.ok ? 0 : 1;
     }
     case 'enroll': {
-      const tokenIndex = cli.rest.indexOf('--token');
-      const token = tokenIndex >= 0 ? cli.rest[tokenIndex + 1] : cli.rest.find(arg => arg.startsWith('--token='))?.slice('--token='.length);
-      if (!token || cli.rest.length > 2) return fail('usage: magnus-agent enroll --token <token>');
+      // --token-file keeps the token off the process table (`-` reads standard input).
+      const parsed = enrollmentTokenFrom(cli.rest, path => readFileSync(path, { encoding: 'utf8' }).slice(0, 4096));
+      if ('error' in parsed) return fail(parsed.error);
+      const { token } = parsed;
       config({ path: resolve(process.env['AGENT_INSTALL_DIR'] ?? process.cwd(), '.env'), quiet: true });
       const { enrollWithToken } = await import('./node-enrollment.js');
       const result = await enrollWithToken(token);

@@ -269,11 +269,15 @@ async function startupAutoMigrate(): Promise<void> {
   }
 }
 
-async function commandStart(options: CliOptions): Promise<void> {
-  // Without --env-file the server reads its package-level .env; apply it here
-  // too so startup switches such as MAGNUS_AUTO_MIGRATE see the same values.
+/** Without --env-file the server reads its package-level .env; other commands that act as the server read it too. */
+function loadPackageEnv(): void {
   const packageEnv = join(PACKAGE_ROOT, '.env');
   if (!process.env['MAGNUS_ENV_FILE'] && existsSync(packageEnv)) { process.loadEnvFile(packageEnv); dropEmptyValues(); }
+}
+
+async function commandStart(options: CliOptions): Promise<void> {
+  // Apply the package-level .env here too so startup switches such as MAGNUS_AUTO_MIGRATE see the same values.
+  loadPackageEnv();
   const { rehearsalEnabled } = await import('./config/rehearsal.js');
   if (rehearsalEnabled() && (options.migrate || process.env['MAGNUS_AUTO_MIGRATE'] === 'true')) fatal('Isolated rehearsal requires explicit migrations before startup; automatic migration must be disabled.');
   if (options.migrate) await migrate();
@@ -320,6 +324,9 @@ async function run(argv: readonly string[]): Promise<number> {
     }
     case 'agents': {
       loadEnvFiles(options.envFiles);
+      // The same settings as `start`, so this process signs agent requests with the server's own key
+      // (MAGNUS_HOME / NODE_AUTH_SERVER_KEY_PATH); it never creates a key of its own.
+      loadPackageEnv();
       // The command calls agents over TLS: trust the same extra CA as the service.
       if (process.env['NODE_EXTRA_CA_CERTS'] && process.env['NODE_EXTRA_CA_CERTS'] !== STARTUP_EXTRA_CA) {
         return new Promise<number>((resolvePromise, reject) => {

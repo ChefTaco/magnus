@@ -9,6 +9,7 @@ import { lockSharedAdmission } from './admission-fence.js';
 import { lockResourceNode } from './resource-node-lock.js';
 import { fetchHostLocalWriterProof, verifyHostLocalWriterProof } from './host-local-writer.js';
 import { fetchOsSchedulerWriterProof, verifyOsSchedulerWriterProof } from './os-scheduler-writer.js';
+import { nodeEvidencePolicy } from './node-evidence-policy.js';
 
 const HELD = ['reserved', 'running', 'unknown'];
 // These are separate owning-service boundaries. A Control API node fence or a
@@ -88,8 +89,8 @@ export async function transferAuthoritySnapshot(nodeFqdn: string, nonce: string)
   // Network evidence is fetched before the database locks. The node's
   // admission drain is one-way; the signed proof is re-bound to the current
   // enrollment identity while holding the locks below.
-  const [rawHostLocalProof, rawSchedulerProof] = await Promise.all([
-    fetchHostLocalWriterProof(node, nodeFqdn, nonce), fetchOsSchedulerWriterProof(node, nodeFqdn, nonce),
+  const [rawHostLocalProof, rawSchedulerProof, evidencePolicy] = await Promise.all([
+    fetchHostLocalWriterProof(node, nodeFqdn, nonce), fetchOsSchedulerWriterProof(node, nodeFqdn, nonce), nodeEvidencePolicy(node.id),
   ]);
   return db.$transaction(async tx => {
     // Use the same lock order as fence close/release. A shared reserve/start
@@ -117,13 +118,13 @@ export async function transferAuthoritySnapshot(nodeFqdn: string, nonce: string)
       [source, { status: 'unverified' as const, ownerReceiptSha256: null, admissionFenceSha256: null }])) as
       Record<WriterClass, WriterEvidence>;
     const hostLocal = verifyHostLocalWriterProof(rawHostLocalProof, { nodeId: node.id, nodeFqdn,
-      nonce, epoch: enrollment?.epoch ?? 0, barrierId: enrollment?.barrierId ?? null }, observedAt);
+      nonce, epoch: enrollment?.epoch ?? 0, barrierId: enrollment?.barrierId ?? null }, observedAt, evidencePolicy);
     if (hostLocal && enrollment?.state === 'enrolled') sourceClasses['host-local-mutations'] = {
       status: 'verified', ownerReceiptSha256: hostLocal.ownerReceiptSha256,
       admissionFenceSha256: hostLocal.admissionFenceSha256,
     };
     const osScheduler = verifyOsSchedulerWriterProof(rawSchedulerProof, { nodeId: node.id, nodeFqdn,
-      nonce, epoch: enrollment?.epoch ?? 0, barrierId: enrollment?.barrierId ?? null }, observedAt);
+      nonce, epoch: enrollment?.epoch ?? 0, barrierId: enrollment?.barrierId ?? null }, observedAt, evidencePolicy);
     if (osScheduler && enrollment?.state === 'enrolled') sourceClasses['os-schedulers'] = {
       status: 'verified', ownerReceiptSha256: osScheduler.ownerReceiptSha256,
       admissionFenceSha256: osScheduler.admissionFenceSha256,

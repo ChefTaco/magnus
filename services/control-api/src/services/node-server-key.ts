@@ -17,6 +17,17 @@ export interface ServerSigningKey { keyId: string; publicKey: string; privateKey
 export interface ServerPublicKey { keyId: string; publicKey: string; status: 'active' | 'next' }
 
 let cached: { path: string; active: ServerSigningKey; next: ServerSigningKey | null } | null = null;
+let mayCreate = false;
+
+/**
+ * Let this process create the key file when there is none. Only the server does this, at start-up:
+ * a `magnus-server` command-line process (for example `agents upgrade`) must sign with the key the
+ * server already has, so with no file at its path it fails clearly instead of minting a second key
+ * that no agent pins.
+ */
+export function allowServerKeyCreation(): void {
+  mayCreate = true;
+}
 
 export function serverSigningKeyPath(env: NodeJS.ProcessEnv = process.env): string {
   return env['NODE_AUTH_SERVER_KEY_PATH']?.trim() || magnusHomePath('state', 'node-auth', 'server-signing-key.json');
@@ -67,7 +78,11 @@ function load(): { active: ServerSigningKey; next: ServerSigningKey | null } {
     cached = { path: file, active: { keyId: key.keyId, publicKey: key.publicKey, privateKey: privateKeyFromPem(key.privateKeyPem) }, next: null };
     return cached;
   }
-  if (!existsSync(file)) create(file);
+  if (!existsSync(file)) {
+    if (!mayCreate) throw new Error(`No server signing key at ${file}; run this command with the server's environment `
+      + '(--env-file, or the same MAGNUS_HOME / NODE_AUTH_SERVER_KEY_PATH as the server) so it signs with the key agents pin');
+    create(file);
+  }
   cached = { path: file, ...read(file) };
   return cached;
 }
@@ -92,4 +107,5 @@ export function serverAudiences(): string[] {
 /** For tests and after replacing the file. */
 export function resetServerSigningKeyCache(): void {
   cached = null;
+  mayCreate = false;
 }

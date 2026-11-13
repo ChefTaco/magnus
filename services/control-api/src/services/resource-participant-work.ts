@@ -19,6 +19,7 @@ import {
 } from '../schemas/resource-participant-reconciliation.js';
 import {
   canonicalNodeSessionReceipt,
+  nodeSessionReceiptSigningPayload,
   nodeSessionReceiptSchema,
   verifyNodeSessionReceiptSignature,
 } from '../schemas/node-session-receipt.js';
@@ -26,6 +27,7 @@ import { RESULT_SIGNING_PREVIOUS_SECRET, RESULT_SIGNING_SECRET } from '../utils/
 import { COMMAND_COMPLETION_REGISTRY, COMMAND_COMPLETION_REGISTRY_SHA256 } from '../security/command-completion-registry.js';
 import { isManagedTerminalWork } from './managed-terminal.js';
 import { hasFreshOnlineHealth } from './resource-node-health.js';
+import { nodeEvidencePolicy } from './node-evidence-policy.js';
 export interface ReserveInput { host: string; workId: string; ownerId: string; kind: ParticipantWorkKind; operationSha256: string; deadline: number }
 export interface StartInput { ownerId: string; epoch: number; barrierId: string | null; operationSha256: string; fence: string; deadline: number; requestSha256: string; targetHost?: string }
 export interface FinishInput { ownerId: string; disposition: 'not-started' | 'remote-ended' | 'unknown'; evidenceSha256: string }
@@ -144,7 +146,9 @@ export const apiParticipantWork = participantWork('api');
  * supervised terminal receipt. This path observes; it never dispatches/retries. */
 export async function settleParticipantWorkFromNodeReceipt(raw: unknown) {
   const value = nodeSessionReceiptSchema.parse(raw);
-  if (!verifyNodeSessionReceiptSignature(value, RESULT_SIGNING_SECRET, RESULT_SIGNING_PREVIOUS_SECRET))
+  // The receipt names its node; its signature must be that node's key (or, for a node without one, the HMAC).
+  if (!(await nodeEvidencePolicy(value.nodeId)).verify('node-session-receipt', nodeSessionReceiptSigningPayload(value), value.nodeSignature,
+    () => verifyNodeSessionReceiptSignature(value, RESULT_SIGNING_SECRET, RESULT_SIGNING_PREVIOUS_SECRET)))
     throw new HttpError(403, 'RESOURCE_EVIDENCE_INVALID', 'Node session receipt signature is invalid');
   const db = getDb();
   const found = await db.resourceParticipantWork.findUnique({ where: { workId: value.workId } });

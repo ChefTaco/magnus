@@ -7,6 +7,9 @@ import { nodeApiFetch } from '../node-auth.js';
 import { commandLedger, executionSupervisor } from './command-executor.js';
 import { mutationBarrier } from './mutation-barrier.js';
 import { logger } from '../utils/logger.js';
+import { canonicalEvidenceJson } from '../security/node-evidence.js';
+import { nodeEvidenceFields } from '../security/evidence-signing.js';
+import { enrollmentReceiptSigningPayload, hostLocalWriterSigningPayload } from '../security/node-evidence.js';
 
 /** Fixed, non-secret reasons an agent drain proof was refused. */
 export type DrainFailureReason = 'authority-unavailable' | 'authority-binding' | 'fence-failed' | 'supervisor-required'
@@ -26,10 +29,7 @@ const writerProofRequest = z.object({ nodeFqdn: z.string().min(1).max(253), nonc
 export const HOST_LOCAL_WRITER_DOMAIN = 'magnus.host-local-writer.v1\n';
 
 export function canonicalDrainJson(value: unknown): string {
-  if (Array.isArray(value)) return '[' + value.map(canonicalDrainJson).join(',') + ']';
-  if (value !== null && typeof value === 'object') return '{' + Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
-    .map(([key, item]) => JSON.stringify(key) + ':' + canonicalDrainJson(item)).join(',') + '}';
-  return JSON.stringify(value);
+  return canonicalEvidenceJson(value);
 }
 
 export const enrollmentDrainRoutes = new Hono();
@@ -52,10 +52,10 @@ enrollmentDrainRoutes.get('/host-local-writer-proof', async c => {
       unknown: inventory.unsettledCounts.unknown,
       mutationInventorySha256: inventory.inventorySha256,
       admissionFenceSha256: createHash('sha256').update(canonicalDrainJson(drain)).digest('hex') };
-    const signature = createHmac('sha256', RESULT_SIGNING_SECRET)
-      .update(HOST_LOCAL_WRITER_DOMAIN + canonicalDrainJson(receipt)).digest('hex');
+    const payload = hostLocalWriterSigningPayload(receipt);
+    const signature = createHmac('sha256', RESULT_SIGNING_SECRET).update(payload).digest('hex');
     c.header('Cache-Control', 'no-store');
-    return c.json({ success: true, data: { ...receipt, signature } });
+    return c.json({ success: true, data: { ...receipt, signature, ...nodeEvidenceFields('host-local-writer', payload) } });
   } catch (error) {
     logger.warn('Host-local writer proof failed', { error: error instanceof Error ? error.message : String(error) });
     return c.json({ success: false, error: { code: 'WRITER_PROOF_UNAVAILABLE' } }, 409);
@@ -110,9 +110,10 @@ enrollmentDrainRoutes.post('/enrollment-drain', async c => {
     const unknownCount = mutations.unknownCount + commands.unknownCount;
     const receipt = { ...descriptor, status: activeCount || unknownCount ? 'pending' : 'drained', activeCount, unknownCount,
       evidenceSha256: createHash('sha256').update(canonicalDrainJson({ mutations, commands, supervisor })).digest('hex') };
-    const signature = createHmac('sha256', RESULT_SIGNING_SECRET).update('magnus.resource-enrollment.v1\n' + canonicalDrainJson(receipt)).digest('hex');
+    const payload = enrollmentReceiptSigningPayload(receipt);
+    const signature = createHmac('sha256', RESULT_SIGNING_SECRET).update(payload).digest('hex');
     c.header('Cache-Control', 'no-store');
-    return c.json({ ...receipt, signature });
+    return c.json({ ...receipt, signature, ...nodeEvidenceFields('enrollment-drain', payload) });
   } catch (error) {
     const reason = error instanceof DrainFailure ? error.reason : step;
     // The local log keeps the real cause; the response carries only the fixed reason.

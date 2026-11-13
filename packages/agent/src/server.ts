@@ -16,6 +16,7 @@ import { controlApiFetch } from './tls.js';
 import { childEnvironment } from './utils/child-env.js';
 import { ownerExecution } from './utils/owner-exec.js';
 import { boundNodeIdentity } from './security/node-identity.js';
+import { signsNodeEvidence, verifiesServerDecisions } from './security/evidence-signing.js';
 
 import type { HealthCheck } from './types/index.js';
 
@@ -116,6 +117,9 @@ export async function createApp(): Promise<Hono> {
           // 1 once this agent has its own node key and verifies requests signed by the listed server keys.
           nodeAuth: ENABLE_NODE_MANAGEMENT && boundNodeIdentity() ? 1 : 0,
           nodeAuthServerKeys: ENABLE_NODE_MANAGEMENT ? boundNodeIdentity()?.binding.serverKeys.map(key => key.keyId) ?? [] : [],
+          // 1 when evidence carries a node-key signature, and when decisions signed by a pinned server key are accepted.
+          nodeEvidence: ENABLE_NODE_MANAGEMENT && signsNodeEvidence() ? 1 : 0,
+          serverAuthorizations: ENABLE_NODE_MANAGEMENT && verifiesServerDecisions() ? 1 : 0,
         },
       },
     }),

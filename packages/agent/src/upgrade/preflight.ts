@@ -10,6 +10,7 @@ import type { CommandLedger, LedgerHealth } from '../executors/command-ledger.js
 import { fenceProofSigningPayload, signCommandEvidence } from '../security/command-result-signature.js';
 import { logger } from '../utils/logger.js';
 import { diskHealth, engineProblem, installDir, npmHealth, runsVersion, selfUpgradeStatus, unwritablePaths, versionComplete } from './self-upgrade.js';
+import { nodeEvidenceFields } from '../security/evidence-signing.js';
 
 export const PREFLIGHT_PROTOCOL = 1;
 const LEDGER_CACHE_MS = 60_000;
@@ -48,7 +49,8 @@ export async function upgradePreflight(options: { version: string; target?: stri
     ledger: ledgerReport(health),
     fenceHighWater: health.fenceHighWater,
     ...(options.nonce && /^[a-zA-Z0-9-]{16,64}$/.test(options.nonce) && RESULT_SIGNING_SECRET.length >= 32 ? { fenceProof: { nonce: options.nonce, nodeFqdn: HOST_FQDN,
-      signature: signCommandEvidence(fenceProofSigningPayload({ nonce: options.nonce, nodeFqdn: HOST_FQDN, fenceHighWater: health.fenceHighWater }), RESULT_SIGNING_SECRET) } } : {}),
+      signature: signCommandEvidence(fenceProofSigningPayload({ nonce: options.nonce, nodeFqdn: HOST_FQDN, fenceHighWater: health.fenceHighWater }), RESULT_SIGNING_SECRET),
+      ...nodeEvidenceFields('fence-proof', fenceProofSigningPayload({ nonce: options.nonce, nodeFqdn: HOST_FQDN, fenceHighWater: health.fenceHighWater })) } } : {}),
     managedEnrollment: marker.marker ? { nodeId: marker.marker.nodeId, nodeFqdn: marker.marker.nodeFqdn } : null,
     managedEnrollmentState: marker.state,
     engines: { node: nodeVersion, range, compatible: range ? problem === null : null, problem },

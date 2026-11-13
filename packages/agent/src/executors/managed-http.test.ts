@@ -62,6 +62,19 @@ beforeEach(async () => {
 afterEach(async () => { await rm(root, { recursive: true, force: true }); await rm(barrierRoot, { recursive: true, force: true }); });
 
 describe('managed native mutation execution boundary', () => {
+  it('dispatches to its own route without the shared secret: the in-process request passes node authentication as local', async () => {
+    const seen: Array<string | undefined> = [];
+    app = new Hono(); app.use('/api/v1/*', nodeAuthMiddleware); app.use('/api/v1/*', managedMutationGuard);
+    app.post('/api/v1/files/write', c => { seen.push(c.req.header('x-node-token')); return execute(); });
+    registerManagedHttp(app);
+    const response = await send(request('local-dispatch-fixture'));
+    expect(response.status).toBe(200);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(seen).toEqual([undefined]);
+    // The route itself is still closed to a caller without credentials.
+    expect((await app.request('/api/v1/files/write', { method: 'POST', body: '{}' })).status).toBe(401);
+  });
+
   it('holds Codex update ownership until its supervised handler finishes and refuses raw or repeated updates', async () => {
     let release: () => void = () => {};
     const finished = new Promise<void>(resolve => { release = resolve; });

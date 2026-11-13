@@ -16,7 +16,9 @@ import { assertEnrollmentComplete } from './resource-enrollment.js';
 import { readOwnershipHistory, stickyEnrollmentObserved } from './resource-ownership.js';
 import { admitResourceCommand, markResourceDispatched, settleResourceResult, resourceLeasesRequested, type ResourceAdmission } from './command-resource-leases.js';
 import { commandRequestDigest, type CommandRequest } from '../security/command-request.js';
-import { verifyCommandResultSignature, type SignedCommandResult } from '../security/command-result-signature.js';
+import { commandResultSigningPayload, verifyCommandResultSignature, type SignedCommandResult } from '../security/command-result-signature.js';
+import { nodeEvidencePolicy, resultKeyHmac } from './node-evidence-policy.js';
+import { signNodeDecision } from './server-authorization.js';
 import { RESULT_SIGNING_SECRET, RESULT_SIGNING_PREVIOUS_SECRET, getNodeManagerSecret } from '../utils/env.js';
 import { getNodeBaseUrl } from '../utils/node-url.js';
 import { commandResultSchema } from '../schemas/node-responses.js';
@@ -140,27 +142,25 @@ export async function stageLegacyCronForEnrollment(cronJobId: string,
     const definition = await stageManagedCronTx(tx, cronJobId, input, false);
     return { node, definition, spec: managedCronSchema.parse(JSON.parse(definition.specJson)) };
   });
-  const secret = process.env['COMMAND_RECONCILIATION_SECRET'] ?? '';
-  const conflicts = [getNodeManagerSecret(), RESULT_SIGNING_SECRET, RESULT_SIGNING_PREVIOUS_SECRET,
-    process.env['NODE_MANAGER_SECRET_PREVIOUS'] ?? '', process.env['RESOURCE_PARTICIPANT_RECONCILIATION_SECRET'] ?? ''];
-  if (secret.length < 32 || conflicts.some(value => value && value === secret))
-    return fail('Independent scheduler conversion authority is required');
-  const unsigned = { version: 1 as const, nodeId: candidate.node.id, nodeFqdn: candidate.node.hostname,
-    spec: candidate.spec, operationId: randomUUID(), expiresAt: Date.now() + 60_000 };
-  const assertion = { ...unsigned, signature: createHmac('sha256', secret)
-    .update(cronEnrollmentStageSigningPayload(unsigned)).digest('hex') };
   const client = new NodeApiClient({ baseUrl: getNodeBaseUrl(candidate.node.ipAddress, candidate.node.port),
     nodeId: candidate.node.id, nodeToken: getNodeManagerSecret() });
+  // Signed for this node with the server key when its agent verifies that; older agents need COMMAND_RECONCILIATION_SECRET.
+  // An agent whose capabilities cannot be read is treated as an older one: HMAC only, which it checks itself.
+  const decisions = await client.decisionCapabilities().catch(() => ({ serverSignatures: false, hmac: true }));
+  const unsigned = { version: 1 as const, nodeId: candidate.node.id, nodeFqdn: candidate.node.hostname,
+    spec: candidate.spec, operationId: randomUUID(), expiresAt: Date.now() + 60_000 };
+  const assertion = signNodeDecision(candidate.node.id, 'cron-enrollment-stage', unsigned, cronEnrollmentStageSigningPayload(unsigned),
+    { agentVerifiesServerSignatures: decisions.serverSignatures });
+  if (!assertion) return fail('Independent scheduler conversion authority is required');
   const staged = await client.stageManagedCronForEnrollment(assertion);
   if (!staged.success) return fail('Node did not acknowledge disabled legacy scheduler conversion');
   const ack = cronEnrollmentStageReceiptSchema.parse(staged.data);
-  const { receiptSignature, ...receipt } = ack;
+  const { receiptSignature, nodeSignature, ...receipt } = ack;
   if (ack.operationId !== unsigned.operationId
     || JSON.stringify(managedCronIdentity(candidate.definition)) !== JSON.stringify(managedCronIdentitySchemaValue(ack)))
     return fail('Node staged a different disabled legacy scheduler definition');
-  const signatures = [RESULT_SIGNING_SECRET, RESULT_SIGNING_PREVIOUS_SECRET].filter(value => value.length >= 32)
-    .map(value => createHmac('sha256', value).update(cronEnrollmentStageReceiptPayload(receipt)).digest());
-  if (!signatures.some(value => timingSafeEqual(value, Buffer.from(receiptSignature, 'hex'))))
+  const receiptPayload = cronEnrollmentStageReceiptPayload(receipt);
+  if (!(await nodeEvidencePolicy(candidate.node.id)).verify('cron-stage-receipt', receiptPayload, nodeSignature, resultKeyHmac(receiptPayload, receiptSignature)))
     return fail('Node scheduler conversion receipt signature is invalid');
   return candidate.definition;
 }
@@ -363,13 +363,11 @@ export async function reconcileForeignSchedulerSource(raw: SchedulerSourceSettle
   const response = await client.reconcileSchedulerSource(assertion);
   if (!response.success) return fail('Node rejected scheduler source reconciliation');
   const ack = schedulerSourceSettlementAckSchema.parse(response.data);
-  const { receiptSignature, settled: _settled, replayed: _replayed, ...ackUnsigned } = ack;
+  const { receiptSignature, nodeSignature, settled: _settled, replayed: _replayed, ...ackUnsigned } = ack;
   if (JSON.stringify(ackUnsigned) !== JSON.stringify(unsigned)) return fail('Node acknowledged a different scheduler source decision');
   const receipt = schedulerSourceSettlementReceiptPayload({ ...ackUnsigned, settled: true, replayed: ack.replayed });
-  const signatures = [RESULT_SIGNING_SECRET, RESULT_SIGNING_PREVIOUS_SECRET].filter(value => value.length >= 32)
-    .map(value => createHmac('sha256', value).update(receipt).digest());
-  const received = Buffer.from(receiptSignature, 'hex');
-  if (!signatures.some(value => timingSafeEqual(value, received))) return fail('Scheduler source receipt signature is invalid');
+  if (!(await nodeEvidencePolicy(node.id)).verify('scheduler-settlement-receipt', receipt, nodeSignature, resultKeyHmac(receipt, receiptSignature)))
+    return fail('Scheduler source receipt signature is invalid');
   return ack;
 }
 
@@ -457,7 +455,8 @@ export async function settleCronOccurrence(raw: z.infer<typeof schedulerSettleSc
   const admission = row.admissionJson ? JSON.parse(row.admissionJson) as ResourceAdmission : null;
   const result = input.result as SignedCommandResult;
   if (!admission || result.commandId !== status.commandId || result.coordination?.requestSha256 !== commandRequestDigest(admission.payload)
-    || !verifyCommandResultSignature(result, RESULT_SIGNING_SECRET, RESULT_SIGNING_PREVIOUS_SECRET)) return fail('Signed original supervisor completion is required');
+    || !(await nodeEvidencePolicy(row.nodeId)).verify('command-result', commandResultSigningPayload(result), result.nodeSignature,
+      () => verifyCommandResultSignature(result, RESULT_SIGNING_SECRET, RESULT_SIGNING_PREVIOUS_SECRET))) return fail('Signed original supervisor completion is required');
   const authority = await db.commandResourceLease.findUnique({ where: { commandId: status.commandId } });
   if (authority?.completionClass !== 'managed-scheduler' || authority.completionOccurrenceId !== row.id
     || authority.completionSpecSha256 !== row.specSha256) return fail('Immutable scheduler completion authority differs');

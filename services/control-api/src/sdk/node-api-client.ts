@@ -14,7 +14,6 @@ import type { CronEnrollmentStage, ManagedCronIdentity, ManagedCronSpec, Schedul
 import { commandRequestDigest, type CommandRequest } from '../security/command-request.js';
 import ky, { HTTPError, type AfterResponseState, type KyInstance } from 'ky';
 import { HttpError } from '../middleware/error-handler.js';
-import { createHmac, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { agentUpgradePreflightSchema, ArdentContextAdoptionInputSchema, type AgentUpgradePreflight, type ArdentNodeState } from '@hivemagnus/magnus-contracts';
 import type {
@@ -34,6 +33,8 @@ import type {
   SystemUpdateInfo,
 } from '../types/index.js';
 import { RESULT_SIGNING_PREVIOUS_SECRET, RESULT_SIGNING_SECRET } from '../utils/env.js';
+import { nodeEvidencePolicy } from '../services/node-evidence-policy.js';
+import { commandReconciliationKey, decisionIdentity, verifyNodeDecision } from '../services/server-authorization.js';
 import { correlateSkillPublicationNoEffect } from '../services/skill-publication-settlement.js';
 import {
   commandResultSigningPayload,
@@ -42,6 +43,7 @@ import {
   type SignedCommandResult,
   verifyCommandResultSignature,
 } from '../security/command-result-signature.js';
+import { commandReconciliationSigningPayload as sharedCommandReconciliationSigningPayload } from '../security/node-evidence.js';
 
 /** Wire format shared with the node ledger; cross-wire tests guard canonicalization. */
 export { commandReconciliationSchema } from '../schemas/command-reconciliation.js';
@@ -53,25 +55,26 @@ export type CommandReceipt = { commandId: string; requestSha256: string } & (
   | { state: 'reconciled'; result?: never; reconciliation: CommandReconciliationAssertion }
 );
 export function commandReconciliationSigningPayload(assertion: Omit<CommandReconciliationAssertion, 'signature'>): string {
-  return JSON.stringify({ domain: 'magnus.command-reconciliation.v1', nodeFqdn: assertion.nodeFqdn,
-    commandId: assertion.commandId, requestSha256: assertion.requestSha256,
-    coordination: assertion.coordination ? { version: assertion.coordination.version,
-      resourceKey: assertion.coordination.resourceKey, fence: assertion.coordination.fence,
-      expiresAt: assertion.coordination.expiresAt } : null,
-    disposition: assertion.disposition, evidenceSha256: assertion.evidenceSha256,
-    approvalRef: assertion.approvalRef, decisionId: assertion.decisionId, expiresAt: assertion.expiresAt });
+  return sharedCommandReconciliationSigningPayload(assertion);
 }
-function verifiedReconciliation(raw: unknown, commandId: string, expected: ExpectedCommandReceipt | undefined, fresh: boolean, nodeToken: string): CommandReconciliationAssertion {
+function verifiedReconciliation(raw: unknown, commandId: string, expected: ExpectedCommandReceipt | undefined, fresh: boolean, nodeToken: string,
+  nodeId: string | undefined): CommandReconciliationAssertion {
   const assertion = commandReconciliationSchema.parse(raw);
-  const secret = process.env['COMMAND_RECONCILIATION_SECRET'] ?? '';
   if (!expected || !/^[a-f0-9]{64}$/.test(expected.requestSha256) || !expected.nodeFqdn
-    || secret.length < 32 || secret === RESULT_SIGNING_SECRET || secret === nodeToken
     || assertion.commandId !== commandId || assertion.nodeFqdn !== expected.nodeFqdn
     || assertion.requestSha256 !== expected.requestSha256
     || (fresh && (assertion.expiresAt <= Date.now() || assertion.expiresAt > Date.now() + 300_000)))
     throw new Error('Command reconciliation authority, expected node, digest, or validity differs');
-  const signature = createHmac('sha256', secret).update(commandReconciliationSigningPayload(assertion)).digest();
-  if (!timingSafeEqual(signature, Buffer.from(assertion.signature, 'hex')))
+  // This server's own decision for this node: its server-key signature, or (agents without a node key) the HMAC.
+  const key = commandReconciliationKey();
+  // An HMAC-only decision needs the dedicated key, never one that doubles as another credential.
+  if (assertion.serverSignature === undefined && (key === null || key === nodeToken))
+    throw new Error('Command reconciliation authority, expected node, digest, or validity differs');
+  // A server signature binds a node id, so it is checked only when the caller knows which node it called.
+  const payload = commandReconciliationSigningPayload(assertion);
+  const verified = nodeId ? verifyNodeDecision(nodeId, 'command-reconciliation', payload, assertion)
+    : assertion.serverSignature === undefined && verifyNodeDecision('unnamed-node', 'command-reconciliation', payload, assertion);
+  if ((key !== null && key === nodeToken) || !verified)
     throw new Error('Command reconciliation signature verification failed');
   return assertion;
 }
@@ -195,6 +198,7 @@ export function parseAgentRefusal(error: unknown): (CommandRefusal & { message: 
     || typeof refusal.code !== 'string' || typeof refusal.signature !== 'string' || !(refusal.highWater === null || typeof refusal.highWater === 'string')
     || typeof refusal.nodeFqdn !== 'string' || typeof refusal.leaseId !== 'string') return null;
   return { commandId: refusal.commandId, requestSha256: refusal.requestSha256, code: refusal.code, highWater: refusal.highWater, nodeFqdn: refusal.nodeFqdn, leaseId: refusal.leaseId, signature: refusal.signature,
+    ...(refusal.nodeSignature !== undefined ? { nodeSignature: refusal.nodeSignature } : {}),
     message: typeof body.error.message === 'string' ? body.error.message.slice(0, 1000) : refusal.code };
 }
 
@@ -250,6 +254,8 @@ export class NodeApiClient {
   private readonly nodeToken: string;
   private readonly defaultTimeout: number;
   private readonly resourceContext?: ResourceCommandContext;
+  /** The node being called: evidence it returns must be signed by this node's key (or, without one, the HMAC). */
+  private readonly targetNodeId: string | undefined;
 
   constructor(options: NodeApiClientOptions) {
     this.nodeToken = options.nodeToken;
@@ -258,6 +264,7 @@ export class NodeApiClient {
       actorId: options.resourceActorId ?? 'system:control-api', baseUrl: options.baseUrl,
       ...(options.resourceScope ? { scope: options.resourceScope } : {}) };
     const target = { nodeId: options.nodeId ?? options.resourceNodeId, legacyToken: options.nodeToken };
+    this.targetNodeId = target.nodeId;
     // Sign the exact bytes of each request for this node; see services/node-agent-auth.ts.
     const authenticate = async ({ request }: { request: Request }): Promise<void> => {
       const body = request.body ? new Uint8Array(await request.clone().arrayBuffer()) : '';
@@ -311,7 +318,7 @@ export class NodeApiClient {
         json: managedRequest }).json<ApiResponse<{ response: { status: number; body: string }; receipt: SignedCommandResult }>>();
       if (!envelope.success) throw new Error('Managed mutation response was unsuccessful');
       const { response } = envelope.data;
-      const receipt = this.verifiedCommandResult(envelope.data.receipt, admission.commandId);
+      const receipt = await this.verifiedCommandResult(envelope.data.receipt, admission.commandId);
       if (!Number.isInteger(response.status) || response.status < 100 || response.status > 599 || typeof response.body !== 'string'
         || receipt.stdout !== httpReceiptBody(method, '/' + path, response.status, response.body)) throw new Error('Managed response body differs from signed receipt');
       await settleResourceResult(admission.commandId, receipt);
@@ -371,8 +378,16 @@ export class NodeApiClient {
   }
 
   async embermendCanSettle(): Promise<boolean> {
-    const value = z.object({ success: z.literal(true), data: z.object({ features: z.object({ commandReconciliation: z.literal(1) }) }) }).safeParse(await this.api.get('ping', { retry: 0 }).json<unknown>());
-    return value.success;
+    const decisions = await this.decisionCapabilities();
+    return decisions.serverSignatures || (decisions.hmac && commandReconciliationKey() !== null);
+  }
+
+  /** Which signed decisions this node's agent accepts: server-key signatures (a bound node key) and/or the reconciliation HMAC. */
+  async decisionCapabilities(): Promise<{ serverSignatures: boolean; hmac: boolean }> {
+    const value = z.object({ success: z.literal(true), data: z.object({ features: z.object({ commandReconciliation: z.number().optional(),
+      serverAuthorizations: z.number().optional() }).passthrough() }).passthrough() }).safeParse(await this.api.get('ping', { retry: 0 }).json<unknown>());
+    if (!value.success) return { serverSignatures: false, hmac: false };
+    return { serverSignatures: value.data.data.features.serverAuthorizations === 1, hmac: value.data.data.features.commandReconciliation === 1 };
   }
 
   async embermendExecute(body: EmbermendOperation, commandId: string) {
@@ -417,12 +432,14 @@ export class NodeApiClient {
 
   // ── Commands ──
 
-  private verifiedCommandResult(raw: unknown, commandId: string): SignedCommandResult {
+  private async verifiedCommandResult(raw: unknown, commandId: string): Promise<SignedCommandResult> {
     const parsed = commandResultSchema.safeParse(raw);
-    if (!parsed.success || parsed.data.commandId !== commandId || !verifyCommandResultSignature(
-      parsed.data, RESULT_SIGNING_SECRET, RESULT_SIGNING_PREVIOUS_SECRET,
-    )) throw new Error('Command result signature verification failed');
-    return parsed.data;
+    if (!parsed.success || parsed.data.commandId !== commandId) throw new Error('Command result signature verification failed');
+    const result = parsed.data;
+    if (!(await nodeEvidencePolicy(this.targetNodeId)).verify('command-result', commandResultSigningPayload(result), result.nodeSignature,
+      () => verifyCommandResultSignature(result, RESULT_SIGNING_SECRET, RESULT_SIGNING_PREVIOUS_SECRET)))
+      throw new Error('Command result signature verification failed');
+    return result;
   }
 
   async executeCommand(payload: CommandRequest): Promise<ApiResponse<CommandResult>> {
@@ -450,7 +467,7 @@ export class NodeApiClient {
       // never use transport retries to run an action again.
       if (admission) await markResourceDispatched(admission);
       const response = await this.api.post('commands/execute', { json: payload, timeout, retry: 0, ...(admission ? { headers: { [MANAGED_CLAIM_HEADER]: JSON.stringify({ leaseId: admission.leaseId, nodeId: admission.nodeId, nodeFqdn: admission.nodeFqdn }) } } : {}) }).json<ApiResponse<CommandResult>>();
-      const result = this.verifiedCommandResult(response?.data, payload.commandId);
+      const result = await this.verifiedCommandResult(response?.data, payload.commandId);
       const descriptor = commandCompletionDescriptor(payload);
       if (descriptor && (result.completion?.registryVersion !== COMMAND_COMPLETION_REGISTRY.version
         || result.completion.registrySha256 !== COMMAND_COMPLETION_REGISTRY_SHA256
@@ -471,7 +488,7 @@ export class NodeApiClient {
     }
   }
 
-  private verifiedCommandReceipt(raw: unknown, commandId: string, expected?: ExpectedCommandReceipt): CommandReceipt {
+  private async verifiedCommandReceipt(raw: unknown, commandId: string, expected?: ExpectedCommandReceipt): Promise<CommandReceipt> {
     const parsed = z.object({ commandId: z.string(), requestSha256: z.string().regex(/^[a-f0-9]{64}$/),
       state: z.enum(['running', 'unknown', 'completed', 'reconciled']), result: z.unknown().optional(),
       reconciliation: z.unknown().optional(), coordination: commandFenceSchema.optional(),
@@ -481,7 +498,7 @@ export class NodeApiClient {
     const row = parsed.data;
     if (row.state === 'reconciled') {
       if (row.result !== undefined) throw new Error('Reconciled receipt cannot contain a result');
-      const assertion = verifiedReconciliation(row.reconciliation, commandId, expected, false, this.nodeToken);
+      const assertion = verifiedReconciliation(row.reconciliation, commandId, expected, false, this.nodeToken, this.targetNodeId);
       if (assertion.requestSha256 !== row.requestSha256
         || JSON.stringify(row.coordination ?? null) !== JSON.stringify(assertion.coordination ?? null))
         throw new Error('Reconciliation receipt request/fence binding differs');
@@ -489,7 +506,7 @@ export class NodeApiClient {
     }
     if (row.reconciliation !== undefined) throw new Error('Unreconciled receipt cannot contain an attestation');
     if (row.state === 'completed') {
-      const result = this.verifiedCommandResult(row.result, commandId);
+      const result = await this.verifiedCommandResult(row.result, commandId);
       if (result.coordination && result.coordination.requestSha256 !== row.requestSha256) throw new Error('Receipt request binding differs');
       return { commandId, requestSha256: row.requestSha256, state: 'completed', result };
     }
@@ -502,7 +519,7 @@ export class NodeApiClient {
     expected = expected ? { ...expected } : undefined;
     const response = await this.api.get(`commands/receipts/${encodeURIComponent(commandId)}`).json<ApiResponse<unknown>>();
     if (!response.success) throw new Error('Command receipt response was unsuccessful');
-    const receipt = this.verifiedCommandReceipt(response.data, commandId, expected);
+    const receipt = await this.verifiedCommandReceipt(response.data, commandId, expected);
     if (this.resourceContext && receipt.state === 'completed') await settleResourceResult(commandId, receipt.result);
     if (this.resourceContext && receipt.state === 'reconciled') await settleResourceReconciliation(this.resourceContext.nodeId, receipt.reconciliation);
     return receipt;
@@ -512,17 +529,20 @@ export class NodeApiClient {
    * neither signs a decision, runs a command, nor retries ambiguous mutations. */
   async reconcileCommandReceipt(raw: CommandReconciliationAssertion, expected: ExpectedCommandReceipt): Promise<CommandReceipt> {
     expected = { ...expected };
-    const assertion = verifiedReconciliation(raw, raw.commandId, expected, true, this.nodeToken);
-    const capability = await this.api.get('ping').json<ApiResponse<{ features?: { commandReconciliation?: number } }>>();
-    if (!capability.success || capability.data?.features?.commandReconciliation !== 1)
+    const assertion = verifiedReconciliation(raw, raw.commandId, expected, true, this.nodeToken, this.targetNodeId);
+    const capability = await this.api.get('ping').json<ApiResponse<{ features?: { commandReconciliation?: number; serverAuthorizations?: number } }>>();
+    // A server-signed decision needs an agent that verifies server signatures; an HMAC-only one an agent that holds the secret.
+    const features = capability.success ? capability.data?.features : undefined;
+    if (!(assertion.serverSignature ? features?.serverAuthorizations === 1 || (assertion.signature !== undefined && features?.commandReconciliation === 1)
+      : features?.commandReconciliation === 1))
       throw new Error('Node does not support explicit command reconciliation');
     // A capability lookup may consume the assertion's remaining validity.
-    verifiedReconciliation(assertion, assertion.commandId, expected, true, this.nodeToken);
+    verifiedReconciliation(assertion, assertion.commandId, expected, true, this.nodeToken, this.targetNodeId);
     const response = await this.api.post(`commands/receipts/${encodeURIComponent(assertion.commandId)}/reconcile`,
       { json: assertion, retry: 0 }).json<ApiResponse<unknown>>();
     if (!response.success) throw new Error('Command reconciliation response was unsuccessful');
-    const receipt = this.verifiedCommandReceipt(response.data, assertion.commandId, expected);
-    if (receipt.state !== 'reconciled' || receipt.reconciliation.signature !== assertion.signature)
+    const receipt = await this.verifiedCommandReceipt(response.data, assertion.commandId, expected);
+    if (receipt.state !== 'reconciled' || decisionIdentity(receipt.reconciliation) !== decisionIdentity(assertion))
       throw new Error('Node did not acknowledge the exact reconciliation decision');
     if (this.resourceContext) await settleResourceReconciliation(this.resourceContext.nodeId, receipt.reconciliation);
     return receipt;
@@ -657,7 +677,7 @@ export class NodeApiClient {
       timeout: Math.max(this.defaultTimeout, ownership.timeoutSeconds * 1000) + 5000,
       json: managedRequest }).json<ApiResponse<{ response: { status: number; body: string }; receipt: SignedCommandResult }>>();
     if (!envelope.success) throw new Error('Skill publication recovery response was unsuccessful');
-    const receipt = this.verifiedCommandResult(envelope.data.receipt, ownership.commandId);
+    const receipt = await this.verifiedCommandResult(envelope.data.receipt, ownership.commandId);
     const response = envelope.data.response;
     if (!Number.isInteger(response.status) || typeof response.body !== 'string'
       || receipt.coordination?.requestSha256 !== ownership.requestSha256

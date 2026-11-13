@@ -76,6 +76,13 @@ deploy/                 example systemd units
 - `src/security/node-request-auth.ts` is the request-signature wire contract and must stay
   byte-identical with the server's copy; both packages run the same vectors
   (`services/control-api/src/security/node-request-auth.vectors.json`). The launcher never imports it.
+- `src/security/node-evidence.ts` (canonical evidence payloads and the Ed25519 evidence envelope) must
+  stay byte-identical with the server's copy; both run `node-evidence.vectors.json`. Evidence leaving the
+  agent gets `nodeSignature` through `src/security/evidence-signing.ts` (`nodeEvidenceFields`,
+  `withResultEvidence`) at the point it is sent, never in what the ledger stores; decisions from the server
+  are checked with `verifyServerDecision`.
+- The agent's own API: an in-process dispatch builds its `Request` with `markLocalDispatch()` (no
+  credential); never send `x-node-token` to the agent's own routes.
 - Every request to the Control API that carries the node credential goes through `nodeApiFetch()` or
   `controlApiAuthHeaders()` in `src/node-auth.ts`. Never set `x-node-token` by hand in a new sender.
 - The node key (`identity/node.key`, `src/security/node-identity.ts`) is never logged, returned,

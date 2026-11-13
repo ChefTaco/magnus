@@ -14,14 +14,35 @@ import { controlApiFetch } from './tls.js';
 export type NodeAuthMode = 'compat' | 'warn' | 'enforce';
 
 /**
- * `NODE_AUTH_MODE` on the agent. Parsed and reported, but reserved: in this release the agent
- * behaves as `compat` whatever the value (it accepts the shared secret on its own API and sends it
- * to the server), because local callers such as the upgrade acceptance probe still use the secret.
+ * `NODE_AUTH_MODE` on the agent (default `compat`):
+ *
+ *   compat   the agent's own API accepts a server signature or the shared node secret (`x-node-token`)
+ *   warn     the same, and each request accepted on the shared secret is logged (throttled)
+ *   enforce  once this node has a bound key and pins a server key, a request that carries only the
+ *            shared secret is refused on every `/api/v1/*` route, and decisions must carry a server
+ *            signature; without a bound key the agent stays in compat and says so
+ *
+ * The agent keeps sending the shared secret to the Control API in every mode of this release, so a
+ * server that lost its records of the key can still recognise the node.
  */
 export function nodeAuthMode(env: NodeJS.ProcessEnv = process.env): NodeAuthMode {
   const value = (env['NODE_AUTH_MODE'] ?? '').trim().toLowerCase();
   return value === 'warn' || value === 'enforce' ? value : 'compat';
 }
+
+/** Whether enforce mode is in effect: requested, and the node has a bound key that pins a server key. */
+export function agentEnforcesNodeAuth(env: NodeJS.ProcessEnv = process.env): boolean {
+  return nodeAuthMode(env) === 'enforce' && (boundNodeIdentity()?.binding.serverKeys.length ?? 0) > 0;
+}
+
+/** The mode in effect, for status output: `enforce` falls back to `compat` until the node has a bound key. */
+export function effectiveNodeAuthMode(env: NodeJS.ProcessEnv = process.env): NodeAuthMode {
+  const mode = nodeAuthMode(env);
+  return mode === 'enforce' && !agentEnforcesNodeAuth(env) ? 'compat' : mode;
+}
+
+/** The audience of a request this node signs for its own API (the acceptance probe). */
+export const selfAudience = (nodeId: string): string => `self:${nodeId}`;
 
 let clockOffsetMs = 0;
 const listeners = new Set<(status: number) => void>();

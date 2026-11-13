@@ -7,6 +7,7 @@ import { lockResourceNode } from './resource-node-lock.js';
 import { assertNodeAdmissionOpen } from './admission-fence.js';
 import { getNodeBaseUrl } from '../utils/node-url.js';
 import { RESULT_SIGNING_SECRET } from '../utils/env.js';
+import { nodeEvidencePolicy } from './node-evidence-policy.js';
 import { agentFetch } from './node-agent-auth.js';
 import { hasFreshOnlineHealth } from './resource-node-health.js';
 
@@ -42,10 +43,11 @@ export async function claimManagedTerminal(raw: unknown, nonce: string) {
 
 export async function settleManagedTerminal(raw: unknown) {
   const receipt = managedTerminalReceiptSchema.parse(raw);
-  const { signature, ...unsigned } = receipt;
+  const { signature, nodeSignature, ...unsigned } = receipt;
   const payload = managedTerminalReceiptPayload(unsigned);
-  if (RESULT_SIGNING_SECRET.length < 32 || !timingSafeEqual(Buffer.from(signature, 'hex'),
-    createHmac('sha256', RESULT_SIGNING_SECRET).update(payload).digest())) fail();
+  // The receipt names its node: the node key signs it, the shared result key only for older agents.
+  if (!(await nodeEvidencePolicy(receipt.nodeId)).verify('terminal-receipt', payload, nodeSignature, () => RESULT_SIGNING_SECRET.length >= 32
+    && timingSafeEqual(Buffer.from(signature, 'hex'), createHmac('sha256', RESULT_SIGNING_SECRET).update(payload).digest()))) fail();
   return getDb().$transaction(async tx => {
     await lockResourceNode(tx, receipt.nodeId);
     const work = await tx.resourceParticipantWork.findUnique({ where: { workId: receipt.workId } });

@@ -7,13 +7,14 @@ import { createHash, randomBytes } from 'node:crypto';
 import { promises as dns } from 'node:dns';
 import { isIP } from 'node:net';
 import { networkInterfaces } from 'node:os';
+import { compareVersions, isVersion } from '@hivemagnus/magnus-contracts';
 import { HttpError } from '../middleware/error-handler.js';
 import { keyFingerprint, keyIdOfSpki, NonceCache, verifyEnrollmentProof, type EnrollmentPurpose } from '../security/node-request-auth.js';
 import { isLoopbackOrUnroutableIp, normalizeIpAddress } from '../utils/ip.js';
 import { logAuditEvent } from './audit-service.js';
 import { ENROLLMENT_TOKEN_DEFAULT_TTL_SECONDS, ENROLLMENT_TOKEN_MAX_TTL_SECONDS, legacyUpgradeDeadline, nodeAuthMode,
   ROTATION_GRACE_MS } from './node-auth-config.js';
-import { nodeCredentialStore, type CredentialNode, type CredentialRow } from './node-credential-store.js';
+import { nodeCredentialStore, type CredentialNode, type CredentialRow, type LegacyUseRow, type PendingBindingRow } from './node-credential-store.js';
 import { serverPublicKeys, type ServerPublicKey } from './node-server-key.js';
 import { createNotification } from './notification-service.js';
 
@@ -155,20 +156,50 @@ function binding(node: CredentialNode, keyId: string): BindingResult {
  * already is. Refused unless the node exists, has no credential yet, the caller's socket address is
  * the node's recorded address, and the upgrade window is open.
  */
+/**
+ * The binding of a key an administrator already approved (or that is already bound): its holder
+ * learns its node id and the server keys, whatever the window and peer rules say.
+ */
+async function alreadyBound(fqdn: string, keyId: string): Promise<BindingResult | null> {
+  const found = await nodeCredentialStore.credentialByKeyId(keyId);
+  if (!found || found.credential.status !== 'ACTIVE' || !fqdnClaimMatchesNode(fqdn, found.node, found.credential.boundFqdn)) return null;
+  return binding(found.node, keyId);
+}
+
 export async function legacyUpgrade(input: { fqdn: string; publicKey: string; proof: EnrollmentProof; peerAddress: string }): Promise<BindingResult> {
   const window = await legacyUpgradeWindow();
-  if (!window.open) throw new HttpError(410, 'LEGACY_UPGRADE_CLOSED', `The automatic upgrade of existing nodes closed on ${window.until}; enroll this node with a token`);
+  if (!window.open) {
+    // A binding an administrator approved after the window closed must still reach its agent.
+    if (nodeAuthMode() !== 'enforce') {
+      try {
+        const fqdn = normalizedFqdn(input.fqdn);
+        const bound = await alreadyBound(fqdn, proofOrRefuse('legacy-upgrade', input.publicKey, fqdn, '-', input.proof));
+        if (bound) return bound;
+      } catch { /* refused as closed below */ }
+    }
+    throw new HttpError(410, 'LEGACY_UPGRADE_CLOSED', `The automatic upgrade of existing nodes closed on ${window.until}; enroll this node with a token`);
+  }
   const fqdn = normalizedFqdn(input.fqdn);
   const keyId = proofOrRefuse('legacy-upgrade', input.publicKey, fqdn, '-', input.proof);
   const node = await resolveUpgradeNode(input.fqdn, input.peerAddress);
   const peer = normalizeIpAddress(input.peerAddress);
+  // Already bound to this very key (an administrator approved its pending binding): answer the binding.
+  if ((await nodeCredentialStore.credentialsOfNode(node.id)).some(row => row.keyId === keyId && row.status === 'ACTIVE')) return binding(node, keyId);
   if (!await peerMatchesNode(peer, node.ipAddress)) {
+    // Kept for an administrator, who can approve it after comparing fingerprints (docs/NODE_CREDENTIALS.md).
+    const pending = await nodeCredentialStore.recordPendingBinding({ nodeId: node.id, keyId, publicKey: input.publicKey, fqdn, peerAddress: peer,
+      recordedAddress: node.ipAddress, now: new Date() }).catch((error: unknown) => {
+      console.warn(`[node-auth] could not record a pending binding for ${node.name}: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    });
+    if (pending?.created) await logAuditEvent({ action: 'node.credential.binding_pending', actorType: 'agent', actorId: `node:${node.id}`, targetType: 'node',
+      targetId: node.id, details: { pendingBindingId: pending.row.id, keyFingerprint: keyFingerprint(keyId), peerAddress: peer, recordedAddress: node.ipAddress } });
     if (await auditRefusal('node.credential.bind_refused', node, 'PEER_ADDRESS_MISMATCH', { peerAddress: peer, recordedAddress: node.ipAddress,
       keyFingerprint: keyFingerprint(keyId) }))
       await notify(node, 'warning', 'bind-refused-peer', `${node.name} could not bind its node key`,
-        `An agent reporting ${fqdn} asked to bind a key from ${peer || 'an unknown address'}, but ${node.name} is recorded at ${node.ipAddress}. Repair the node's address if this is the same host, or enroll it with a token.`,
-        { peerAddress: peer });
-    throw new HttpError(403, 'PEER_ADDRESS_MISMATCH', 'The caller address is not the address recorded for this node');
+        `An agent reporting ${fqdn} asked to bind the key ${keyFingerprint(keyId)} from ${peer || 'an unknown address'}, but ${node.name} is recorded at ${node.ipAddress}. If this is the same host, compare the fingerprint with \`magnus-agent identity show\` and approve the pending binding, repair the node's address, or enroll it with a token.`,
+        { peerAddress: peer, ...(pending ? { pendingBindingId: pending.row.id } : {}) });
+    throw new HttpError(403, 'PEER_ADDRESS_MISMATCH', 'The caller address is not the address recorded for this node; an administrator can approve the pending binding');
   }
   const outcome = await nodeCredentialStore.bindFirst({ nodeId: node.id, keyId, publicKey: input.publicKey, boundFqdn: fqdn }, 'LEGACY_UPGRADE');
   if (outcome === 'exists' || outcome === 'key-in-use') {
@@ -276,6 +307,124 @@ export async function resetNodeCredentials(nodeId: string, actorId: string): Pro
   return { removed };
 }
 
+const PENDING_BINDING_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+export interface PendingBindingView {
+  id: string; nodeId: string; nodeName: string | null; keyId: string; keyFingerprint: string; fqdn: string; peerAddress: string; recordedAddress: string;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'EXPIRED'; attempts: number; createdAt: string; lastSeenAt: string;
+  decidedAt: string | null; decidedBy: string | null; decisionReason: string | null;
+}
+
+function pendingView(row: PendingBindingRow, names: Map<string, string>, now = Date.now()): PendingBindingView {
+  const expired = row.status === 'PENDING' && now - row.lastSeenAt.getTime() > PENDING_BINDING_TTL_MS;
+  return { id: row.id, nodeId: row.nodeId, nodeName: names.get(row.nodeId) ?? null, keyId: row.keyId, keyFingerprint: keyFingerprint(row.keyId),
+    fqdn: row.fqdn, peerAddress: row.peerAddress, recordedAddress: row.recordedAddress, status: expired ? 'EXPIRED' : row.status, attempts: row.attempts,
+    createdAt: row.createdAt.toISOString(), lastSeenAt: row.lastSeenAt.toISOString(), decidedAt: row.decidedAt?.toISOString() ?? null,
+    decidedBy: row.decidedBy, decisionReason: row.decisionReason };
+}
+
+/** Pending, approved and rejected requests (newest first, at most 200). */
+export async function listPendingBindings(filter: { status?: 'PENDING' | 'APPROVED' | 'REJECTED'; nodeId?: string } = {}): Promise<PendingBindingView[]> {
+  const rows = await nodeCredentialStore.pendingBindings(filter);
+  const names = new Map<string, string>();
+  for (const nodeId of new Set(rows.map(row => row.nodeId))) {
+    const node = await nodeCredentialStore.nodeById(nodeId);
+    if (node) names.set(nodeId, node.name);
+  }
+  return rows.map(row => pendingView(row, names));
+}
+
+/**
+ * Approve a binding refused for its address: the key becomes the node's first credential, exactly as
+ * if the automatic upgrade had accepted it, and the agent learns it on its next attempt. Refused when
+ * the node has a key by now, when the request is older than seven days, or in enforce mode.
+ */
+export async function approvePendingBinding(id: string, actorId: string): Promise<PendingBindingView> {
+  if (nodeAuthMode() === 'enforce') throw new HttpError(409, 'NODE_AUTH_ENFORCED', 'Pending bindings cannot be approved while NODE_AUTH_MODE=enforce; enroll the node with a token');
+  const current = await nodeCredentialStore.pendingBinding(id);
+  if (!current) throw new HttpError(404, 'NOT_FOUND', 'Pending binding not found');
+  if (current.status === 'PENDING' && Date.now() - current.lastSeenAt.getTime() > PENDING_BINDING_TTL_MS)
+    throw new HttpError(410, 'PENDING_BINDING_EXPIRED', 'The agent has not asked for this binding for seven days; enroll the node with a token');
+  const node = await nodeCredentialStore.nodeById(current.nodeId);
+  const result = await nodeCredentialStore.approvePendingBinding(id, actorId, new Date());
+  if (result.outcome === 'not-pending') throw new HttpError(409, 'PENDING_BINDING_DECIDED', 'This request was already approved or rejected');
+  if (result.outcome === 'exists') throw new HttpError(409, 'NODE_CREDENTIAL_EXISTS', 'The node has a credential by now; revoke or reset it first');
+  if (result.outcome === 'key-in-use') throw new HttpError(409, 'NODE_KEY_IN_USE', 'This key is already bound to another node');
+  await logAuditEvent({ action: 'node.credential.binding_approve', actorId, targetType: 'node', targetId: current.nodeId,
+    details: { pendingBindingId: id, keyFingerprint: keyFingerprint(current.keyId), keyId: current.keyId, peerAddress: current.peerAddress } });
+  await logAuditEvent({ action: 'node.credential.bind', actorId, targetType: 'node', targetId: current.nodeId,
+    details: { origin: 'LEGACY_UPGRADE', approvedPendingBinding: id, keyFingerprint: keyFingerprint(current.keyId), keyId: current.keyId, fqdn: current.fqdn,
+      peerAddress: current.peerAddress } });
+  if (node) await notify(node, 'info', `bound:${current.keyId.slice(0, 16)}`, `${node.name} now has its own node key`,
+    `An administrator approved the key ${keyFingerprint(current.keyId)} that ${node.name} asked to bind from ${current.peerAddress}. The shared node secret can no longer speak for this node.`,
+    { origin: 'LEGACY_UPGRADE', keyFingerprint: keyFingerprint(current.keyId) });
+  return pendingView(result.row!, new Map(node ? [[node.id, node.name]] : []));
+}
+
+export async function rejectPendingBinding(id: string, actorId: string, reason: string | null): Promise<PendingBindingView> {
+  const row = await nodeCredentialStore.rejectPendingBinding(id, actorId, reason, new Date());
+  if (!row) {
+    if (!await nodeCredentialStore.pendingBinding(id)) throw new HttpError(404, 'NOT_FOUND', 'Pending binding not found');
+    throw new HttpError(409, 'PENDING_BINDING_DECIDED', 'This request was already approved or rejected');
+  }
+  await logAuditEvent({ action: 'node.credential.binding_reject', actorId, targetType: 'node', targetId: row.nodeId,
+    details: { pendingBindingId: id, keyFingerprint: keyFingerprint(row.keyId), peerAddress: row.peerAddress, ...(reason ? { reason } : {}) } });
+  const node = await nodeCredentialStore.nodeById(row.nodeId);
+  return pendingView(row, new Map(node ? [[node.id, node.name]] : []));
+}
+
+/** The first agent release that knows node keys. An older agent only has the shared node secret. */
+export const NODE_CREDENTIALS_SINCE = '2.10.0';
+
+export interface CredentialDowngradeCheck {
+  nodeId: string;
+  /** The agent version the operator wants to install. */
+  to: string;
+  /** Whether that version keeps the node key (and so stays accepted). */
+  targetKnowsNodeKeys: boolean;
+  /** The node has credential rows, so the shared secret is refused for it (the per-node ratchet). */
+  nodeHasCredentials: boolean;
+  /** `none`: install it. `reset-credentials`: reset first (or the node is refused until you do). `enroll-instead`: enforce mode, no reset exists. */
+  action: 'none' | 'reset-credentials' | 'enroll-instead';
+  resetPath: string | null;
+  detail: string;
+}
+
+/**
+ * Before installing an older agent on a node: an agent older than {@link NODE_CREDENTIALS_SINCE}
+ * only has the shared secret, which the server refuses for a node that has a key. The answer names
+ * the reset that has to come first (docs/NODE_CREDENTIALS.md, rollback). An agent of a release
+ * that knows node keys keeps its key; the evidence ratchet follows its own heartbeats.
+ */
+export async function credentialDowngradeCheck(nodeId: string, to: string): Promise<CredentialDowngradeCheck> {
+  if (!isVersion(to)) throw new HttpError(400, 'VALIDATION_ERROR', 'to must be a version such as 2.9.1');
+  const node = await nodeCredentialStore.nodeById(nodeId);
+  if (!node) throw new HttpError(404, 'NOT_FOUND', 'Node not found');
+  const rows = await nodeCredentialStore.credentialsOfNode(nodeId);
+  const targetKnowsNodeKeys = compareVersions(to, NODE_CREDENTIALS_SINCE) >= 0;
+  const nodeHasCredentials = rows.length > 0;
+  const base = { nodeId, to, targetKnowsNodeKeys, nodeHasCredentials };
+  if (targetKnowsNodeKeys || !nodeHasCredentials)
+    return { ...base, action: 'none', resetPath: null, detail: targetKnowsNodeKeys ? `magnus-agent ${to} keeps the node key` : 'The node has no key; it already uses the shared node secret' };
+  if (nodeAuthMode() === 'enforce')
+    return { ...base, action: 'enroll-instead', resetPath: null,
+      detail: `magnus-agent ${to} only knows the shared node secret, which NODE_AUTH_MODE=enforce refuses; keep an agent of ${NODE_CREDENTIALS_SINCE} or later on ${node.name}` };
+  return { ...base, action: 'reset-credentials', resetPath: `/api/v1/nodes/${encodeURIComponent(nodeId)}/credentials/reset`,
+    detail: `magnus-agent ${to} only knows the shared node secret, which is refused for ${node.name} while it has a key. Reset its credentials first (POST the reset path), then install ${to}` };
+}
+
+export interface LegacyChannelUse { count: number; lastUsedAt: string }
+export interface NodeLegacyUseView { request: LegacyChannelUse | null; evidence: LegacyChannelUse | null; outbound: LegacyChannelUse | null; lastUsedAt: string | null }
+
+export function legacyUseView(rows: readonly LegacyUseRow[] | undefined): NodeLegacyUseView {
+  const of = (channel: LegacyUseRow['channel']) => {
+    const entry = rows?.find(item => item.channel === channel);
+    return entry ? { count: entry.count, lastUsedAt: entry.lastUsedAt.toISOString() } : null;
+  };
+  const last = (rows ?? []).reduce<Date | null>((latest, entry) => !latest || entry.lastUsedAt > latest ? entry.lastUsedAt : latest, null);
+  return { request: of('request'), evidence: of('evidence'), outbound: of('outbound'), lastUsedAt: last?.toISOString() ?? null };
+}
+
 export interface NodeCredentialView {
   /** none: shared secret only. active: has a valid key. revoked: its keys were revoked and it must re-enroll. */
   state: 'none' | 'active' | 'revoked';
@@ -284,9 +433,13 @@ export interface NodeCredentialView {
   lastUsedAt: string | null;
   /** Key fingerprint (first 16 hex characters of the key id); ADMIN only. */
   keyFingerprint?: string | null;
+  /** The node's agent signs its evidence with its active key (HMAC-only evidence for it is refused). */
+  evidenceSigning: boolean;
+  /** Recent use of the shared credentials for this node; null where the caller did not load it. */
+  legacyUse: NodeLegacyUseView | null;
 }
 
-export function credentialView(rows: readonly CredentialRow[] | undefined, includeFingerprint: boolean): NodeCredentialView {
+export function credentialView(rows: readonly CredentialRow[] | undefined, includeFingerprint: boolean, legacy?: readonly LegacyUseRow[]): NodeCredentialView {
   const active = rows?.find(entry => entry.status === 'ACTIVE');
   const shown = active ?? rows?.[0];
   return {
@@ -295,11 +448,14 @@ export function credentialView(rows: readonly CredentialRow[] | undefined, inclu
     boundAt: shown?.createdAt.toISOString() ?? null,
     lastUsedAt: shown?.lastUsedAt?.toISOString() ?? null,
     ...(includeFingerprint ? { keyFingerprint: shown ? keyFingerprint(shown.keyId) : null } : {}),
+    evidenceSigning: active?.evidenceSigning === true,
+    legacyUse: legacy === undefined ? null : legacyUseView(legacy),
   };
 }
 
 export function credentialDetail(entry: CredentialRow) {
   return { keyId: entry.keyId, keyFingerprint: keyFingerprint(entry.keyId), status: entry.status, origin: entry.origin, boundFqdn: entry.boundFqdn,
+    evidenceSigning: entry.evidenceSigning, evidenceSigningAt: entry.evidenceSigningAt?.toISOString() ?? null,
     createdAt: entry.createdAt.toISOString(), lastUsedAt: entry.lastUsedAt?.toISOString() ?? null,
     retireAt: entry.retireAt?.toISOString() ?? null, revokedAt: entry.revokedAt?.toISOString() ?? null, revokedBy: entry.revokedBy };
 }
