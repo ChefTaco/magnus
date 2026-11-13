@@ -206,6 +206,7 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('browser contract against rea
     '/node-credentials/downgrade-check': `/node-credentials/downgrade-check?nodeId=${nodeId}&to=2.9.1`,
     '/node-credentials/summary': '/node-credentials/summary',
     '/node-credentials/pending-bindings': '/node-credentials/pending-bindings',
+    '/nodes/{nodeId}/credentials': `/nodes/${nodeId}/credentials`,
   };
   const NOT_RUN_HERE = new Set([
     '/assistant/insights', // model provider
@@ -325,5 +326,27 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('browser contract against rea
     expectParses('POST /logs/query', contract.logQueryResponseSchema, logs.json);
 
     expectParses('POST /commands/{commandId}/cancel refused', contract.apiErrorSchema, (await call('POST', `/commands/${commandId}/cancel`, {})).json);
+  }, 60_000);
+
+  it('parses the node key revoke and reset, with their consequences', async () => {
+    const keys = expectParses('GET /nodes/{nodeId}/credentials', contract.nodeCredentialsResponseSchema, (await call('GET', `/nodes/${nodeId}/credentials`)).json) as
+      { data: Array<{ keyId: string; status: string }> };
+    expect(keys.data).toMatchObject([{ status: 'ACTIVE' }]);
+    const revoke = await call('POST', `/nodes/${nodeId}/credentials/revoke`, contract.nodeCredentialRevokeRequestSchema.parse({ keyId: keys.data[0]!.keyId, reason: `${prefix} contract` }));
+    expect(revoke.status, JSON.stringify(revoke.json)).toBe(200);
+    expect(expectParses('POST /nodes/{nodeId}/credentials/revoke', contract.nodeCredentialRevokeResponseSchema, revoke.json)).toMatchObject({
+      data: { revoked: 1, state: 'revoked', agentRefused: true, sharedSecretAccepted: false, resetAvailable: true } });
+    const again = await call('POST', `/nodes/${nodeId}/credentials/revoke`, {});
+    expect(again.status).toBe(404);
+    expect(expectParses('POST /nodes/{nodeId}/credentials/revoke refused', contract.apiErrorSchema, again.json)).toMatchObject({ error: { code: 'NODE_CREDENTIAL_NOT_FOUND' } });
+    const reset = await call('POST', `/nodes/${nodeId}/credentials/reset`, contract.nodeCredentialResetRequestSchema.parse({ reason: `${prefix} rollback` }));
+    expect(reset.status, JSON.stringify(reset.json)).toBe(200);
+    expect(expectParses('POST /nodes/{nodeId}/credentials/reset', contract.nodeCredentialResetResponseSchema, reset.json)).toMatchObject({
+      data: { removed: 1, state: 'none', sharedSecretAccepted: true } });
+    const { queryAuditEvents } = await import('../services/audit-service.js');
+    const [revoked, removed] = await Promise.all(['node.credential.revoke', 'node.credential.reset'].map(async (action) =>
+      (await queryAuditEvents({ action, pageSize: 200 })).events.find((event) => event.targetId === nodeId)));
+    expect(revoked).toMatchObject({ actorId: 'system', details: { reason: `${prefix} contract`, agentRefused: true } });
+    expect(removed).toMatchObject({ actorId: 'system', details: { reason: `${prefix} rollback`, removed: 1 } });
   }, 60_000);
 });

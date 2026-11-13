@@ -228,9 +228,34 @@ export const nodeCredentialsResponseSchema = ok(z.array(nodeCredentialDetailSche
 export const nodeEnrollmentTokenRequestSchema = z.object({ ttlSeconds: z.number().int().min(60).max(86_400).optional() }).strict();
 // The token is shown once (Cache-Control: no-store) and never stored by the server in clear.
 export const nodeEnrollmentTokenResponseSchema = ok(z.object({ token: z.string(), expiresAt: z.string() }));
-export const nodeCredentialRevokeRequestSchema = z.object({ keyId: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict();
-export const nodeCredentialRevokeResponseSchema = ok(z.object({ revoked: z.number().int() }));
-export const nodeCredentialResetResponseSchema = ok(z.object({ removed: z.number().int() }));
+// An optional reason, recorded in the audit event (node.credential.revoke, node.credential.reset) with the acting user.
+export const nodeCredentialReasonSchema = z.string().trim().min(1).max(500);
+// POST /nodes/{nodeId}/credentials/revoke: one key (keyId) or every valid key of the node.
+export const nodeCredentialRevokeRequestSchema = z.object({ keyId: z.string().regex(/^[a-f0-9]{64}$/).optional(), reason: nodeCredentialReasonSchema.optional() }).strict();
+export const nodeCredentialRevokeResultSchema = z.object({
+  revoked: z.number().int(),
+  /** nodeCredential.state after the change. */
+  state: z.enum(['active', 'revoked']),
+  /** No ACTIVE key is left: the agent is refused (401 NODE_CREDENTIAL_REVOKED) until it is enrolled with a new token. */
+  agentRefused: z.boolean(),
+  /** A node with keys, revoked or not, stays closed to the shared node secret. */
+  sharedSecretAccepted: z.literal(false),
+  /** POST /nodes/{nodeId}/credentials/reset is another way back; false in enforce mode. */
+  resetAvailable: z.boolean(),
+  detail: z.string(),
+});
+export const nodeCredentialRevokeResponseSchema = ok(nodeCredentialRevokeResultSchema);
+// POST /nodes/{nodeId}/credentials/reset: forget the node's keys; it is a shared-secret node again.
+export const nodeCredentialResetRequestSchema = z.object({ reason: nodeCredentialReasonSchema.optional() }).strict();
+export const nodeCredentialResetResultSchema = z.object({
+  removed: z.number().int(),
+  state: z.literal('none'),
+  sharedSecretAccepted: z.literal(true),
+  /** While the upgrade window is open, an agent of 2.10.0 or later binds a key again by itself. */
+  legacyUpgradeOpen: z.boolean(),
+  detail: z.string(),
+});
+export const nodeCredentialResetResponseSchema = ok(nodeCredentialResetResultSchema);
 // GET /node-credentials/downgrade-check?nodeId=<id>&to=<version>: what installing an older agent needs first.
 export const nodeCredentialDowngradeQuerySchema = z.object({ nodeId: z.string().min(1).max(128), to: z.string().min(1).max(64) });
 export const nodeCredentialDowngradeCheckSchema = z.object({
@@ -3153,8 +3178,11 @@ export const magnusBrowserRoutes: readonly MagnusBrowserRoute[] = [
   { method: 'POST', path: '/nodes/{nodeId}/system-updates/enable', response: enableSystemUpdatesResponseSchema, roles: WRITE_ROLES, note: 'The node must be ONLINE, otherwise 409 INVALID_STATE.' },
   { method: 'GET', path: '/nodes/{nodeId}/gpu', query: nodeGpuQuerySchema, response: nodeGpuResponseSchema, roles: ANY_ROLE },
 
-  // Per-node credentials (docs/NODE_CREDENTIALS.md). The key administration routes under /nodes/{nodeId}/credentials and
-  // /nodes/{nodeId}/enrollment-token are not browser routes yet (docs/console-api.md); their schemas are exported above.
+  // Per-node credentials (docs/NODE_CREDENTIALS.md). An ADMIN lists, revokes and resets a node's keys; none of these
+  // returns a secret. POST /nodes/{nodeId}/enrollment-token returns one and is not a browser route (docs/console-api.md).
+  { method: 'GET', path: '/nodes/{nodeId}/credentials', response: nodeCredentialsResponseSchema, roles: ADMIN_ONLY, note: 'Newest first; key ids and fingerprints, never key material. Compare keyFingerprint with `magnus-agent identity show` on the host. Cache-Control: no-store.' },
+  { method: 'POST', path: '/nodes/{nodeId}/credentials/revoke', request: nodeCredentialRevokeRequestSchema, response: nodeCredentialRevokeResponseSchema, roles: ADMIN_ONLY, note: 'Without keyId, every valid key. When agentRefused is true the agent is refused until it is enrolled with a new token; the node never falls back to the shared secret. Optional x-idempotency-key header: a repeat answers 409 DUPLICATE_REQUEST. 404 NOT_FOUND or NODE_CREDENTIAL_NOT_FOUND (nothing left to revoke).' },
+  { method: 'POST', path: '/nodes/{nodeId}/credentials/reset', request: nodeCredentialResetRequestSchema, response: nodeCredentialResetResponseSchema, roles: ADMIN_ONLY, note: 'Rollback: the node is accepted with the shared node secret again. 409 NODE_AUTH_ENFORCED in enforce mode. Optional x-idempotency-key header: a repeat answers 409 DUPLICATE_REQUEST.' },
   { method: 'GET', path: '/node-credentials/downgrade-check', query: nodeCredentialDowngradeQuerySchema, response: nodeCredentialDowngradeCheckResponseSchema, roles: WRITE_ROLES, note: 'Ask before installing an older agent: an agent older than 2.10.0 is refused for a node with a key until its credentials are reset.' },
   { method: 'GET', path: '/node-credentials/summary', response: nodeCredentialFleetSummaryResponseSchema, roles: WRITE_ROLES, note: 'In NODE_AUTH_MODE=warn the readiness probe reports a failing non-critical node-credentials check while blockers is not empty.' },
   { method: 'GET', path: '/node-credentials/pending-bindings', query: pendingBindingsQuerySchema, response: pendingBindingsResponseSchema, roles: ADMIN_ONLY },

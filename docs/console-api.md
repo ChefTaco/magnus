@@ -10,9 +10,9 @@ moved without updating it.
 
 | Class | Meaning | Rows | At the ingress |
 |---|---|---|---|
-| `browser` | A person's console drives it with a user token | 152 | Allow the exact method and path |
+| `browser` | A person's console drives it with a user token | 155 | Allow the exact method and path |
 | `machine` | Agents, services and integrations, with their own credentials | 86 | Deny |
-| `exclude` | Reachable with a user token, but no console needs it, or it was written for a server-side caller | 146 | Deny until a feature needs it and it is reviewed |
+| `exclude` | Reachable with a user token, but no console needs it, or it was written for a server-side caller | 143 | Deny until a feature needs it and it is reviewed |
 | `retired` | Always answers 404 or 410 | 64 | Deny |
 
 The `Wave 1` column marks routes whose request and response shapes are published in
@@ -200,6 +200,41 @@ the same name on the node. A malformed reference answers 400 `INVALID_AGENT_REF`
 share 409 `AGENT_REF_AMBIGUOUS`. A linked service identity cannot reach these routes. The response
 carries identifiers only, never a credential.
 
+## Node key administration
+
+An `ADMIN` can list, revoke and reset a node's keys ([NODE_CREDENTIALS.md](NODE_CREDENTIALS.md)) from the
+browser. None of these routes returns a secret: the list carries key ids, fingerprints, status, origin and use
+times, never key material. Each is `Cache-Control: no-store`.
+
+| Route | What it does |
+|---|---|
+| `GET /api/v1/nodes/:nodeId/credentials` | Every key of the node, newest first |
+| `POST /api/v1/nodes/:nodeId/credentials/revoke` | Body `{}`, `{"keyId": "..."}`, and an optional `reason` |
+| `POST /api/v1/nodes/:nodeId/credentials/reset` | Body `{}` and an optional `reason`. Returns the node to the shared node secret |
+
+- **Roles.** The server checks the role on each request: `OPERATOR` and `VIEWER` answer 403 `FORBIDDEN`, whatever the
+  UI shows. An Oathweave person needs `magnus:admin` on an `ADMIN` link. A linked service identity, the scoped
+  plugin, fleet-check and shared-resource credentials, and node credentials (`x-node-token` or a node signature) are
+  refused on these routes; the ingress also strips `x-api-secret`, as on every browser route.
+- **Cross-site requests.** As on every other browser mutation, the only credential is the bearer token in
+  `Authorization`. There is no cookie for a cross-site form to carry, and CORS stays same-origin.
+- **Audit.** `node.credential.revoke` and `node.credential.reset` name the acting user (the link's `localUserId`) and
+  carry the `reason` when one was given: free text, trimmed, 1 to 500 characters, or 400 `VALIDATION_ERROR`. A revoke
+  also records the key fingerprint (or `all`) and `agentRefused`; a reset records `removed` and `legacyUpgradeOpen`.
+  The node's notification does not repeat the reason.
+- **Idempotency.** An optional `x-idempotency-key` header, scoped to the route and the acting user for 24 hours, answers
+  a repeat with 409 `DUPLICATE_REQUEST`. A refused request (an unknown node or key, enforce mode) frees the key again.
+- **Consequences.** A revoke answers `state`, `agentRefused`, `sharedSecretAccepted` (always `false`: a node with keys
+  never falls back to the shared secret), `resetAvailable` and a `detail` sentence. When `agentRefused` is true the
+  agent is refused with 401 `NODE_CREDENTIAL_REVOKED` until it is enrolled with a new token. A reset answers
+  `state: none`, `sharedSecretAccepted: true`, `legacyUpgradeOpen` (an agent of 2.10.0 or later binds a key again by
+  itself while it is true) and `detail`.
+- **Errors.** 404 `NOT_FOUND` (no such node), 404 `NODE_CREDENTIAL_NOT_FOUND` (nothing left to revoke), 409
+  `NODE_AUTH_ENFORCED` (reset in enforce mode), 409 `DUPLICATE_REQUEST`. Error bodies carry no key material.
+
+Issuing an enrollment token (`POST /api/v1/nodes/:nodeId/enrollment-token`) is not a browser route: its response is
+a secret. Neither are the shared-secret lifecycle routes under `/api/v1/credentials/:name`.
+
 ## Suite event feed
 
 The HiveXUI inbox reads Magnus notifications as HiveEvent v1 (from `@hivemagnus/hive-common`) at
@@ -383,6 +418,9 @@ unless these rows change. `POST /api/v1/hermes/deploy` is retired and always ans
 | DELETE | `/api/v1/nodes/:nodeId` | browser | `user:ADMIN` | yes |
 | GET | `/api/v1/nodes/:nodeId` | browser | `user:any` | yes |
 | PATCH | `/api/v1/nodes/:nodeId` | browser | `user:ADMIN\|OPERATOR` | yes |
+| GET | `/api/v1/nodes/:nodeId/credentials` | browser | `user:ADMIN` | yes |
+| POST | `/api/v1/nodes/:nodeId/credentials/reset` | browser | `user:ADMIN` | yes |
+| POST | `/api/v1/nodes/:nodeId/credentials/revoke` | browser | `user:ADMIN` | yes |
 | GET | `/api/v1/nodes/:nodeId/gpu` | browser | `user:any` | yes |
 | GET | `/api/v1/nodes/:nodeId/health` | browser | `user:any` | yes |
 | GET | `/api/v1/nodes/:nodeId/health/history` | browser | `user:any` | yes |
@@ -640,10 +678,7 @@ Each row is a non-browser route that a broader `browser` pattern also matches. D
 | GET | `/api/v1/hermes/profiles/:id/api-server/status` | exclude | `user:any` | No call site: an unused client wrapper only. Add when a console feature needs it. |
 | POST | `/api/v1/nodes/:nodeId/change-password` | exclude | `user:ADMIN\|OPERATOR` | Handles OS passwords in the body; no console caller. |
 | POST | `/api/v1/nodes/:nodeId/provision-user` | exclude | `user:ADMIN\|OPERATOR` | Handles OS passwords in the body; no console caller. |
-| GET | `/api/v1/nodes/:nodeId/credentials` | exclude | `user:ADMIN` | Node key administration; no console caller yet. |
-| POST | `/api/v1/nodes/:nodeId/credentials/reset` | exclude | `user:ADMIN` | Node key administration; no console caller yet. |
-| POST | `/api/v1/nodes/:nodeId/credentials/revoke` | exclude | `user:ADMIN` | Node key administration; no console caller yet. |
-| POST | `/api/v1/nodes/:nodeId/enrollment-token` | exclude | `user:ADMIN` | Returns a one-time enrollment token; no console caller yet. |
+| POST | `/api/v1/nodes/:nodeId/enrollment-token` | exclude | `user:ADMIN` | Returns a one-time enrollment token, a secret. Issue it with the API or CLI, not from a browser. |
 | POST | `/api/v1/nodes/:nodeId/repair-address` | exclude | `user:ADMIN\|OPERATOR` | No call site: an unused client wrapper only. Add when a console feature needs it. |
 | GET | `/api/v1/nodes/:nodeId/wazuh` | exclude | `user:any` | No call site: an unused client wrapper only. Add when a console feature needs it. |
 | GET | `/api/v1/nodes/compare` | exclude | `user:any` | No dashboard call site. Add when a console feature needs it. |
