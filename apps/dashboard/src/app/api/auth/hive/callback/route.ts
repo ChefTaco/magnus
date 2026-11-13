@@ -1,6 +1,6 @@
 import {recordSecurityEvent} from '@/lib/security-events';
 import { NextRequest, NextResponse } from 'next/server';
-import { finishHiveLogin } from '@/lib/hive-login';
+import { finishHiveLogin, HiveClientRejected } from '@/lib/hive-login';
 import { createSessionToken, COOKIE_NAME } from '@/lib/auth';
 export async function GET(req: NextRequest) {
   const state = req.nextUrl.searchParams.get('state');
@@ -25,7 +25,9 @@ export async function GET(req: NextRequest) {
       maxAge: 0,
     });
     return response;
-  } catch {
+  } catch (error) {
+    // A misconfigured client fails every sign-in the same way: tell the operator why.
+    if (error instanceof HiveClientRejected) console.error(error.message);
     await recordSecurityEvent('auth.login_failed', req.headers, '', 'hive').catch(() => undefined);
     return NextResponse.json({ error: 'Hive login failed' }, { status: 401 });
   }

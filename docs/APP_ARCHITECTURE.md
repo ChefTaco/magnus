@@ -76,7 +76,11 @@ concurrency limit. The TLS front end ignores inbound forwarding headers and take
 address from the socket, so the throttle cannot be bypassed with a spoofed header.
 
 Named users can sign in through Hive IAM (OIDC) when the `HIVE_OAUTH_*` variables are set. Hive IAM
-remains the identity provider; Magnus does not administer it.
+remains the identity provider; Magnus does not administer it. The dashboard uses the authorization
+code flow with S256 PKCE on every sign-in. Register its client in Hive IAM either as a public client
+(no secret; leave `HIVE_OAUTH_CLIENT_SECRET` unset) or as a confidential client, in which case
+`HIVE_OAUTH_CLIENT_SECRET` must hold its secret: Hive IAM refuses a confidential client's code
+exchange without it (`invalid_client`), and the dashboard logs that reason when it happens.
 
 ### Terminals and SSH
 

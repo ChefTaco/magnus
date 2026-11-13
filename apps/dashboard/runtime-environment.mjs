@@ -38,7 +38,7 @@ export const dashboardEnvironmentSchema = Object.freeze({
   NEXT_PUBLIC_API_URL: url({ default: 'https://localhost:4000', public: true, purpose: 'Legacy build-time Control API URL; must never contain a secret.' }),
   HIVE_OAUTH_DISCOVERY_URL: url({ optional: true, purpose: 'Hive OAuth discovery URL for optional named dashboard login; HTTPS required.' }),
   HIVE_OAUTH_CLIENT_ID: string({ optional: true, purpose: 'Registered Magnus dashboard OAuth client ID.' }),
-  HIVE_OAUTH_CLIENT_SECRET: string({ optional: true, sensitive: true, purpose: 'Optional confidential OAuth client secret, kept server-side.' }),
+  HIVE_OAUTH_CLIENT_SECRET: string({ optional: true, sensitive: true, purpose: 'OAuth client secret, kept server-side. Required when the client is registered as confidential; leave unset for a public PKCE client.' }),
   HIVE_OAUTH_ISSUER: url({ optional: true, purpose: 'Exact trusted Hive access-token issuer.' }),
   HIVE_OAUTH_API_AUDIENCE: string({ optional: true, purpose: 'Exact access-token audience accepted by the Control API.' }),
   HIVE_OAUTH_SCOPE: string({ default: 'openid profile email', purpose: 'Registered named-user OAuth scopes.' }),

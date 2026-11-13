@@ -142,7 +142,7 @@ Every variable the runtime configuration accepts. `magnus-ui env-schema` prints 
 | `NEXT_PUBLIC_API_URL` | Optional | `https://localhost:4000` | Legacy build-time Control API URL; must never contain a secret. |
 | `HIVE_OAUTH_DISCOVERY_URL` | Optional | None | Hive OAuth discovery URL for optional named dashboard login; HTTPS required. |
 | `HIVE_OAUTH_CLIENT_ID` | Optional | None | Registered Magnus dashboard OAuth client ID. |
-| `HIVE_OAUTH_CLIENT_SECRET` | Optional | None | Optional confidential OAuth client secret, kept server-side. |
+| `HIVE_OAUTH_CLIENT_SECRET` | Optional | None | OAuth client secret, kept server-side. Required when the client is registered as confidential; leave unset for a public PKCE client. |
 | `HIVE_OAUTH_ISSUER` | Optional | None | Exact trusted Hive access-token issuer. |
 | `HIVE_OAUTH_API_AUDIENCE` | Optional | None | Exact access-token audience accepted by the Control API. |
 | `HIVE_OAUTH_SCOPE` | Optional | `openid profile email` | Registered named-user OAuth scopes. |

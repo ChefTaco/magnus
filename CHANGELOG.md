@@ -16,6 +16,10 @@ All notable changes to this project are documented in this file. The format is b
 - Fleet assistant: `runSkill` refuses a skill name or action that is not a plain name before it builds the node-side command. The file tools also refuse private keys, certificates, `.npmrc`, databases, dumps and the `certs`, `state`, `artifacts` and `backups` directories.
 - Server: the audit, command and log CSV exports quote every cell and stop a spreadsheet from evaluating a cell as a formula. A quote in an actor, target or node value previously shifted that row's columns.
 
+### Changed
+
+- Console: Hive IAM sign-in now explains a refused client. Oathweave requires a confidential client to authenticate when it exchanges an authorization code, so a console whose client is registered as confidential must set `HIVE_OAUTH_CLIENT_SECRET` (a public PKCE client needs no secret; the console has always sent the PKCE verifier, and the secret when configured). When the identity service answers `invalid_client`, the console logs that the secret is missing or wrong instead of failing silently. The environment reference and `docs/APP_ARCHITECTURE.md` describe both registrations.
+
 ### Fixed
 
 - Node agent: log forwarding no longer stalls for good when the server rejects a batch. Journal messages that journalctl prints as byte arrays (lines with colour escapes, for example) are decoded, and a batch the server answers with 400, 413 or 422 is dropped instead of being re-queued ahead of every later entry.
