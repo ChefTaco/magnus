@@ -193,10 +193,23 @@ export const upgradeReadinessSchema = z.object({
 });
 
 // services/control-api/src/routes/nodes.ts (include agent and role; readiness is null when it cannot be computed)
+// services/control-api/src/services/node-credential-service.ts (credentialView). `none`: the node still
+// authenticates with the shared node secret; `active`: it has its own Ed25519 key and the shared secret is
+// refused for it; `revoked`: its keys were revoked and it must be enrolled again. `keyFingerprint` is ADMIN only.
+export const nodeCredentialSchema = z.object({
+  state: z.enum(['none', 'active', 'revoked']),
+  origin: z.enum(['ENROLLMENT_TOKEN', 'LEGACY_UPGRADE', 'ROTATION']).nullable(),
+  boundAt: z.string().nullable(),
+  lastUsedAt: z.string().nullable(),
+  keyFingerprint: z.string().nullable().optional(),
+});
+
 export const nodeWithRelationsSchema = nodeSchema.extend({
   agent: nodeAgentSchema.nullable(),
   role: z.object({ id: z.string(), name: z.string() }).nullable(),
   upgradeReadiness: upgradeReadinessSchema.nullable(),
+  // Absent on a server older than per-node credentials.
+  nodeCredential: nodeCredentialSchema.optional(),
 });
 
 // services/control-api/src/routes/nodes.ts (pageSize clamped to 100; status upper-cased server-side, an unknown value answers 400).
@@ -254,10 +267,12 @@ export const registerNodeRequestSchema = z.object({
   agentVersion: z.string().optional(),
 });
 
-// services/control-api/src/routes/nodes.ts (the raw body also carries the node token, once, with Cache-Control: no-store)
+// services/control-api/src/routes/nodes.ts (the raw body also carries the node token and a one-time
+// enrollmentToken for `magnus-agent enroll --token`, once, with Cache-Control: no-store)
 export const registerNodeResponseSchema = ok(z.object({
   nodeId: z.string(),
   controlApiUrl: z.string(),
+  enrollmentTokenExpiresAt: z.string().optional(),
 }));
 
 // services/control-api/src/schemas/nodes.ts (the server uppercases status; a non-enum value answers 400)

@@ -59,10 +59,30 @@ console.log(`[startup] security-fusion=${securityFusionMode()} hermes-registry=$
 const { writeRuntimeFile } = await import('./utils/runtime-file.js');
 const { CONTROL_API_VERSION } = await import('./config/version.js');
 
+/**
+ * Per-node credentials: create the server signing key and record the start of the legacy-upgrade
+ * window at the first start, not at the first agent request. A failure is reported and does not
+ * stop the server: in compat mode agents keep working on the shared node secret.
+ */
+async function announceNodeAuth(): Promise<void> {
+  try {
+    const { serverSigningKey } = await import('./services/node-server-key.js');
+    const { legacyUpgradeWindow } = await import('./services/node-credential-service.js');
+    const { nodeAuthMode } = await import('./services/node-auth-config.js');
+    const { keyFingerprint } = await import('./security/node-request-auth.js');
+    const window = await legacyUpgradeWindow();
+    console.log(`[startup] node-auth mode=${nodeAuthMode()} server-key=${keyFingerprint(serverSigningKey().keyId)} `
+      + `legacy-upgrade=${window.open ? `open until ${window.until}` : 'closed'}`);
+  } catch (error) {
+    console.error(`[startup] node-auth is not ready: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 /** Background services shared by the TLS and development listeners. */
 function startBackgroundServices(listenPort: number): void {
   const started = startLiveBackgroundServices(() => {
   writeRuntimeFile({ version: CONTROL_API_VERSION, port: listenPort, host: listener.hostname });
+  void announceNodeAuth();
   startNodeIssueMonitor();
   startUpgradeReadinessMonitor();
   startApplicationProbes();

@@ -7,8 +7,20 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Added
+
+- Per-node credentials, phase 1 (`compat`). Each node agent now has its own Ed25519 key and the server has a signing key; requests in both directions are signed for exactly one node, with a timestamp, a single-use nonce and the hash of the body. `docs/NODE_CREDENTIALS.md` explains the model, the migration and the rollback. Nothing has to be done on a node:
+  - An upgraded agent creates its key in `$AGENT_INSTALL_DIR/identity/node.key` (mode 0600) and binds it to its node with the shared node secret, after its first accepted heartbeat and never while a self-upgrade is on trial. The server binds a node's first key only when the node is in the inventory, has no key yet, the request comes from the address recorded for the node, and the upgrade window is open (30 days from the first start of this release, or `NODE_AUTH_LEGACY_UPGRADE_UNTIL`). Each binding is audited and raises a notification with the key fingerprint; a second agent that asks to bind the same node is refused with 409 and a critical notification.
+  - Once a node has a key, the shared node secret can no longer speak for it: a request with `x-node-token` that names that node is refused with `401 NODE_CREDENTIAL_REQUIRED`. With a signature, the node is the key's node, and a body that names another node (`fqdn`, `nodeFqdn`, `nodeId`) is refused with `403 NODE_IDENTITY_MISMATCH`, so a heartbeat can no longer rename or re-address another node.
+  - The server signs every request to an agent and stops sending the shared secret to a node once its agent reports, in a signed heartbeat, that it pins the server's key. An agent verifies a signed request (made for this node, fresh, not replayed, exact method, path, query and body) and still accepts the shared secret.
+  - Old and new versions mix freely: an older agent keeps working on the shared secret against this server, and this agent keeps working against an older server and binds its key once the server is upgraded.
+  - New commands: `magnus-agent enroll --token`, `magnus-agent identity show|rotate|reset`. New server routes: `GET /api/v1/node-enrollment/server-key`, `POST /api/v1/node-enrollment/legacy-upgrade|enroll|rotate`, and for administrators `GET /api/v1/nodes/:nodeId/credentials`, `POST /api/v1/nodes/:nodeId/enrollment-token`, `.../credentials/revoke` and `.../credentials/reset`. `POST /api/v1/nodes/register` also returns a one-time `enrollmentToken`. Node reads carry `nodeCredential` (`state` `none`, `active` or `revoked`; the key fingerprint for administrators); `nodeManagerSecretState` is unchanged.
+  - `NODE_AUTH_MODE` on the server: `compat` (default), `warn` (also logs each use of the shared secret) and `enforce` (signatures only, opt-in). On the agent the setting is reserved and behaves as `compat`.
+- Server: `NODE_AUTO_REGISTER=false` stops adding unknown agents that present the shared node secret to the inventory. The default (`true`) is the previous behaviour.
+
 ### Security
 
+- Node agent: drift file checks refuse the agent's `identity` directory, so a content or hash check cannot be used to probe the node key.
 - Node agent: a root agent no longer runs a Hermes executable, or runs one against a Hermes home, that another account controls as root. Hermes discovery (every heartbeat cycle), the Hermes management routes and the `hermes-cli` health check now run such an executable as the account that owns it or its home, with that account's own `HOME` and session bus. Before, any local account with a home directory could place a `hermes` file there and have the agent run it as root. A Hermes installed for a user is therefore run as that user from now on; a root-owned install with a root-owned home is unchanged. The health-check probes no longer inherit agent credentials, and `OTEL_EXPORTER_OTLP_HEADERS` is no longer passed to child processes.
 - Skills: `backup-manager` writes archives and checksums readable only by the invoking account (a default run archives `/etc`), purges only its own archives directly in the destination, and validates the retention. `news-reporter` sends the API key in a header read from stdin instead of the URL, validates its settings, bounds the request time and filters every remote field.
 - Server: creating a skill no longer lets a name or entry point with path separators write outside the skills directory, and skill file reads and writes can no longer reach a sibling skill whose name starts with the same text. Skill names must be letters, digits, underscores and hyphens; an entry point must be a plain file name.
@@ -32,9 +44,12 @@ All notable changes to this project are documented in this file. The format is b
 - `magnus init` and `magnus upgrade`: an env-file value containing a single quote is written intact (double-quoted) instead of having the quote removed; a value that cannot be written faithfully is refused with a message.
 - `magnus init` and `magnus adopt` with systemd: a project directory or env-file path containing whitespace or `" ' \ % $ ;` is refused before anything is written, instead of generating a unit that cannot start.
 
-**New environment variables:** None.
+### New environment variables
 
-**Migration impact:** No datastore migrations.
+- Server, all optional: `NODE_AUTH_MODE` (`compat`, `warn` or `enforce`; default `compat`), `NODE_AUTH_LEGACY_UPGRADE_UNTIL` (ISO 8601 date; default 30 days after the first start), `NODE_AUTH_SERVER_KEY_PATH` (default `$MAGNUS_HOME/state/node-auth/server-signing-key.json`), `NODE_AUTO_REGISTER` (default `true`).
+- Node agent, optional: `NODE_AUTH_MODE` (reserved; behaves as `compat`).
+
+**Migration impact:** One additive datastore migration, `20261113120000_node_credentials`: it creates `node_credentials`, `node_enrollment_tokens` and `node_auth_state` and changes no existing table or row. `magnus upgrade` applies it. A server rolled back to an earlier release ignores the new tables. The server also creates a signing key file in `$MAGNUS_HOME/state/node-auth/` on first start; include it in backups. Before downgrading an agent that has bound a key to a release older than this one, reset that node's credentials on the server (`POST /api/v1/nodes/:nodeId/credentials/reset`), because the older agent only knows the shared secret and the server refuses it for a node that has a key.
 
 ## [2.9.1] - 2026-11-12
 

@@ -83,6 +83,11 @@ export function configurationErrors(): string[] {
     }
   }
 
+  const nodeAuthMode = process.env['NODE_AUTH_MODE']?.trim().toLowerCase();
+  if (nodeAuthMode && !['compat', 'warn', 'enforce'].includes(nodeAuthMode)) {
+    errors.push('NODE_AUTH_MODE must be compat, warn or enforce');
+  }
+
   if (ENABLE_AGENT_DISCOVERY) {
     if (AGENT_DISCOVERY_SECRET.length < 32) {
       errors.push('AGENT_DISCOVERY_SECRET must contain at least 32 characters when discovery is enabled');

@@ -22,6 +22,8 @@ README is the reference for its installation, configuration and environment vari
 
 - [Command receipts and recovery](COMMAND_RECEIPTS.md): durable per-node receipts, uncertain
   outcomes and signed reconciliation.
+- [Per-node credentials](NODE_CREDENTIALS.md): each node's own Ed25519 key, the automatic upgrade
+  of existing nodes, enrollment tokens, revocation, rollback and the phase plan.
 - [Command resource leases](COMMAND_RESOURCE_LEASES.md): durable ownership of node commands, node
   enrollment, and shared repository, provider and GPU leases.
 
