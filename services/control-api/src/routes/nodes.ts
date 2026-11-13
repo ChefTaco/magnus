@@ -1,6 +1,6 @@
 import { optional } from '../utils/optional.js';
 import { intQuery, pagination } from '../utils/query.js';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import type { AppVariables } from '../types/index.js';
 import { nodeForRole } from '../services/secret-views.js';
 import { nanoid } from 'nanoid';
@@ -23,7 +23,8 @@ import { ensureControlHostNode } from '../services/control-host-node.js';
 import { withReadRetry } from '../db/read-retry.js';
 import { readinessOfNodes } from '../services/agent-upgrade-readiness.js';
 import { z } from 'zod';
-import { credentialDetail, credentialView, issueEnrollmentToken, resetNodeCredentials, revokeNodeCredentials } from '../services/node-credential-service.js';
+import { credentialDetail, credentialView, issueEnrollmentToken, NODE_CREDENTIAL_REASON_MAX, resetNodeCredentials, revokeNodeCredentials } from '../services/node-credential-service.js';
+import { enforceIdempotencyFromHeader } from '../utils/idempotency.js';
 import { nodeCredentialStore } from '../services/node-credential-store.js';
 import {
   parseTailscaleNodeKeyPosture,
@@ -644,15 +645,29 @@ nodesRouter.post('/:nodeId/enrollment-token', requireRole('ADMIN'), async (c) =>
   return c.json({ success: true, data }, 201);
 });
 
+// Revoke and reset are browser routes (docs/console-api.md): ADMIN only, an optional reason recorded in the audit
+// event, and an optional x-idempotency-key, claimed once the body is valid, that answers a repeat with 409 DUPLICATE_REQUEST.
+const credentialReason = z.string().trim().min(1).max(NODE_CREDENTIAL_REASON_MAX).optional();
+
+async function withIdempotency<T>(c: Context<AppVariables>, change: () => Promise<T>): Promise<T> {
+  const claim = await enforceIdempotencyFromHeader(c);
+  // A refused change (unknown node or key, enforce mode) changed nothing, so the same key may be used again.
+  try { return await change(); } catch (error) { await claim?.release(); throw error; }
+}
+
 nodesRouter.post('/:nodeId/credentials/revoke', requireRole('ADMIN'), async (c) => {
-  const body = await parseBody(c, z.object({ keyId: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict());
-  return c.json({ success: true, data: await revokeNodeCredentials(c.req.param('nodeId')!, body.keyId ?? null, getUser(c).userId) });
+  const body = await parseBody(c, z.object({ keyId: z.string().regex(/^[a-f0-9]{64}$/).optional(), reason: credentialReason }).strict());
+  const data = await withIdempotency(c, () => revokeNodeCredentials(c.req.param('nodeId')!, body.keyId ?? null, getUser(c).userId, body.reason ?? null));
+  c.header('Cache-Control', 'no-store');
+  return c.json({ success: true, data });
 });
 
 // Rollback to the shared node secret for one node (not in enforce mode).
 nodesRouter.post('/:nodeId/credentials/reset', requireRole('ADMIN'), async (c) => {
-  await parseBody(c, z.object({}).strict());
-  return c.json({ success: true, data: await resetNodeCredentials(c.req.param('nodeId')!, getUser(c).userId) });
+  const body = await parseBody(c, z.object({ reason: credentialReason }).strict());
+  const data = await withIdempotency(c, () => resetNodeCredentials(c.req.param('nodeId')!, getUser(c).userId, body.reason ?? null));
+  c.header('Cache-Control', 'no-store');
+  return c.json({ success: true, data });
 });
 
 // ── Register a new node ──

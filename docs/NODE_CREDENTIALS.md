@@ -99,7 +99,7 @@ To check a binding, compare fingerprints:
 # on the node
 magnus-agent identity show
 
-# on the server (ADMIN)
+# on the server (ADMIN; the UI lists the same keys)
 curl -H "Authorization: Bearer $TOKEN" https://magnus.example.com:4000/api/v1/nodes/<nodeId>/credentials
 ```
 
@@ -263,19 +263,36 @@ node and channel each day (`node.credential.legacy_use`), and the readiness prob
 | Task | How | Effect |
 |---|---|---|
 | Rotate a node key | `magnus-agent identity rotate` on the node | New key, signed for by the old one. The old key stays valid for 24 hours |
-| Revoke | `POST /api/v1/nodes/<nodeId>/credentials/revoke` (ADMIN), body `{}` or `{"keyId": "..."}` | The agent is refused with `401 NODE_CREDENTIAL_REVOKED`. The node stays closed to the shared secret |
-| Re-enroll | Issue a token, then `magnus-agent enroll --token` on the node | A new key replaces the old ones |
-| List keys | `GET /api/v1/nodes/<nodeId>/credentials` (ADMIN) | Key ids, fingerprints, status, origin, last use |
+| Revoke | In the UI, or `POST /api/v1/nodes/<nodeId>/credentials/revoke` (ADMIN), body `{}` or `{"keyId": "..."}`, optionally with `"reason"` | Once no active key is left, the agent is refused with `401 NODE_CREDENTIAL_REVOKED`. The node stays closed to the shared secret |
+| Re-enroll | Issue a token with the API, then `magnus-agent enroll --token` on the node | A new key replaces the old ones |
+| List keys | In the UI, or `GET /api/v1/nodes/<nodeId>/credentials` (ADMIN) | Key ids, fingerprints, status, origin, last use |
 
 Deleting a node deletes its credentials.
+
+### From the UI
+
+These three routes are browser routes, so HiveXUI, signed in with Oathweave, can offer an administrator the list,
+revoke and reset of a node's keys. The UI calls the same routes as `curl` does; the server checks the `ADMIN` role on each request, so an `OPERATOR` or `VIEWER` is refused
+whatever the UI shows. Issuing an enrollment token stays with the API and the command line, because its response is a
+secret.
+
+- A revoke or reset takes an optional `reason` (1 to 500 characters). The audit event (`node.credential.revoke`,
+  `node.credential.reset`) records it with the person who acted.
+- The response says what happened next, so the UI can explain it. A revoke answers `agentRefused` (no active key is
+  left, so the agent is refused until it is enrolled with a token), `sharedSecretAccepted: false` and `resetAvailable`.
+  A reset answers `sharedSecretAccepted: true` and `legacyUpgradeOpen`: while the upgrade window is open, an agent of
+  this release binds a key again by itself.
+- A repeat with the same `x-idempotency-key` header answers `409 DUPLICATE_REQUEST` instead of acting twice.
+
+The routes and their schemas are in [console-api.md](console-api.md#node-key-administration).
 
 ## Rollback
 
 **One node back to the shared secret.** Both sides have to forget the key:
 
 ```bash
-# server (ADMIN): accept the shared secret for this node again
-curl -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' -d '{}' \
+# server (ADMIN, or Reset in the UI): accept the shared secret for this node again
+curl -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' -d '{"reason":"rollback"}' \
   https://magnus.example.com:4000/api/v1/nodes/<nodeId>/credentials/reset
 
 # node: remove the key

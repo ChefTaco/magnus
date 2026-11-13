@@ -128,3 +128,29 @@ test('hive event feed: the route, the query and the event shape', async () => {
   assert.throws(() => hiveEventFeedResponseSchema.parse({ data: [{ ...event, severity: 'error' }], nextCursor: null }));
   assert.throws(() => hiveEventFeedResponseSchema.parse({ data: [{ ...event, link: { product: 'magnus', path: 'https://example.com' } }], nextCursor: null }));
 });
+
+test('node key administration: ADMIN only, no enrollment token or shared-secret lifecycle route', async () => {
+  const { nodeCredentialResetRequestSchema, nodeCredentialResetResponseSchema, nodeCredentialRevokeRequestSchema, nodeCredentialRevokeResponseSchema } = await import('../dist/browser.js');
+  const credentialRoutes = magnusBrowserRoutes.filter((route) => /\/credential|enrollment/u.test(route.path)).map((route) => `${route.method} ${route.path}`);
+  assert.deepEqual(credentialRoutes.sort(), ['GET /nodes/{nodeId}/credentials', 'POST /nodes/{nodeId}/credentials/reset', 'POST /nodes/{nodeId}/credentials/revoke']);
+  for (const key of credentialRoutes) assert.deepEqual(magnusBrowserRoutes.find((route) => `${route.method} ${route.path}` === key).roles, ['ADMIN'], key);
+  assert.throws(() => magnusBrowserRoute('/nodes/node-1/enrollment-token', 'POST'), /no released contract/);
+  assert.throws(() => magnusBrowserRoute('/credentials/rotations'), /no released contract/);
+
+  // The reason is optional, trimmed, and 1 to 500 characters; nothing else may ride along.
+  assert.deepEqual(nodeCredentialRevokeRequestSchema.parse({ reason: '  lost laptop  ' }), { reason: 'lost laptop' });
+  assert.deepEqual(nodeCredentialResetRequestSchema.parse({}), {});
+  for (const reason of ['', '   ', 'x'.repeat(501), 7]) {
+    assert.equal(nodeCredentialRevokeRequestSchema.safeParse({ reason }).success, false, String(reason));
+    assert.equal(nodeCredentialResetRequestSchema.safeParse({ reason }).success, false, String(reason));
+  }
+  assert.equal(nodeCredentialRevokeRequestSchema.safeParse({ keyId: 'a'.repeat(64), reason: 'x'.repeat(500) }).success, true);
+  assert.equal(nodeCredentialResetRequestSchema.safeParse({ keyId: 'a'.repeat(64) }).success, false);
+
+  // The consequences the UI explains.
+  const revoked = nodeCredentialRevokeResponseSchema.parse({ success: true, data: { revoked: 1, state: 'revoked', agentRefused: true, sharedSecretAccepted: false, resetAvailable: true, detail: 'refused' } });
+  assert.equal(revoked.data.agentRefused, true);
+  assert.throws(() => nodeCredentialRevokeResponseSchema.parse({ success: true, data: { ...revoked.data, sharedSecretAccepted: true } }));
+  const reset = nodeCredentialResetResponseSchema.parse({ success: true, data: { removed: 2, state: 'none', sharedSecretAccepted: true, legacyUpgradeOpen: false, detail: 'shared secret' } });
+  assert.equal(reset.data.sharedSecretAccepted, true);
+});

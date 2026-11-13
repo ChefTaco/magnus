@@ -283,28 +283,67 @@ export async function rotateCredential(input: { node: CredentialNode; currentKey
   return { ...binding(input.node, keyId), retiresAt: retireAt.toISOString() };
 }
 
-export async function revokeNodeCredentials(nodeId: string, keyId: string | null, actorId: string): Promise<{ revoked: number }> {
+/** What a revoke leaves behind, so a console can explain it. */
+export interface NodeCredentialRevokeResult {
+  revoked: number;
+  /** The node's `nodeCredential.state` after the change. */
+  state: 'active' | 'revoked';
+  /** No ACTIVE key is left: the agent is refused with 401 NODE_CREDENTIAL_REVOKED until it is enrolled with a new token. */
+  agentRefused: boolean;
+  /** Always false: a node with keys, revoked or not, stays closed to the shared node secret. */
+  sharedSecretAccepted: false;
+  /** A reset to the shared secret is another way back (not in enforce mode). */
+  resetAvailable: boolean;
+  detail: string;
+}
+
+/** What a reset leaves behind. */
+export interface NodeCredentialResetResult {
+  removed: number;
+  state: 'none';
+  /** Always true: the node is accepted with the shared node secret again. */
+  sharedSecretAccepted: true;
+  /** While the upgrade window is open, an agent of 2.10.0 or later binds a new key by itself. */
+  legacyUpgradeOpen: boolean;
+  detail: string;
+}
+
+/** Free text an administrator gives for a revoke or reset; recorded in the audit event only. */
+export const NODE_CREDENTIAL_REASON_MAX = 500;
+
+export async function revokeNodeCredentials(nodeId: string, keyId: string | null, actorId: string, reason: string | null = null): Promise<NodeCredentialRevokeResult> {
   const node = await nodeCredentialStore.nodeById(nodeId);
   if (!node) throw new HttpError(404, 'NOT_FOUND', 'Node not found');
   const revoked = await nodeCredentialStore.revoke(nodeId, keyId, actorId, new Date());
   if (revoked === 0) throw new HttpError(404, 'NODE_CREDENTIAL_NOT_FOUND', 'No valid credential matches');
+  const agentRefused = !(await nodeCredentialStore.credentialsOfNode(nodeId)).some(entry => entry.status === 'ACTIVE');
+  const resetAvailable = nodeAuthMode() !== 'enforce';
   await logAuditEvent({ action: 'node.credential.revoke', actorId, targetType: 'node', targetId: nodeId,
-    details: { revoked, ...(keyId ? { keyFingerprint: keyFingerprint(keyId), keyId } : { all: true }) } });
+    details: { revoked, ...(keyId ? { keyFingerprint: keyFingerprint(keyId), keyId } : { all: true }), agentRefused, ...(reason ? { reason } : {}) } });
   await notify(node, 'warning', `revoked:${Date.now()}`, `Node key of ${node.name} revoked`,
-    `An administrator revoked ${keyId ? `the key ${keyFingerprint(keyId)}` : 'every key'} of ${node.name}. Its agent is refused until it is enrolled with a new token.`);
-  return { revoked };
+    `An administrator revoked ${keyId ? `the key ${keyFingerprint(keyId)}` : 'every key'} of ${node.name}. ${agentRefused
+      ? 'Its agent is refused until it is enrolled with a new token.' : 'Its active key still works.'}`);
+  return { revoked, state: agentRefused ? 'revoked' : 'active', agentRefused, sharedSecretAccepted: false, resetAvailable,
+    detail: agentRefused
+      ? `The agent of ${node.name} is refused (401 NODE_CREDENTIAL_REVOKED), and the node stays closed to the shared node secret. Issue an enrollment token and run \`magnus-agent enroll\` on the node${resetAvailable ? ', or reset its credentials to return it to the shared secret' : ''}.`
+      : `${node.name} still has an active key, and its agent keeps working with it.` };
 }
 
 /** Rollback: forget the node's credentials so it is a shared-secret node again. Not available in enforce mode. */
-export async function resetNodeCredentials(nodeId: string, actorId: string): Promise<{ removed: number }> {
+export async function resetNodeCredentials(nodeId: string, actorId: string, reason: string | null = null): Promise<NodeCredentialResetResult> {
   if (nodeAuthMode() === 'enforce') throw new HttpError(409, 'NODE_AUTH_ENFORCED', 'Credentials cannot be reset to the shared secret while NODE_AUTH_MODE=enforce');
   const node = await nodeCredentialStore.nodeById(nodeId);
   if (!node) throw new HttpError(404, 'NOT_FOUND', 'Node not found');
   const removed = await nodeCredentialStore.reset(nodeId);
-  await logAuditEvent({ action: 'node.credential.reset', actorId, targetType: 'node', targetId: nodeId, details: { removed } });
+  const { open } = await legacyUpgradeWindow();
+  await logAuditEvent({ action: 'node.credential.reset', actorId, targetType: 'node', targetId: nodeId,
+    details: { removed, legacyUpgradeOpen: open, ...(reason ? { reason } : {}) } });
   await notify(node, 'warning', `reset:${Date.now()}`, `Node credentials of ${node.name} reset`,
     `An administrator removed the node keys of ${node.name}. It is accepted with the shared node secret again and may bind a new key while the upgrade window is open.`);
-  return { removed };
+  return { removed, state: 'none', sharedSecretAccepted: true, legacyUpgradeOpen: open,
+    detail: `${node.name} is accepted with the shared node secret again. ${open
+      ? 'While the upgrade window is open, an agent of 2.10.0 or later binds a key again by itself; an older agent stays on the shared secret.'
+      : 'The upgrade window is closed, so its agent does not bind a key again by itself: it stays on the shared secret until it is enrolled with a token.'}` };
 }
 
 const PENDING_BINDING_TTL_MS = 7 * 24 * 60 * 60 * 1000;

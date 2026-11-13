@@ -373,7 +373,7 @@ describe('agent-to-server authentication', () => {
 
   it('refuses a revoked key, and keeps the node closed to the shared secret until it is re-enrolled', async () => {
     const key = await bound('node-a');
-    expect(await revokeNodeCredentials('node-a', key.keyId, 'admin')).toEqual({ revoked: 1 });
+    expect(await revokeNodeCredentials('node-a', key.keyId, 'admin')).toMatchObject({ revoked: 1, agentRefused: true });
     const response = await signedProbe(key, 'node-a', { nodeId: 'node-a' }, { extra: { 'x-node-token': SECRET } });
     expect(response.status).toBe(401);
     expect(await code(response)).toBe('NODE_CREDENTIAL_REVOKED');
@@ -432,7 +432,7 @@ describe('agent-to-server authentication', () => {
 
   it('an administrator reset returns the node to the shared secret (rollback)', async () => {
     const key = await bound('node-a');
-    expect(await resetNodeCredentials('node-a', 'admin')).toEqual({ removed: 1 });
+    expect(await resetNodeCredentials('node-a', 'admin')).toMatchObject({ removed: 1, sharedSecretAccepted: true });
     expect((await post('/api/v1/probe', { nodeId: 'node-a' }, { 'x-node-token': SECRET })).status).toBe(200);
     expect(await code(await signedProbe(key, 'node-a', {}))).toBe('NODE_CREDENTIAL_UNKNOWN');
     expect((await upgrade(key, 'node-a.example.com')).status).toBe(200);
