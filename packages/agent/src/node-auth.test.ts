@@ -124,7 +124,7 @@ describe('automatic upgrade of an existing node', () => {
     expect(call.url).toBe('https://magnus.example.com:4000/fleet/api/v1/node-enrollment/legacy-upgrade');
     expect(headerOf(call, 'x-node-token')).toBe(SECRET);
     const sent = JSON.parse(String(call.init.body)) as { fqdn: string; publicKey: string; proof: { timestamp: string; nonce: string; signature: string } };
-    expect(sent.fqdn).toBe('node-a.example.com');
+    expect(sent.fqdn).toBe('Node-A.example.com');
     expect(wire.verifyEnrollmentProof({ purpose: 'legacy-upgrade', publicKey: sent.publicKey, fqdn: sent.fqdn, binding: '-', ...sent.proof })).toEqual({ ok: true });
     expect(String(call.init.body)).not.toContain('PRIVATE');
     const bound = identity.boundNodeIdentity()!;

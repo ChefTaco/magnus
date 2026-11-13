@@ -18,7 +18,8 @@ import { serverPublicKeys, type ServerPublicKey } from './node-server-key.js';
 import { createNotification } from './notification-service.js';
 
 const proofNonces = new NonceCache();
-const FQDN = /^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$/;
+// Deliberately loose (underscores occur in real host names); it only has to be a single safe token.
+const FQDN = /^[a-z0-9](?:[a-z0-9._-]{0,251}[a-z0-9])?$/;
 
 export interface EnrollmentProof { timestamp: string; nonce: string; signature: string }
 export interface BindingResult {
@@ -127,9 +128,11 @@ export async function peerMatchesNode(peerAddress: string, recorded: string,
   return addresses.some(address => (isLoopbackOrUnroutableIp(address) && address !== '0.0.0.0' && address !== '::') || own.includes(address));
 }
 
-async function resolveUpgradeNode(fqdn: string, peerAddress: string): Promise<CredentialNode> {
-  const { aliases, shortName } = nodeFqdnAliases(fqdn);
-  let candidates = await nodeCredentialStore.nodesForFqdn(aliases, shortName);
+async function resolveUpgradeNode(reported: string, peerAddress: string): Promise<CredentialNode> {
+  // The heartbeat matches the name exactly as the agent reports it, so both spellings are tried.
+  const exact = nodeFqdnAliases(reported.trim());
+  const lower = nodeFqdnAliases(reported.trim().toLowerCase());
+  let candidates = await nodeCredentialStore.nodesForFqdn([...new Set([...exact.aliases, ...lower.aliases])], exact.shortName);
   // The heartbeat falls back to the caller's address for nodes recorded under another name.
   if (candidates.length === 0 && isIP(normalizeIpAddress(peerAddress)) !== 0)
     candidates = await nodeCredentialStore.nodesByAddress(normalizeIpAddress(peerAddress));
@@ -152,7 +155,7 @@ export async function legacyUpgrade(input: { fqdn: string; publicKey: string; pr
   if (!window.open) throw new HttpError(410, 'LEGACY_UPGRADE_CLOSED', `The automatic upgrade of existing nodes closed on ${window.until}; enroll this node with a token`);
   const fqdn = normalizedFqdn(input.fqdn);
   const keyId = proofOrRefuse('legacy-upgrade', input.publicKey, fqdn, '-', input.proof);
-  const node = await resolveUpgradeNode(fqdn, input.peerAddress);
+  const node = await resolveUpgradeNode(input.fqdn, input.peerAddress);
   const peer = normalizeIpAddress(input.peerAddress);
   if (!await peerMatchesNode(peer, node.ipAddress)) {
     if (await auditRefusal('node.credential.bind_refused', node, 'PEER_ADDRESS_MISMATCH', { peerAddress: peer, recordedAddress: node.ipAddress,

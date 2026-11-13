@@ -132,8 +132,9 @@ async function checkFile(path: string, expected: string): Promise<DriftCheck> {
   if (!path.startsWith('/') || path.includes('\0')) return invalidName('file', path, expected);
   // The node key must not be hashed or matched against guesses: a content check is an oracle.
   const identity = identityDirectory();
-  const real = await realpath(path).catch(() => resolve(path));
-  if (real === identity || real.startsWith(identity + sep)) return { type: 'file', name: path, expected, actual: 'protected', status: 'error' };
+  const [real, identityReal] = await Promise.all([realpath(path).catch(() => resolve(path)), realpath(identity).catch(() => identity)]);
+  if ([identity, identityReal].some(root => real === root || real.startsWith(root + sep)))
+    return { type: 'file', name: path, expected, actual: 'protected', status: 'error' };
   let info;
   try {
     info = await stat(path);

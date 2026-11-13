@@ -72,7 +72,8 @@ export async function attemptLegacyUpgrade(): Promise<UpgradeOutcome> {
     logOnce('warn', `Node key could not be created or read (${error instanceof Error ? error.message : String(error)}); staying on the shared node secret`);
     return { state: 'retry', reason: 'KEY_UNAVAILABLE', retryInMs: 30 * MINUTE };
   }
-  const body = JSON.stringify({ fqdn: fqdn(), publicKey: identity.publicKey,
+  // The name exactly as heartbeats report it, so the server finds the same inventory node.
+  const body = JSON.stringify({ fqdn: HOST_FQDN.trim(), publicKey: identity.publicKey,
     proof: signEnrollmentProof(identity.privateKey, { purpose: 'legacy-upgrade', publicKey: identity.publicKey, fqdn: fqdn(), binding: '-' }, nodeAuthNow()) });
   let response: Response;
   try {
