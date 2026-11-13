@@ -15,6 +15,7 @@ import { ARDENT_AGENT_CAPABILITIES } from './ardent-capabilities.js';
 import { controlApiFetch } from './tls.js';
 import { childEnvironment } from './utils/child-env.js';
 import { ownerExecution } from './utils/owner-exec.js';
+import { boundNodeIdentity } from './security/node-identity.js';
 
 import type { HealthCheck } from './types/index.js';
 
@@ -112,6 +113,9 @@ export async function createApp(): Promise<Hono> {
           studio: ENABLE_NODE_MANAGEMENT ? ARDENT_AGENT_CAPABILITIES.studio : 0,
           commandCompletionRegistry: { version: COMMAND_COMPLETION_REGISTRY.version,
             sha256: COMMAND_COMPLETION_REGISTRY_SHA256, enabled: MAGNUS_EXECUTION_SUPERVISOR_ENABLED ? 1 : 0 },
+          // 1 once this agent has its own node key and verifies requests signed by the listed server keys.
+          nodeAuth: ENABLE_NODE_MANAGEMENT && boundNodeIdentity() ? 1 : 0,
+          nodeAuthServerKeys: ENABLE_NODE_MANAGEMENT ? boundNodeIdentity()?.binding.serverKeys.map(key => key.keyId) ?? [] : [],
         },
       },
     }),

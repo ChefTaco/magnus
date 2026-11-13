@@ -79,3 +79,7 @@ output/
 
 # Agent worktrees
 .claude/worktrees/
+
+# Node agent identity (private key); never commit
+packages/agent/identity/
+identity/node.key

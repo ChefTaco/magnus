@@ -3,7 +3,7 @@ import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { CONTROL_API_URL, HOST_FQDN, NODE_MANAGER_SECRET, RESULT_SIGNING_SECRET, MAGNUS_EXECUTION_SUPERVISOR_ENABLED } from '../env.js';
-import { controlApiFetch } from '../tls.js';
+import { nodeApiFetch } from '../node-auth.js';
 import { commandLedger, executionSupervisor } from './command-executor.js';
 import { mutationBarrier } from './mutation-barrier.js';
 import { logger } from '../utils/logger.js';
@@ -83,9 +83,9 @@ enrollmentDrainRoutes.post('/enrollment-drain', async c => {
   let step: DrainFailureReason = 'authority-unavailable'; const started = Date.now();
   try {
     const request = { nodeFqdn: HOST_FQDN, nonce: randomUUID() };
-    const response = await controlApiFetch(CONTROL_API_URL.replace(/\/+$/, '') + '/api/v1/resource-leases/enrollment/node-status', {
+    const response = await nodeApiFetch(CONTROL_API_URL.replace(/\/+$/, '') + '/api/v1/resource-leases/enrollment/node-status', {
       method: 'POST', redirect: 'error', signal: AbortSignal.timeout(5000),
-      headers: { 'content-type': 'application/json', 'x-node-token': NODE_MANAGER_SECRET, 'cache-control': 'no-store' },
+      headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
       body: JSON.stringify(request),
     });
     if (!response.ok) throw new Error('Drain authority unavailable');

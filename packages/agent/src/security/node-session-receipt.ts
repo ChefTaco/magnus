@@ -7,7 +7,7 @@ import { createHash, createHmac } from 'node:crypto';
 import { z } from 'zod';
 import { CONTROL_API_URL, NODE_MANAGER_SECRET, RESULT_SIGNING_SECRET } from '../env.js';
 import type { ExecutionSupervisor, SupervisorStatus } from '../executors/execution-supervisor.js';
-import { controlApiFetch } from '../tls.js';
+import { nodeApiFetch } from '../node-auth.js';
 import { COMMAND_COMPLETION_REGISTRY, COMMAND_COMPLETION_REGISTRY_SHA256 } from './command-completion-registry.js';
 
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/);
@@ -82,8 +82,8 @@ export function issueNodeSessionReceipt(rawAuthority: unknown, status: Superviso
 
 export async function publishNodeSessionReceipt(authority: unknown, status: SupervisorStatus): Promise<NodeSessionReceipt> {
   const receipt = issueNodeSessionReceipt(authority, status);
-  const response = await controlApiFetch(`${CONTROL_API_URL.replace(/\/+$/, '')}/api/v1/resource-leases/enrollment/work/${receipt.workId}/node-receipt`, {
-    method: 'POST', headers: { 'content-type': 'application/json', 'x-node-token': NODE_MANAGER_SECRET }, body: JSON.stringify(receipt),
+  const response = await nodeApiFetch(`${CONTROL_API_URL.replace(/\/+$/, '')}/api/v1/resource-leases/enrollment/work/${receipt.workId}/node-receipt`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(receipt),
   });
   if (!response.ok) throw new Error(`Node session receipt was not accepted (${response.status})`);
   const value = await response.json() as { success?: boolean; data?: { workId?: string; state?: string } };

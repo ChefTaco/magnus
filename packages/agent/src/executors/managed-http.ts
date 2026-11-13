@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { Hono, MiddlewareHandler } from 'hono';
 import { z } from 'zod';
 import { CONTROL_API_URL, HOST_FQDN, NODE_MANAGER_SECRET, RESULT_SIGNING_SECRET, MAGNUS_EXECUTION_SUPERVISOR_ENABLED } from '../env.js';
-import { controlApiFetch } from '../tls.js';
+import { nodeApiFetch } from '../node-auth.js';
 import { commandLedger, executeBodySchema } from './command-executor.js';
 import { refusalError, refusalStatus } from './command-refusal.js';
 import { admissionCause, CommandAdmissionError, commandFenceSchema, commandRequestDigest, isArdentScopedCommand, type CommandIdentity } from './command-ledger.js';
@@ -30,9 +30,9 @@ async function confirmAt(claim: ManagedClaim, input: CommandIdentity, endpoint: 
     && !isArdentScopedCommand(input, claim.nodeId)))
     throw new Error('Resource claim target differs from this node');
   const value = { ...claim, commandId: input.commandId, requestSha256: commandRequestDigest(input), coordination: input.coordination };
-  const response = await controlApiFetch(`${CONTROL_API_URL.replace(/\/+$/, '')}/api/v1/resource-leases/${endpoint}`, {
+  const response = await nodeApiFetch(`${CONTROL_API_URL.replace(/\/+$/, '')}/api/v1/resource-leases/${endpoint}`, {
     method: 'POST', redirect: 'error', signal: AbortSignal.timeout(5000),
-    headers: { 'content-type': 'application/json', 'x-node-token': NODE_MANAGER_SECRET }, body: JSON.stringify(value),
+    headers: { 'content-type': 'application/json' }, body: JSON.stringify(value),
   });
   if (!response.ok) throw new Error('Root authority did not confirm the exact resource owner');
   const reply = await response.json() as { success?: boolean; data?: Record<string, unknown> };
@@ -44,9 +44,9 @@ const confirmRecovery = (claim: ManagedClaim, input: CommandIdentity) => confirm
 
 async function legacyAdmission() {
   const request = { nodeFqdn: HOST_FQDN, nonce: randomUUID() };
-  const response = await controlApiFetch(`${CONTROL_API_URL.replace(/\/+$/, '')}/api/v1/resource-leases/legacy-admission`, {
+  const response = await nodeApiFetch(`${CONTROL_API_URL.replace(/\/+$/, '')}/api/v1/resource-leases/legacy-admission`, {
     method: 'POST', redirect: 'error', signal: AbortSignal.timeout(5000),
-    headers: { 'content-type': 'application/json', 'x-node-token': NODE_MANAGER_SECRET, 'cache-control': 'no-store' }, body: JSON.stringify(request),
+    headers: { 'content-type': 'application/json', 'cache-control': 'no-store' }, body: JSON.stringify(request),
   });
   if (!response.ok) throw new Error('Enrollment authority unavailable');
   const envelope = await response.json() as { success?: boolean; data?: unknown };
@@ -207,6 +207,7 @@ export function registerManagedHttp(app: Hono): void {
           } }), { status: 409, headers: { 'content-type': 'application/json' } });
         } else result = await managedExecution.run({ claim: value.claim, commandId: value.commandId, requestSha256: digest,
             coordination: value.coordination, signal: c.req.raw.signal, afterSettled }, () => app.request(`http://localhost/api/v1${value.path}`, {
+          // In-process dispatch to this agent's own route: the shared secret is the local credential.
           method: value.method, headers: { 'content-type': 'application/json', 'x-node-token': NODE_MANAGER_SECRET },
           signal: c.req.raw.signal,
           ...(value.body ? { body: value.body } : {}),

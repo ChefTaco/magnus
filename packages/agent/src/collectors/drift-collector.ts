@@ -10,7 +10,9 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { open, stat } from 'node:fs/promises';
+import { open, realpath, stat } from 'node:fs/promises';
+import { resolve, sep } from 'node:path';
+import { identityDirectory } from '../security/node-identity.js';
 import { logger } from '../utils/logger.js';
 
 export type DriftCheckType = 'package' | 'file' | 'service' | 'sysctl' | 'user';
@@ -128,6 +130,10 @@ function sha256File(path: string): Promise<string> {
 
 async function checkFile(path: string, expected: string): Promise<DriftCheck> {
   if (!path.startsWith('/') || path.includes('\0')) return invalidName('file', path, expected);
+  // The node key must not be hashed or matched against guesses: a content check is an oracle.
+  const identity = identityDirectory();
+  const real = await realpath(path).catch(() => resolve(path));
+  if (real === identity || real.startsWith(identity + sep)) return { type: 'file', name: path, expected, actual: 'protected', status: 'error' };
   let info;
   try {
     info = await stat(path);
