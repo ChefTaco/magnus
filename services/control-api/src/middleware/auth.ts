@@ -34,7 +34,7 @@ import {
 import { verifyWithRotation } from '../services/credential-rotation-service.js';
 import { verifyIamAccessToken } from './iam-token.js';
 import { getCurrentUserStatus } from './user-status.js';
-import { safeEqual } from '../utils/safe-equal.js';
+import { matchesSha256Digest, safeEqual } from '../utils/safe-equal.js';
 import { OathweaveAccessDenied, oathweaveAuthentication } from './oathweave.js';
 
 /** Constant-time string comparison (re-exported for existing callers). */
@@ -110,7 +110,7 @@ const JWT_SECRET_KEY = jwtSecretRaw
   : null;
 
 function matchesBearerDigest(token: string, expectedDigest: string): boolean {
-  return Boolean(expectedDigest) && safeEqual(createHash('sha256').update(token).digest('hex'), expectedDigest);
+  return matchesSha256Digest(token, expectedDigest);
 }
 
 const ARDENT_PROFILE = String.raw`^/api/v1/ardent/installations/[A-Za-z0-9._-]{1,128}/profiles/[A-Za-z0-9._-]{1,128}`;

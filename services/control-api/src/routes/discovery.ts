@@ -1,4 +1,4 @@
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import { createSocket, type RemoteInfo } from 'node:dgram';
 import { Hono } from 'hono';
 import type { AppVariables } from '../types/index.js';
@@ -6,6 +6,7 @@ import { authMiddleware, requireRole } from '../middleware/auth.js';
 import { HttpError } from '../middleware/error-handler.js';
 import { getDb } from '../db/index.js';
 import { AGENT_DISCOVERY_SECRET, ENABLE_AGENT_DISCOVERY } from '../utils/env.js';
+import { safeEqual } from '../utils/safe-equal.js';
 
 export const discoveryRouter = new Hono<AppVariables>();
 
@@ -43,16 +44,6 @@ interface DiscoveredAgent {
   port: number;
   version: string;
   registered: boolean;
-}
-
-function safeEqual(left: string, right: string): boolean {
-  const leftBuffer = Buffer.from(left);
-  const rightBuffer = Buffer.from(right);
-  if (leftBuffer.length !== rightBuffer.length) {
-    timingSafeEqual(leftBuffer, leftBuffer);
-    return false;
-  }
-  return timingSafeEqual(leftBuffer, rightBuffer);
 }
 
 function sign(secret: string, value: Record<string, unknown>): string {
