@@ -9,6 +9,8 @@ import { CONTROL_API_URL, NODE_MANAGER_SECRET, RESULT_SIGNING_SECRET } from '../
 import type { ExecutionSupervisor, SupervisorStatus } from '../executors/execution-supervisor.js';
 import { nodeApiFetch } from '../node-auth.js';
 import { COMMAND_COMPLETION_REGISTRY, COMMAND_COMPLETION_REGISTRY_SHA256 } from './command-completion-registry.js';
+import { nodeSessionReceiptSigningPayload as sharedNodeSessionReceiptSigningPayload } from './node-evidence.js';
+import { nodeEvidenceFields } from './evidence-signing.js';
 
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/);
 const kind = z.enum(['ssh-command', 'agent-deploy', 'agent-upgrade', 'control-deploy', 'agent-migrate',
@@ -39,16 +41,12 @@ export interface NodeSessionReceipt extends NodeSessionAuthority {
   startedAt: number; terminalAt: number; disposition: 'succeeded' | 'failed'; resultSha256: string;
   completionRegistrySha256: string; completionDescriptorId: string;
   groupEmpty: true; effectBoundary: 'bounded-node-process'; signature: string;
+  /** Ed25519 by the node key, when the Control API verifies it (docs/NODE_CREDENTIALS.md). */
+  nodeSignature?: import('./node-evidence.js').EvidenceSignature;
 }
 
-export function nodeSessionReceiptSigningPayload(value: Omit<NodeSessionReceipt, 'signature'>): string {
-  return JSON.stringify({ domain: 'magnus.node-session-terminal.v1', version: value.version, workId: value.workId,
-    nodeId: value.nodeId, nodeFqdn: value.nodeFqdn, participant: value.participant, ownerId: value.ownerId, kind: value.kind,
-    operationSha256: value.operationSha256, requestSha256: value.requestSha256, fence: value.fence, deadline: value.deadline,
-    bootId: value.bootId, unit: value.unit, invocationId: value.invocationId, cgroup: value.cgroup,
-    startedAt: value.startedAt, terminalAt: value.terminalAt, disposition: value.disposition,
-    resultSha256: value.resultSha256, completionRegistrySha256: value.completionRegistrySha256,
-    completionDescriptorId: value.completionDescriptorId, groupEmpty: value.groupEmpty, effectBoundary: value.effectBoundary });
+export function nodeSessionReceiptSigningPayload(value: Omit<NodeSessionReceipt, 'signature' | 'nodeSignature'>): string {
+  return sharedNodeSessionReceiptSigningPayload(value);
 }
 
 function resultDigest(result: NonNullable<SupervisorStatus['result']>): string {
@@ -77,7 +75,9 @@ export function issueNodeSessionReceipt(rawAuthority: unknown, status: Superviso
     resultSha256: resultDigest(status.result), completionRegistrySha256: evidence.completionOwner.registrySha256,
     completionDescriptorId: evidence.completionOwner.descriptorId, groupEmpty: true,
     effectBoundary: descriptor.participantAuthority.effectBoundary };
-  return { ...unsigned, signature: createHmac('sha256', RESULT_SIGNING_SECRET).update(nodeSessionReceiptSigningPayload(unsigned)).digest('hex') };
+  const payload = nodeSessionReceiptSigningPayload(unsigned);
+  return { ...unsigned, signature: createHmac('sha256', RESULT_SIGNING_SECRET).update(payload).digest('hex'),
+    ...nodeEvidenceFields('node-session-receipt', payload) };
 }
 
 export async function publishNodeSessionReceipt(authority: unknown, status: SupervisorStatus): Promise<NodeSessionReceipt> {

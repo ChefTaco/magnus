@@ -18,6 +18,11 @@ export interface NodeBinding {
   serverKeys: PinnedServerKey[];
   origin: 'legacy-upgrade' | 'enrollment-token' | 'rotation';
   boundAt: string;
+  /**
+   * The Control API said (in a heartbeat reply) that it verifies evidence signed with this key; only
+   * then does the agent attach `nodeSignature` to its evidence. Older agents ignore the field.
+   */
+  serverEvidence?: boolean;
 }
 export interface NodeIdentity {
   privateKey: KeyObject;
@@ -74,7 +79,8 @@ function parseBinding(raw: string | null, keyId: string): NodeBinding | null {
     const serverKeys = value.serverKeys.filter(key => typeof key?.publicKey === 'string').flatMap(key => {
       try { return [{ keyId: keyIdOfSpki(key.publicKey), publicKey: key.publicKey }]; } catch { return []; }
     });
-    return { version: 1, nodeId: value.nodeId, keyId, serverKeys, origin: value.origin ?? 'legacy-upgrade', boundAt: value.boundAt ?? '' };
+    return { version: 1, nodeId: value.nodeId, keyId, serverKeys, origin: value.origin ?? 'legacy-upgrade', boundAt: value.boundAt ?? '',
+      ...(value.serverEvidence === true ? { serverEvidence: true } : {}) };
   } catch { return null; }
 }
 
@@ -138,6 +144,14 @@ export function savePinnedServerKeys(serverKeys: PinnedServerKey[]): void {
   const identity = loadNodeIdentity(0);
   if (!identity?.binding) return;
   saveNodeBinding({ ...identity.binding, serverKeys });
+}
+
+/** Record whether the Control API verifies evidence signed with this key. Writes only on a change. */
+export function saveServerEvidenceSupport(supported: boolean): void {
+  const identity = loadNodeIdentity(0);
+  if (!identity?.binding || (identity.binding.serverEvidence === true) === supported) return;
+  const { serverEvidence: _previous, ...binding } = identity.binding;
+  saveNodeBinding(supported ? { ...binding, serverEvidence: true } : binding);
 }
 
 /** Install a new key together with its binding (enrollment with a token, or a rotation). */

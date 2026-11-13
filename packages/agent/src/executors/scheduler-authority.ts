@@ -8,6 +8,7 @@ import { ExecutionSupervisor } from './execution-supervisor.js';
 import { signCommandResult } from '../security/command-result-signature.js';
 import { managedClaimSchema } from '../security/managed-http.js';
 import type { SchedulerAuthority, SchedulerOccurrence } from './managed-scheduler.js';
+import { withResultEvidence } from '../security/evidence-signing.js';
 
 export async function schedulerPost(path: string, body: unknown): Promise<Record<string, unknown>> {
   const response = await nodeApiFetch(CONTROL_API_URL.replace(/\/+$/, '') + '/api/v1/' + path, {
@@ -80,7 +81,7 @@ export function schedulerAuthority(options: { ledger?: CommandLedger; supervisor
       // A no-dispatch assertion cannot free a grant already sent across the API
       // boundary. Such occurrences deliberately retain ownership for review.
       if (!row.result) throw new Error('Signed original completion required for scheduler settlement');
-      const result = await post('cron/managed-occurrences/settle', { nodeFqdn: HOST_FQDN, occurrenceId: row.occurrenceId, result: row.result });
+      const result = await post('cron/managed-occurrences/settle', { nodeFqdn: HOST_FQDN, occurrenceId: row.occurrenceId, result: withResultEvidence(row.result) });
       if (result['occurrenceId'] !== row.occurrenceId || result['state'] !== 'completed') throw new Error('Scheduler settlement binding differs');
     },
   };

@@ -2,7 +2,8 @@
 import { randomUUID } from 'node:crypto';
 import type { Hono, MiddlewareHandler } from 'hono';
 import { z } from 'zod';
-import { CONTROL_API_URL, HOST_FQDN, NODE_MANAGER_SECRET, RESULT_SIGNING_SECRET, MAGNUS_EXECUTION_SUPERVISOR_ENABLED } from '../env.js';
+import { CONTROL_API_URL, HOST_FQDN, RESULT_SIGNING_SECRET, MAGNUS_EXECUTION_SUPERVISOR_ENABLED } from '../env.js';
+import { markLocalDispatch } from '../middleware.js';
 import { nodeApiFetch } from '../node-auth.js';
 import { commandLedger, executeBodySchema } from './command-executor.js';
 import { refusalError, refusalStatus } from './command-refusal.js';
@@ -11,6 +12,7 @@ import { managedExecution } from '../security/managed-context.js';
 import { legacyAdmissionResponseSchema, managedClaimSchema, MANAGED_CLAIM_HEADER, httpIdentity, httpReceiptBody, type ManagedClaim } from '../security/managed-http.js';
 import { nativeCompletionDescriptor, nativeCompletionResourceKey } from '../security/native-completion-registry.js';
 import { signCommandResult } from '../security/command-result-signature.js';
+import { withResultEvidence } from '../security/evidence-signing.js';
 import { logger } from '../utils/logger.js';
 import { mutationBarrier, type MutationToken } from './mutation-barrier.js';
 import { recoverSkillPublication } from './skill-publication.js';
@@ -172,11 +174,11 @@ export function registerManagedHttp(app: Hono): void {
         if (prior?.state === 'completed') {
           if (prior.result?.stdout !== unsigned.stdout || prior.result.exitCode !== unsigned.exitCode)
             throw new Error('Retained skill publication response differs from its signed receipt');
-          return c.json({ success: true, data: { response: recovered, receipt: prior.result } });
+          return c.json({ success: true, data: { response: recovered, receipt: prior.result && withResultEvidence(prior.result) } });
         }
         const signed = { ...unsigned, signature: signCommandResult(unsigned, RESULT_SIGNING_SECRET) };
         const adopted = await commandLedger.settleRecoveredResult(identity, signed, value.claim);
-        return c.json({ success: true, data: { response: recovered, receipt: adopted.result } });
+        return c.json({ success: true, data: { response: recovered, receipt: adopted.result && withResultEvidence(adopted.result) } });
       }
       try {
         await confirm(value.claim, identity);
@@ -206,12 +208,13 @@ export function registerManagedHttp(app: Hono): void {
             code: 'LEASE_EXPIRED', message: 'Native mutation lease expired before handler start; no handler executed',
           } }), { status: 409, headers: { 'content-type': 'application/json' } });
         } else result = await managedExecution.run({ claim: value.claim, commandId: value.commandId, requestSha256: digest,
-            coordination: value.coordination, signal: c.req.raw.signal, afterSettled }, () => app.request(`http://localhost/api/v1${value.path}`, {
-          // In-process dispatch to this agent's own route: the shared secret is the local credential.
-          method: value.method, headers: { 'content-type': 'application/json', 'x-node-token': NODE_MANAGER_SECRET },
+            coordination: value.coordination, signal: c.req.raw.signal, afterSettled }, () => app.request(markLocalDispatch(new Request(`http://localhost/api/v1${value.path}`, {
+          // In-process dispatch to this agent's own route. The request object is marked as local, so it
+          // needs no credential, and no request from the network can pass as one (NODE_AUTH_MODE=enforce).
+          method: value.method, headers: { 'content-type': 'application/json' },
           signal: c.req.raw.signal,
           ...(value.body ? { body: value.body } : {}),
-        }));
+        }))));
         // A backend acceptance, redirect, unbounded stream, or thrown callback does
         // not prove completion. Keep the ledger's durable uncertain owner.
         if (result.status >= 500 || result.status === 202 || result.status >= 300 && result.status < 400) throw new Error('Unsettled asynchronous mutation');
@@ -235,7 +238,7 @@ export function registerManagedHttp(app: Hono): void {
         return { ...signed, signature: signCommandResult(signed, RESULT_SIGNING_SECRET) };
       }, value.claim).finally(settled);
       if (!response) return c.json({ success: false, error: { code: 'RESULT_ALREADY_RECORDED', message: 'Read the existing signed receipt without replay' } }, 409);
-      return c.json({ success: true, data: { response, receipt } });
+      return c.json({ success: true, data: { response, receipt: withResultEvidence(receipt) } });
     } catch (error) {
       // A refusal the ledger can name keeps its name; only what is really uncertain is reported as uncertain.
       if (error instanceof CommandAdmissionError && error.code !== 'OUTCOME_UNKNOWN') {

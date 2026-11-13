@@ -147,7 +147,9 @@ export function startHeartbeatLoop(): void {
           nodeVersion: process.version,
           selfUpgrade,
           // Which server keys this agent pins: the server stops sending it the shared secret once it signs with one of them.
-          ...(identity ? { nodeAuth: { serverKeyIds: identity.binding.serverKeys.map(key => key.keyId) } } : {}),
+          // `evidence: 1`: this agent signs its evidence with the node key (the server then refuses HMAC-only evidence for it).
+          ...(identity ? { nodeAuth: { serverKeyIds: identity.binding.serverKeys.map(key => key.keyId),
+            ...(identity.binding.serverEvidence ? { evidence: 1 } : {}) } } : {}),
       });
       await ky.post(heartbeatUrl, {
         body: payload,

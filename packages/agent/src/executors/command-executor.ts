@@ -8,6 +8,7 @@ import { HOST_FQDN, RESULT_SIGNING_SECRET, MAGNUS_EXECUTION_SUPERVISOR_ENABLED }
 import { startSpan } from '../collectors/otel-collector.js';
 import { admissionCause, CommandLedger, CommandAdmissionError, commandFenceSchema, commandReconciliationSchema, commandRequestDigest, type CommandReceiptResult } from './command-ledger.js';
 import { commandAbsenceSigningPayload, signCommandEvidence, signCommandResult } from '../security/command-result-signature.js';
+import { nodeEvidenceFields, withResultEvidence } from '../security/evidence-signing.js';
 import { refusalError, refusalStatus } from './command-refusal.js';
 import { ExecutionSupervisor } from './execution-supervisor.js';
 import { mutationBarrier } from './mutation-barrier.js';
@@ -120,7 +121,7 @@ commandRoutes.post('/execute', async (c) => {
 
   try {
     const result = await executeCommand(parsed.data);
-    return c.json({ success: true, data: result });
+    return c.json({ success: true, data: withResultEvidence(result) });
   } catch (error) {
     if (!(error instanceof CommandAdmissionError)) throw error;
     logger.warn(`Command ${parsed.data.commandId} refused: ${error.code}: ${error.message}${admissionCause(error)}`);
@@ -286,7 +287,8 @@ commandRoutes.get('/receipts/:commandId', async (c) => {
   try {
     const row = await recoverCommandReceipt(id);
     if (!row) return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'Command receipt not found' } }, 404);
-    return c.json({ success: true, data: row });
+    // The ledger keeps the HMAC form; the node signature is added on the way out.
+    return c.json({ success: true, data: row.result ? { ...row, result: withResultEvidence(row.result) } : row });
   } catch (error) {
     logger.warn(`Command receipt ${id} could not be read: ${error instanceof Error ? error.message : String(error)}`);
     return c.json({ success: false, error: { code: 'LEDGER_UNAVAILABLE', message: 'Command receipt unavailable; do not replay' } }, 503);
@@ -307,7 +309,9 @@ commandRoutes.get('/receipts/:commandId/trace', async (c) => {
     if (trace.marker.error) logger.warn(`Enrollment marker could not be read: ${trace.marker.error}`);
     const unsigned = { commandId: id, nodeFqdn: HOST_FQDN, nonce, ledgerExists: trace.ledgerExists, receipt: trace.receipt, activeLock: trace.activeLock, resourceKey,
       fenceHighWater: trace.fenceHighWater, markerState: trace.marker.state, markerNodeId: trace.marker.marker?.nodeId ?? null, admissionFailedFence: trace.admissionFailedFence };
-    return c.json({ success: true, data: { ...unsigned, signature: signCommandEvidence(commandAbsenceSigningPayload(unsigned), RESULT_SIGNING_SECRET) } });
+    const payload = commandAbsenceSigningPayload(unsigned);
+    return c.json({ success: true, data: { ...unsigned, signature: signCommandEvidence(payload, RESULT_SIGNING_SECRET),
+      ...nodeEvidenceFields('command-absence', payload) } });
   } catch (error) {
     logger.warn(`Command trace ${id} could not be read: ${error instanceof Error ? error.message : String(error)}`);
     return c.json({ success: false, error: { code: 'LEDGER_UNAVAILABLE', message: 'Command ledger unavailable' } }, 503);

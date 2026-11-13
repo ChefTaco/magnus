@@ -9,6 +9,9 @@ import { ManagedScheduler, type SchedulerDrainIdentity } from './managed-schedul
 import { schedulerInventory, type SchedulerInventoryOptions } from './scheduler-inventory.js';
 import { schedulerAuthority } from './scheduler-authority.js';
 import { logger } from '../utils/logger.js';
+import { canonicalEvidenceJson } from '../security/node-evidence.js';
+import { nodeEvidenceFields } from '../security/evidence-signing.js';
+import { enrollmentReceiptSigningPayload } from '../security/node-evidence.js';
 /** Fixed, non-secret reasons a scheduler drain proof was refused. */
 export type SchedulerDrainFailureReason = 'authority-unavailable' | 'authority-binding' | 'fence-failed' | 'inventory-failed'
   | 'inventory-changed' | 'ownership-changed' | 'challenge-expired' | 'receipt-failed';
@@ -40,10 +43,7 @@ const descriptorSchema = z.object({ version: z.literal(1), participant: z.litera
   nodeId: z.string().min(1).max(128), nodeFqdn: z.string().min(1).max(253), epoch: z.number().int().positive(),
   barrierId: z.string().guid(), challengeId: z.string().guid(), expiresAt: z.number().int().positive() }).strict();
 export function canonicalSchedulerEvidence(value: unknown): string {
-  if (Array.isArray(value)) return '[' + value.map(canonicalSchedulerEvidence).join(',') + ']';
-  if (value !== null && typeof value === 'object') return '{' + Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
-    .map(([key, item]) => JSON.stringify(key) + ':' + canonicalSchedulerEvidence(item)).join(',') + '}';
-  return JSON.stringify(value);
+  return canonicalEvidenceJson(value);
 }
 export function schedulerDrainRoutes(options: { scheduler?: ManagedScheduler; inventory?: SchedulerInventoryOptions;
   status?: typeof freshSchedulerStatus; recover?: (id: string) => Promise<unknown> } = {}) {
@@ -104,8 +104,9 @@ export function schedulerDrainRoutes(options: { scheduler?: ManagedScheduler; in
         scope: 'magnus-managed-scheduler-only', activeCount, unknownCount,
         externalBlockers: observed.blockers.filter(source => EXTERNAL_SCHEDULER_KINDS.has(source.kind)),
         evidenceSha256: createHash('sha256').update(canonicalSchedulerEvidence({ inventory: observed, managed: finalOwned })).digest('hex') };
-      const signature = createHmac('sha256', RESULT_SIGNING_SECRET).update('magnus.resource-enrollment.v1\n' + canonicalSchedulerEvidence(receipt)).digest('hex');
-      c.header('Cache-Control', 'no-store'); return c.json({ ...receipt, signature });
+      const payload = enrollmentReceiptSigningPayload(receipt);
+      const signature = createHmac('sha256', RESULT_SIGNING_SECRET).update(payload).digest('hex');
+      c.header('Cache-Control', 'no-store'); return c.json({ ...receipt, signature, ...nodeEvidenceFields('scheduler-drain', payload) });
     } catch (error) {
       const reason = error instanceof SchedulerDrainFailure ? error.reason : step;
       // The local log keeps the real cause; the response carries only the fixed reason.

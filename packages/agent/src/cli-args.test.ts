@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseCli } from './cli-args.js';
+import { enrollmentTokenFrom, parseCli } from './cli-args.js';
 
 describe('magnus-agent CLI arguments', () => {
   it('defaults to start', () => {
@@ -17,5 +17,23 @@ describe('magnus-agent CLI arguments', () => {
   it('parses help and version flags', () => {
     expect(parseCli(['-h']).help).toBe(true);
     expect(parseCli(['--version']).version).toBe(true);
+  });
+});
+
+describe('enrollment token source', () => {
+  const files: Record<string, string> = { '/run/token': 'mne_fixture-token-from-file\n' };
+  const read = (path: string | 0) => {
+    if (path === 0) return 'mne_fixture-token-from-stdin\n';
+    if (files[path] === undefined) throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+    return files[path]!;
+  };
+  it('reads --token, --token-file and standard input, and nothing ambiguous', () => {
+    expect(enrollmentTokenFrom(['--token', 'mne_fixture-token'], read)).toEqual({ token: 'mne_fixture-token' });
+    expect(enrollmentTokenFrom(['--token=mne_fixture-token'], read)).toEqual({ token: 'mne_fixture-token' });
+    expect(enrollmentTokenFrom(['--token-file', '/run/token'], read)).toEqual({ token: 'mne_fixture-token-from-file' });
+    expect(enrollmentTokenFrom(['--token-file=-'], read)).toEqual({ token: 'mne_fixture-token-from-stdin' });
+    expect(enrollmentTokenFrom(['--token-file', '/missing'], read)).toEqual({ error: expect.stringContaining('ENOENT') });
+    for (const bad of [[], ['--token'], ['--token', 'a', '--token-file', '-'], ['--token-file'], ['--token', 'a b'], ['--other', 'x']])
+      expect(enrollmentTokenFrom(bad, read)).toHaveProperty('error');
   });
 });

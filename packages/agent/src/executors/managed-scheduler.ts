@@ -8,6 +8,7 @@ import { HOST_FQDN } from '../env.js';
 import { hash, privateDirectory, readJson, writeJson } from './execution-supervisor-state.js';
 import { commandFenceSchema, commandRequestDigest, type CommandIdentity, type CommandReceiptResult } from './command-ledger.js';
 import { aggregateSchedulerBlockers } from './scheduler-discovery.js';
+import * as sharedEvidence from '../security/node-evidence.js';
 
 export const managedCronSchema = z.object({
   nodeFqdn: z.string().min(1).max(253),
@@ -28,13 +29,14 @@ export type ManagedCronSpec = z.infer<typeof managedCronSchema>;
 export const cronEnrollmentStageSchema = z.object({
   version: z.literal(1), nodeId: z.string().min(1).max(128), nodeFqdn: z.string().min(1).max(253),
   spec: managedCronSchema, operationId: z.string().guid(), expiresAt: z.number().int().positive(),
-  signature: z.string().regex(/^[a-f0-9]{64}$/),
-}).strict();
+  // COMMAND_RECONCILIATION_SECRET HMAC (older servers) and/or the server key's signature for this node.
+  signature: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  serverSignature: z.object({ alg: z.literal('ed25519'), v: z.literal(1), nodeId: z.string().max(128), keyId: z.string().max(64),
+    sig: z.string().max(86) }).strict().optional(),
+}).strict().refine(value => value.signature !== undefined || value.serverSignature !== undefined);
 export type CronEnrollmentStage = z.infer<typeof cronEnrollmentStageSchema>;
-export function cronEnrollmentStageSigningPayload(value: Omit<CronEnrollmentStage, 'signature'>): string {
-  return JSON.stringify({ domain: 'magnus.cron-enrollment-stage.v1', version: value.version, nodeId: value.nodeId,
-    nodeFqdn: value.nodeFqdn, specSha256: hash(JSON.stringify(value.spec)), operationId: value.operationId,
-    expiresAt: value.expiresAt });
+export function cronEnrollmentStageSigningPayload(value: Omit<CronEnrollmentStage, 'signature' | 'serverSignature'>): string {
+  return sharedEvidence.cronEnrollmentStageSigningPayload(value);
 }
 const cronEnrollmentStageIdentitySchema = z.object({ nodeFqdn: z.string().min(1).max(253),
   name: z.string().min(1).max(128).regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/), jobId: z.string().regex(/^[a-f0-9]{64}$/),
@@ -44,7 +46,7 @@ export const cronEnrollmentStageReceiptSchema = cronEnrollmentStageIdentitySchem
   receiptSignature: z.string().regex(/^[a-f0-9]{64}$/),
 }).strict();
 export function cronEnrollmentStageReceiptPayload(value: Omit<z.infer<typeof cronEnrollmentStageReceiptSchema>, 'receiptSignature'>): string {
-  return JSON.stringify({ domain: 'magnus.cron-enrollment-stage-receipt.v1', ...value });
+  return sharedEvidence.cronEnrollmentStageReceiptPayload(value);
 }
 export interface ManagedCronJob { version: 1; jobId: string; specSha256: string; spec: ManagedCronSpec; enabled: boolean }
 export interface SchedulerOccurrence {
@@ -140,7 +142,7 @@ export function schedulerSourceSettlementSigningPayload(value: Omit<SchedulerSou
     expiresAt: value.expiresAt });
 }
 export function schedulerSourceSettlementReceiptPayload(value: Omit<SchedulerSourceSettlement, 'signature'> & { settled: true; replayed: boolean }): string {
-  return JSON.stringify({ domain: 'magnus.scheduler-source-reconciliation-receipt.v2', ...value });
+  return sharedEvidence.schedulerSourceSettlementReceiptPayload(value);
 }
 
 const settlementTombstoneSchema = z.object({ decisionId: z.string().guid(), assertionSha256: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
