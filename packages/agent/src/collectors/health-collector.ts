@@ -1,6 +1,6 @@
 import * as os from 'node:os';
 import { readFileSync } from 'node:fs';
-import { exec } from 'node:child_process';
+import { exec, execFile, type ChildProcess } from 'node:child_process';
 import type { HealthSnapshot, HealthProvider } from '../types/index.js';
 import { collectDockerGroupService } from './docker-group.js';
 import { collectSystemUpdates } from './system-updates.js';
@@ -168,14 +168,32 @@ export function parseDiskOutput(output: string): CollectedDisk[] {
     .filter((disk): disk is CollectedDisk => disk !== null);
 }
 
-/** Collect disk info via `df`. */
-async function collectDisks(): Promise<CollectedDisk[]> {
-  try {
-    const output = await execAsync('df -B1 --output=source,fstype,size,used,avail,pcent,target 2>/dev/null | tail -n +2');
-    return parseDiskOutput(output);
-  } catch {
-    return [];
-  }
+/** The `df` of an earlier collection that has not exited (a hung network mount keeps it in uninterruptible IO). */
+let pendingDiskProbe: ChildProcess | null = null;
+let lastDisks: CollectedDisk[] = [];
+
+/**
+ * Collect disk info via `df`, without a shell: the deadline then kills `df`
+ * itself, not a shell that leaves it behind. While an earlier `df` is still
+ * stuck, no new one is started and the last result is reported, so a dead
+ * mount cannot pile up one stuck process per heartbeat.
+ */
+export function collectDisks(command = 'df', timeoutMs = PROBE_TIMEOUT_MS): Promise<CollectedDisk[]> {
+  if (pendingDiskProbe) return Promise.resolve(lastDisks);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(lastDisks), timeoutMs + 1_000);
+    const child = execFile(command, ['-B1', '--output=source,fstype,size,used,avail,pcent,target'],
+      { encoding: 'utf-8', timeout: timeoutMs, killSignal: 'SIGKILL', maxBuffer: 1024 * 1024 }, (error, stdout) => {
+        clearTimeout(timer);
+        // df exits non-zero when one mount cannot be read and still lists the others.
+        if (!error || stdout) lastDisks = parseDiskOutput(String(stdout).split('\n').slice(1).join('\n'));
+        resolve(error && !stdout ? [] : lastDisks);
+      });
+    pendingDiskProbe = child;
+    const release = () => { if (pendingDiskProbe === child) pendingDiskProbe = null; };
+    child.once('exit', release);
+    child.once('error', release);
+  });
 }
 
 /** Collect network interface info with live rx/tx stats from /proc/net/dev. */

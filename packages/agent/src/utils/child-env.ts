@@ -14,6 +14,8 @@ export const AGENT_SECRET_ENV_KEYS = [
   'LOG_INGEST_TOKEN',
   'AGENT_DISCOVERY_SECRET',
   'HERMES_REGISTRY_TOKEN',
+  // Usually carries the collector's Authorization header.
+  'OTEL_EXPORTER_OTLP_HEADERS',
 ] as const;
 
 /** Copy of `base` (default: process.env) with agent credentials removed, then `overrides` applied. */

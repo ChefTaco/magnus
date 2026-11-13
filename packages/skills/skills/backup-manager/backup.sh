@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # backup-manager — Backup files/directories with integrity verification
 set -euo pipefail
+# Archives of /etc hold password hashes and private keys: never leave them readable by other accounts.
+umask 077
 
 VERBOSE=0
 SRC="/etc"
@@ -57,6 +59,10 @@ done
 [[ $# -ge 1 ]] && SRC="$1"
 [[ $# -ge 2 ]] && DEST="$2"
 [[ $# -ge 3 ]] && RETENTION_DAYS="$3"
+if ! [[ "$RETENTION_DAYS" =~ ^[0-9]{1,5}$ ]]; then
+  echo "RETENTION_DAYS must be a whole number of days" >&2
+  exit 2
+fi
 
 echo "=== Backup Manager ==="
 echo "Source: $SRC"
@@ -100,7 +106,8 @@ if [[ $VERBOSE -ge 1 ]]; then
 fi
 
 echo "--- Retention Cleanup ---"
-DELETED=$(find "$DEST" -name "backup-*.tar.gz" -mtime +"$RETENTION_DAYS" -delete -print | wc -l)
+# Only this tool's own archives directly in DEST, never matching files in directories below it.
+DELETED=$(find "$DEST" -maxdepth 1 -type f -name "backup-*.tar.gz" -mtime +"$RETENTION_DAYS" -delete -print | wc -l)
 echo "Purged $DELETED old backup(s) (> ${RETENTION_DAYS} days)"
 
 echo "--- Current Backups ---"

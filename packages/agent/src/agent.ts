@@ -12,11 +12,12 @@ import { parseHeartbeatAcknowledgement } from './heartbeat-ack.js';
 import { heartbeatDrift } from './upgrade/preflight.js';
 import { confirmTrial, controlApiUnreachable, recordTrialAlive, selfUpgradeStatus, trialOf } from './upgrade/self-upgrade.js';
 import { commandLedger } from './executors/command-executor.js';
+import { positiveIntegerEnv } from './utils/env-number.js';
 const HEARTBEAT_INTERVAL_MS = 30_000; // 30s
 const HEARTBEAT_BACKOFF_MAX_MS = 5 * 60_000; // 5 min max backoff
 /** On an upgrade trial: retry fast, without backoff, so a short control API outage does not end the trial. */
 export const TRIAL_RETRY_MS = 5_000;
-const HERMES_DISCOVERY_INTERVAL_MS = Number(process.env['HERMES_DISCOVERY_INTERVAL_MS'] ?? 3 * 60 * 60 * 1000);
+const HERMES_DISCOVERY_INTERVAL_MS = positiveIntegerEnv('HERMES_DISCOVERY_INTERVAL_MS', 3 * 60 * 60 * 1000);
 
 let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
 let heartbeatRunning = false;
