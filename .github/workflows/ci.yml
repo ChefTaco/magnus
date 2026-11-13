@@ -64,6 +64,11 @@ jobs:
       UI_TEST_REDIS_URL: redis://127.0.0.1:55449
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Reserve the browser harness ports
+        # 55440-55449 sit inside the kernel's ephemeral range, so an outbound
+        # connection (to Redis or PostgreSQL) can take 55442 as its source port
+        # just before the dashboard binds it. Reserved ports are never auto-assigned.
+        run: sudo sysctl -w net.ipv4.ip_local_reserved_ports=55440-55449
       - name: Configure bounded authenticated package downloads
         run: bash scripts/ci-apt-setup.test.sh && sudo env GITHUB_ACTIONS=true bash scripts/ci-apt-setup.sh
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
