@@ -1,0 +1,8 @@
+{
+  "summary": "Node agent: Hermes discovery caches the slow version probe per binary, runs it in the background with a 90-second budget, and reports a trusted Hermes that answers profile list as runnable with no version instead of degraded. Hidden profile directories such as profiles/.deleted are no longer reported as profiles. No migrations and no new settings.",
+  "breaking": false,
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}
