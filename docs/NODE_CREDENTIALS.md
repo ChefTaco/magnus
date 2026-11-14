@@ -48,16 +48,23 @@ longer rename or re-address another node.
 the server and on the agent. Upgrade in this order:
 
 1. **Run the server on 2.10.2** (3.0.0 upgrades only from 2.10.2), with every agent on 2.10.2 or later.
-2. **Set `NODE_AUTH_MODE=warn` on the 2.10.2 server** and restart it. Wait a day of normal use.
+2. **Optional, recommended: set `NODE_AUTH_MODE=warn` on the 2.10.2 server** and restart it. Wait a
+   day of normal use, so that remaining uses of the shared secret show up before they are refused.
 3. **Confirm `GET /api/v1/node-credentials/summary` has no blockers** (`enforceReady: true`). The
    start-up guard of 3.0.0 checks `NODES_WITHOUT_KEY`, `NODES_REVOKED`, `NODES_NOT_SIGNING_EVIDENCE`
    and `AGENTS_NEED_UPGRADE` (agents 2.10.0 and 2.10.1, which enforce cannot reach); `RECENT_SHARED_SECRET_USE`
    and `PENDING_BINDINGS` are worth clearing too, and the readiness probe reports them in `warn`.
 4. **Remove `NODE_AUTH_MODE` from the server's environment** (or set `enforce`) and upgrade the server
    to 3.0.0 (`magnus upgrade --allow-major`). It applies no migration.
-5. **Upgrade the agents to 3.0.0**, from the Nodes page or with `magnus-server agents upgrade`. A
-   3.0.0 agent enforces by default too: it accepts only the server's signature on its API and sends
-   only its own.
+5. **Then the agents.** A 2.10.2 agent with a key keeps working with a 3.0.0 server in enforce mode
+   (see the table below), so there is no hurry. Moving it to 3.0.0 crosses a major version, which no
+   automatic path does: the Nodes page's **Upgrade agents** and `magnus-server agents upgrade` list
+   the node as `MAJOR_VERSION`, and a 2.10.2 agent refuses the request (`SELF_UPGRADE_REFUSED`).
+   Upgrade such agents by hand on the node; new nodes install 3.0.0 directly and enroll with a token.
+   A 3.0.0 agent enforces by default too: it accepts only the server's signature on its API and
+   sends only its own. Two things need a 3.0.0 agent on the node: the two-ADMIN
+   [scheduler-source settlement](#settling-a-scheduler-source), and pinning a staged server key from
+   the heartbeat ([Rotating the server key](#rotating-the-server-key)).
 
 **The start-up guard.** With `NODE_AUTH_MODE` unset, a 3.0.0 server reads its inventory before it
 listens. Real nodes only count: decommissioned nodes and the internal `__control-api__` and
