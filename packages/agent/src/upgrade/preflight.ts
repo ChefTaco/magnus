@@ -5,7 +5,8 @@
  * every heartbeat, so an operator sees drift long before an upgrade.
  */
 import type { AgentDiskHealth, AgentLedgerHealth, AgentNpmHealth, AgentUpgradePreflight } from '@hivemagnus/magnus-contracts';
-import { HOST_FQDN, RESULT_SIGNING_SECRET } from '../env.js';
+import { resultSigningKey } from '../security/local-evidence-keys.js';
+import { HOST_FQDN } from '../env.js';
 import type { CommandLedger, LedgerHealth } from '../executors/command-ledger.js';
 import { fenceProofSigningPayload, signCommandEvidence } from '../security/command-result-signature.js';
 import { logger } from '../utils/logger.js';
@@ -48,8 +49,8 @@ export async function upgradePreflight(options: { version: string; target?: stri
     fromVersionComplete: versionComplete(dir, options.version) && runsVersion(dir, options.version),
     ledger: ledgerReport(health),
     fenceHighWater: health.fenceHighWater,
-    ...(options.nonce && /^[a-zA-Z0-9-]{16,64}$/.test(options.nonce) && RESULT_SIGNING_SECRET.length >= 32 ? { fenceProof: { nonce: options.nonce, nodeFqdn: HOST_FQDN,
-      signature: signCommandEvidence(fenceProofSigningPayload({ nonce: options.nonce, nodeFqdn: HOST_FQDN, fenceHighWater: health.fenceHighWater }), RESULT_SIGNING_SECRET),
+    ...(options.nonce && /^[a-zA-Z0-9-]{16,64}$/.test(options.nonce) && resultSigningKey().length >= 32 ? { fenceProof: { nonce: options.nonce, nodeFqdn: HOST_FQDN,
+      signature: signCommandEvidence(fenceProofSigningPayload({ nonce: options.nonce, nodeFqdn: HOST_FQDN, fenceHighWater: health.fenceHighWater }), resultSigningKey()),
       ...nodeEvidenceFields('fence-proof', fenceProofSigningPayload({ nonce: options.nonce, nodeFqdn: HOST_FQDN, fenceHighWater: health.fenceHighWater })) } } : {}),
     managedEnrollment: marker.marker ? { nodeId: marker.marker.nodeId, nodeFqdn: marker.marker.nodeFqdn } : null,
     managedEnrollmentState: marker.state,

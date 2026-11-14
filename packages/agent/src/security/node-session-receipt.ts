@@ -4,8 +4,9 @@
  * a command or mint evidence from a socket/shell close.
  */
 import { createHash, createHmac } from 'node:crypto';
+import { resultSigningKey } from './local-evidence-keys.js';
 import { z } from 'zod';
-import { CONTROL_API_URL, NODE_MANAGER_SECRET, RESULT_SIGNING_SECRET } from '../env.js';
+import { CONTROL_API_URL } from '../env.js';
 import type { ExecutionSupervisor, SupervisorStatus } from '../executors/execution-supervisor.js';
 import { nodeApiFetch } from '../node-auth.js';
 import { COMMAND_COMPLETION_REGISTRY, COMMAND_COMPLETION_REGISTRY_SHA256 } from './command-completion-registry.js';
@@ -68,7 +69,7 @@ export function issueNodeSessionReceipt(rawAuthority: unknown, status: Superviso
     || descriptor.participantAuthority.effectSemantics !== 'read-only-node-diagnostic'
     || descriptor.participantAuthority.effectBoundary !== 'bounded-node-process')
     throw new Error('Supervisor evidence lacks an approved bounded completion owner');
-  if (RESULT_SIGNING_SECRET.length < 32 || RESULT_SIGNING_SECRET === NODE_MANAGER_SECRET) throw new Error('Dedicated node receipt signer is unavailable');
+  if (resultSigningKey().length < 32) throw new Error('Dedicated node receipt signer is unavailable');
   const unsigned: Omit<NodeSessionReceipt, 'signature'> = { version: 1, ...authority, bootId: evidence.bootId,
     unit: evidence.unit, invocationId: evidence.invocationId, cgroup: evidence.cgroup, startedAt: evidence.startedAt,
     terminalAt: evidence.terminalAt, disposition: status.result.exitCode === 0 ? 'succeeded' : 'failed',
@@ -76,7 +77,7 @@ export function issueNodeSessionReceipt(rawAuthority: unknown, status: Superviso
     completionDescriptorId: evidence.completionOwner.descriptorId, groupEmpty: true,
     effectBoundary: descriptor.participantAuthority.effectBoundary };
   const payload = nodeSessionReceiptSigningPayload(unsigned);
-  return { ...unsigned, signature: createHmac('sha256', RESULT_SIGNING_SECRET).update(payload).digest('hex'),
+  return { ...unsigned, signature: createHmac('sha256', resultSigningKey()).update(payload).digest('hex'),
     ...nodeEvidenceFields('node-session-receipt', payload) };
 }
 

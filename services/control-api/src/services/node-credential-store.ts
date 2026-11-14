@@ -1,5 +1,6 @@
 /** Database access for per-node credentials. Kept narrow so the rules in node-credential-service.ts can be tested without PostgreSQL. */
 import { getDb, type Prisma } from '../db/index.js';
+import { SENTINEL_NODE_IDS } from '../utils/sentinel-nodes.js';
 
 export type NodeCredentialStatus = 'ACTIVE' | 'RETIRING' | 'REVOKED';
 export type NodeCredentialOrigin = 'ENROLLMENT_TOKEN' | 'LEGACY_UPGRADE' | 'ROTATION';
@@ -20,6 +21,7 @@ export interface PendingBindingRow {
 export type LegacyChannel = 'request' | 'evidence' | 'outbound';
 export interface LegacyUseRow { nodeId: string; channel: LegacyChannel; count: number; firstUsedAt: Date; lastUsedAt: Date; lastDetail: string | null }
 export interface NewCredential { nodeId: string; keyId: string; publicKey: string; boundFqdn: string }
+export type FleetNode = CredentialNode & { credentials: CredentialRow[]; agentVersion: string | null };
 export type BindOutcome = 'bound' | 'same' | 'exists' | 'key-in-use';
 export type TokenBindOutcome = 'bound' | 'same' | 'invalid' | 'expired' | 'used' | 'key-in-use';
 
@@ -258,10 +260,15 @@ export const nodeCredentialStore = {
     return (await getDb().nodeLegacyCredentialUse.findMany({ where: nodeIds ? { nodeId: { in: nodeIds } } : {}, orderBy: { lastUsedAt: 'desc' } })) as LegacyUseRow[];
   },
 
-  /** Inventory nodes that are not decommissioned, with their credential rows, for the fleet summary. */
-  async fleet(): Promise<Array<CredentialNode & { credentials: CredentialRow[] }>> {
-    const nodes = await getDb().node.findMany({ where: { status: { not: 'DECOMMISSIONED' } }, select: { ...nodeSelect, credentials: true } });
-    return nodes.map(node => ({ ...node, credentials: node.credentials.map(row) }));
+  /**
+   * Real inventory nodes (not decommissioned, not the internal `__control-api__` / `__dashboard__`
+   * log sources, which have no agent), with their credential rows and agent version, for the fleet
+   * summary and the start-up guard.
+   */
+  async fleet(): Promise<FleetNode[]> {
+    const nodes = await getDb().node.findMany({ where: { status: { not: 'DECOMMISSIONED' }, id: { notIn: SENTINEL_NODE_IDS } },
+      select: { ...nodeSelect, credentials: true, agent: { select: { version: true } } } });
+    return nodes.map(({ agent, ...node }) => ({ ...node, credentials: node.credentials.map(row), agentVersion: agent?.version ?? null }));
   },
 
   async touch(keyId: string, at: Date): Promise<void> {

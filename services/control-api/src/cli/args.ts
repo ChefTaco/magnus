@@ -1,5 +1,5 @@
 /** Argument parsing for the `magnus-server` CLI (no dependencies, strict). */
-export type CliCommand = 'start' | 'check' | 'migrate' | 'migrations' | 'verify-migrations' | 'verify-initialization' | 'backup' | 'restore' | 'upgrade' | 'rollback' | 'agents' | 'env-schema' | 'help' | 'version';
+export type CliCommand = 'start' | 'check' | 'migrate' | 'migrations' | 'verify-migrations' | 'verify-initialization' | 'backup' | 'restore' | 'upgrade' | 'rollback' | 'agents' | 'node-auth' | 'env-schema' | 'help' | 'version';
 
 export interface CliOptions {
   command: CliCommand;
@@ -36,6 +36,7 @@ Commands:
   upgrade       Upgrade a \`magnus init\` project (runs \`magnus upgrade\`; see --help there)
   rollback      Switch a \`magnus init\` project back to the previous version
   agents        Agent fleet commands: \`agents upgrade [--to X.Y.Z] [--nodes a,b] [--dry-run]\`, \`agents doctor [--nodes a,b]\`
+  node-auth     Server signing key: \`node-auth server-key [status|stage|promote|retire] [--force] [--grace-hours N]\`
   env-schema    Print the documented environment variables
   help          Show this help
   version       Print the version
@@ -50,9 +51,9 @@ Options:
   -v, --version       Print the version
 `;
 
-const COMMANDS = new Set<CliCommand>(['start', 'check', 'migrate', 'migrations', 'verify-migrations', 'verify-initialization', 'backup', 'restore', 'upgrade', 'rollback', 'agents', 'env-schema', 'help', 'version']);
+const COMMANDS = new Set<CliCommand>(['start', 'check', 'migrate', 'migrations', 'verify-migrations', 'verify-initialization', 'backup', 'restore', 'upgrade', 'rollback', 'agents', 'node-auth', 'env-schema', 'help', 'version']);
 /** Commands whose remaining arguments belong to another tool. */
-const PASSTHROUGH = new Set<CliCommand>(['upgrade', 'rollback', 'agents']);
+const PASSTHROUGH = new Set<CliCommand>(['upgrade', 'rollback', 'agents', 'node-auth']);
 
 export function parseArgs(argv: readonly string[]): CliOptions {
   const options: CliOptions = { command: 'start', envFiles: [], migrate: false, format: 'json', formatGiven: false, passthrough: [], yes: false };

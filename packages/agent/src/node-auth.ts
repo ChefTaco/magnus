@@ -2,9 +2,9 @@
  * Authentication of this agent's requests to the Control API (see docs/NODE_CREDENTIALS.md in the
  * repository). Every sender goes through {@link nodeApiFetch} or {@link controlApiAuthHeaders}.
  *
- * Once the node has a bound key, each request is signed for the pinned server key. The shared node
- * secret is still sent as well: a server older than node credentials ignores the signature headers
- * and keeps working, and a server in compat mode ignores the secret once the signature verifies.
+ * Once the node has a bound key, each request is signed for the pinned server key. In enforce mode
+ * (the default from 3.0.0) that is all it carries; under an explicit compat or warn the shared node
+ * secret is sent as well, which a server older than node credentials still needs.
  */
 import { CONTROL_API_URL, NODE_MANAGER_SECRET } from './env.js';
 import { boundNodeIdentity } from './security/node-identity.js';
@@ -14,20 +14,34 @@ import { controlApiFetch } from './tls.js';
 export type NodeAuthMode = 'compat' | 'warn' | 'enforce';
 
 /**
- * `NODE_AUTH_MODE` on the agent (default `compat`):
+ * `NODE_AUTH_MODE` on the agent (default `enforce` from 3.0.0):
  *
- *   compat   the agent's own API accepts a server signature or the shared node secret (`x-node-token`)
- *   warn     the same, and each request accepted on the shared secret is logged (throttled)
  *   enforce  once this node has a bound key and pins a server key, a request that carries only the
- *            shared secret is refused on every `/api/v1/*` route, and decisions must carry a server
- *            signature; without a bound key the agent stays in compat and says so
+ *            shared secret is refused on every `/api/v1/*` route, decisions must carry a server
+ *            signature, and the agent no longer sends the shared secret to the Control API; without a
+ *            bound key the agent stays in compat and says so (it needs `magnus-agent enroll --token`)
+ *   compat   deprecated: the agent's own API accepts a server signature or the shared node secret
+ *            (`x-node-token`), and the agent sends the secret next to its signature
+ *   warn     deprecated: the same, and each request accepted on the shared secret is logged (throttled)
  *
- * The agent keeps sending the shared secret to the Control API in every mode of this release, so a
- * server that lost its records of the key can still recognise the node.
+ * An explicit `compat` or `warn` keeps working in this major and is removed in the next.
  */
-export function nodeAuthMode(env: NodeJS.ProcessEnv = process.env): NodeAuthMode {
+export function nodeAuthModeSetting(env: NodeJS.ProcessEnv = process.env): { mode: NodeAuthMode; explicit: boolean } {
   const value = (env['NODE_AUTH_MODE'] ?? '').trim().toLowerCase();
-  return value === 'warn' || value === 'enforce' ? value : 'compat';
+  if (value === 'compat' || value === 'warn' || value === 'enforce') return { mode: value, explicit: true };
+  return { mode: 'enforce', explicit: false };
+}
+
+export function nodeAuthMode(env: NodeJS.ProcessEnv = process.env): NodeAuthMode {
+  return nodeAuthModeSetting(env).mode;
+}
+
+/** The start-up warning of an explicit compat or warn, or null. */
+export function nodeAuthDeprecationWarning(env: NodeJS.ProcessEnv = process.env): string | null {
+  const setting = nodeAuthModeSetting(env);
+  if (!setting.explicit || setting.mode === 'enforce') return null;
+  return `NODE_AUTH_MODE=${setting.mode} is deprecated: this agent accepts and sends the shared node secret for this major only; `
+    + 'remove the setting (enforce, the default) once the node has a bound key (`magnus-agent identity show`).';
 }
 
 /** Whether enforce mode is in effect: requested, and the node has a bound key that pins a server key. */
@@ -82,11 +96,14 @@ export function controlApiPath(url: string | URL): string {
  * Never log the result: it carries the shared node secret.
  */
 export function controlApiAuthHeaders(method: string, url: string | URL, body = ''): Record<string, string> {
-  const headers: Record<string, string> = { 'x-node-token': NODE_MANAGER_SECRET };
   const identity = boundNodeIdentity();
   const serverKey = identity?.binding.serverKeys[0];
-  if (!identity || !serverKey) return headers;
-  return { ...headers, ...signNodeRequest({ privateKey: identity.privateKey, keyId: identity.keyId, nodeId: identity.binding.nodeId,
+  // Enforce, with a bound key: the signature alone. Otherwise the shared secret travels as well (when
+  // the agent has one), for a server that does not know this key or predates node credentials.
+  const legacy: Record<string, string> = NODE_MANAGER_SECRET && !(identity && serverKey && nodeAuthMode() === 'enforce')
+    ? { 'x-node-token': NODE_MANAGER_SECRET } : {};
+  if (!identity || !serverKey) return legacy;
+  return { ...legacy, ...signNodeRequest({ privateKey: identity.privateKey, keyId: identity.keyId, nodeId: identity.binding.nodeId,
     audience: serverAudience(serverKey.keyId), method, pathWithQuery: controlApiPath(url), body, now: nodeAuthNow() }) };
 }
 

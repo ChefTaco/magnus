@@ -119,21 +119,27 @@ export const schedulerDrainIdentitySchema = z.object({ nodeId: z.string().min(1)
   epoch: z.number().int().positive(), barrierId: z.string().guid() }).strict();
 export type SchedulerDrainIdentity = z.infer<typeof schedulerDrainIdentitySchema>;
 
-export const schedulerSourceSettlementSchema = z.object({
+const schedulerSourceSettlementFields = z.object({
   version: z.literal(1), sourceIdentityVersion: z.literal(2), nodeId: z.string().min(1).max(128), nodeFqdn: z.string().min(1).max(253),
   epoch: z.number().int().positive(), barrierId: z.string().guid(), kind: z.string().regex(/^[A-Z_]{1,80}$/),
   sourceSha256: z.string().regex(/^[a-f0-9]{64}$/), count: z.number().int().positive().max(1_000_000),
   disposition: z.enum(['effects_verified', 'no_effect_verified']), evidenceSha256: z.string().regex(/^[a-f0-9]{64}$/),
   approvalRef: z.string().min(1).max(512), decisionId: z.string().guid(), expiresAt: z.number().int().positive(),
-  signature: z.string().regex(/^[a-f0-9]{64}$/),
+  // A reviewer's COMMAND_RECONCILIATION_SECRET HMAC (explicit compat), and/or the server key's signature
+  // for this node of a settlement two ADMINs approved (3.0.0).
+  signature: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  serverSignature: z.object({ alg: z.literal('ed25519'), v: z.literal(1), nodeId: z.string().max(128), keyId: z.string().max(64),
+    sig: z.string().max(86) }).strict().optional(),
 }).strict();
+export const schedulerSourceSettlementSchema = schedulerSourceSettlementFields
+  .refine(value => value.signature !== undefined || value.serverSignature !== undefined);
 export type SchedulerSourceSettlement = z.infer<typeof schedulerSourceSettlementSchema>;
-const schedulerSourceSettlementUnsignedSchema = schedulerSourceSettlementSchema.omit({ signature: true });
+const schedulerSourceSettlementUnsignedSchema = schedulerSourceSettlementFields.omit({ signature: true, serverSignature: true });
 export const schedulerSourceSettlementReceiptSchema = schedulerSourceSettlementUnsignedSchema.extend({
   settled: z.literal(true), replayed: z.literal(false), receiptSignature: z.string().regex(/^[a-f0-9]{64}$/),
 }).strict();
 export type SchedulerSourceSettlementReceipt = z.infer<typeof schedulerSourceSettlementReceiptSchema>;
-export function schedulerSourceSettlementSigningPayload(value: Omit<SchedulerSourceSettlement, 'signature'>): string {
+export function schedulerSourceSettlementSigningPayload(value: Omit<SchedulerSourceSettlement, 'signature' | 'serverSignature'>): string {
   return JSON.stringify({ domain: 'magnus.scheduler-source-reconciliation.v2', version: value.version,
     sourceIdentityVersion: value.sourceIdentityVersion,
     nodeId: value.nodeId, nodeFqdn: value.nodeFqdn, epoch: value.epoch, barrierId: value.barrierId,
@@ -141,7 +147,7 @@ export function schedulerSourceSettlementSigningPayload(value: Omit<SchedulerSou
     evidenceSha256: value.evidenceSha256, approvalRef: value.approvalRef, decisionId: value.decisionId,
     expiresAt: value.expiresAt });
 }
-export function schedulerSourceSettlementReceiptPayload(value: Omit<SchedulerSourceSettlement, 'signature'> & { settled: true; replayed: boolean }): string {
+export function schedulerSourceSettlementReceiptPayload(value: Omit<SchedulerSourceSettlement, 'signature' | 'serverSignature'> & { settled: true; replayed: boolean }): string {
   return sharedEvidence.schedulerSourceSettlementReceiptPayload(value);
 }
 
@@ -299,7 +305,7 @@ export class ManagedScheduler {
         }
       }
       if (settlements.length >= MAX_SETTLEMENT_RECEIPTS) throw new Error('Scheduler settlement journal limit reached');
-      const { signature: _signature, ...unsigned } = assertion;
+      const { signature: _signature, serverSignature: _serverSignature, ...unsigned } = assertion;
       const payload = { ...schedulerSourceSettlementUnsignedSchema.parse(unsigned), settled: true as const, replayed: false as const };
       const receipt = schedulerSourceSettlementReceiptSchema.parse({ ...payload, receiptSignature: signReceipt(payload) });
       const next = discoveryMemorySchema.parse({ ...memory,

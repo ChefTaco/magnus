@@ -3,12 +3,13 @@ import { generateSigningKey, privateKeyFromPem, serverAudience, signEnrollmentPr
 import type { CredentialNode, CredentialRow, LegacyChannel, LegacyUseRow, NewCredential, NodeCredentialOrigin, PendingBindingRow,
   PendingBindingStatus } from './node-credential-store.js';
 import { signNodeEvidence, type NodeEvidenceKind } from '../security/node-evidence.js';
+import { SENTINEL_NODE_IDS } from '../utils/sentinel-nodes.js';
 
 interface Token { id: string; tokenSha256: string; nodeId: string; expiresAt: Date; usedAt: Date | null; usedKeyId: string | null; createdBy: string }
 
 export function createFakeCredentialStore() {
   const state = { nodes: [] as CredentialNode[], credentials: [] as CredentialRow[], tokens: [] as Token[], startedAt: new Date(), touched: [] as string[],
-    pending: [] as PendingBindingRow[], legacy: [] as LegacyUseRow[] };
+    pending: [] as PendingBindingRow[], legacy: [] as LegacyUseRow[], agentVersions: new Map<string, string>() };
   let sequence = 0;
   const add = (input: NewCredential, origin: NodeCredentialOrigin): void => {
     state.credentials.push({ id: `cred-${++sequence}`, ...input, status: 'ACTIVE', origin, createdAt: new Date(), lastUsedAt: null,
@@ -139,8 +140,8 @@ export function createFakeCredentialStore() {
     },
     async legacyUse(nodeIds?: string[]) { return state.legacy.filter(row => !nodeIds || nodeIds.includes(row.nodeId)); },
     async fleet() {
-      return state.nodes.filter(node => node.status !== 'DECOMMISSIONED')
-        .map(node => ({ ...node, credentials: state.credentials.filter(entry => entry.nodeId === node.id) }));
+      return state.nodes.filter(node => node.status !== 'DECOMMISSIONED' && !SENTINEL_NODE_IDS.includes(node.id))
+        .map(node => ({ ...node, credentials: state.credentials.filter(entry => entry.nodeId === node.id), agentVersion: state.agentVersions.get(node.id) ?? null }));
     },
     async summaries(nodeIds: string[]) {
       return new Map(nodeIds.map(id => [id, state.credentials.filter(entry => entry.nodeId === id)] as const).filter(([, rows]) => rows.length > 0));
@@ -148,6 +149,7 @@ export function createFakeCredentialStore() {
   };
   return { state, store, reset(): void {
     state.nodes = []; state.credentials = []; state.tokens = []; state.startedAt = new Date(); state.touched = []; state.pending = []; state.legacy = [];
+    state.agentVersions.clear();
   } };
 }
 

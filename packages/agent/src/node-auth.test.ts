@@ -69,13 +69,17 @@ describe('agent to server', () => {
     expect(existsSync(join(dir, 'identity'))).toBe(false);
   });
 
-  it('signs for the pinned server key and still sends the shared secret, so either server accepts it', async () => {
+  it('signs for the pinned server key and, in enforce (the default), sends nothing else; an explicit compat adds the shared secret', async () => {
     await bind();
     peer.respond = () => json(200, { success: true });
     const url = 'https://magnus.example.com:4000/fleet/api/v1/cron/managed-occurrences/status?x=1';
     const body = JSON.stringify({ nodeFqdn: 'node-a.example.com' });
     await client.nodeApiFetch(url, { method: 'POST', body, headers: { 'content-type': 'application/json' } });
-    const call = peer.calls[0]!;
+    expect(headerOf(peer.calls[0]!, 'x-node-token')).toBeUndefined();
+    vi.stubEnv('NODE_AUTH_MODE', 'compat');
+    await client.nodeApiFetch(url, { method: 'POST', body, headers: { 'content-type': 'application/json' } });
+    vi.stubEnv('NODE_AUTH_MODE', '');
+    const call = peer.calls[1]!;
     expect(headerOf(call, 'x-node-token')).toBe(SECRET);
     const headers = wire.readNodeAuthHeaders(name => headerOf(call, name));
     if (!headers || headers === 'MALFORMED') throw new Error('unsigned');
@@ -257,12 +261,15 @@ describe('server to agent (nodeAuthMiddleware)', () => {
     { method: options.method ?? 'POST', headers, ...((options.method ?? 'POST') === 'GET' ? {} : { body: options.body ?? '{"a":1}' }) });
   const code = async (response: Response) => ((await response.json()) as { error?: { code?: string } }).error?.code;
 
-  it('keeps accepting an old server: the shared secret alone, before and after this agent has a key', async () => {
+  it('accepts the shared secret before it has a key; once bound only under an explicit compat (an old server)', async () => {
     expect((await call({ 'x-node-token': SECRET })).status).toBe(200);
     expect((await call({})).status).toBe(401);
     expect((await call({ 'x-node-token': 'wrong' })).status).toBe(401);
     await bind();
-    expect((await call({ 'x-node-token': SECRET })).status).toBe(200);
+    expect((await call({ 'x-node-token': SECRET })).status).toBe(401);
+    vi.stubEnv('NODE_AUTH_MODE', 'compat');
+    try { expect((await call({ 'x-node-token': SECRET })).status).toBe(200); }
+    finally { vi.stubEnv('NODE_AUTH_MODE', ''); }
   });
 
   it('accepts a request signed by the pinned server key without the shared secret, and hands the handler the body', async () => {
@@ -306,7 +313,11 @@ describe('server to agent (nodeAuthMiddleware)', () => {
     const rotated = wire.generateSigningKey();
     peer.respond = newServer('node-a', [{ keyId: rotated.keyId, publicKey: rotated.publicKey, status: 'active' }]);
     expect((await call(sign({ key: rotated }))).status).toBe(401);
-    expect((await call({ ...sign({ key: rotated }), 'x-node-token': SECRET })).status).toBe(200);
+    // Enforce (the default) refuses it even with the shared secret; an explicit compat judges it by the secret.
+    expect((await call({ ...sign({ key: rotated }), 'x-node-token': SECRET })).status).toBe(401);
+    vi.stubEnv('NODE_AUTH_MODE', 'compat');
+    try { expect((await call({ ...sign({ key: rotated }), 'x-node-token': SECRET })).status).toBe(200); }
+    finally { vi.stubEnv('NODE_AUTH_MODE', ''); }
     await settle();
     expect(peer.calls.map(entry => entry.url)).toEqual(['https://magnus.example.com:4000/fleet/api/v1/node-enrollment/server-key']);
     expect((await call(sign({ key: rotated }))).status).toBe(200);

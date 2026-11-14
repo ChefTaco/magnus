@@ -1,4 +1,7 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+// These cases exercise shared-secret paths, which 3.0.0 keeps only under an explicit NODE_AUTH_MODE=compat (or warn).
+beforeEach(() => { process.env['NODE_AUTH_MODE'] = 'compat'; });
+afterEach(() => { delete process.env['NODE_AUTH_MODE']; });
 import { NodeApiClient } from './node-api-client.js';
 import { commandRequestDigest } from '../security/command-request.js';
 import { commandRequestDigest as agentDigest } from '../../../../packages/agent/src/executors/command-ledger.js';

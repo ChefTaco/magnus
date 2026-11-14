@@ -66,14 +66,14 @@ const { CONTROL_API_VERSION } = await import('./config/version.js');
  */
 async function announceNodeAuth(): Promise<void> {
   try {
-    const { allowServerKeyCreation, serverSigningKey } = await import('./services/node-server-key.js');
-    // Only the server creates its key; command-line processes use the file it made.
-    allowServerKeyCreation();
+    const { serverKeyRotationState } = await import('./services/node-server-key.js');
     const { legacyUpgradeWindow } = await import('./services/node-credential-service.js');
-    const { nodeAuthMode } = await import('./services/node-auth-config.js');
-    const { keyFingerprint } = await import('./security/node-request-auth.js');
+    const { nodeAuthModeSetting } = await import('./services/node-auth-config.js');
     const window = await legacyUpgradeWindow();
-    console.log(`[startup] node-auth mode=${nodeAuthMode()} server-key=${keyFingerprint(serverSigningKey().keyId)} `
+    const setting = nodeAuthModeSetting();
+    const rotation = serverKeyRotationState();
+    console.log(`[startup] node-auth mode=${setting.mode}${setting.explicit ? '' : ' (default)'} server-key=${rotation.active.keyFingerprint}`
+      + `${rotation.next ? ` next=${rotation.next.keyFingerprint}` : ''}${rotation.previous ? ` previous=${rotation.previous.keyFingerprint} until ${rotation.previous.retireAfter}` : ''} `
       + `legacy-upgrade=${window.open ? `open until ${window.until}` : 'closed'}`);
   } catch (error) {
     console.error(`[startup] node-auth is not ready: ${error instanceof Error ? error.message : String(error)}`);
@@ -107,6 +107,30 @@ function startBackgroundServices(listenPort: number): void {
   }
   });
   if (!started) console.log('[startup] isolated rehearsal: background consumers and queue activation disabled');
+}
+
+/**
+ * Per-node credentials, before listening: with NODE_AUTH_MODE unset (enforce, the default since
+ * 3.0.0) the server refuses to start while enforce would lock out part of its fleet; an explicit
+ * compat or warn starts with a deprecation warning (services/node-auth-startup-guard.ts).
+ */
+{
+  const { allowServerKeyCreation } = await import('./services/node-server-key.js');
+  // Only the server creates its key; command-line processes use the file it made.
+  allowServerKeyCreation();
+  const { nodeAuthStartupGuard } = await import('./services/node-auth-startup-guard.js');
+  let guard: Awaited<ReturnType<typeof nodeAuthStartupGuard>>;
+  try { guard = await nodeAuthStartupGuard(); }
+  catch (error) {
+    console.error(`[startup] Refusing to start: NODE_AUTH_MODE is not set (enforce by default), and the inventory could not be read to check `
+      + `that enforce mode locks out no node: ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
+  if (!guard.ok) {
+    console.error(`[startup] ${guard.message}`);
+    process.exit(1);
+  }
+  for (const warning of guard.warnings) console.warn(`[startup] DEPRECATED: ${warning}`);
 }
 
 // Relative TLS paths resolve against the working directory; prefer absolute paths.

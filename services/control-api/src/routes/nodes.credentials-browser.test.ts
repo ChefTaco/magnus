@@ -84,9 +84,9 @@ beforeEach(() => {
   fake.state.nodes.push(fixtureNode('node-a', 'node-a.example.com', '192.0.2.10'));
   fixture.audit = []; fixture.notifications = []; fixture.redis.clear();
   resetNodeCredentialServiceState();
-  delete process.env['NODE_AUTH_MODE'];
+  process.env['NODE_AUTH_MODE'] = 'compat';
 });
-afterEach(() => { delete process.env['NODE_AUTH_MODE']; });
+afterEach(() => { process.env['NODE_AUTH_MODE'] = 'compat'; });
 
 describe('node key administration: roles', () => {
   it('lets an ADMIN list the keys, with no key material and no-store', async () => {
@@ -217,7 +217,7 @@ describe('node key administration: idempotency', () => {
     const idem = { 'x-idempotency-key': 'reset-1' };
     process.env['NODE_AUTH_MODE'] = 'enforce';
     expect((await reset('ADMIN', {}, idem)).status).toBe(409);
-    delete process.env['NODE_AUTH_MODE'];
+    process.env['NODE_AUTH_MODE'] = 'compat';
     expect((await reset('ADMIN', {}, idem)).status).toBe(200);
     expect((await reset('ADMIN', {}, idem)).json.error?.code).toBe('DUPLICATE_REQUEST');
   });

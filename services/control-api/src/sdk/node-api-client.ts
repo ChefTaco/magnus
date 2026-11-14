@@ -44,7 +44,7 @@ import {
   type SignedCommandResult,
   verifyCommandResultSignature,
 } from '../security/command-result-signature.js';
-import { commandReconciliationSigningPayload as sharedCommandReconciliationSigningPayload } from '../security/node-evidence.js';
+import { commandReconciliationSigningPayload as sharedCommandReconciliationSigningPayload, type EvidenceSignature } from '../security/node-evidence.js';
 
 /** Wire format shared with the node ledger; cross-wire tests guard canonicalization. */
 export { commandReconciliationSchema } from '../schemas/command-reconciliation.js';
@@ -615,8 +615,19 @@ export class NodeApiClient {
 
   /** Signed evidence reconciliation is an enrollment control message. It does
    * not execute or mutate the observed foreign scheduler itself. */
-  async reconcileSchedulerSource(data: SchedulerSourceSettlement): Promise<ApiResponse<unknown>> {
+  /**
+   * A scheduler-source settlement: a reviewer's assertion (`signature`, the COMMAND_RECONCILIATION_SECRET
+   * HMAC), or a decision two ADMINs approved, signed by this server for the node (`serverSignature`).
+   */
+  async reconcileSchedulerSource(data: Omit<SchedulerSourceSettlement, 'signature'> & { signature?: string; serverSignature?: EvidenceSignature }): Promise<ApiResponse<unknown>> {
     return this.api.post('cron/source-reconciliation', { json: data, retry: 0 }).json();
+  }
+
+  /** Whether this node's agent accepts a scheduler-source settlement signed with the server key (agent 3.0.0 and later, with a node key). */
+  async acceptsServerSignedSchedulerSettlement(): Promise<boolean> {
+    const value = z.object({ success: z.literal(true), data: z.object({ features: z.object({ schedulerSourceAuthorizations: z.number().optional() })
+      .passthrough() }).passthrough() }).safeParse(await this.api.get('ping', { retry: 0 }).json<unknown>());
+    return value.success && value.data.data.features.schedulerSourceAuthorizations === 1;
   }
 
   async syncCronJob(data: CronJobCreateRequest): Promise<ApiResponse<CronJobSpec>> {

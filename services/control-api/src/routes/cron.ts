@@ -2,7 +2,9 @@ import { optional } from '../utils/optional.js';
 import { managedCronRouter } from './managed-cron.js';
 import { canStageLegacyCronForEnrollment, cronMutationMode, finalizeManagedCronRevocation, installManagedCron, registerManagedCron,
   reconcileForeignSchedulerSource, revokeManagedCron, stageLegacyCronForEnrollment,
-  updateAndRegisterManagedCron } from '../services/managed-cron.js';
+  updateAndRegisterManagedCron, requestSchedulerSourceReconciliation, approveSchedulerSourceReconciliation,
+  rejectSchedulerSourceReconciliation } from '../services/managed-cron.js';
+import { z } from 'zod';
 import { managedCronSchema, managedCronRegistrationSchema, schedulerSourceSettlementSchema, type ManagedCronIdentity } from '../schemas/managed-cron.js';
 import { Hono } from 'hono';
 import type { AppVariables } from '../types/index.js';
@@ -181,6 +183,55 @@ cronRouter.post('/scheduler-sources/reconcile', requireRole('ADMIN'), async c =>
       disposition: assertion.disposition, evidenceSha256: assertion.evidenceSha256,
       approvalRef: assertion.approvalRef, decisionId: assertion.decisionId, replayed: result.replayed } });
   return c.json({ success: true, data: result });
+});
+
+// Two-ADMIN approval of a scheduler-source settlement (services/managed-cron.ts): the enforce-mode
+// equivalent of the reviewer's COMMAND_RECONCILIATION_SECRET signature. People only, two of them.
+function adminPerson(c: Parameters<typeof getUser>[0]): string {
+  const user = getUser(c);
+  if (user.role !== 'ADMIN' || user.userId === 'system' || user.service)
+    throw new HttpError(403, 'ADMIN_PERSON_REQUIRED', 'A signed-in ADMIN must take this step; the API secret and service identities cannot');
+  return user.userId;
+}
+const reconcileRequestSchema = z.object({
+  nodeId: z.string().min(1).max(128), kind: z.string().regex(/^[A-Z_]{1,80}$/), sourceSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  count: z.number().int().positive().max(1_000_000), disposition: z.enum(['effects_verified', 'no_effect_verified']),
+  reason: z.string().trim().min(10).max(500), evidenceSha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+}).strict();
+
+cronRouter.post('/scheduler-sources/reconcile-requests', requireRole('ADMIN'), async c => {
+  const actorId = adminPerson(c);
+  const input = await parseBody(c, reconcileRequestSchema);
+  const request = await requestSchedulerSourceReconciliation(input, actorId);
+  await logAuditEvent({ action: 'cron.scheduler-source.reconcile_request', actorId, targetType: 'scheduler-source', targetId: request.sourceSha256,
+    details: { requestId: request.id, nodeId: request.nodeId, kind: request.kind, count: request.count, disposition: request.disposition,
+      reason: request.reason, epoch: request.epoch, barrierId: request.barrierId, expiresAt: request.expiresAt } });
+  return c.json({ success: true, data: request }, 201);
+});
+
+cronRouter.post('/scheduler-sources/reconcile-requests/:id/approve', requireRole('ADMIN'), async c => {
+  const actorId = adminPerson(c);
+  await parseBody(c, z.object({}).strict());
+  const id = c.req.param('id')!;
+  try {
+    const result = await approveSchedulerSourceReconciliation(id, actorId);
+    await logAuditEvent({ action: 'cron.scheduler-source.reconcile_approve', actorId, targetType: 'scheduler-source', targetId: result.sourceSha256,
+      details: { requestId: id, nodeId: result.nodeId, decisionId: result.decisionId, evidenceSha256: result.evidenceSha256, replayed: result.replayed } });
+    return c.json({ success: true, data: result });
+  } catch (error) {
+    await logAuditEvent({ action: 'cron.scheduler-source.reconcile_approve', actorId, targetType: 'scheduler-source', targetId: id,
+      details: { requestId: id, refused: error instanceof HttpError ? error.code : 'ERROR' } }).catch(() => undefined);
+    throw error;
+  }
+});
+
+cronRouter.post('/scheduler-sources/reconcile-requests/:id/reject', requireRole('ADMIN'), async c => {
+  const actorId = adminPerson(c);
+  await parseBody(c, z.object({}).strict());
+  const request = await rejectSchedulerSourceReconciliation(c.req.param('id')!, actorId);
+  await logAuditEvent({ action: 'cron.scheduler-source.reconcile_reject', actorId, targetType: 'scheduler-source', targetId: request.sourceSha256,
+    details: { requestId: request.id, nodeId: request.nodeId } });
+  return c.json({ success: true, data: request });
 });
 
 // Explicit opt-in: legacy jobs have no managed authority until this admin action.

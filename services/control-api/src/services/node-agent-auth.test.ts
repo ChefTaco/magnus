@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+// These cases exercise shared-secret paths, which 3.0.0 keeps only under an explicit NODE_AUTH_MODE=compat (or warn).
+beforeEach(() => { process.env['NODE_AUTH_MODE'] = 'compat'; });
+afterEach(() => { delete process.env['NODE_AUTH_MODE']; });
 
 vi.mock('../utils/env.js', async original => ({ ...await original<object>(), getNodeManagerSecret: () => 'node-agent-auth-fixture-shared-secret-32chars' }));
 const { createFakeCredentialStore, fixtureAgentKey } = await import('./node-credential-test-fixture.js');

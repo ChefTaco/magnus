@@ -86,6 +86,13 @@ integrations table together.
   never by checking `RESULT_SIGNING_SECRET` alone, and decisions the server makes for one node through
   `services/server-authorization.ts`. Canonical payloads live in `security/node-evidence.ts`, byte-identical
   with the agent's copy and pinned by `node-evidence.vectors.json`; a new evidence kind goes there first.
+- `NODE_AUTH_MODE` defaults to `enforce` (3.0.0); `compat` and `warn` are deprecated and only explicit. Code that
+  needs the shared node secret reads `getNodeManagerSecret()`, which is empty in enforce mode without one. The start-up
+  guard (`services/node-auth-startup-guard.ts`) and the fleet summary count real nodes only: never `SENTINEL_NODE_IDS`
+  or decommissioned nodes.
+- The server key rotates (`services/node-server-key.ts`: next, active, previous, retired). Sign with
+  `serverSigningKey()`, offer `serverPublicKeys()` for pinning, and verify a stored decision with
+  `serverVerificationKeys()` (retired public keys included); a retired key is never pinned or an audience.
 - Compare secrets with the constant-time helpers. Store only SHA-256 digests of
   credentials that other services present.
 - Required secrets fail fast at startup; never add a fallback secret value or a

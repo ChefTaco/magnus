@@ -10,7 +10,7 @@
  */
 import { createHash } from 'node:crypto';
 import { CONTROL_API_URL, HOST_FQDN, NODE_MANAGER_SECRET } from './env.js';
-import { nodeApiFetch, nodeAuthNow, noteControlApiResponse, onControlApiStatus } from './node-auth.js';
+import { nodeApiFetch, nodeAuthDeprecationWarning, nodeAuthMode, nodeAuthNow, noteControlApiResponse, onControlApiStatus } from './node-auth.js';
 import { boundNodeIdentity, ensureNodeKey, loadNodeIdentity, replaceNodeIdentity, saveNodeBinding, savePinnedServerKeys, saveServerEvidenceSupport, type NodeBinding,
   type PinnedServerKey } from './security/node-identity.js';
 import { generateSigningKey, keyFingerprint, keyIdOfSpki, privateKeyFromPem, signEnrollmentProof } from './security/node-request-auth.js';
@@ -24,7 +24,9 @@ const fqdn = (): string => HOST_FQDN.trim().toLowerCase();
 
 export interface HeartbeatNodeAuth { supported?: boolean | undefined; mode?: string | undefined; method?: string | undefined; problem?: string | undefined;
   /** 1: the server verifies evidence signed with the node key. */
-  evidence?: number | undefined }
+  evidence?: number | undefined;
+  /** The server keys to pin (3.0.0 servers): a staged next key appears here before the server signs with it. */
+  serverKeyIds?: string[] | undefined }
 export type UpgradeOutcome =
   | { state: 'bound'; nodeId: string }
   | { state: 'retry'; reason: string; retryInMs: number };
@@ -36,14 +38,18 @@ let inFlight = false;
 let lastLogged = '';
 let lastPinRefreshAt = 0;
 
+/** Pin order: the key the server signs with (and the audience this agent signs for) first, then a staged next key, then a replaced one. */
+const PIN_RANK: Record<string, number> = { active: 0, next: 1, previous: 2 };
 function pinnedKeys(value: unknown): PinnedServerKey[] {
   if (!Array.isArray(value)) return [];
   const keys = value.flatMap((entry: { publicKey?: unknown; status?: unknown }) => {
-    try { return typeof entry?.publicKey === 'string' ? [{ keyId: keyIdOfSpki(entry.publicKey), publicKey: entry.publicKey, active: entry.status !== 'next' }] : []; }
-    catch { return []; }
+    try {
+      // A status this agent does not know (for example `retired`) is never pinned.
+      const rank = PIN_RANK[typeof entry?.status === 'string' ? entry.status : 'active'];
+      return typeof entry?.publicKey === 'string' && rank !== undefined ? [{ keyId: keyIdOfSpki(entry.publicKey), publicKey: entry.publicKey, rank }] : [];
+    } catch { return []; }
   });
-  // The key the server signs with, and the audience this agent signs for, goes first.
-  return keys.sort((a, b) => Number(b.active) - Number(a.active)).slice(0, 4).map(({ keyId, publicKey }) => ({ keyId, publicKey }));
+  return keys.sort((a, b) => a.rank - b.rank).slice(0, 4).map(({ keyId, publicKey }) => ({ keyId, publicKey }));
 }
 
 interface BindingReply { nodeId?: unknown; keyId?: unknown; serverKeys?: unknown }
@@ -125,6 +131,12 @@ export function onHeartbeatAcknowledged(nodeAuth: HeartbeatNodeAuth | undefined,
   // Sign evidence with the node key only for a server that verifies it; a server downgrade turns it off again.
   try { saveServerEvidenceSupport(nodeAuth?.evidence === 1); }
   catch (error) { logger.warn(`Could not record whether the server verifies node evidence: ${error instanceof Error ? error.message : String(error)}`); }
+  // Server-key rotation: pin a staged key before the server signs with it, sign for the promoted one
+  // (the server lists the key it signs with first), and drop a retired one.
+  const pinned = boundNodeIdentity()?.binding.serverKeys.map(key => key.keyId);
+  if (pinned && Array.isArray(nodeAuth?.serverKeyIds) && nodeAuth.serverKeyIds.length > 0
+    && JSON.stringify(nodeAuth.serverKeyIds.slice(0, 4)) !== JSON.stringify(pinned))
+    void refreshPinnedServerKeys(MINUTE, now);
   if (!nodeAuth?.supported || inFlight || now < nextAttemptAt) return;
   let bound = false;
   try { bound = Boolean(loadNodeIdentity()?.binding); }
@@ -133,6 +145,8 @@ export function onHeartbeatAcknowledged(nodeAuth: HeartbeatNodeAuth | undefined,
   // (its records were restored, or the node was re-created): bind again with the same key.
   if (bound && !(nodeAuth.method === 'legacy' && nodeAuth.problem === 'UNKNOWN_KEY')) { failures = 0; return; }
   if (nodeAuth.mode === 'enforce' && !bound) return;
+  // Without the shared secret there is nothing to bind with: this agent waits for `magnus-agent enroll --token`.
+  if (!NODE_MANAGER_SECRET) return;
   if (trialOf(AGENT_VERSION) !== null) return;
   inFlight = true;
   void attemptLegacyUpgrade().then(outcome => {
@@ -176,7 +190,13 @@ export function startNodeIdentityMaintenance(): void {
   if (identity) {
     logger.info(`Node identity: node ${identity.binding.nodeId}, key ${keyFingerprint(identity.keyId)}`);
     void refreshPinnedServerKeys(0);
-  } else logger.info('Node identity: none yet; using the shared node secret until the Control API binds a node key');
+  } else if (NODE_MANAGER_SECRET) logger.info('Node identity: none yet; using the shared node secret until the Control API binds a node key');
+  else logger.warn('Node identity: none, and no shared node secret: the Control API refuses this agent until it is enrolled with '
+    + '`magnus-agent enroll --token-file -` and a one-time token (POST /api/v1/nodes/<nodeId>/enrollment-token on the server)');
+  const deprecation = nodeAuthDeprecationWarning();
+  if (deprecation) logger.warn(`DEPRECATED: ${deprecation}`);
+  else if (nodeAuthMode() === 'enforce' && !identity)
+    logger.info('NODE_AUTH_MODE=enforce takes effect once this node has a bound key; until then the agent works as in compat');
 }
 
 /** `magnus-agent enroll --token`: bind a new key with a one-time token from an administrator. */

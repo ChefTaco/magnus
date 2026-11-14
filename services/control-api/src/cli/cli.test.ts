@@ -41,10 +41,14 @@ describe('documented environment', () => {
   it('lists every required secret exactly once and marks secrets', () => {
     const names = ENV_CATALOG.map(variable => variable.name);
     expect(new Set(names).size).toBe(names.length);
-    for (const name of ['API_SECRET', 'NODE_MANAGER_SECRET', 'AUDIT_HMAC_SECRET', 'RESULT_SIGNING_SECRET',
+    for (const name of ['API_SECRET', 'AUDIT_HMAC_SECRET',
       'LOG_INGEST_SIGNING_SECRET', 'CREDENTIAL_ROTATION_KEY', 'METRICS_TOKEN', 'WEBHOOK_ENCRYPTION_KEY']) {
       expect(ENV_CATALOG.find(variable => variable.name === name)).toMatchObject({ required: true, secret: true });
     }
+    // 3.0.0: the shared node credentials are needed only by an explicit compat or warn mode.
+    for (const name of ['NODE_MANAGER_SECRET', 'RESULT_SIGNING_SECRET'])
+      expect(ENV_CATALOG.find(variable => variable.name === name)).toMatchObject({ required: false, secret: true, requiredWhen: 'NODE_AUTH_MODE=compat or warn' });
+    expect(ENV_CATALOG.find(variable => variable.name === 'NODE_AUTH_MODE')?.default).toBe('enforce');
     expect(ENV_CATALOG.find(variable => variable.name === 'SECURITY_FUSION_MODE')?.default).toBe('off');
   });
 

@@ -103,9 +103,8 @@ export async function nodeAuthMiddleware(c: Context, next: Next): Promise<Respon
     return c.json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Missing x-node-token header' } }, 401);
   }
 
-  if (!NODE_SECRET) {
-    return c.json({ success: false, error: { code: 'CONFIG_ERROR', message: 'NODE_MANAGER_SECRET not configured' } }, 500);
-  }
+  // From 3.0.0 an agent may have no shared secret at all: nothing it could match is accepted.
+  if (!NODE_SECRET) return refused(c, 'NODE_SIGNATURE_REQUIRED', 'This agent has no shared node secret; it accepts only requests signed by the Control API');
 
   // Evaluate both candidates unconditionally to avoid leaking which matched.
   const matchesActive = constantTimeEqual(token, NODE_SECRET);

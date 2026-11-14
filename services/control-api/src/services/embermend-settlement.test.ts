@@ -1,4 +1,7 @@
-import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+// These cases exercise shared-secret paths, which 3.0.0 keeps only under an explicit NODE_AUTH_MODE=compat (or warn).
+beforeEach(() => { process.env['NODE_AUTH_MODE'] = 'compat'; });
+afterEach(() => { delete process.env['NODE_AUTH_MODE']; });
 import { embermendOperationSchema } from '@hivemagnus/magnus-contracts/embermend';
 import { NodeApiClient, type CommandReceipt, type CommandReconciliationAssertion } from '../sdk/node-api-client.js';
 const db = vi.hoisted(() => ({ operation: { findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), update: vi.fn() }, lease: { findUnique: vi.fn() } }));

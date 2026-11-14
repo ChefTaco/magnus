@@ -5,7 +5,11 @@ import { join, resolve } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHmac, randomUUID } from 'node:crypto';
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+// These cases drive agents that hold no node key (shared secret and shared result key), which 3.0.0
+// accepts only under an explicit NODE_AUTH_MODE=compat; node-credentials-enforce.real-agent covers enforce.
+beforeEach(() => { process.env['NODE_AUTH_MODE'] = 'compat'; });
+afterEach(() => { delete process.env['NODE_AUTH_MODE']; });
 import { commandRequestDigest } from '../security/command-request.js';
 import { commandResultSigningPayload } from '../security/command-result-signature.js';
 import { managedCronSchema as apiSchema } from '../schemas/managed-cron.js';

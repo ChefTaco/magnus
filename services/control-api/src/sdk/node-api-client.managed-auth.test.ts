@@ -3,7 +3,10 @@
  * node key refuse every signed request on that route as a replay; the server sends them the shared
  * secret alone, after a request that runs nothing has shown they accept it, and never in enforce mode.
  */
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+// These cases exercise shared-secret paths, which 3.0.0 keeps only under an explicit NODE_AUTH_MODE=compat (or warn).
+beforeEach(() => { process.env['NODE_AUTH_MODE'] = 'compat'; });
+afterEach(() => { delete process.env['NODE_AUTH_MODE']; });
 import { nativeCompletionDescriptor, nativeCompletionResourceKey } from '../security/native-completion-registry.js';
 
 const mocks = vi.hoisted(() => ({ admit: vi.fn(), mark: vi.fn(), fail: vi.fn(async () => true), legacy: vi.fn() }));

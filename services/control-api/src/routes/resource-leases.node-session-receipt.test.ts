@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { Hono } from 'hono';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+// These cases exercise shared-secret paths, which 3.0.0 keeps only under an explicit NODE_AUTH_MODE=compat (or warn).
+beforeEach(() => { process.env['NODE_AUTH_MODE'] = 'compat'; });
+afterEach(() => { delete process.env['NODE_AUTH_MODE']; });
 import { errorHandler } from '../middleware/error-handler.js';
 
 const fixture = vi.hoisted(() => ({ settle: vi.fn() }));

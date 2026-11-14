@@ -1,5 +1,10 @@
 import { createHash, createHmac, randomUUID } from 'node:crypto';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+// These cases exercise shared-secret paths, which 3.0.0 keeps only under an explicit NODE_AUTH_MODE=compat (or warn).
+beforeEach(() => { process.env['NODE_AUTH_MODE'] = 'compat'; });
+afterEach(() => { delete process.env['NODE_AUTH_MODE']; });
+// The policy below is built at load time, so the mode has to be set before it too.
+process.env['NODE_AUTH_MODE'] = 'compat';
 
 const secret = 'dedicated-result-signing-secret-for-owner-proof';
 vi.mock('../utils/env.js', () => ({ RESULT_SIGNING_SECRET: secret,

@@ -6,7 +6,8 @@ const acknowledgement = z.object({
     updateAvailable: z.boolean().optional(),
     // Sent by a server with per-node credentials. Read leniently: it must never fail a heartbeat.
     nodeAuth: z.object({ supported: z.boolean().optional(), mode: z.string().optional(), method: z.string().optional(),
-      problem: z.string().optional(), evidence: z.number().optional() }).optional().catch(undefined),
+      problem: z.string().optional(), evidence: z.number().optional(),
+      serverKeyIds: z.array(z.string().regex(/^[a-f0-9]{64}$/)).max(8).optional().catch(undefined) }).optional().catch(undefined),
   }),
 });
 /** An HTTP response alone is not proof that the control plane accepted a heartbeat. */

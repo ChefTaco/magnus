@@ -329,6 +329,8 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('browser contract against rea
   }, 60_000);
 
   it('parses the node key revoke and reset, with their consequences', async () => {
+    // The reset back to the shared secret exists only under an explicit (deprecated) compat; enforce is the default.
+    vi.stubEnv('NODE_AUTH_MODE', 'compat');
     const keys = expectParses('GET /nodes/{nodeId}/credentials', contract.nodeCredentialsResponseSchema, (await call('GET', `/nodes/${nodeId}/credentials`)).json) as
       { data: Array<{ keyId: string; status: string }> };
     expect(keys.data).toMatchObject([{ status: 'ACTIVE' }]);

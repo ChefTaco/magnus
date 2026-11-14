@@ -338,6 +338,13 @@ async function run(argv: readonly string[]): Promise<number> {
       const { commandAgents } = await import('./cli/agents.js');
       return commandAgents(options.passthrough);
     }
+    case 'node-auth': {
+      loadEnvFiles(options.envFiles);
+      // The server's own settings, so this process edits the key file the server reads.
+      loadPackageEnv();
+      const { commandNodeAuth } = await import('./cli/node-auth.js');
+      return commandNodeAuth(options.passthrough);
+    }
     case 'migrate':
       loadEnvFiles(options.envFiles);
       await migrate();

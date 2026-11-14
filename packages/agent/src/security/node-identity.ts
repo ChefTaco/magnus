@@ -23,6 +23,12 @@ export interface NodeBinding {
    * then does the agent attach `nodeSignature` to its evidence. Older agents ignore the field.
    */
   serverEvidence?: boolean;
+  /**
+   * Server keys this agent pinned before and no longer pins (a server-key rotation retired them).
+   * Never trusted for a new request or decision; only a decision recorded while they were pinned is
+   * verified with them, so it stays readable (docs/NODE_CREDENTIALS.md, "Rotating the server key").
+   */
+  retiredServerKeys?: PinnedServerKey[];
 }
 export interface NodeIdentity {
   privateKey: KeyObject;
@@ -79,8 +85,10 @@ function parseBinding(raw: string | null, keyId: string): NodeBinding | null {
     const serverKeys = value.serverKeys.filter(key => typeof key?.publicKey === 'string').flatMap(key => {
       try { return [{ keyId: keyIdOfSpki(key.publicKey), publicKey: key.publicKey }]; } catch { return []; }
     });
+    const retiredServerKeys = (Array.isArray(value.retiredServerKeys) ? value.retiredServerKeys : []).filter(key => typeof key?.publicKey === 'string')
+      .flatMap(key => { try { return [{ keyId: keyIdOfSpki(key.publicKey), publicKey: key.publicKey }]; } catch { return []; } });
     return { version: 1, nodeId: value.nodeId, keyId, serverKeys, origin: value.origin ?? 'legacy-upgrade', boundAt: value.boundAt ?? '',
-      ...(value.serverEvidence === true ? { serverEvidence: true } : {}) };
+      ...(value.serverEvidence === true ? { serverEvidence: true } : {}), ...(retiredServerKeys.length ? { retiredServerKeys } : {}) };
   } catch { return null; }
 }
 
@@ -139,11 +147,19 @@ export function saveNodeBinding(binding: NodeBinding): void {
   cache = null;
 }
 
-/** Replace the pinned server keys of the current binding. */
+/** Server keys kept for recorded decisions after they stop being pinned. */
+const MAX_RETIRED_SERVER_KEYS = 16;
+
+/** Replace the pinned server keys of the current binding; a key no longer pinned is kept for recorded decisions only. */
 export function savePinnedServerKeys(serverKeys: PinnedServerKey[]): void {
   const identity = loadNodeIdentity(0);
   if (!identity?.binding) return;
-  saveNodeBinding({ ...identity.binding, serverKeys });
+  const pinned = new Set(serverKeys.map(key => key.keyId));
+  const dropped = identity.binding.serverKeys.filter(key => !pinned.has(key.keyId));
+  const retired = [...(identity.binding.retiredServerKeys ?? []).filter(key => !pinned.has(key.keyId)), ...dropped]
+    .filter((key, index, list) => list.findIndex(other => other.keyId === key.keyId) === index).slice(-MAX_RETIRED_SERVER_KEYS);
+  const { retiredServerKeys: _previous, ...binding } = identity.binding;
+  saveNodeBinding({ ...binding, serverKeys, ...(retired.length ? { retiredServerKeys: retired } : {}) });
 }
 
 /** Record whether the Control API verifies evidence signed with this key. Writes only on a change. */

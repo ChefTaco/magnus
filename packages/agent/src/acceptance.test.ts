@@ -56,6 +56,13 @@ it('refuses missing configuration or credential-bearing, non-HTTPS and non-origi
     ok: false,
     reason: 'INVALID_CONFIGURATION',
   });
+  // 3.0.0: without the shared secret the probe needs the node key; with neither nothing is sent.
+  const { credential: _credential, ...keyOnly } = options;
+  expect(await probeAgentAcceptance(keyOnly, { fetch })).toEqual({ ok: false, reason: 'INVALID_CONFIGURATION' });
+  expect(fetch).not.toHaveBeenCalled();
+  fetch.mockResolvedValue(new Response('{}', { status: 401 }));
+  await probeAgentAcceptance({ ...keyOnly, waitSeconds: 0 }, { fetch, selfSign: () => ({ 'x-magnus-signature': 'fixture' }) });
+  expect(Object.keys(fetch.mock.calls[0]![1]!.headers as Record<string, string>)).toEqual(['x-magnus-signature']);
 });
 it('refuses stale, future, missing or failed heartbeats and a different running artifact', async () => {
   for (const heartbeat of [

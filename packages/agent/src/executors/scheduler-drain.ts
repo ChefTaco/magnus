@@ -1,8 +1,9 @@
 /** Fixed API challenge -> durable local fence -> independently observed scheduler proof. */
 import { createHash, createHmac, randomUUID } from 'node:crypto';
+import { resultSigningKey } from '../security/local-evidence-keys.js';
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { HOST_FQDN, NODE_MANAGER_SECRET, RESULT_SIGNING_SECRET } from '../env.js';
+import { HOST_FQDN } from '../env.js';
 import { freshSchedulerStatus, schedulerStatusSchema } from './scheduler-status.js';
 import { nodeAuthMiddleware } from '../middleware.js';
 import { ManagedScheduler, type SchedulerDrainIdentity } from './managed-scheduler.js';
@@ -54,7 +55,7 @@ export function schedulerDrainRoutes(options: { scheduler?: ManagedScheduler; in
     if (!parsed.success) return c.json({ success: false, error: { code: 'INVALID_SCHEDULER_DRAIN' } }, 400);
     const descriptor = parsed.data; const started = Date.now();
     if (descriptor.nodeFqdn !== HOST_FQDN || descriptor.expiresAt <= Date.now() || descriptor.expiresAt > Date.now() + 300_000
-      || RESULT_SIGNING_SECRET.length < 32 || RESULT_SIGNING_SECRET === NODE_MANAGER_SECRET)
+      || resultSigningKey().length < 32)
       return c.json({ success: false, error: { code: 'INVALID_SCHEDULER_DRAIN' } }, 409);
     // The step in progress names the refusal when a dependency throws.
     let step: SchedulerDrainFailureReason = 'authority-unavailable';
@@ -105,7 +106,7 @@ export function schedulerDrainRoutes(options: { scheduler?: ManagedScheduler; in
         externalBlockers: observed.blockers.filter(source => EXTERNAL_SCHEDULER_KINDS.has(source.kind)),
         evidenceSha256: createHash('sha256').update(canonicalSchedulerEvidence({ inventory: observed, managed: finalOwned })).digest('hex') };
       const payload = enrollmentReceiptSigningPayload(receipt);
-      const signature = createHmac('sha256', RESULT_SIGNING_SECRET).update(payload).digest('hex');
+      const signature = createHmac('sha256', resultSigningKey()).update(payload).digest('hex');
       c.header('Cache-Control', 'no-store'); return c.json({ ...receipt, signature, ...nodeEvidenceFields('scheduler-drain', payload) });
     } catch (error) {
       const reason = error instanceof SchedulerDrainFailure ? error.reason : step;

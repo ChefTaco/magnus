@@ -7,7 +7,8 @@ import { spawn } from 'node:child_process';
 import { lstat, mkdir, open, readdir, rename, unlink } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
-import { HOST_FQDN, NODE_MANAGER_SECRET, RESULT_SIGNING_SECRET } from '../env.js';
+import { HOST_FQDN, NODE_MANAGER_SECRET } from '../env.js';
+import { resultSigningKey, resultVerificationKeys } from '../security/local-evidence-keys.js';
 import { commandReconciliationSigningPayload, verifyCommandResult, verifyCommandReconciliation, type CommandReconciliationAssertion } from '../security/command-result-signature.js';
 import { verifyServerDecision } from '../security/evidence-signing.js';
 import { MANAGED_HTTP_COMMAND } from '../security/managed-http.js';
@@ -114,11 +115,29 @@ export function commandRequestDigest(input: CommandIdentity): string {
     } : null }));
 }
 
+/** What a ledger checks with. Unset keys resolve at use (security/local-evidence-keys.ts). */
+export interface LedgerAuthority { nodeFqdn: string; resultSecret?: string; reconciliationSecret?: string }
+
 export class CommandLedger {
   private readonly active = new Set<string>();
   constructor(readonly root = resolve(process.env['AGENT_INSTALL_DIR'] ?? process.cwd(), '.magnus/command-receipts'),
-    private readonly authority = { resultSecret: RESULT_SIGNING_SECRET,
-      reconciliationSecret: process.env['COMMAND_RECONCILIATION_SECRET'] ?? '', nodeFqdn: HOST_FQDN }) {}
+    private readonly authority: LedgerAuthority = { nodeFqdn: HOST_FQDN }) {}
+
+  /**
+   * The keys of this ledger's MACs (security/local-evidence-keys.ts): the shared result key when it is
+   * configured, else the node-local one; a stored result verifies with any key it may have been signed
+   * with, so a ledger written by 2.10.x stays readable. Tests pass fixed secrets instead.
+   */
+  private resultKeyAvailable(): boolean {
+    return (this.authority.resultSecret ?? resultSigningKey()).length >= 32;
+  }
+  private resultKeys(): string[] {
+    return this.authority.resultSecret !== undefined ? [this.authority.resultSecret] : resultVerificationKeys();
+  }
+  private reconciliationKeys(): string[] {
+    return this.authority.reconciliationSecret !== undefined ? [this.authority.reconciliationSecret]
+      : [process.env['COMMAND_RECONCILIATION_SECRET'] ?? ''].filter(Boolean);
+  }
 
   /** Linux flock locks the open file description, retained by this parent FD after
    * the helper exits. Kernel cleanup after a crash releases only this mutex: the
@@ -218,7 +237,8 @@ export class CommandLedger {
   }
   private checkResult(result: CommandReceiptResult, id: string, digest: string, fence?: CommandFence) {
     resultSchema.parse(result);
-    if (!verifyCommandResult(result, this.authority.resultSecret)) throw new Error('Invalid result signature');
+    if (!this.resultKeys().some(key => verifyCommandResult(result, key)))
+      throw new Error('Invalid result signature (a result signed with RESULT_SIGNING_SECRET needs that key, or RESULT_SIGNING_PREVIOUS_SECRET, on this agent)');
     if (result.commandId !== id || (fence ? !result.coordination
       || result.coordination.requestSha256 !== digest
       || result.coordination.resourceKey !== fence.resourceKey || result.coordination.fence !== fence.fence
@@ -229,10 +249,11 @@ export class CommandLedger {
     const expected = row.coordination;
     const actual = assertion.coordination;
     // A decision signed for this node with a pinned server key, or (older servers) the shared reconciliation key.
-    const secret = this.authority.reconciliationSecret;
+    const resultKeys = new Set(this.resultKeys());
+    // A recorded decision verifies with the server key that signed it, also after a server-key rotation.
     const authentic = verifyServerDecision('command-reconciliation', commandReconciliationSigningPayload(assertion), assertion.serverSignature,
-      () => typeof assertion.signature === 'string' && verifyCommandReconciliation({ ...assertion, signature: assertion.signature }, secret)
-        && secret !== this.authority.resultSecret && secret !== NODE_MANAGER_SECRET);
+      () => typeof assertion.signature === 'string' && this.reconciliationKeys().some(secret => !resultKeys.has(secret) && secret !== NODE_MANAGER_SECRET
+        && verifyCommandReconciliation({ ...assertion, signature: assertion.signature! }, secret)), { stored: !fresh });
     if (!authentic
       || assertion.nodeFqdn !== this.authority.nodeFqdn || assertion.commandId !== row.commandId
       || assertion.requestSha256 !== row.requestSha256
@@ -318,7 +339,7 @@ export class CommandLedger {
   async settleRecoveredResult(input: CommandIdentity, result: CommandReceiptResult, enrollment: ManagedClaim) {
     input = structuredClone(input); const digest = commandRequestDigest(input); const mutex = await this.acquire();
     try {
-      if (this.authority.resultSecret.length < 32) throw new Error('Result signing unavailable');
+      if (!this.resultKeyAvailable()) throw new Error('Result signing unavailable');
       const row = await this.receipt(input.commandId);
       if (row) {
         if (row.requestSha256 !== digest || row.state === 'reconciled') throw new Error('Recovery identity is unavailable or reconciled');
@@ -478,7 +499,7 @@ export class CommandLedger {
       throw new CommandAdmissionError('OUTCOME_UNKNOWN', 'Original command is active, uncertain, or reconciled; its identifier cannot execute again');
     };
     try {
-      if (this.authority.resultSecret.length < 32) throw new Error('Result signing unavailable');
+      if (!this.resultKeyAvailable()) throw new Error('Result signing unavailable');
       const replay = await previous(); if (replay) return replay;
       noReceipt = true;
       mutex = await this.acquire();

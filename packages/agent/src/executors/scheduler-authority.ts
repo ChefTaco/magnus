@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import { resultSigningKey } from '../security/local-evidence-keys.js';
 import { freshSchedulerStatus, schedulerStatusSchema } from './scheduler-status.js';
 /** Fresh fixed-endpoint authority and the existing signed supervisor/command ledger. */
-import { CONTROL_API_URL, HOST_FQDN, RESULT_SIGNING_SECRET, MAGNUS_EXECUTION_SUPERVISOR_ENABLED } from '../env.js';
+import { CONTROL_API_URL, HOST_FQDN, MAGNUS_EXECUTION_SUPERVISOR_ENABLED } from '../env.js';
 import { nodeApiFetch } from '../node-auth.js';
 import { CommandLedger, commandRequestDigest } from './command-ledger.js';
 import { ExecutionSupervisor } from './execution-supervisor.js';
@@ -38,7 +39,7 @@ export function schedulerAuthority(options: { ledger?: CommandLedger; supervisor
     if (observation.state !== 'completed' || !observation.result || observation.evidence.requestSha256 !== row.requestSha256) throw new Error('Supervisor completion remains unknown');
     const value = { commandId: row.command.commandId, ...observation.result,
       coordination: { ...row.command.coordination!, requestSha256: row.requestSha256 } };
-    return { ...value, signature: signCommandResult(value, RESULT_SIGNING_SECRET) };
+    return { ...value, signature: signCommandResult(value, resultSigningKey()) };
   };
   return {
     async enrolled(identity) {
@@ -50,7 +51,7 @@ export function schedulerAuthority(options: { ledger?: CommandLedger; supervisor
       return identity;
     },
     async admit(row) {
-      if (!MAGNUS_EXECUTION_SUPERVISOR_ENABLED || RESULT_SIGNING_SECRET.length < 32) throw new Error('Managed scheduler supervisor is disabled');
+      if (!MAGNUS_EXECUTION_SUPERVISOR_ENABLED || resultSigningKey().length < 32) throw new Error('Managed scheduler supervisor is disabled');
       const value = await post('cron/managed-occurrences/admit', { nodeFqdn: HOST_FQDN, jobId: row.jobId,
         revision: row.revision, specSha256: row.specSha256, occurrenceId: row.occurrenceId, scheduledAt: row.scheduledAt, deadline: row.deadline });
       if (value['occurrenceId'] !== row.occurrenceId || value['specSha256'] !== row.specSha256 || value['commandId'] !== row.command.commandId)

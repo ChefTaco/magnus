@@ -9,7 +9,7 @@ import { HOST_FQDN } from '../env.js';
 import { commandRequestDigest, type CommandIdentity, type CommandLedger } from './command-ledger.js';
 import { historicalHash, signHistoricalObservation, signHistoricalReceipt, verifyHistoricalAssertion,
   verifyHistoricalReceipt, readHostBoot, reviewedHistoricalRecords, type ReviewedHistoricalRecords,
-  type HistoricalKeys, type HistoricalReceipt, type HostBoot } from './historical-mutation.js';
+  hostHistoricalKeys, type HistoricalKeys, type HistoricalReceipt, type HostBoot } from './historical-mutation.js';
 
 const identitySchema = z.object({ nodeId: z.string().min(1).max(128), nodeFqdn: z.string().min(1).max(253),
   epoch: z.number().int().positive(), barrierId: z.string().guid() }).strict();
@@ -28,10 +28,14 @@ export class MutationBarrier {
   private readonly active = new Set<string>();
   constructor(readonly root = resolve(process.env['AGENT_INSTALL_DIR'] ?? process.cwd(), '.magnus/mutation-barrier'),
     private readonly hostname = HOST_FQDN,
-    private readonly historicalKeys: HistoricalKeys = { result: process.env['RESULT_SIGNING_SECRET'] ?? '',
-      reconciliation: process.env['COMMAND_RECONCILIATION_SECRET'] ?? '' },
+    private readonly fixedHistoricalKeys: HistoricalKeys | null = null,
     private readonly bootReader: () => Promise<HostBoot> = readHostBoot,
     private readonly reviewedRecords: ReviewedHistoricalRecords = reviewedHistoricalRecords) {}
+
+  /** Resolved at use: the shared keys when configured, else node-local ones (security/local-evidence-keys.ts). */
+  private get historicalKeys(): HistoricalKeys {
+    return this.fixedHistoricalKeys ?? hostHistoricalKeys();
+  }
 
   private async initialize() {
     await mkdir(this.root, { recursive: true, mode: 0o700 });
