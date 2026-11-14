@@ -152,7 +152,7 @@ export async function init(io: Io, options: InitOptions): Promise<number> {
     writeFileSync(project.envFile('server'), serverEnv({
       databaseUrl: databaseUrl!, redisUrl: redisUrl!, port: options.serverPort, publicUrl: `https://${host}:${options.serverPort}`,
       uiOrigin, tlsCert: tls.cert, tlsKey: tls.key, home: project.path('data'), backupDir: project.path('backups'), autoMigrate: options.autoMigrate,
-      projectDir: project.dir, runtimeFile: project.path('run', 'server-runtime.json'),
+      projectDir: project.dir, runtimeFile: project.path('run', 'server-runtime.json'), version,
       ...(tls.selfSigned ? { extraCaFile: tls.cert } : {}),
     }, {}), { mode: 0o600 });
     const password = options.adminPassword ?? randomBytes(12).toString('base64url');
