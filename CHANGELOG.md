@@ -7,6 +7,26 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [2.10.3] - 2026-11-14
+
+2.10.3 is the stepping stone that lets an existing agent move to 3.0.x through the managed upgrade. It
+changes nothing else: a 2.10.3 agent behaves as 2.10.2 in every other respect, and a 2.10.3 server is
+2.10.2 with the version changed. See `docs/NODE_CREDENTIALS.md`, "Moving agents across a major version".
+
+### Added
+
+- Node agent: a self-upgrade to another major version is accepted when, and only when, the upgrade request carries a `majorAuthorization` signed with a server key this agent pins (server-authorization kind `agent-major-upgrade`). The signature covers the node id, the package, the version the agent runs, the target version, the tarball's integrity and an expiry of at most 24 hours. The agent needs a bound node key: the shared node secret never authorizes a major upgrade, and a node without a key refuses it. A request without the authorization is refused as before (`SELF_UPGRADE_REFUSED`); one whose authorization is expired, for another node, version or tarball, or signed by a key the agent does not pin is refused with `SELF_UPGRADE_MAJOR_UNAUTHORIZED`. Everything else about the upgrade is unchanged: the exact integrity, provenance check, trial and automatic switch-back. Servers that produce the authorization: 3.0.1 and later, with `magnus-server agents upgrade --allow-major`.
+- The agent reports `majorUpgradeAuthorization: 1` in its self-upgrade status, so a server knows it can be sent one. Older servers ignore the field.
+- Release tooling: a release older than npm's `latest` (a patch from a maintenance branch) is published with the dist-tag `maintenance-<major>.<minor>` instead of `latest`, so `npm install @hivemagnus/<package>` keeps installing the newest major.
+
+### Upgrading
+
+- 2.10.0, 2.10.1 and 2.10.2 agents reach 2.10.3 with the usual managed upgrade (a patch): the console's **Upgrade agents**, or `magnus-server agents upgrade --to 2.10.3` from a 2.10.x or 3.0.x server. On npm, 2.10.3 carries the dist-tag `maintenance-2.10`; `latest` stays on 3.0.x.
+
+**New environment variables:** None.
+
+**Migration impact:** No datastore migrations.
+
 ## [2.10.2] - 2026-11-14
 
 ### Fixed

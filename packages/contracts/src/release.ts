@@ -335,6 +335,11 @@ export const agentSelfUpgradeStatusSchema = z.object({
   ledger: agentLedgerHealthSchema.optional().catch(undefined),
   disk: agentDiskHealthSchema.optional().catch(undefined),
   npm: agentNpmHealthSchema.optional().catch(undefined),
+  /**
+   * 1: this agent accepts a self-upgrade across a major version when the request carries a
+   * `majorAuthorization` signed by a server key it pins (2.10.3 and later). Older agents leave it out.
+   */
+  majorUpgradeAuthorization: z.number().int().nonnegative().optional().catch(undefined),
 });
 
 /** The answer of an agent's read-only GET /api/v1/agent-upgrade/preflight. Each field drops alone when malformed, and a newer agent's extras are ignored. */
@@ -374,6 +379,16 @@ export const agentUpgradeRequestSchema = z.object({
   integrity: z.string().regex(/^sha512-[A-Za-z0-9+/]+={0,2}$/),
   requestId: z.string().min(1).max(128),
   packageName: z.string().default('@hivemagnus/magnus-agent'),
+  /**
+   * Only for a target in another major version: the server's permission for this node, signed with
+   * the server key (kind `agent-major-upgrade`) over the package, the running version, the target,
+   * its integrity and `expiresAt` (milliseconds). Agents before 2.10.3 drop it and refuse the major.
+   */
+  majorAuthorization: z.object({
+    expiresAt: z.number().int().positive(),
+    // Ed25519 envelope `{ alg, v, nodeId, keyId, sig }`; the agent checks it, so it is kept as received.
+    serverSignature: z.unknown(),
+  }).optional(),
 });
 
 export type AgentUpgradeState = z.infer<typeof agentUpgradeStateSchema>;

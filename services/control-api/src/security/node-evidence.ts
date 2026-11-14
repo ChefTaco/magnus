@@ -46,7 +46,7 @@ export const NODE_EVIDENCE_KINDS = [
 export type NodeEvidenceKind = typeof NODE_EVIDENCE_KINDS[number];
 
 /** Every decision the server signs for one node. */
-export const SERVER_AUTHORIZATION_KINDS = ['command-reconciliation', 'cron-enrollment-stage'] as const;
+export const SERVER_AUTHORIZATION_KINDS = ['command-reconciliation', 'cron-enrollment-stage', 'agent-major-upgrade'] as const;
 export type ServerAuthorizationKind = typeof SERVER_AUTHORIZATION_KINDS[number];
 
 /** The wire form: `{ alg, v, nodeId, keyId, sig }`, sent as `nodeSignature` or `serverSignature`. */
@@ -278,6 +278,25 @@ export function cronEnrollmentStageSigningPayload(value: CronEnrollmentStageDeci
   return JSON.stringify({ domain: 'magnus.cron-enrollment-stage.v1', version: value.version, nodeId: value.nodeId,
     nodeFqdn: value.nodeFqdn, specSha256: sha256Hex(JSON.stringify(value.spec)), operationId: value.operationId,
     expiresAt: value.expiresAt });
+}
+
+/**
+ * A self-upgrade across a major version that the server authorizes for one node: the exact package,
+ * the version the node runs, the target version and its tarball integrity, until `expiresAt`
+ * (milliseconds). The node id is inside the signing input; it is repeated here so the payload names it.
+ */
+export interface AgentMajorUpgradeDecision {
+  nodeId: string;
+  packageName: string;
+  from: string;
+  to: string;
+  integrity: string;
+  expiresAt: number;
+}
+
+export function agentMajorUpgradeSigningPayload(value: AgentMajorUpgradeDecision): string {
+  return JSON.stringify({ domain: 'magnus.agent-major-upgrade.v1', version: 1, nodeId: value.nodeId, packageName: value.packageName,
+    from: value.from, to: value.to, integrity: value.integrity, expiresAt: value.expiresAt });
 }
 
 /** The node's receipt for a staged definition: its fields in the order the node sends them. */

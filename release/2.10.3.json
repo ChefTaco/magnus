@@ -1,0 +1,8 @@
+{
+  "summary": "Stepping stone to 3.0.x agents: the 2.10.3 agent accepts a self-upgrade across a major version only when the request carries an authorization signed by the server key it pins, for this node, the version it runs, the target version and its tarball integrity, with an expiry (3.0.1 servers send it with agents upgrade --allow-major). Without one it refuses the major as before. Nothing else changes. 2.10.x agents reach 2.10.3 with the usual managed upgrade. On npm 2.10.3 is tagged maintenance-2.10; latest stays on 3.0.x. No migrations and no new settings.",
+  "breaking": false,
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}

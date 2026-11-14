@@ -69,6 +69,33 @@ export async function publishedVersionExists(name, version, fetcher = fetch) {
   return true;
 }
 
+/** The version npm installs by default for `name`, or null when the package has no `latest` yet. */
+export async function latestDistTag(name, fetcher = fetch) {
+  const response = await fetcher(`https://registry.npmjs.org/-/package/${encodeURIComponent(name)}/dist-tags`, {
+    redirect: 'error', signal: AbortSignal.timeout(15_000),
+  });
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`Could not read the dist-tags of ${name} on npm (HTTP ${response.status}); publication stopped`);
+  const tags = await response.json();
+  if (tags?.latest !== undefined && (typeof tags.latest !== 'string' || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(tags.latest)))
+    throw new Error(`Unexpected npm dist-tags for ${name}; publication stopped`);
+  return tags?.latest ?? null;
+}
+
+const releaseParts = version => version.split('-')[0].split('.').map(Number);
+
+/**
+ * `latest`, unless npm's `latest` is already a newer release: a patch of an older line (a maintenance
+ * branch) is published as `maintenance-<major>.<minor>`, so it never becomes the default install.
+ */
+export function distTagFor(version, latest) {
+  if (!latest) return 'latest';
+  const [a, b] = [releaseParts(version), releaseParts(latest)];
+  const older = a.findIndex((part, index) => part !== b[index]);
+  if (older === -1 || a[older] > b[older]) return 'latest';
+  return `maintenance-${a[0]}.${a[1]}`;
+}
+
 export async function publishPackages({ root, dryRun, ref, fetcher = fetch, run = execFileSync }) {
   if (typeof dryRun !== 'boolean') throw new Error('An explicit boolean dryRun is required');
   const packages = readReleasePackages(root);
@@ -78,10 +105,12 @@ export async function publishPackages({ root, dryRun, ref, fetcher = fetch, run 
   // Finish every registry lookup before the first mutation. A registry or authentication
   // failure must not be mistaken for an unpublished version or leave a partial release.
   const existing = dryRun ? [] : await Promise.all(packages.map(pkg => publishedVersionExists(pkg.name, pkg.version, fetcher)));
+  const tags = dryRun ? [] : await Promise.all(packages.map(async pkg => distTagFor(pkg.version, await latestDistTag(pkg.name, fetcher))));
   for (const [index, pkg] of packages.entries()) {
     if (existing[index]) { console.log(`${pkg.name}@${pkg.version} is already on npm; skipping`); continue; }
+    if (tags[index] && tags[index] !== 'latest') console.log(`${pkg.name}@${pkg.version} is older than npm's latest; publishing it as ${tags[index]}`);
     // Build, test and inspect every payload first; never run lifecycle scripts here.
-    run('npm', ['publish', dryRun ? '--dry-run' : '--provenance', '--ignore-scripts', '--access', 'public',
+    run('npm', ['publish', dryRun ? '--dry-run' : '--provenance', ...(tags[index] ? ['--tag', tags[index]] : []), '--ignore-scripts', '--access', 'public',
       '--registry', 'https://registry.npmjs.org/'], { cwd: join(root, pkg.directory), stdio: 'inherit' });
   }
 }
