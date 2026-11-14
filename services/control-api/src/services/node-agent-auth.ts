@@ -90,6 +90,28 @@ export function agentAuthHeaders(target: AgentRequestTarget, method: string, url
   return { ...legacy(), ...signature };
 }
 
+/**
+ * Agents 2.10.0 and 2.10.1 that have a node key authenticate `POST /api/v1/commands/managed-http`
+ * twice: the second pass finds the nonce the first one claimed and refuses every signed request on
+ * that route as a replay (401 NODE_AUTH_REPLAY), before the handler runs. The shared secret has no
+ * nonce, so it passes both. Fixed in the 2.10.2 agent.
+ */
+export function agentRefusesSignedManagedHttp(version: unknown, nodeAuth: unknown): boolean {
+  return nodeAuth === 1 && typeof version === 'string' && /^2\.10\.[01](?:[-+][0-9A-Za-z.+-]*)?$/.test(version);
+}
+
+/**
+ * The headers of a request that must reach such an agent without a signature: the shared secret
+ * only, which compat and warn mode also send to any node whose key pins are not current. Refused
+ * in enforce mode. The request's own authority (a resource claim the agent confirms with this
+ * server over its signed channel, and its once-only ledger receipt) is unchanged.
+ */
+export function unsignedAgentAuthHeaders(target: AgentRequestTarget, method: string, url: string | URL, reason: string): Record<string, string> {
+  if (nodeAuthMode() === 'enforce') throw new Error('An unsigned request to an agent is refused (NODE_AUTH_MODE=enforce)');
+  if (target.nodeId) recordLegacyUse(target.nodeId, 'outbound', `${method.toUpperCase()} ${pathWithQueryOf(url).split('?')[0]} (${reason})`);
+  return { 'x-node-token': target.legacyToken ?? getNodeManagerSecret() };
+}
+
 /** `fetch` for a node's agent with the authentication headers added. `init.body`, when present, must be a string or bytes. */
 export function agentFetch(target: AgentRequestTarget, url: string | URL, init: RequestInit = {}): Promise<Response> {
   const body = init.body ?? '';

@@ -2,7 +2,8 @@ import type { HiveSkillsTargetPosture, HiveSkillsSyncInput } from '@hivemagnus/m
 import { embermendOperationSchema, embermendNodeCapabilitiesSchema, embermendNativeResultSchema, type EmbermendOperation } from '@hivemagnus/magnus-contracts/embermend';
 import { createHash, randomUUID } from 'node:crypto';
 import { assertLiveExecution } from '../config/rehearsal.js';
-import { agentAuthHeaders, forgetAgentServerKeyPins } from '../services/node-agent-auth.js';
+import { agentAuthHeaders, agentRefusesSignedManagedHttp, forgetAgentServerKeyPins, unsignedAgentAuthHeaders } from '../services/node-agent-auth.js';
+import { nodeAuthMode } from '../services/node-auth-config.js';
 import { MANAGED_CLAIM_HEADER, credentialMutationIdentity, httpIdentity, httpReceiptBody, managedHttpRequestSchema } from '../security/managed-http.js';
 import { nativeCompletionDescriptor, nativeCompletionResourceKey } from '../security/native-completion-registry.js';
 import { COMMAND_COMPLETION_REGISTRY, COMMAND_COMPLETION_REGISTRY_SHA256, commandCompletionDescriptor } from '../security/command-completion-registry.js';
@@ -249,6 +250,12 @@ export function classifyAgentRequestError(error: unknown, dispatched: boolean): 
   return new DispatchOutcomeUnknownError(`no answer from the agent after the request was sent: ${errorText(error)}`, error);
 }
 
+/** Set by this client on one request it must send unsigned; the request hook removes it. Never sent. */
+const UNSIGNED_REQUEST = 'x-magnus-internal-unsigned';
+/** A 2.10.0 or 2.10.1 agent with a node key that this server cannot reach on its managed HTTP route. */
+export const AGENT_MANAGED_HTTP_NEEDS_UPGRADE = 'AGENT_MANAGED_HTTP_NEEDS_UPGRADE';
+type ManagedPing = { version?: unknown; features?: { managedMutations?: number; nodeAuth?: unknown } };
+
 export class NodeApiClient {
   private api: KyInstance;
   private readonly nodeToken: string;
@@ -267,8 +274,12 @@ export class NodeApiClient {
     this.targetNodeId = target.nodeId;
     // Sign the exact bytes of each request for this node; see services/node-agent-auth.ts.
     const authenticate = async ({ request }: { request: Request }): Promise<void> => {
+      const unsigned = request.headers.get(UNSIGNED_REQUEST);
+      request.headers.delete(UNSIGNED_REQUEST);
       const body = request.body ? new Uint8Array(await request.clone().arrayBuffer()) : '';
-      for (const [name, value] of Object.entries(agentAuthHeaders(target, request.method, request.url, body))) request.headers.set(name, value);
+      const headers = unsigned ? unsignedAgentAuthHeaders(target, request.method, request.url, unsigned)
+        : agentAuthHeaders(target, request.method, request.url, body);
+      for (const [name, value] of Object.entries(headers)) request.headers.set(name, value);
     };
     const forgetPinsOnRefusal = ({ response }: AfterResponseState): void => {
       if (response.status === 401 && target.nodeId) forgetAgentServerKeyPins(target.nodeId);
@@ -278,6 +289,30 @@ export class NodeApiClient {
       timeout: options.timeout ?? 15_000,
       hooks: { beforeRequest: [() => assertLiveExecution(), authenticate], afterResponse: [rejectUnprivilegedAgent, forgetPinsOnRefusal] },
     });
+  }
+
+  /**
+   * The headers that make a managed HTTP request authenticate on this agent, decided before the
+   * request is dispatched. Signed, except for a 2.10.0 or 2.10.1 agent with a node key, which refuses
+   * every signed request on that route as its own replay (agentRefusesSignedManagedHttp): it gets
+   * the shared secret alone, as compat mode allows, once a request that runs nothing has shown that
+   * the agent accepts it. Throws when such an agent can accept nothing this server may send.
+   */
+  private async managedHttpHeaders(ping: ManagedPing | undefined): Promise<Record<string, string>> {
+    if (!agentRefusesSignedManagedHttp(ping?.version, ping?.features?.nodeAuth)) return {};
+    const version = String(ping?.version);
+    const remedy = 'Nothing was sent. Upgrade this agent to 2.10.2 or later outside the managed path (see docs/NODE_CREDENTIALS.md).';
+    if (nodeAuthMode() === 'enforce') throw new HttpError(409, AGENT_MANAGED_HTTP_NEEDS_UPGRADE,
+      `Agent ${version} refuses every signed managed request as a replay, and NODE_AUTH_MODE=enforce on the server sends no unsigned one. ${remedy}`);
+    // A GET of the managed route is authenticated and then answered 404 by every agent: it runs nothing.
+    const probe = await this.api.get('commands/managed-http', { retry: 0, timeout: 10_000, throwHttpErrors: false,
+      headers: { [UNSIGNED_REQUEST]: 'probe for an agent that refuses signed managed HTTP' } });
+    await probe.body?.cancel().catch(() => undefined);
+    if (probe.status === 401) throw new HttpError(409, AGENT_MANAGED_HTTP_NEEDS_UPGRADE,
+      `Agent ${version} refuses every signed managed request as a replay, and it enforces its node key, so it refuses the shared secret too. ${remedy}`);
+    if (probe.status !== 404 && probe.status !== 405)
+      throw new Error(`Agent ${version} did not confirm unsigned managed authentication (HTTP ${probe.status}); not dispatched`);
+    return { [UNSIGNED_REQUEST]: 'agent that refuses signed managed HTTP' };
   }
 
   /** All finite native mutations use the same central owner and node execution slot. */
@@ -305,8 +340,9 @@ export class NodeApiClient {
         throw new Error('This enrolled-node mutation lacks a reviewed completion boundary; not dispatched');
       if (admission.payload.coordination?.resourceKey !== nativeCompletionResourceKey(descriptor, this.resourceContext.nodeId))
         throw new Error('Native mutation resource classification differs from its lease');
-      const capability = await this.api.get('ping').json<ApiResponse<{ features?: { managedMutations?: number } }>>();
+      const capability = await this.api.get('ping').json<ApiResponse<ManagedPing>>();
       if (!capability.success || capability.data?.features?.managedMutations !== 1) throw new Error('Node does not support managed mutations; operation not dispatched');
+      const authentication = await this.managedHttpHeaders(capability.data);
       await markResourceDispatched(admission);
       dispatch?.onDispatch();
       const managedRequest = managedHttpRequestSchema.parse({
@@ -314,7 +350,7 @@ export class NodeApiClient {
         commandId: admission.commandId, method, path: '/' + path, body: serialized,
         timeoutSeconds: identity.timeoutSeconds, coordination: admission.payload.coordination,
       });
-      const envelope = await this.api.post('commands/managed-http', { retry: 0, timeout: timeout + 5000,
+      const envelope = await this.api.post('commands/managed-http', { retry: 0, timeout: timeout + 5000, headers: authentication,
         json: managedRequest }).json<ApiResponse<{ response: { status: number; body: string }; receipt: SignedCommandResult }>>();
       if (!envelope.success) throw new Error('Managed mutation response was unsuccessful');
       const { response } = envelope.data;
@@ -673,8 +709,11 @@ export class NodeApiClient {
       commandId: ownership.commandId, method: 'POST', path: '/skills/install', body: serialized,
       timeoutSeconds: ownership.timeoutSeconds, coordination: ownership.coordination, recoveryOnly: true,
     });
+    // Only to pick the authentication; an agent whose ping does not answer gets the usual signed request.
+    const ping = await this.api.get('ping', { retry: 0, timeout: 10_000 }).json<ApiResponse<ManagedPing>>().catch(() => null);
+    const authentication = await this.managedHttpHeaders(ping?.success ? ping.data : undefined);
     const envelope = await this.api.post('commands/managed-http', { retry: 0,
-      timeout: Math.max(this.defaultTimeout, ownership.timeoutSeconds * 1000) + 5000,
+      timeout: Math.max(this.defaultTimeout, ownership.timeoutSeconds * 1000) + 5000, headers: authentication,
       json: managedRequest }).json<ApiResponse<{ response: { status: number; body: string }; receipt: SignedCommandResult }>>();
     if (!envelope.success) throw new Error('Skill publication recovery response was unsuccessful');
     const receipt = await this.verifiedCommandResult(envelope.data.receipt, ownership.commandId);

@@ -1,0 +1,8 @@
+{
+  "summary": "Managed HTTP to an enrolled node whose agent has a node key: 2.10.0 and 2.10.1 agents refused every signed managed request as a replay (NODE_AUTH_REPLAY), which blocked agent upgrades and other managed mutations of those nodes and left their leases unknown. The agent now authenticates a request once, and the server reaches 2.10.0 and 2.10.1 agents with a key without upgrading them first (shared secret on that route only, never in enforce mode). The agent's hermes-cli health check uses the Hermes discovery cache instead of a 2.5-second hermes --version. No migrations and no new settings. Upgrade the server first.",
+  "breaking": false,
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}

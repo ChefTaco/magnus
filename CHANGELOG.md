@@ -7,6 +7,20 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [2.10.2] - 2026-11-14
+
+### Fixed
+
+- Managed HTTP to an enrolled node whose agent has a node key. Agents 2.10.0 and 2.10.1 authenticated `POST /api/v1/commands/managed-http` twice (for `/api/v1/*` and for the route itself), and the second pass refused the nonce the first had just claimed, so every signed managed request answered `401 NODE_AUTH_REPLAY` before anything ran: agent upgrades from the console or `magnus-server agents upgrade`, Embermend, skills and other mutations of such a node failed, and the server kept each lease `unknown`. Nodes that are not enrolled use the direct routes and were not affected, nor were agents without a key.
+  - Agent: one request is authenticated once, however many times the middleware is mounted on its route. A nonce is still accepted once: a replay of the same signed request is refused.
+  - Server: an agent of 2.10.0 or 2.10.1 with a key is reached without upgrading it first. The server checks with an unsigned `GET` of the managed route, which runs nothing, that the agent accepts the shared secret, then sends the managed request with the shared secret only, as `compat` and `warn` allow, and counts the use under `outbound`. The resource claim, fence and ledger receipt still decide what runs. In server `enforce` mode, or when the agent enforces its key, nothing is sent and the request fails as not dispatched with `AGENT_MANAGED_HTTP_NEEDS_UPGRADE`. Other agents get signed requests as before. See `docs/NODE_CREDENTIALS.md`.
+  - A lease left `unknown` by such a refusal is settled as `not-dispatched` from the agent's signed ledger account: by the readiness monitor past the lease deadline, or at once with `magnus-server agents doctor --heal`.
+- Node agent: the `hermes-cli` check of `GET /api/v1/health/check` no longer runs `hermes --version` with a 2.5-second limit, which failed on nodes where that command is slow and so made the agent `degraded` and its upgrade acceptance probe fail. It reads Hermes discovery's cached version probe and answers within 2 seconds: the cached version, or that the binary answers `hermes profile list` (recently, or in a liveness check it starts and shares) while the version probe is pending or ran out of time.
+
+**New environment variables:** None.
+
+**Migration impact:** No datastore migrations.
+
 ## [2.10.1] - 2026-11-14
 
 ### Fixed

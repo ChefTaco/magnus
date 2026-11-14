@@ -50,7 +50,7 @@ vi.mock('./updater/self-updater.js', () => {
 });
 vi.mock('./executors/hermes-manager.js', () => {
   const { Hono } = require('hono');
-  return { hermesRoutes: new Hono() };
+  return { hermesRoutes: new Hono(), hermesCliHealth: async () => ({ ok: true, message: 'Hermes Agent v0.0.0-fixture' }) };
 });
 import { createApp, hermesCliCandidates } from './server.js';
 import type { Hono } from 'hono';

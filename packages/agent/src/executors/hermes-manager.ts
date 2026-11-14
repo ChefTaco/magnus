@@ -449,6 +449,14 @@ type VersionOutcome =
 
 interface VersionProbe {
   fingerprint: string;
+  /** The resolved binary, the Hermes home and the account the probe runs against (its cache key). */
+  real: string;
+  home: string;
+  uid: number;
+  /** When this binary last answered the liveness command (`hermes profile list`). */
+  livenessAt: number | null;
+  /** A liveness command the health check started and others may wait for. */
+  liveness: Promise<boolean> | null;
   /** The command as given and its absolute path, to forget the entry when the binary disappears. */
   command: string;
   absolute: string;
@@ -540,9 +548,14 @@ async function probeVersion(bin: string, home: string, budgetMs: number): Promis
   };
 }
 
-function startVersionProbe(key: string, bin: string, home: string, identity: { absolute: string; fingerprint: string }): VersionProbe {
+function startVersionProbe(key: string, bin: string, home: string, identity: { absolute: string; real: string; fingerprint: string }, uid: number): VersionProbe {
   const probe: VersionProbe = {
     fingerprint: identity.fingerprint,
+    real: identity.real,
+    home,
+    uid,
+    livenessAt: null,
+    liveness: null,
     command: bin,
     absolute: identity.absolute,
     outcome: null,
@@ -605,7 +618,7 @@ async function probeCandidate(bin: string, home: string): Promise<CandidateProbe
     versionProbes.delete(key);
     probe = undefined;
   }
-  probe ??= startVersionProbe(key, bin, home, identity);
+  probe ??= startVersionProbe(key, bin, home, identity, uid);
 
   let outcome = probe.outcome;
   if (!outcome) {
@@ -621,7 +634,60 @@ async function probeCandidate(bin: string, home: string): Promise<CandidateProbe
   if (outcome?.status === 'ok') return { runnable: true, version: outcome.version, versionProbe: 'ok', liveness: null };
 
   const liveness = await runHermesBinary(bin, home, ['profile', 'list'], { env: { COLUMNS: '240' }, timeoutMs: discoveryTuning.livenessTimeoutMs });
+  if (liveness.code === 0) probe.livenessAt = Date.now();
   return { runnable: liveness.code === 0, version: null, versionProbe: outcome?.status ?? 'pending', liveness };
+}
+
+/** A liveness answer this recent still counts for the health check. */
+const HEALTH_LIVENESS_FRESH_MS = 15 * 60_000;
+
+/** The Hermes home a health check probes a binary against when discovery has not probed it yet. */
+function healthHome(command: string): string {
+  const marker = command.indexOf('/.hermes/');
+  return marker > 0 ? command.slice(0, marker + '/.hermes'.length) : resolve(expandHome(DEFAULT_HERMES_HOME));
+}
+
+/**
+ * The `hermes-cli` health check, from the discovery cache: the version probe discovery keeps per
+ * binary (90-second budget, in the background), else a recent or bounded liveness answer. It never
+ * waits longer than `waitMs`, so a Hermes whose version command is slow does not fail the check
+ * (and with it the upgrade acceptance probe, which needs a healthy agent within seconds).
+ */
+export async function hermesCliHealth(command: string, waitMs = 2_000): Promise<{ ok: boolean; message: string }> {
+  const deadline = Date.now() + waitMs;
+  const execution = await ownerExecution(command);
+  if (!execution.ok) return { ok: false, message: execution.reason };
+  const identity = await binaryIdentity(execution.command);
+  if (!identity) return { ok: false, message: 'Hermes CLI not found' };
+  const uid = execution.uid ?? process.geteuid?.() ?? -1;
+  const current = [...versionProbes.values()].filter(probe => probe.real === identity.real && probe.fingerprint === identity.fingerprint && probe.uid === uid
+    && (probe.settledAt === null || Date.now() - probe.settledAt <= discoveryTuning.versionTtlMs));
+  let probe = current.find(entry => entry.outcome?.status === 'ok') ?? current.find(entry => entry.livenessAt !== null) ?? current[0];
+  if (!probe) {
+    const home = healthHome(command);
+    probe = startVersionProbe(`${identity.real}\u0000${home}\u0000${uid}`, command, home, identity, uid);
+  }
+  const entry = probe;
+  const versionState = () => entry.outcome ? `version probe ${entry.outcome.status}` : 'version probe still running';
+  if (entry.outcome?.status === 'ok') return { ok: true, message: entry.outcome.version ?? 'ok' };
+  if (entry.livenessAt !== null && Date.now() - entry.livenessAt <= HEALTH_LIVENESS_FRESH_MS)
+    return { ok: true, message: `runnable (answers profile list); ${versionState()}` };
+  // Whichever proves the binary runs first: its version, or the liveness command (shared by concurrent checks).
+  entry.liveness ??= runHermesBinary(command, entry.home, ['profile', 'list'], { env: { COLUMNS: '240' }, timeoutMs: discoveryTuning.livenessTimeoutMs })
+    .then(result => { if (result.code === 0) entry.livenessAt = Date.now(); return result.code === 0; })
+    .catch(() => false)
+    .finally(() => { entry.liveness = null; });
+  const liveness = entry.liveness;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const answer = await Promise.race([
+    entry.promise.then(outcome => outcome.status === 'ok' ? 'version' as const : liveness.then(live => live ? 'liveness' as const : 'failed' as const)),
+    liveness.then(live => live ? 'liveness' as const : entry.promise.then(outcome => outcome.status === 'ok' ? 'version' as const : 'failed' as const)),
+    new Promise<'waiting'>(done => { timer = setTimeout(() => done('waiting'), Math.max(0, deadline - Date.now())); }),
+  ]).finally(() => clearTimeout(timer));
+  const settled = entry.outcome as VersionOutcome | null;
+  if (answer === 'version' && settled?.status === 'ok') return { ok: true, message: settled.version ?? 'ok' };
+  if (answer === 'liveness') return { ok: true, message: `runnable (answers profile list); ${versionState()}` };
+  return { ok: false, message: answer === 'waiting' ? `${versionState()}; liveness check still running` : `${versionState()}; profile list failed` };
 }
 
 async function discoverRuntimeTarget(requested: { hermesHome: string; hermesBin: string }): Promise<{

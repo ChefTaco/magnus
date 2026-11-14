@@ -9,6 +9,12 @@ import { NonceCache, nodeAudience, pathWithQueryOf, readNodeAuthHeaders, verifyN
 
 const serverNonces = new NonceCache();
 const localDispatch = new WeakSet<Request>();
+/**
+ * Requests this middleware already let through. It is mounted for /api/v1/* and again on the
+ * managed HTTP route, so it runs twice on that route: the second pass must not verify again,
+ * because the nonce the first pass claimed would read as a replay (NODE_AUTH_REPLAY).
+ */
+const authenticated = new WeakSet<Request>();
 let sharedSecretWarnedAt = 0;
 const SELF_SIGNED_ROUTE = '/api/v1/health/check';
 
@@ -55,7 +61,8 @@ export function constantTimeEqual(a: string, b: string): boolean {
  * can be rolled in any order without a flag-day.
  */
 export async function nodeAuthMiddleware(c: Context, next: Next): Promise<Response | void> {
-  if (localDispatch.has(c.req.raw)) { await next(); return; }
+  if (localDispatch.has(c.req.raw) || authenticated.has(c.req.raw)) { await next(); return; }
+  const pass = async (): Promise<void> => { authenticated.add(c.req.raw); await next(); };
   const signature = readNodeAuthHeaders(name => c.req.header(name));
   if (signature === 'MALFORMED') return refused(c, 'NODE_SIGNATURE_INVALID', 'The server signature headers are malformed');
   if (signature) {
@@ -68,7 +75,7 @@ export async function nodeAuthMiddleware(c: Context, next: Next): Promise<Respon
         audiences: [selfAudience(identity.binding.nodeId)], method: c.req.method, pathWithQuery: pathWithQueryOf(c.req.url), body: new Uint8Array() });
       if (!verified.ok) return refused(c, 'NODE_SIGNATURE_INVALID', 'The node signature does not verify');
       if (!serverNonces.claim(signature.keyId, signature.nonce)) return refused(c, 'NODE_AUTH_REPLAY', 'This signed request was already received');
-      await next();
+      await pass();
       return;
     }
     const pinned = identity?.binding.serverKeys.find(key => key.keyId === signature.keyId);
@@ -80,7 +87,7 @@ export async function nodeAuthMiddleware(c: Context, next: Next): Promise<Respon
       if (!verified.ok) return refused(c, verified.reason === 'SKEW' ? 'NODE_AUTH_SKEW' : 'NODE_SIGNATURE_INVALID',
         verified.reason === 'SKEW' ? 'The request timestamp is outside the accepted clock window' : 'The server signature does not verify for this node');
       if (!serverNonces.claim(signature.keyId, signature.nonce)) return refused(c, 'NODE_AUTH_REPLAY', 'This signed request was already received');
-      await next();
+      await pass();
       return;
     }
     // Signed by a key this agent has not pinned (the server's key changed): read the keys again
@@ -111,5 +118,5 @@ export async function nodeAuthMiddleware(c: Context, next: Next): Promise<Respon
     logger.warn(`Shared node secret accepted on ${c.req.method} ${c.req.path}; set NODE_AUTH_MODE=enforce once this node has a key (docs/NODE_CREDENTIALS.md)`);
   }
 
-  await next();
+  await pass();
 }

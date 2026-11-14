@@ -6,6 +6,7 @@ import {
   collectHermesState,
   configureHermes,
   configureHermesDiscoveryForTests,
+  hermesCliHealth,
   hermesInstallationStatus,
   hermesRoutes,
   hermesVersionProbeCountForTests,
@@ -424,5 +425,74 @@ exit 0
     await chmod(bin, 0o755);
     const state = await collectHermesState({ hermesHome: home, hermesBin: bin }, true);
     expect(state.profiles.map((profile) => profile['name'])).toEqual(['default']);
+  });
+});
+
+describe('the hermes-cli health check reads the discovery cache', () => {
+  let root: string;
+  let home: string;
+  let bin: string;
+
+  /** `version` is not a command, `--version` takes `sleepSeconds`, `profile list` answers unless broken. */
+  async function writeHermes(sleepSeconds: string, broken = false): Promise<void> {
+    await mkdir(join(home, 'hermes-agent', 'venv', 'bin'), { recursive: true });
+    await writeFile(bin, `#!/bin/sh
+printf '%s\\n' "$*" >> "$HERMES_HOME/calls"
+if [ "$1" = "version" ]; then echo "error: unknown command 'version'" >&2; exit 2; fi
+if [ "$1" = "--version" ]; then sleep ${sleepSeconds}; ${broken ? 'exit 1' : "echo 'Hermes Agent v0.13.0'; exit 0"}; fi
+if [ "$1" = "profile" ] && [ "$2" = "list" ]; then ${broken ? 'exit 1' : "echo '│ default │ gpt-example │ running │'; exit 0"}; fi
+exit 0
+`, 'utf8');
+    await chmod(bin, 0o755);
+  }
+  const versionCalls = async () => (await readFile(join(home, 'calls'), 'utf8').catch(() => '')).split('\n').filter(call => call === '--version').length;
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'hermes-cli-health-'));
+    // The layout of a user-installed Hermes, so the check derives the same home as discovery.
+    home = join(root, '.hermes');
+    bin = join(home, 'hermes-agent', 'venv', 'bin', 'hermes');
+    configureHermesDiscoveryForTests({ versionWaitMs: 50, versionBudgetMs: 5_000, livenessTimeoutMs: 5_000,
+      homeCandidates: async (requested) => [requested], binCandidates: (requested) => [requested] });
+  });
+
+  afterEach(async () => {
+    await settleHermesVersionProbesForTests();
+    configureHermesDiscoveryForTests();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it('passes within its wait for a Hermes whose --version is slow, from what discovery found, without probing again', async () => {
+    await writeHermes('3');
+    await collectHermesState({ hermesHome: home, hermesBin: bin }, true);
+    const started = Date.now();
+    const health = await hermesCliHealth(bin, 1_000);
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(health).toEqual({ ok: true, message: 'runnable (answers profile list); version probe still running' });
+    expect(await versionCalls()).toBe(1);
+  });
+
+  it('reports the cached version once the probe has settled', async () => {
+    await writeHermes('0.2');
+    await collectHermesState({ hermesHome: home, hermesBin: bin }, true);
+    await settleHermesVersionProbesForTests();
+    expect(await hermesCliHealth(bin)).toEqual({ ok: true, message: 'Hermes Agent v0.13.0' });
+    expect(await versionCalls()).toBe(1);
+  });
+
+  it('before any discovery: starts the shared probe, answers from the liveness command, and starts no second probe', async () => {
+    await writeHermes('3');
+    const started = Date.now();
+    expect(await hermesCliHealth(bin, 1_500)).toEqual({ ok: true, message: 'runnable (answers profile list); version probe still running' });
+    expect(Date.now() - started).toBeLessThan(2_500);
+    expect(await hermesCliHealth(bin, 1_500)).toMatchObject({ ok: true });
+    expect(hermesVersionProbeCountForTests()).toBe(1);
+    expect(await versionCalls()).toBe(1);
+  });
+
+  it('fails for a Hermes that answers neither command, and for a missing one', async () => {
+    await writeHermes('0', true);
+    expect(await hermesCliHealth(bin, 1_500)).toEqual({ ok: false, message: expect.stringContaining('profile list failed') });
+    expect(await hermesCliHealth(join(root, 'missing', 'hermes'), 500)).toMatchObject({ ok: false });
   });
 });

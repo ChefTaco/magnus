@@ -237,6 +237,28 @@ is refused by the server meanwhile (its key was revoked, or the server lost its 
 agent has not pinned the new one), the agent in enforce mode also refuses the server's requests
 until it pins the server key again; rolling back to `compat` restores the shared-secret path.
 
+### Agents 2.10.0 and 2.10.1 on enrolled nodes
+
+An agent of 2.10.0 or 2.10.1 with a bound key authenticates `POST /api/v1/commands/managed-http`
+twice, and its second pass refuses the nonce its first pass claimed: every signed managed request
+(agent upgrades, Embermend, skills and other mutations of an enrolled node) answers
+`401 NODE_AUTH_REPLAY` before anything runs. The 2.10.2 agent authenticates a request once.
+
+A 2.10.2 or later server reaches such an agent without upgrading it first. It reads the agent's
+version and `features.nodeAuth` from its ping, checks with an unsigned `GET` of the managed route
+(authenticated, then answered 404: it runs nothing) that the agent accepts the shared secret, and
+sends that one managed request with the shared secret only, as `compat` and `warn` allow; the use is
+counted under `outbound` in `legacyUse`. The resource claim the agent confirms with the server over
+its own signed channel, the fence and the once-only ledger receipt still decide what runs. When the
+server is in `enforce`, or the agent enforces its key, nothing is sent and the request fails as not
+dispatched with `AGENT_MANAGED_HTTP_NEEDS_UPGRADE`: switch the server to `compat` for the upgrade,
+or upgrade that agent outside the managed path.
+
+A request a 2.10.0 or 2.10.1 agent refused this way left its lease `unknown`. The agent's ledger
+holds no receipt for it, so past the lease deadline the server's readiness monitor settles it as
+`not-dispatched` by itself (at most hourly per node), and `magnus-server agents doctor --heal`
+settles it at once. Both act only on the agent's signed ledger account.
+
 ## Readiness for enforce
 
 `GET /api/v1/node-credentials/summary` (ADMIN, OPERATOR) counts nodes by credential state, sums the

@@ -205,3 +205,40 @@ describe('signed evidence on the agent', () => {
     expect(signing.verifyServerDecision('command-reconciliation', payload, forUs, hmacBad)).toBe(true);
   });
 });
+
+describe('one signed request is verified once, wherever the middleware is mounted', () => {
+  /** As server.ts mounts managed HTTP: authenticated by v1's `*` and again by the route's own mount. */
+  function managedHttpMount(): Hono {
+    const v1 = new Hono();
+    v1.use('*', nodeAuthMiddleware);
+    const app = new Hono();
+    app.route('/api/v1', v1);
+    app.use('/api/v1/commands/managed-http', nodeAuthMiddleware);
+    app.post('/api/v1/commands/managed-http', c => c.json({ success: true }));
+    return app;
+  }
+  const body = '{"commandId":"fixture"}';
+  const post = (app: Hono, headers: Record<string, string>) => app.request('http://localhost/api/v1/commands/managed-http',
+    { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body });
+
+  it('accepts a signed managed request through both mounts (2.10.0 and 2.10.1 refused it as NODE_AUTH_REPLAY), and refuses its replay', async () => {
+    await bind();
+    const app = managedHttpMount();
+    const headers = serverSigned('POST', '/api/v1/commands/managed-http', body);
+    const first = await post(app, headers);
+    expect(first.status).toBe(200);
+    const replay = await post(app, headers);
+    expect(replay.status).toBe(401);
+    expect(((await replay.json()) as { error: { code: string } }).error.code).toBe('NODE_AUTH_REPLAY');
+  });
+
+  it('still refuses a bad signature and, in enforce mode, the shared secret on that route', async () => {
+    await bind();
+    const app = managedHttpMount();
+    const headers = serverSigned('POST', '/api/v1/commands/managed-http', '{"commandId":"other"}');
+    expect((await post(app, headers)).status).toBe(401);
+    expect((await post(app, { 'x-node-token': SECRET })).status).toBe(200);
+    vi.stubEnv('NODE_AUTH_MODE', 'enforce');
+    expect((await post(app, { 'x-node-token': SECRET })).status).toBe(401);
+  });
+});
