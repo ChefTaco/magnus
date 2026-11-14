@@ -44,4 +44,11 @@ describe('agents CLI options', () => {
     expect(() => parseAgentsArgs(['stop'])).toThrow(UsageError);
     expect(() => parseAgentsArgs(['upgrade', '--retry', 'run-1', '--to', '1.2.0'])).toThrow(UsageError);
   });
+
+  it('takes --allow-major for upgrade only, and not with --retry (the run keeps its own)', () => {
+    expect(parseAgentsArgs(['upgrade', '--to', '3.0.1', '--integrity', 'sha512-x', '--allow-major', '--dry-run'])).toMatchObject({ to: '3.0.1', allowMajor: true, dryRun: true });
+    expect(parseAgentsArgs(['upgrade', '--to', '3.0.1'])).not.toHaveProperty('allowMajor');
+    expect(() => parseAgentsArgs(['doctor', '--allow-major'])).toThrow(UsageError);
+    expect(() => parseAgentsArgs(['upgrade', '--retry', 'run-1', '--allow-major'])).toThrow(UsageError);
+  });
 });

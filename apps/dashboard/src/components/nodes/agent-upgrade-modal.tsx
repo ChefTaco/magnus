@@ -217,7 +217,7 @@ export function AgentUpgradeModal({ open, onClose, onFinished }: { open: boolean
             {majorUpgradeCount > 0 && (
               <div className="space-y-1 rounded border border-warning/40 bg-warning/10 px-3 py-2 text-warning" data-testid="agent-upgrade-major-notice">
                 <p>{majorUpgradeCount} agent{majorUpgradeCount === 1 ? ' requires' : 's require'} a manual major-version upgrade to {eligibility.version}. This dialog only upgrades agents within their current major version.</p>
-                <p>Read the <a href="https://github.com/ChefTaco/magnus/blob/main/UPGRADING.md#agents" target="_blank" rel="noreferrer" className="underline">agent upgrade guide</a>, then upgrade each affected node using its installation method. A successful rollout to an older version does not complete this upgrade.</p>
+                <p>Read the <a href="https://github.com/ChefTaco/magnus/blob/main/docs/NODE_CREDENTIALS.md#moving-agents-across-a-major-version" target="_blank" rel="noreferrer" className="underline">cross-major procedure</a>: from the server host, <code>magnus-server agents upgrade --to {eligibility.version} --allow-major</code> moves keyed agents of 2.10.3 or later with a server-signed authorization; older agents take 2.10.3 first. A successful rollout to an older version does not complete this upgrade.</p>
               </div>
             )}
             {eligibleCount === 0 && <p className="text-text-muted" data-testid="agent-upgrade-empty">No agents can be upgraded from this dialog right now. Review the reasons below; Check refreshes the readiness report.</p>}

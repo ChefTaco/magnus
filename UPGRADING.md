@@ -10,7 +10,8 @@ The rules every upgrade path follows:
 
 - **Never across a major version by itself.** `magnus upgrade`, the update notices, the agent
   upgrade action and the `:1` image tags all stay on the current major. A new major needs
-  `--allow-major` (or a new image tag) and its own notes.
+  `--allow-major` (or a new image tag) and its own notes; for agents, `--allow-major` also needs a
+  server-signed authorization that each agent verifies.
 - **Always back up before migrating.** Every path that migrates dumps PostgreSQL first and stops if
   the dump fails. The only exception is a dump you switch off yourself (`MAGNUS_AUTO_MIGRATE_BACKUP=false`).
 - **Every automatic behaviour has a switch.** See [Turning automation off](#turning-automation-off).
@@ -232,6 +233,12 @@ It moves the install into `/opt/magnus-agent/versions/<X>`, links `./current`, i
   since <date>"), unsettled participant work or command leases, or an agent whose local
   managed-enrollment marker the server does not share (see below).
 - From the server host: `magnus-server agents upgrade [--to X.Y.Z] [--nodes a,b] [--canary NODE] [--max-failures N] [--dry-run]`.
+- Across a major version (for example 2.10.x agents to 3.0.x), only from the server host and only
+  when asked: `magnus-server agents upgrade --to 3.0.1 --allow-major` (`allowMajor` in
+  `POST /api/v1/agents/upgrade`). The server signs a one-hour authorization for each node, which a
+  2.10.3 or later agent with a bound node key verifies against the server key it pins. Agents
+  2.10.0 to 2.10.2 take 2.10.3 first (`--to 2.10.3`, an ordinary patch). See
+  [docs/NODE_CREDENTIALS.md](docs/NODE_CREDENTIALS.md#moving-agents-across-a-major-version).
 
 Before anything is touched, the server asks every selected agent for a read-only preflight report
 (`GET /api/v1/agent-upgrade/preflight`, 16 at a time with a short timeout): layout, launcher, writable
@@ -405,7 +412,8 @@ means the request may have run, so it is never repeated automatically.
 | `SELF_UPGRADE_LAUNCHER` | node | The new version needs a newer launcher than the node has. | Run `sudo magnus-agent install-service` once on the node. |
 | `SELF_UPGRADE_ENGINE` | node | The new version does not support the Node.js on this node. | Upgrade Node.js on the node. |
 | `SELF_UPGRADE_PACKAGE` | node | The agent refused to install a package other than magnus-agent. | Report this: the server sent an unexpected package name. |
-| `SELF_UPGRADE_REFUSED` | node | The agent refused the version change. | Read the detail. Crossing a major version is done by hand. |
+| `SELF_UPGRADE_REFUSED` | node | The agent refused the version change. | Read the detail. A major version is crossed with `--allow-major` from 2.10.3 agents on, see docs/NODE_CREDENTIALS.md. |
+| `SELF_UPGRADE_MAJOR_UNAUTHORIZED` | node | The request crosses a major version, and its major-upgrade authorization is missing, expired, for another node, version or tarball, or not signed by a server key this agent pins. | Start the run again from a server that authorizes major upgrades (`magnus-server agents upgrade --allow-major`); the node needs a bound node key (`magnus-agent identity show` reports bound). |
 | `PREFLIGHT_NOT_WRITABLE` | node | The agent cannot write to its install directory. | Run `sudo magnus-agent install-service` again on the node, which repairs ownership. |
 | `PREFLIGHT_DISK_LOW` | node | The install directory has less free space than an upgrade needs. | Free disk space on the node. |
 | `PREFLIGHT_NPM` | node | npm is missing on the node or too old. | Install npm beside the agent's Node.js, or set MAGNUS_AGENT_NPM. |
@@ -417,7 +425,10 @@ means the request may have run, so it is never repeated automatically.
 | `ALREADY_CURRENT` | expected | The node already runs the target version. | Nothing to do. |
 | `SELF_UPGRADE_CURRENT` | expected | The agent already runs the target version. | Nothing to do. |
 | `DOWNGRADE` | expected | The node runs a newer version than the target. | Nothing to do, or choose a newer target. |
-| `MAJOR_VERSION` | expected | The change crosses a major version. | Upgrade this node by hand. |
+| `MAJOR_VERSION` | expected | The change crosses a major version, which a run does only when asked to. | Pass --allow-major (allowMajor in the API) after reading the release notes; see docs/NODE_CREDENTIALS.md, "Moving agents across a major version". |
+| `MAJOR_NEEDS_STEPPING_STONE` | expected | This agent cannot verify a major-upgrade authorization: it is older than 2.10.3. | Upgrade it within its major first (`magnus-server agents upgrade --to 2.10.3` for 2.10.x agents), then run the major upgrade again. |
+| `SERVER_KEY_UNAVAILABLE` | node | The server could not read its signing key, so it cannot sign the major-upgrade authorization. | Check `magnus-server node-auth server-key status` and NODE_AUTH_SERVER_KEY_PATH, then retry the run. |
+| `MAJOR_NEEDS_NODE_KEY` | expected | A major upgrade is authorized with the server key for a node key, and this node has no active node key. | Enroll the node (`magnus-agent enroll --token-file -`) or let it bind its key, then run the major upgrade again. |
 | `NOT_SELF_UPGRADABLE` | expected | This agent cannot upgrade itself: it is too old, or not set up with the launcher. | Run `sudo magnus-agent install-service` once on the node. |
 | `PROTOCOL_TOO_OLD` | expected | The agent speaks an older self-upgrade protocol. | Upgrade this agent by hand. |
 | `SELF_UPGRADE_DISABLED` | expected | An operator switched self-upgrade off on this node, or it runs in a container or the legacy layout. | Nothing to do if that is intended. Otherwise set MAGNUS_AGENT_SELF_UPGRADE=true, pull a newer image, or run `sudo magnus-agent install-service` once. |

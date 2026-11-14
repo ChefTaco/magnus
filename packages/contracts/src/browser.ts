@@ -1122,6 +1122,7 @@ export const upgradeRunSchema = z.object({
   stopRequestedBy: z.string().nullable().optional(),
   retryOf: z.string().nullable().optional(),
   allowRetryReverted: z.boolean().optional(),
+  allowMajor: z.boolean().optional(),
   suspectedRelease: z.string().nullable().optional(),
   excluded: z.array(z.object({
     nodeId: z.string(),
@@ -1144,6 +1145,7 @@ export const upgradeRunSchema = z.object({
 export const upgradeEligibilityQuerySchema = z.object({
   version: z.string().regex(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/).optional(),
   allowRetryReverted: z.enum(['true', 'false']).optional(),
+  allowMajor: z.enum(['true', 'false']).optional(),
 });
 
 // services/control-api/src/routes/agent-upgrades.ts
@@ -1166,6 +1168,7 @@ export const startUpgradeRequestSchema = z.object({
   canaryNodeId: z.string().min(1).max(128).optional(),
   allowPrerelease: z.boolean().optional(),
   allowRetryReverted: z.boolean().optional(),
+  allowMajor: z.boolean().optional(),
   dryRun: z.boolean().optional(),
   maxFailures: z.number().int().min(1).max(1000).optional(),
 }).strict();
@@ -3101,7 +3104,8 @@ export const UPGRADE_REMEDIES = {
   SELF_UPGRADE_LAUNCHER: { class: 'node', suspectable: true, cause: 'The new version needs a newer launcher than the node has.', remedy: 'Run `sudo magnus-agent install-service` once on the node.' },
   SELF_UPGRADE_ENGINE: { class: 'node', suspectable: true, cause: 'The new version does not support the Node.js on this node.', remedy: 'Upgrade Node.js on the node.' },
   SELF_UPGRADE_PACKAGE: { class: 'node', suspectable: true, cause: 'The agent refused to install a package other than magnus-agent.', remedy: 'Report this: the server sent an unexpected package name.' },
-  SELF_UPGRADE_REFUSED: { class: 'node', suspectable: true, cause: 'The agent refused the version change.', remedy: 'Read the detail. Crossing a major version is done by hand.' },
+  SELF_UPGRADE_REFUSED: { class: 'node', suspectable: true, cause: 'The agent refused the version change.', remedy: 'Read the detail. A major version is crossed with `--allow-major` from 2.10.3 agents on, see docs/NODE_CREDENTIALS.md.' },
+  SELF_UPGRADE_MAJOR_UNAUTHORIZED: { class: 'node', cause: 'The request crosses a major version, and its major-upgrade authorization is missing, expired, for another node, version or tarball, or not signed by a server key this agent pins.', remedy: 'Start the run again from a server that authorizes major upgrades (`magnus-server agents upgrade --allow-major`); the node needs a bound node key (`magnus-agent identity show` reports bound).' },
   PREFLIGHT_NOT_WRITABLE: { class: 'node', cause: 'The agent cannot write to its install directory.', remedy: 'Run `sudo magnus-agent install-service` again on the node, which repairs ownership.' },
   PREFLIGHT_DISK_LOW: { class: 'node', cause: 'The install directory has less free space than an upgrade needs.', remedy: 'Free disk space on the node.' },
   PREFLIGHT_NPM: { class: 'node', cause: 'npm is missing on the node or too old.', remedy: 'Install npm beside the agent\'s Node.js, or set MAGNUS_AGENT_NPM.' },
@@ -3116,7 +3120,10 @@ export const UPGRADE_REMEDIES = {
   ALREADY_CURRENT: { class: 'node', informational: true, cause: 'The node already runs the target version.', remedy: 'Nothing to do.' },
   SELF_UPGRADE_CURRENT: { class: 'node', informational: true, cause: 'The agent already runs the target version.', remedy: 'Nothing to do.' },
   DOWNGRADE: { class: 'node', informational: true, cause: 'The node runs a newer version than the target.', remedy: 'Nothing to do, or choose a newer target.' },
-  MAJOR_VERSION: { class: 'node', informational: true, cause: 'The change crosses a major version.', remedy: 'Upgrade this node by hand.' },
+  MAJOR_VERSION: { class: 'node', informational: true, cause: 'The change crosses a major version, which a run does only when asked to.', remedy: 'Pass --allow-major (allowMajor in the API) after reading the release notes; see docs/NODE_CREDENTIALS.md, "Moving agents across a major version".' },
+  MAJOR_NEEDS_STEPPING_STONE: { class: 'node', informational: true, cause: 'This agent cannot verify a major-upgrade authorization: it is older than 2.10.3.', remedy: 'Upgrade it within its major first (`magnus-server agents upgrade --to 2.10.3` for 2.10.x agents), then run the major upgrade again.' },
+  SERVER_KEY_UNAVAILABLE: { class: 'node', cause: 'The server could not read its signing key, so it cannot sign the major-upgrade authorization.', remedy: 'Check `magnus-server node-auth server-key status` and NODE_AUTH_SERVER_KEY_PATH, then retry the run.' },
+  MAJOR_NEEDS_NODE_KEY: { class: 'node', informational: true, cause: 'A major upgrade is authorized with the server key for a node key, and this node has no active node key.', remedy: 'Enroll the node (`magnus-agent enroll --token-file -`) or let it bind its key, then run the major upgrade again.' },
   NOT_SELF_UPGRADABLE: { class: 'node', informational: true, cause: 'This agent cannot upgrade itself: it is too old, or not set up with the launcher.', remedy: 'Run `sudo magnus-agent install-service` once on the node.' },
   PROTOCOL_TOO_OLD: { class: 'node', informational: true, cause: 'The agent speaks an older self-upgrade protocol.', remedy: 'Upgrade this agent by hand.' },
   SELF_UPGRADE_DISABLED: { class: 'node', informational: true, cause: 'An operator switched self-upgrade off on this node, or it runs in a container or the legacy layout.', remedy: 'Nothing to do if that is intended. Otherwise set MAGNUS_AGENT_SELF_UPGRADE=true, pull a newer image, or run `sudo magnus-agent install-service` once.' },

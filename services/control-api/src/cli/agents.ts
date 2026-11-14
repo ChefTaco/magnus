@@ -30,6 +30,11 @@ Options:
   --canary NODE         Upgrade this node first (default: the first eligible one)
   --max-failures N      Release failures that stop this run (default: MAGNUS_AGENT_UPGRADE_MAX_FAILURES)
   --allow-prerelease    Required for a prerelease version such as 1.2.0-rc.1
+  --allow-major         Also move agents of another major version (--to 3.x for 2.10.x agents).
+                        Each one gets a request signed with the server key for that node, the
+                        version it runs, the target and its integrity, valid one hour; agents
+                        older than 2.10.3 are listed as needing 2.10.3 first. Without it a major
+                        change is left out as MAJOR_VERSION. See docs/NODE_CREDENTIALS.md.
   --retry-reverted      Also offer nodes that already reverted this version
   --retry RUN_ID        Retry the nodes of a run that were not upgraded
   --acknowledge-suspicion  With --retry: also retry older agents after a run that stopped on their ambiguous answers
@@ -58,6 +63,7 @@ interface AgentsOptions {
   nodes?: string[];
   canary?: string;
   allowPrerelease?: true;
+  allowMajor?: true;
   retryReverted?: true;
   acknowledgeSuspicion?: true;
   retry?: string;
@@ -101,6 +107,7 @@ export function parseAgentsArgs(args: readonly string[]): AgentsOptions | 'help'
     else if (name === '--canary') options.canary = value();
     else if (name === '--retry') options.retry = value();
     else if (name === '--allow-prerelease') options.allowPrerelease = true;
+    else if (name === '--allow-major' && sub === 'upgrade') options.allowMajor = true;
     else if (name === '--retry-reverted') options.retryReverted = true;
     else if (name === '--acknowledge-suspicion') options.acknowledgeSuspicion = true;
     else if (name === '--dry-run') options.dryRun = true;
@@ -114,8 +121,8 @@ export function parseAgentsArgs(args: readonly string[]): AgentsOptions | 'help'
     else throw new UsageError(`unknown option ${name}`);
   }
   if (options.nodes?.length === 0) throw new UsageError('--nodes needs at least one node');
-  if (options.retry && (options.to || options.integrity || options.nodes || options.dryRun))
-    throw new UsageError('--retry reuses the version, integrity and nodes of that run; drop --to, --integrity, --nodes and --dry-run');
+  if (options.retry && (options.to || options.integrity || options.nodes || options.dryRun || options.allowMajor))
+    throw new UsageError('--retry reuses the version, integrity, nodes and --allow-major of that run; drop --to, --integrity, --nodes, --allow-major and --dry-run');
   return options;
 }
 
@@ -246,20 +253,22 @@ export async function commandAgents(args: readonly string[]): Promise<number> {
         }
       };
       if (options.dryRun) {
-        const report = await service.checkUpgrade({ version: release.version, integrity: release.integrity, ...optional("nodeIds", nodeIds), deps, everyOnlineNode: false, ...optional("allowRetryReverted", options.retryReverted) });
+        const report = await service.checkUpgrade({ version: release.version, integrity: release.integrity, ...optional("nodeIds", nodeIds), deps, everyOnlineNode: false, ...optional("allowRetryReverted", options.retryReverted), ...optional("allowMajor", options.allowMajor) });
         showCandidates(report.nodes);
         for (const node of report.nodes) {
           if (!node.eligible && node.code && !upgradeRemedy(node.code).informational) console.log(`    ${node.name}: ${node.code}: ${node.remedy}`);
           if (node.preflight?.status === 'unavailable') console.log(`    ${node.name}: preflight unavailable (${node.preflight.detail ?? 'older agent'}); heartbeat data was used`);
         }
-        console.log(`Dry run: ${report.eligible} of ${report.nodes.length} agent(s) would be upgraded.`);
+        const stepping = report.nodes.filter(node => node.code === 'MAJOR_NEEDS_STEPPING_STONE');
+        if (stepping.length) console.log(`Needs a stepping stone first: ${stepping.map(node => `${node.name} (${node.version} -> ${service.steppingStone(node.version)})`).join(', ')}`);
+        console.log(`Dry run: ${report.eligible} of ${report.nodes.length} agent(s) would be upgraded${options.allowMajor ? ' (major upgrades authorized)' : ''}.`);
         return 0;
       }
       try {
-        started = await service.startUpgradeRun({ version: release.version, integrity: release.integrity, ...optional("nodeIds", nodeIds), ...optional("canaryNodeId", canaryNodeId), ...optional("allowPrerelease", options.allowPrerelease), ...optional("allowRetryReverted", options.retryReverted), actorId: 'system:magnus-server-cli', deps, ...(options.maxFailures ? { maxFailures: options.maxFailures } : {}) });
+        started = await service.startUpgradeRun({ version: release.version, integrity: release.integrity, ...optional("nodeIds", nodeIds), ...optional("canaryNodeId", canaryNodeId), ...optional("allowPrerelease", options.allowPrerelease), ...optional("allowRetryReverted", options.retryReverted), ...optional("allowMajor", options.allowMajor), actorId: 'system:magnus-server-cli', deps, ...(options.maxFailures ? { maxFailures: options.maxFailures } : {}) });
       } catch (error) {
         if ((error as { code?: unknown }).code !== 'NO_ELIGIBLE_AGENTS') throw error;
-        const candidates = await service.listUpgradeCandidates(release.version, nodeIds, { ...optional("allowRetryReverted", options.retryReverted) });
+        const candidates = await service.listUpgradeCandidates(release.version, nodeIds, { ...optional("allowRetryReverted", options.retryReverted), ...optional("allowMajor", options.allowMajor) });
         showCandidates(candidates);
         console.log('Nothing to upgrade.');
         return candidates.some(candidate => candidate.reason !== 'already on this version') ? 1 : 0;

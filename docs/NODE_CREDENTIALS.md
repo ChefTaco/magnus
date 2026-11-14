@@ -56,11 +56,13 @@ the server and on the agent. Upgrade in this order:
    and `PENDING_BINDINGS` are worth clearing too, and the readiness probe reports them in `warn`.
 4. **Remove `NODE_AUTH_MODE` from the server's environment** (or set `enforce`) and upgrade the server
    to 3.0.0 (`magnus upgrade --allow-major`). It applies no migration.
-5. **Then the agents.** A 2.10.2 agent with a key keeps working with a 3.0.0 server in enforce mode
-   (see the table below), so there is no hurry. Moving it to 3.0.0 crosses a major version, which no
-   automatic path does: the Nodes page's **Upgrade agents** and `magnus-server agents upgrade` list
-   the node as `MAJOR_VERSION`, and a 2.10.2 agent refuses the request (`SELF_UPGRADE_REFUSED`).
-   Upgrade such agents by hand on the node; new nodes install 3.0.0 directly and enroll with a token.
+5. **Then the agents.** A 2.10.2 agent with a key keeps working with a 3.0.x server in enforce mode
+   (see the table below), so there is no hurry. Moving it to 3.0.x crosses a major version: from
+   3.0.1 the server does it with `magnus-server agents upgrade --allow-major`, by way of the 2.10.3
+   stepping stone (see [Moving agents across a major version](#moving-agents-across-a-major-version)).
+   Without `--allow-major` the Nodes page's **Upgrade agents** and `magnus-server agents upgrade` list
+   the node as `MAJOR_VERSION`, and an agent before 2.10.3 refuses any major (`SELF_UPGRADE_REFUSED`).
+   New nodes install 3.0.x directly and enroll with a token.
    A 3.0.0 agent enforces by default too: it accepts only the server's signature on its API and
    sends only its own. Two things need a 3.0.0 agent on the node: the two-ADMIN
    [scheduler-source settlement](#settling-a-scheduler-source), and pinning a staged server key from
@@ -106,10 +108,68 @@ enrollment token and run `magnus-agent enroll --token-file -` on the host ([New 
 |---|---|---|---|
 | 3.0.0 (enforce) | 3.0.0 | yes | Signatures only, both ways |
 | 3.0.0 (enforce) | 2.10.2 with a key | yes | The agent signs and also sends the shared secret; the server goes by the signature and ignores the secret. The server signs only; the agent pins its key. Evidence carries the node signature next to the HMAC |
+| 3.0.1 (enforce) | 2.10.3 with a key | yes | As 2.10.2, and it accepts a major upgrade the server authorized for it (`--allow-major`, see [Moving agents across a major version](#moving-agents-across-a-major-version)) |
 | 3.0.0 (enforce) | 2.10.0 or 2.10.1 with a key | no (guard) | Its managed HTTP route refuses every signed request; upgrade it first (`AGENTS_NEED_UPGRADE`) |
 | 3.0.0 (enforce) | 2.9.x or a node without a key | no (guard) | It has only the shared secret (`NODES_WITHOUT_KEY`) |
 | 3.0.0 (explicit compat) | any of the above | yes | As 2.10.2 does |
 | 2.10.2 (compat) | 3.0.0 | yes | The agent signs only; 2.10.2 verifies the signature and signs its own requests and decisions, which the agent accepts. A 3.0.0 agent upgraded from 2.10.x keeps its shared keys in `.env`, so its HMACs still verify too |
+
+## Moving agents across a major version
+
+3.0.0 had no supported way to move an existing agent from 2.10.x to 3.0.x: the managed upgrade
+stays within a major, and a 2.10.2 agent refuses a major request. From 3.0.1 the server can
+authorize it for each node, and from 2.10.3 the agent can verify that authorization.
+
+**The authorization.** With `--allow-major` (`allowMajor` in `POST /api/v1/agents/upgrade`), the
+server adds to each request that crosses a major version a `majorAuthorization`: an expiry one hour
+ahead and an Ed25519 signature with its server key (authorization kind `agent-major-upgrade`, the
+same envelope as every [server-signed decision](#signed-evidence)) over
+
+```text
+{"domain":"magnus.agent-major-upgrade.v1","version":1,"nodeId":…,"packageName":"@hivemagnus/magnus-agent",
+ "from":<the version the agent runs>,"to":<the target>,"integrity":<the tarball's sha512>,"expiresAt":<ms>}
+```
+
+with the node id inside the signed bytes. The agent rebuilds this payload from what it knows (its
+own node id from its key binding, the version it runs, the requested version and integrity) and
+verifies it against a server key it pins. So a signature made for another node, another version
+change or another tarball does not verify, an expired one or one valid for more than 24 hours is
+refused, and the shared node secret plays no part: a node without a bound key cannot take a major
+upgrade this way. Once accepted, the upgrade is an ordinary one: the exact integrity, the provenance
+check, the trial and the automatic switch-back all apply. Each run records `allowMajor` and the nodes
+it moves across the major in its `agent.upgrade_run.started` audit event.
+
+| Agent | `--allow-major` run lists it as | Next step |
+|---|---|---|
+| 2.10.3 or later of an older major, with an active key | eligible | It gets the authorization |
+| 2.10.0 to 2.10.2 | `MAJOR_NEEDS_STEPPING_STONE` | `magnus-server agents upgrade --to 2.10.3` first (an ordinary patch) |
+| 2.10.3, no active node key | `MAJOR_NEEDS_NODE_KEY` | Enroll the node, or let it bind its key |
+| any, without `--allow-major` | `MAJOR_VERSION` | Pass `--allow-major` |
+
+An agent answers `SELF_UPGRADE_REFUSED` to a major request without an authorization (every agent
+before 2.10.3 does to any major) and `SELF_UPGRADE_MAJOR_UNAUTHORIZED` to an authorization that does
+not hold. On npm, 2.10.3 is published with the dist-tag `maintenance-2.10`; `latest` stays on 3.0.x.
+
+**The procedure** for a 2.10.2 fleet whose server already runs 3.0.1 (steps 1 to 4 of
+[Upgrading to 3.0.0](#upgrading-to-300) apply unchanged), on the server host:
+
+```bash
+# 1. who can take which step (read only)
+magnus-server agents upgrade --to 3.0.1 --allow-major --dry-run
+# 2. the stepping stone: 2.10.x agents to 2.10.3, a patch within their major
+magnus-server agents upgrade --to 2.10.3 --dry-run
+magnus-server agents upgrade --to 2.10.3
+# 3. across the major, canary first as in any run
+magnus-server agents upgrade --to 3.0.1 --allow-major --dry-run
+magnus-server agents upgrade --to 3.0.1 --allow-major
+```
+
+Without `--integrity` the server reads each version's integrity from the registry
+(`MAGNUS_UPDATE_REGISTRY`); pass it explicitly for offline installs. A node whose trial fails switches
+back to 2.10.3 by itself. Rotate the server key only after the agents are on 3.0.x: a 2.10.x agent
+pins a staged key only when it restarts, and an authorization signed with a key the agent does not
+pin is refused. A 3.0.1 agent verifies the same authorization, so the next major can be crossed the
+same way.
 
 ## What happens to existing nodes
 

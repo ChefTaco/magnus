@@ -756,7 +756,7 @@ export class NodeApiClient {
   // ── Agent self-upgrade ──
 
   /** Stage an exact agent version; the agent restarts into it through its launcher. */
-  async upgradeAgent(request: { version: string; integrity: string; requestId: string; packageName: string }): Promise<ApiResponse<{
+  async upgradeAgent(request: { version: string; integrity: string; requestId: string; packageName: string; majorAuthorization?: { expiresAt: number; serverSignature: unknown } }): Promise<ApiResponse<{
     accepted: boolean; from: string; to: string; integrity: string; requestId: string; restartInSeconds: number;
   }>> {
     // Every failure is typed: NotDispatchedError (node untouched), AgentResponseError
