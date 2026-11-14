@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { access, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, readdir, realpath, stat, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -414,26 +414,239 @@ function providersFromConfiguration(config: string, configuration: HermesNodeSta
   }];
 }
 
+/**
+ * Discovery timing. `version`/`--version` can be far slower than every other
+ * Hermes command (some releases spend most of a minute of CPU on it), so the
+ * probe gets its own budget, runs once per binary change, and discovery waits
+ * for it only briefly before it falls back to a cheap liveness command.
+ */
+interface HermesDiscoveryTuning {
+  /** Total time for `hermes version` and then `hermes --version`. */
+  versionBudgetMs: number;
+  /** How long one discovery waits for a probe that has not settled yet. */
+  versionWaitMs: number;
+  /** Timeout of the liveness command (`hermes profile list`). */
+  livenessTimeoutMs: number;
+  /** A settled probe is repeated after this long even if the binary looks unchanged. */
+  versionTtlMs: number;
+  homeCandidates: (requestedHome: string) => Promise<string[]>;
+  binCandidates: (requestedBin: string, home: string) => string[];
+}
+
+const DEFAULT_DISCOVERY_TUNING: HermesDiscoveryTuning = {
+  versionBudgetMs: 90_000,
+  versionWaitMs: 10_000,
+  livenessTimeoutMs: 15_000,
+  versionTtlMs: 24 * 60 * 60_000,
+  homeCandidates,
+  binCandidates,
+};
+let discoveryTuning: HermesDiscoveryTuning = { ...DEFAULT_DISCOVERY_TUNING };
+
+type VersionOutcome =
+  | { status: 'ok'; version: string | null }
+  | { status: 'failed' | 'timeout'; detail: string };
+
+interface VersionProbe {
+  fingerprint: string;
+  /** The command as given and its absolute path, to forget the entry when the binary disappears. */
+  command: string;
+  absolute: string;
+  outcome: VersionOutcome | null;
+  settledAt: number | null;
+  /** A discovery reported this binary before the probe settled: tell listeners when it does. */
+  reportedPending: boolean;
+  promise: Promise<VersionOutcome>;
+}
+
+const MAX_VERSION_PROBES = 64;
+const versionProbes = new Map<string, VersionProbe>();
+const versionProbeListeners = new Set<() => void>();
+
+/** Called when a version probe that discovery stopped waiting for has settled. */
+export function onHermesVersionProbeSettled(listener: () => void): () => void {
+  versionProbeListeners.add(listener);
+  return () => { versionProbeListeners.delete(listener); };
+}
+
+/** Forget every cached version probe (after Magnus installs, updates or removes Hermes). */
+export function forgetHermesVersionProbes(): void {
+  versionProbes.clear();
+}
+
+/** Test hook: override discovery timing and candidates; call with no argument to restore the defaults. */
+export function configureHermesDiscoveryForTests(overrides?: Partial<HermesDiscoveryTuning>): void {
+  discoveryTuning = { ...DEFAULT_DISCOVERY_TUNING, ...overrides };
+  versionProbes.clear();
+  stateCache = null;
+}
+
+/** Test hook: wait until every running version probe has settled. */
+export async function settleHermesVersionProbesForTests(): Promise<void> {
+  await Promise.all([...versionProbes.values()].map((probe) => probe.promise));
+}
+
+/** Test hook: how many version probes are cached. */
+export function hermesVersionProbeCountForTests(): number {
+  return versionProbes.size;
+}
+
+async function findExecutable(command: string): Promise<string | null> {
+  if (command.includes('/')) return resolve(command);
+  for (const entry of (process.env['PATH'] ?? '').split(':')) {
+    if (!entry.startsWith('/')) continue;
+    const candidate = join(entry, command);
+    try {
+      await access(candidate, constants.X_OK);
+      if ((await stat(candidate)).isFile()) return candidate;
+    } catch { /* next entry */ }
+  }
+  return null;
+}
+
+/** The resolved binary and what identifies its current contents, or null when it does not exist. */
+async function binaryIdentity(command: string): Promise<{ absolute: string; real: string; fingerprint: string } | null> {
+  const absolute = await findExecutable(command);
+  if (!absolute) return null;
+  try {
+    const real = await realpath(absolute);
+    const info = await stat(real);
+    if (!info.isFile()) return null;
+    return { absolute, real, fingerprint: `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}` };
+  } catch {
+    return null;
+  }
+}
+
+function forgetProbesFor(command: string, absolute: string | null): void {
+  for (const [key, probe] of versionProbes) {
+    if (probe.command === command || (absolute && probe.absolute === absolute)) versionProbes.delete(key);
+  }
+}
+
+async function probeVersion(bin: string, home: string, budgetMs: number): Promise<VersionOutcome> {
+  const deadline = Date.now() + budgetMs;
+  let last: CommandResult | null = null;
+  for (const args of [['version'], ['--version']]) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    const result = await runHermesBinary(bin, home, args, { timeoutMs: remaining });
+    if (result.code === 0) return { status: 'ok', version: firstLine(result.stdout || result.stderr) };
+    last = result;
+  }
+  return {
+    status: !last || last.code === 124 ? 'timeout' : 'failed',
+    detail: redact(firstLine(last?.stderr || last?.stdout || '') ?? 'Hermes version probe ran out of time'),
+  };
+}
+
+function startVersionProbe(key: string, bin: string, home: string, identity: { absolute: string; fingerprint: string }): VersionProbe {
+  const probe: VersionProbe = {
+    fingerprint: identity.fingerprint,
+    command: bin,
+    absolute: identity.absolute,
+    outcome: null,
+    settledAt: null,
+    reportedPending: false,
+    promise: Promise.resolve({ status: 'timeout', detail: 'not started' }),
+  };
+  probe.promise = probeVersion(bin, home, discoveryTuning.versionBudgetMs)
+    .catch((error: unknown): VersionOutcome => ({ status: 'failed', detail: error instanceof Error ? error.message : String(error) }))
+    .then((outcome) => {
+      probe.outcome = outcome;
+      probe.settledAt = Date.now();
+      if (probe.reportedPending && versionProbes.get(key) === probe) {
+        for (const listener of versionProbeListeners) {
+          try { listener(); } catch { /* a listener failure must not affect discovery */ }
+        }
+      }
+      return outcome;
+    });
+  if (versionProbes.size >= MAX_VERSION_PROBES) {
+    const oldest = versionProbes.keys().next().value;
+    if (oldest !== undefined) versionProbes.delete(oldest);
+  }
+  versionProbes.set(key, probe);
+  return probe;
+}
+
+type VersionProbeState = 'ok' | 'pending' | 'failed' | 'timeout' | 'not_found' | 'refused';
+
+interface CandidateProbe {
+  runnable: boolean;
+  version: string | null;
+  versionProbe: VersionProbeState;
+  /** `hermes profile list` output when it was run as the liveness check. */
+  liveness: CommandResult | null;
+}
+
+/**
+ * Whether `bin` runs against `home`. The version probe is cached per resolved
+ * binary, its contents, the home and the account it runs as. When the probe
+ * fails, times out or is still running, a trusted binary that answers the
+ * liveness command still counts as runnable, with no version.
+ */
+async function probeCandidate(bin: string, home: string): Promise<CandidateProbe> {
+  const execution = await ownerExecution(bin, { home });
+  if (!execution.ok) {
+    if (execution.code === 127) forgetProbesFor(bin, bin.includes('/') ? resolve(bin) : null);
+    return { runnable: false, version: null, versionProbe: execution.code === 127 ? 'not_found' : 'refused', liveness: null };
+  }
+  const identity = await binaryIdentity(execution.command);
+  if (!identity) {
+    forgetProbesFor(bin, bin.includes('/') ? resolve(bin) : null);
+    return { runnable: false, version: null, versionProbe: 'not_found', liveness: null };
+  }
+  const uid = execution.uid ?? process.geteuid?.() ?? -1;
+  const key = `${identity.real}\u0000${home}\u0000${uid}`;
+  let probe = versionProbes.get(key);
+  if (probe && (probe.fingerprint !== identity.fingerprint
+    || (probe.settledAt !== null && Date.now() - probe.settledAt > discoveryTuning.versionTtlMs))) {
+    versionProbes.delete(key);
+    probe = undefined;
+  }
+  probe ??= startVersionProbe(key, bin, home, identity);
+
+  let outcome = probe.outcome;
+  if (!outcome) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    outcome = await Promise.race([
+      probe.promise,
+      new Promise<null>((done) => { timer = setTimeout(() => done(null), discoveryTuning.versionWaitMs); }),
+    ]);
+    clearTimeout(timer);
+    // This discovery reports the binary without its version: say when the probe has settled.
+    if (!outcome) probe.reportedPending = true;
+  }
+  if (outcome?.status === 'ok') return { runnable: true, version: outcome.version, versionProbe: 'ok', liveness: null };
+
+  const liveness = await runHermesBinary(bin, home, ['profile', 'list'], { env: { COLUMNS: '240' }, timeoutMs: discoveryTuning.livenessTimeoutMs });
+  return { runnable: liveness.code === 0, version: null, versionProbe: outcome?.status ?? 'pending', liveness };
+}
+
 async function discoverRuntimeTarget(requested: { hermesHome: string; hermesBin: string }): Promise<{
   requested: { hermesHome: string; hermesBin: string };
   resolved: { home: string; bin: string };
-  versionResult: CommandResult;
-  fallbackVersion: CommandResult | null;
+  runnable: boolean;
+  version: string | null;
+  versionProbe: VersionProbeState;
+  liveness: CommandResult | null;
   homeDetected: boolean;
 }> {
   let firstHomeOnly: string | null = null;
-  for (const home of await homeCandidates(requested.hermesHome)) {
+  for (const home of await discoveryTuning.homeCandidates(requested.hermesHome)) {
     const homeDetected = await looksLikeHermesHome(home);
     if (homeDetected && !firstHomeOnly) firstHomeOnly = home;
-    for (const bin of binCandidates(requested.hermesBin, home)) {
-      const versionResult = await runHermesBinary(bin, home, ['version'], { timeoutMs: 10_000 });
-      const fallbackVersion = versionResult.code === 0 ? null : await runHermesBinary(bin, home, ['--version'], { timeoutMs: 10_000 });
-      if (versionResult.code === 0 || fallbackVersion?.code === 0) {
+    for (const bin of discoveryTuning.binCandidates(requested.hermesBin, home)) {
+      const candidate = await probeCandidate(bin, home);
+      if (candidate.runnable) {
         return {
           requested: { hermesHome: home, hermesBin: bin },
           resolved: { home, bin },
-          versionResult,
-          fallbackVersion,
+          runnable: true,
+          version: candidate.version,
+          versionProbe: candidate.versionProbe,
+          liveness: candidate.liveness,
           homeDetected,
         };
       }
@@ -445,8 +658,10 @@ async function discoverRuntimeTarget(requested: { hermesHome: string; hermesBin:
   return {
     requested: { hermesHome: home, hermesBin: bin },
     resolved: { home, bin },
-    versionResult: { code: 127, stdout: '', stderr: 'Hermes binary not found' },
-    fallbackVersion: null,
+    runnable: false,
+    version: null,
+    versionProbe: 'not_found',
+    liveness: null,
     homeDetected: Boolean(firstHomeOnly),
   };
 }
@@ -542,6 +757,11 @@ async function readMagnusState(home: string): Promise<{ routerBaseUrl?: string }
   }
 }
 
+/** A Hermes profile name. Hidden entries such as `profiles/.deleted` are not profiles. */
+function isProfileName(name: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(name);
+}
+
 function cleanCell(text: string): string {
   return text.replace(/\s+/g, ' ').replace(/…/g, '').trim();
 }
@@ -556,7 +776,7 @@ function parseProfileListText(text: string, home: string): Array<Record<string, 
       : cleanCell(line).split(/\s{2,}/);
     const nameCell = cells[0] ?? '';
     const name = nameCell.replace(/^[*◆◇•]\s*/, '').replace(/\s+\(default\)$/i, '').split(/\s+/)[0] ?? '';
-    if (!name || name.includes(':') || !/^[A-Za-z0-9_.-]+$/.test(name)) continue;
+    if (!name || name.includes(':') || !isProfileName(name)) continue;
     profiles.push({
       name,
       profileHome: join(home, 'profiles', name),
@@ -636,7 +856,7 @@ async function profilesFromHome(home: string): Promise<Array<Record<string, unkn
   try {
     const entries = await readdir(profilesDir, { withFileTypes: true });
     return entries
-      .filter((entry) => entry.isDirectory() && /^[A-Za-z0-9_.-]+$/.test(entry.name))
+      .filter((entry) => entry.isDirectory() && isProfileName(entry.name))
       .map((entry) => ({
         name: entry.name,
         profileHome: join(profilesDir, entry.name),
@@ -770,24 +990,26 @@ export async function collectHermesState(
   const envPath = join(resolved.home, '.env');
   const configPresent = await exists(configPath);
   const config = configPresent ? await readFile(configPath, 'utf8') : '';
-  const versionResult = runtime.versionResult;
-  const fallbackVersion = runtime.fallbackVersion;
   const homeProfiles = await profilesFromHome(resolved.home);
-  const installed = versionResult.code === 0 || fallbackVersion?.code === 0 || runtime.homeDetected || configPresent || homeProfiles.length > 0;
   // A Hermes home without a working binary is leftover data, not a usable installation.
-  const runnable = versionResult.code === 0 || fallbackVersion?.code === 0;
-  const version = runnable ? firstLine(versionResult.stdout || fallbackVersion?.stdout || versionResult.stderr) : null;
+  const runnable = runtime.runnable;
+  const installed = runnable || runtime.homeDetected || configPresent || homeProfiles.length > 0;
+  const version = runnable ? runtime.version : null;
   const gatewayResult = runnable ? await runHermes(runtime.requested, ['gateway', 'status']) : null;
   const profileListResult = runnable ? await runHermes(runtime.requested, ['profile', 'list', '--json'], 15_000) : null;
   let profiles: Array<Record<string, unknown>> = [];
   if (profileListResult?.code === 0 && profileListResult.stdout.trim()) {
     try {
       const parsed = JSON.parse(profileListResult.stdout);
-      if (Array.isArray(parsed)) profiles = parsed.slice(0, 50).filter((entry): entry is Record<string, unknown> => typeof entry === 'object' && entry !== null);
+      if (Array.isArray(parsed)) {
+        profiles = parsed.filter((entry): entry is Record<string, unknown> => typeof entry === 'object' && entry !== null)
+          .filter((entry) => typeof entry['name'] !== 'string' || isProfileName(entry['name'])).slice(0, 50);
+      }
     } catch { /* fall through with empty profiles */ }
   }
   if (profiles.length === 0 && runnable) {
-    const textResult = await runHermes(runtime.requested, ['profile', 'list'], 15_000);
+    // Discovery may already have run `profile list` as its liveness check.
+    const textResult = runtime.liveness?.code === 0 ? runtime.liveness : await runHermes(runtime.requested, ['profile', 'list'], 15_000);
     profiles = parseProfileListText(`${textResult.stdout}\n${textResult.stderr}`, resolved.home).slice(0, 50);
   }
   if (profiles.length === 0) profiles = homeProfiles.slice(0, 50);
@@ -849,8 +1071,7 @@ export async function collectHermesState(
         : 'Set MAGNUS_SKILLS_DIR on this node to expose the magnus-skills catalogue to Hermes Agent profiles.',
     },
   };
-  const canRunHermes = versionResult.code === 0 || fallbackVersion?.code === 0;
-  const [skills, plugins] = canRunHermes
+  const [skills, plugins] = runnable
     ? await Promise.all([
         collectHermesSkills(runtime.requested).catch(() => []),
         collectHermesPlugins(runtime.requested).catch(() => []),
@@ -893,7 +1114,8 @@ export async function collectHermesState(
       magnusRouterManaged: Boolean(magnusState.routerBaseUrl),
       detectedHome: resolved.home,
       detectedBin: resolved.bin,
-      binaryDetected: versionResult.code === 0 || fallbackVersion?.code === 0,
+      binaryDetected: runnable,
+      versionProbe: runtime.versionProbe,
     },
   };
   stateCache = { key: cacheKey, at: Date.now(), value: state };
@@ -928,6 +1150,7 @@ hermesRoutes.post('/install', async (c) => {
     const { home } = target(parsed.data);
     const args = parsed.data.skipBrowser ? ['--skip-browser'] : [];
     const result = await run('/bin/bash', ['-c', `curl -fsSL ${OFFICIAL_INSTALL_SCRIPT} | bash -s -- "$@"`, 'hermes-agent-install', ...args], { env: { HERMES_HOME: home }, timeoutMs: 20 * 60_000 });
+    forgetHermesVersionProbes();
     if (result.code !== 0) throw new Error(redact(result.stderr || result.stdout || 'Official Hermes installer failed'));
     const configured = parsed.data.configuration
       ? await configureHermes(parsed.data, parsed.data.configuration)
@@ -944,6 +1167,7 @@ hermesRoutes.post('/update', async (c) => {
     if (parsed.data.checkOnly) args.push('--check');
     else if (parsed.data.backup) args.push('--backup');
     const result = await runHermes(parsed.data, args, 20 * 60_000);
+    if (!parsed.data.checkOnly) forgetHermesVersionProbes();
     if (result.code !== 0) throw new Error(redact(result.stderr || result.stdout || 'Hermes update failed'));
     const configured = !parsed.data.checkOnly && parsed.data.configuration
       ? await configureHermes(parsed.data, parsed.data.configuration)
@@ -959,6 +1183,7 @@ hermesRoutes.post('/uninstall', async (c) => {
     await runHermes(parsed.data, ['gateway', 'stop'], 30_000);
     const args = parsed.data.keepConfiguration ? ['uninstall', '--yes'] : ['uninstall', '--full', '--yes'];
     const result = await runHermes(parsed.data, args, 5 * 60_000);
+    forgetHermesVersionProbes();
     if (result.code !== 0) throw new Error(redact(result.stderr || result.stdout || 'Hermes uninstall failed'));
     return c.json({ success: true, data: { state: await collectHermesState(parsed.data, true), output: redact(result.stdout.slice(-4000)) } });
   } catch (err) { return errorResponse(c, err); }

@@ -8,7 +8,7 @@ import { onHeartbeatAcknowledged } from './node-enrollment.js';
 import { boundNodeIdentity } from './security/node-identity.js';
 import { controlApiFetch } from './tls.js';
 import { startSpan, formatTraceparent } from './collectors/otel-collector.js';
-import { collectHermesState } from './executors/hermes-manager.js';
+import { collectHermesState, onHermesVersionProbeSettled } from './executors/hermes-manager.js';
 import { existsSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseHeartbeatAcknowledgement } from './heartbeat-ack.js';
@@ -64,6 +64,8 @@ async function refreshHermesSnapshot(force = false): Promise<void> {
   return hermesRefreshInFlight;
 }
 
+let stopVersionProbeListener: (() => void) | null = null;
+
 const HEALTH_COLLECTION_DEADLINE_MS = 60_000;
 const HERMES_HEARTBEAT_WAIT_MS = 15_000;
 let healthInFlight: ReturnType<typeof collectSystemHealth> | null = null;
@@ -98,6 +100,8 @@ async function heartbeatSelfUpgrade(): Promise<ReturnType<typeof selfUpgradeStat
 /** Stop the heartbeat loop. */
 export function stopHeartbeatLoop(): void {
   heartbeatRunning = false;
+  stopVersionProbeListener?.();
+  stopVersionProbeListener = null;
   if (heartbeatTimer) {
     clearTimeout(heartbeatTimer);
     heartbeatTimer = null;
@@ -109,6 +113,12 @@ export function stopHeartbeatLoop(): void {
 export function startHeartbeatLoop(): void {
   let consecutiveFailures = 0;
   heartbeatRunning = true;
+  // A slow Hermes version probe settles in the background after discovery has
+  // already reported the binary without a version: refresh the snapshot once it
+  // has, after any refresh still in flight.
+  stopVersionProbeListener ??= onHermesVersionProbeSettled(() => {
+    if (heartbeatRunning) void (hermesRefreshInFlight ?? Promise.resolve()).then(() => refreshHermesSnapshot(true));
+  });
 
   const send = async (): Promise<void> => {
     if (!heartbeatRunning) return;

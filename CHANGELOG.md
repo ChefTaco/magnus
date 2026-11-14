@@ -7,6 +7,13 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Fixed
+
+- Node agent: Hermes discovery no longer reports a working Hermes as `degraded` (gateway `unknown`, no version) when its version command is slow. Since 2.10.0 a root agent runs a user-installed Hermes as its owner, and on some installs `hermes version` is not a command while `hermes --version` takes most of a minute, longer than the 10-second limit each form had, so discovery found no runnable Hermes. Now:
+  - The version probe runs once per binary and caches its result per resolved executable, its size, modification time and inode, the Hermes home and the account it runs as. It runs again when the binary changes, after Magnus installs, updates or removes Hermes, and at most daily otherwise; a binary that disappears is forgotten.
+  - The probe has 90 seconds across both forms and runs in the background. Discovery waits for it up to 10 seconds, as before, then checks that Hermes answers `hermes profile list` (whose output it reuses for the profile list) and reports it as runnable with no version. When the probe finishes, the agent refreshes its Hermes snapshot so the next heartbeat carries the version. A probe that fails or runs out of time leaves the version empty; it no longer makes a trusted, working Hermes look missing. The rules for which account runs Hermes are unchanged.
+  - Hidden entries are no longer reported as profiles: a hidden directory such as `profiles/.deleted` in a Hermes home appeared as a profile named `.deleted` when discovery found no runnable Hermes and fell back to reading the profiles directory. Profile names from `hermes profile list` follow the same rule.
+
 ## [2.10.0] - 2026-11-13
 
 ### Added
