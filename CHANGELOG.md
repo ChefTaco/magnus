@@ -7,6 +7,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [2.10.1] - 2026-11-14
+
 ### Fixed
 
 - Node agent: Hermes discovery no longer reports a working Hermes as `degraded` (gateway `unknown`, no version) when its version command is slow. Since 2.10.0 a root agent runs a user-installed Hermes as its owner, and on some installs `hermes version` is not a command while `hermes --version` takes most of a minute, longer than the 10-second limit each form had, so discovery found no runnable Hermes. Now:
