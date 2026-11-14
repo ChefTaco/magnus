@@ -7,7 +7,9 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
-This section is bound for **3.0.0**, a major release: per-node credentials, phase 3 (`enforce`). See
+## [3.0.0] - 2026-11-14
+
+3.0.0 is a major release: per-node credentials, phase 3 (`enforce`). See
 `docs/NODE_CREDENTIALS.md`, "Upgrading to 3.0.0".
 
 ### Breaking changes
@@ -26,11 +28,13 @@ This section is bound for **3.0.0**, a major release: per-node credentials, phas
 
 ### Upgrade order
 
-1. Server on 2.10.2, every agent on 2.10.2 or later (each with a bound key: `nodeCredential.state: active`).
-2. Set `NODE_AUTH_MODE=warn` on the 2.10.2 server, restart it, and use the fleet normally for a day.
+1. Server on 2.10.2, every agent on 2.10.2 or later (each with a bound key: `nodeCredential.state: active`). Agents 2.10.0 and 2.10.1 move to 2.10.2 with the console's **Upgrade agents** or `magnus-server agents upgrade`.
+2. Optional, recommended: set `NODE_AUTH_MODE=warn` on the 2.10.2 server, restart it, and use the fleet normally for a day, so that remaining uses of the shared secret show up before they are refused.
 3. Confirm `GET /api/v1/node-credentials/summary` reports `enforceReady: true` (no blockers).
-4. Remove `NODE_AUTH_MODE` from the server's environment and upgrade the server to 3.0.0 (`magnus upgrade --allow-major`). It applies no migration.
-5. Upgrade the agents to 3.0.0.
+4. Remove `NODE_AUTH_MODE` from the server's environment and upgrade the server to 3.0.0 (`magnus upgrade --allow-major`). It applies no migration. The start-up guard checks the inventory first: if a node would be locked out, the server does not start, names the nodes, and `magnus upgrade` switches back to 2.10.2 by itself.
+5. Then the agents. A 2.10.2 agent with a key keeps working with a 3.0.0 server in enforce mode, so there is no hurry. Moving an agent to 3.0.0 crosses a major version, which no automatic path does: the console's **Upgrade agents** and `magnus-server agents upgrade` list such nodes as `MAJOR_VERSION`, and a 2.10.2 agent refuses the request (`SELF_UPGRADE_REFUSED`). Upgrade those agents by hand on each node; new nodes install 3.0.0 directly and enroll with a token. Two things wait for a 3.0.0 agent on a node: the two-ADMIN scheduler-source settlement (a 2.10.2 agent answers `409 AGENT_UPGRADE_REQUIRED` in enforce mode; settle under an explicit `NODE_AUTH_MODE=compat` if one is needed sooner), and server-key rotation, which pins a staged key from the heartbeat only on 3.0.0 agents (rotate after the agents are on 3.0.0; see `docs/NODE_CREDENTIALS.md`, "Rotating the server key").
+
+**Hive installations:** a Hive suite installs Magnus by the exact versions and digests in its signed manifest. Hive 3.8.1 ships Magnus 2.10.2. Do not point a Hive installation at Magnus 3.0.0 by hand: wait for the Hive suite release whose notes list Magnus 3.0.0, and follow its upgrade notes.
 
 ### Rollback
 
