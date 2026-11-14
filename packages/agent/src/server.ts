@@ -125,6 +125,8 @@ export async function createApp(): Promise<Hono> {
           // 1 when evidence carries a node-key signature, and when decisions signed by a pinned server key are accepted.
           nodeEvidence: ENABLE_NODE_MANAGEMENT && signsNodeEvidence() ? 1 : 0,
           serverAuthorizations: ENABLE_NODE_MANAGEMENT && verifiesServerDecisions() ? 1 : 0,
+          // 3.0.0: a scheduler-source settlement signed by the server key (two-ADMIN approval) is accepted.
+          schedulerSourceAuthorizations: ENABLE_NODE_MANAGEMENT && verifiesServerDecisions() ? 1 : 0,
         },
       },
     }),

@@ -1,5 +1,6 @@
 /** Restricted PTYs live in systemd cgroups. Socket closure is never completion evidence. */
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { resultSigningKey } from '../security/local-evidence-keys.js';
 import { promisify } from 'node:util';
 import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
@@ -9,7 +10,7 @@ import { Hono } from 'hono';
 import { managedTerminalActionSchema, managedTerminalAuthoritySchema, managedTerminalReceiptPayload,
   managedTerminalReceiptSchema, type ManagedTerminalAuthority, type ManagedTerminalAction,
   type ManagedTerminalReceipt, type ManagedTerminalSize } from '@hivemagnus/magnus-contracts';
-import { CONTROL_API_URL, HOST_FQDN, RESULT_SIGNING_SECRET, MAGNUS_EXECUTION_SUPERVISOR_ENABLED } from '../env.js';
+import { CONTROL_API_URL, HOST_FQDN, MAGNUS_EXECUTION_SUPERVISOR_ENABLED } from '../env.js';
 import { nodeApiFetch } from '../node-auth.js';
 import { requirePrivileged } from '../privileged.js';
 import { logger } from '../utils/logger.js';
@@ -161,7 +162,7 @@ export class ManagedTerminals {
       const unsigned = { ...intent.authority, version: 1 as const, boundary: 'restricted-terminal-process-v1' as const,
         bootId: intent.bootId, unit: intent.unit, invocationId: intent.invocationId, cgroup: intent.cgroup,
         startedAt: intent.startedAt, terminalAt: Date.now(), groupEmpty: true as const };
-      const receipt = managedTerminalReceiptSchema.parse({ ...unsigned, signature: createHmac('sha256', RESULT_SIGNING_SECRET)
+      const receipt = managedTerminalReceiptSchema.parse({ ...unsigned, signature: createHmac('sha256', resultSigningKey())
         .update(managedTerminalReceiptPayload(unsigned)).digest('hex') });
       intent.receipt = receipt; await this.save(intent);
       live.child?.kill();

@@ -13,14 +13,17 @@ decided by the server's roles, approvals and remediation plans.
   lock is held through an inherited file descriptor and released when the agent process exits.
 - Keep `$AGENT_INSTALL_DIR/.magnus/command-receipts` across upgrades. The directory is `0700`, and
   receipts and locks are `0600`. Never delete it to clear a lock.
-- Keep `RESULT_SIGNING_SECRET` separate from `NODE_MANAGER_SECRET`. Completed receipts are verified
-  with the result-signing key before they are returned or recovered, so a retained receipt needs
-  the key it was signed with. Plan key rotation with that in mind; rotating a key is no reason to
-  delete old receipts.
-- Leave `COMMAND_RECONCILIATION_SECRET` unset until you have a reviewed process for reconciling
-  uncertain commands (see below). When you set it, use an independent random value of at least 32
-  characters, the same on the server and the node, and never reuse another credential. Do not give
-  it to model tools, clients or logs.
+- Completed receipts are verified before they are returned or recovered, so a retained receipt
+  needs the key it was signed with: the shared `RESULT_SIGNING_SECRET` (kept separate from
+  `NODE_MANAGER_SECRET`) or, from 3.0.0 on an agent without it, the node-local key in
+  `$AGENT_INSTALL_DIR/identity`. A retired shared key stays readable as `RESULT_SIGNING_PREVIOUS_SECRET`
+  ([the agent's own records](NODE_CREDENTIALS.md#the-agents-own-records)). Rotating a key is no
+  reason to delete old receipts.
+- A reconciliation decision from the server is signed with its server key for this node, which an
+  agent with a node key verifies. `COMMAND_RECONCILIATION_SECRET` (an independent HMAC key of at
+  least 32 characters, the same on the server and the node) is needed only by agents without a node
+  key, under an explicit `NODE_AUTH_MODE=compat`; enforce mode neither makes nor accepts an
+  HMAC-only decision. Do not give it to model tools, clients or logs.
 
 The agent advertises `commandReceipts: 1` and `commandFencing: 1` when node management is enabled,
 and `commandReconciliation: 1` when a reconciliation key is configured. The server checks these

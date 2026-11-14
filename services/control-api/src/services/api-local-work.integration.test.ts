@@ -1,5 +1,9 @@
 import { randomUUID, createHmac } from 'node:crypto';
-import { beforeAll, afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+// These cases drive agents that hold no node key (shared secret and shared result key), which 3.0.0
+// accepts only under an explicit NODE_AUTH_MODE=compat; node-credentials-enforce.real-agent covers enforce.
+beforeEach(() => { process.env['NODE_AUTH_MODE'] = 'compat'; });
+afterEach(() => { delete process.env['NODE_AUTH_MODE']; });
 const probe = vi.hoisted(() => ({ host: '', available: true }));
 vi.mock('./control-host-node.js', () => ({ probeLocalAgent: async () => probe.available ? { verifiedTlsHostname: probe.host } : null }));
 const nodeKey = 'local-drain-node-fixture-at-least-32-characters';

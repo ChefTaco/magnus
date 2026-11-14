@@ -63,18 +63,27 @@ across upgrades.
 
 ## Enroll with a magnus-server
 
-1. In the Magnus console or through the Control API, register the node. Use
-   the host's FQDN and a node secret, for example from `openssl rand -hex 32`.
+1. In the Magnus console or through the Control API, register the node with
+   the host's FQDN, and issue a one-time enrollment token for it
+   (`POST /api/v1/nodes/<nodeId>/enrollment-token`, ADMIN).
 2. Edit `/opt/magnus-agent/.env`:
 
    ```bash
    CONTROL_API_URL=https://magnus.example.com:4000
-   NODE_MANAGER_SECRET=<the node secret registered on the server>
-   RESULT_SIGNING_SECRET=<openssl rand -hex 32>
    TLS_CERT_PATH=/opt/magnus-agent/certs/agent.crt
    TLS_KEY_PATH=/opt/magnus-agent/certs/agent.key
    NODE_ENV=production
    ```
+
+   and enroll the agent once, keeping the token off the process table:
+
+   ```bash
+   printf '%s' "$ENROLLMENT_TOKEN" | sudo node node_modules/@hivemagnus/magnus-agent/dist/index.js enroll --token-file -
+   ```
+
+   From 3.0.0 no shared secret is needed. `NODE_MANAGER_SECRET` and
+   `RESULT_SIGNING_SECRET` are only for an explicit (deprecated)
+   `NODE_AUTH_MODE=compat`.
 
 3. Validate the configuration, then install the example unit:
 
@@ -199,9 +208,9 @@ and `magnus-agent env-schema` prints them as JSON.
 | Variable | Purpose |
 | --- | --- |
 | `CONTROL_API_URL` | magnus-server Control API (required) |
-| `NODE_MANAGER_SECRET` | Node credential shared with the server (required, 32+ characters). The agent also creates its own node key in `$AGENT_INSTALL_DIR/identity` and binds it automatically; see [per-node credentials](https://github.com/ChefTaco/magnus/blob/main/docs/NODE_CREDENTIALS.md) |
-| `NODE_AUTH_MODE` | `compat` (default): the shared node secret is accepted on this agent's API. `warn`: also logged. `enforce`: once the node has a bound key, only requests signed by the pinned server key are accepted (see [agent-side enforce](https://github.com/ChefTaco/magnus/blob/main/docs/NODE_CREDENTIALS.md#agent-side-enforce)) |
-| `RESULT_SIGNING_SECRET` | Independent result-signing key (required, 32+ characters) |
+| `NODE_AUTH_MODE` | `enforce` (default from 3.0.0): once the node has a bound key, only requests signed by the pinned server key are accepted, and the agent sends only its own signature (see [agent-side enforce](https://github.com/ChefTaco/magnus/blob/main/docs/NODE_CREDENTIALS.md#agent-side-enforce)). `compat` and `warn` (deprecated) also accept the shared node secret |
+| `NODE_MANAGER_SECRET` | Deprecated shared node credential (32+ characters): only for an explicit `compat` or `warn`, or the automatic legacy upgrade of a 2.10.x fleet. The node key lives in `$AGENT_INSTALL_DIR/identity`; see [per-node credentials](https://github.com/ChefTaco/magnus/blob/main/docs/NODE_CREDENTIALS.md) |
+| `RESULT_SIGNING_SECRET` | Deprecated shared result key (32+ characters). Without it the agent MACs its own records with a node-local key; an upgraded agent keeps it, or moves it to `RESULT_SIGNING_PREVIOUS_SECRET`, so older records stay readable |
 | `TLS_CERT_PATH` / `TLS_KEY_PATH` | Listener TLS, required in production |
 | `HOST_FQDN` | Host identity override (default `hostname --fqdn`) |
 | `NODE_MANAGER_PORT` / `NODE_MANAGER_BIND_HOST` | Listener port (default `4100`) and address |

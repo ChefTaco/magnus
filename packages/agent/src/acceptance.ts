@@ -21,7 +21,8 @@ const optionsSchema = z.object({
       return false;
     }
   }),
-  credential: z.string().min(32).max(16384),
+  // The shared node secret, when the agent still has one (3.0.0 agents may not): the probe signs with the node key too.
+  credential: z.string().min(32).max(16384).optional(),
   caPath: z.string().min(1).optional(),
   expectedVersion: z.string().min(1),
   waitSeconds: z.number().int().min(0).max(300).default(60),
@@ -79,13 +80,15 @@ export async function probeAgentAcceptance(
           dispatcher: dispatcher!,
         }) as unknown as Promise<Response>);
     if (!overrides.fetch) dispatcher = new Agent({ connect: verifiedTlsOptions(options.caPath) });
+    // Neither the shared secret nor a bound key: nothing could authenticate the probe.
+    if (!options.credential && Object.keys(overrides.selfSign?.() ?? {}).length === 0) return { ok: false, reason: 'INVALID_CONFIGURATION' };
     const deadline = now() + options.waitSeconds * 1000;
     let result: AgentAcceptanceResult = { ok: false, reason: 'PROBE_FAILED' };
     do {
       try {
         const response = await request(new URL('/api/v1/health/check', options.selfUrl), {
           // Signed with this node's key when it has one: an agent in NODE_AUTH_MODE=enforce refuses the shared secret alone.
-          headers: { 'x-node-token': options.credential, ...(overrides.selfSign?.() ?? {}) },
+          headers: { ...(options.credential ? { 'x-node-token': options.credential } : {}), ...(overrides.selfSign?.() ?? {}) },
           redirect: 'error',
           signal: AbortSignal.timeout(5000),
         });
@@ -169,7 +172,7 @@ export async function runAgentAcceptance(
   }
   return probeAgentAcceptance({
     selfUrl: env['MAGNUS_AGENT_SELF_URL'] ?? '',
-    credential: env['NODE_MANAGER_SECRET'] ?? '',
+    ...(env['NODE_MANAGER_SECRET'] ? { credential: env['NODE_MANAGER_SECRET'] } : {}),
     expectedVersion,
     waitSeconds,
     ...(env['MAGNUS_AGENT_SELF_CA_PATH'] ? { caPath: env['MAGNUS_AGENT_SELF_CA_PATH'] } : {}),

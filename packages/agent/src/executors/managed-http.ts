@@ -1,8 +1,9 @@
 /** One node execution slot for reviewed synchronous native mutations and commands. */
 import { randomUUID } from 'node:crypto';
+import { resultSigningKey } from '../security/local-evidence-keys.js';
 import type { Hono, MiddlewareHandler } from 'hono';
 import { z } from 'zod';
-import { CONTROL_API_URL, HOST_FQDN, RESULT_SIGNING_SECRET, MAGNUS_EXECUTION_SUPERVISOR_ENABLED } from '../env.js';
+import { CONTROL_API_URL, HOST_FQDN, MAGNUS_EXECUTION_SUPERVISOR_ENABLED } from '../env.js';
 import { markLocalDispatch } from '../middleware.js';
 import { nodeApiFetch } from '../node-auth.js';
 import { commandLedger, executeBodySchema } from './command-executor.js';
@@ -176,7 +177,7 @@ export function registerManagedHttp(app: Hono): void {
             throw new Error('Retained skill publication response differs from its signed receipt');
           return c.json({ success: true, data: { response: recovered, receipt: prior.result && withResultEvidence(prior.result) } });
         }
-        const signed = { ...unsigned, signature: signCommandResult(unsigned, RESULT_SIGNING_SECRET) };
+        const signed = { ...unsigned, signature: signCommandResult(unsigned, resultSigningKey()) };
         const adopted = await commandLedger.settleRecoveredResult(identity, signed, value.claim);
         return c.json({ success: true, data: { response: recovered, receipt: adopted.result && withResultEvidence(adopted.result) } });
       }
@@ -235,7 +236,7 @@ export function registerManagedHttp(app: Hono): void {
           stdout: httpReceiptBody(value.method, value.path, result.status, text), stderr: '',
           durationMs: Date.now() - start, truncated: false,
           coordination: { ...value.coordination, requestSha256: digest } };
-        return { ...signed, signature: signCommandResult(signed, RESULT_SIGNING_SECRET) };
+        return { ...signed, signature: signCommandResult(signed, resultSigningKey()) };
       }, value.claim).finally(settled);
       if (!response) return c.json({ success: false, error: { code: 'RESULT_ALREADY_RECORDED', message: 'Read the existing signed receipt without replay' } }, 409);
       return c.json({ success: true, data: { response, receipt: withResultEvidence(receipt) } });

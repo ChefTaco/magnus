@@ -1,6 +1,9 @@
 import { createHmac } from 'node:crypto';
 import { HTTPError } from 'ky';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+// These cases exercise shared-secret paths, which 3.0.0 keeps only under an explicit NODE_AUTH_MODE=compat (or warn).
+beforeEach(() => { process.env['NODE_AUTH_MODE'] = 'compat'; });
+afterEach(() => { delete process.env['NODE_AUTH_MODE']; });
 import { verifyNodeDecision } from './server-authorization.js';
 // Evidence policy: a node without a key, so the shared result key applies (docs/NODE_CREDENTIALS.md).
 vi.mock('./node-credential-store.js', async () => ({ nodeCredentialStore: (await import('./node-credential-test-fixture.js')).createFakeCredentialStore().store }));

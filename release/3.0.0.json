@@ -1,0 +1,9 @@
+{
+  "summary": "Per-node credentials, phase 3: NODE_AUTH_MODE defaults to enforce on the server and the agent. The shared node secret is refused and no longer sent in either direction, HMAC-only evidence and decisions are refused, the automatic legacy upgrade is closed and NODE_AUTO_REGISTER is off. A server with the mode unset refuses to start while any real node lacks an active key or its agent does not sign evidence (or is 2.10.0/2.10.1), naming them; an explicit compat or warn keeps working for this major and is deprecated. NODE_MANAGER_SECRET and RESULT_SIGNING_SECRET are no longer required outside compat and warn. Adds server-key rotation (stage, promote, retire) and a two-ADMIN approval for scheduler-source settlements in place of the reviewer HMAC. No migrations. Upgrade from 2.10.2 only: run 2.10.2 in warn until GET /api/v1/node-credentials/summary reports no blockers, remove NODE_AUTH_MODE, upgrade the server, then the agents. Roll back by setting NODE_AUTH_MODE=compat. See docs/NODE_CREDENTIALS.md.",
+  "breaking": true,
+  "minUpgradeFrom": "2.10.2",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}

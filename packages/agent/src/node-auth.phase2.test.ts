@@ -74,9 +74,16 @@ afterEach(() => { vi.stubEnv('NODE_AUTH_MODE', ''); });
 afterAll(() => { vi.unstubAllEnvs(); rmSync(dir, { recursive: true, force: true }); });
 
 describe('agent-side enforce', () => {
-  it('stays compat by default: a bound node still accepts the shared secret', async () => {
+  it('enforces by default from 3.0.0: a bound node refuses the shared secret; an explicit compat (deprecated) still accepts it', async () => {
     await bind();
-    expect(client.nodeAuthMode()).toBe('compat');
+    expect(client.nodeAuthMode()).toBe('enforce');
+    expect(client.nodeAuthModeSetting()).toEqual({ mode: 'enforce', explicit: false });
+    expect(client.nodeAuthDeprecationWarning()).toBeNull();
+    const refused = await agentApp().request('/api/v1/files', { headers: { 'x-node-token': SECRET } });
+    expect(refused.status).toBe(401);
+    expect(await refused.json()).toMatchObject({ error: { code: 'NODE_SIGNATURE_REQUIRED' } });
+    vi.stubEnv('NODE_AUTH_MODE', 'compat');
+    expect(client.nodeAuthDeprecationWarning()).toMatch(/NODE_AUTH_MODE=compat is deprecated/);
     expect((await agentApp().request('/api/v1/files', { headers: { 'x-node-token': SECRET } })).status).toBe(200);
   });
 
@@ -195,7 +202,8 @@ describe('signed evidence on the agent', () => {
     expect(signing.verifyServerDecision('command-reconciliation', payload.replace('no_effect', 'effects'), forUs, hmacOk)).toBe(false);
     expect(signing.verifyServerDecision('cron-enrollment-stage', payload, forUs, hmacOk)).toBe(false);
     expect(signing.verifyServerDecision('command-reconciliation', payload, { ...forUs, sig: 'bad' }, hmacOk)).toBe(false);
-    // A key this agent does not pin, or none: the HMAC decides outside enforce mode, and nothing does in it.
+    // A key this agent does not pin, or none: the HMAC decides under an explicit compat, and nothing does in enforce (the default).
+    vi.stubEnv('NODE_AUTH_MODE', 'compat');
     expect(signing.verifyServerDecision('command-reconciliation', payload, byStranger, hmacOk)).toBe(true);
     expect(signing.verifyServerDecision('command-reconciliation', payload, undefined, hmacOk)).toBe(true);
     expect(signing.verifyServerDecision('command-reconciliation', payload, undefined, hmacBad)).toBe(false);
@@ -237,8 +245,11 @@ describe('one signed request is verified once, wherever the middleware is mounte
     const app = managedHttpMount();
     const headers = serverSigned('POST', '/api/v1/commands/managed-http', '{"commandId":"other"}');
     expect((await post(app, headers)).status).toBe(401);
+    vi.stubEnv('NODE_AUTH_MODE', 'compat');
     expect((await post(app, { 'x-node-token': SECRET })).status).toBe(200);
     vi.stubEnv('NODE_AUTH_MODE', 'enforce');
+    expect((await post(app, { 'x-node-token': SECRET })).status).toBe(401);
+    vi.stubEnv('NODE_AUTH_MODE', '');
     expect((await post(app, { 'x-node-token': SECRET })).status).toBe(401);
   });
 });

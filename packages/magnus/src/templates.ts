@@ -30,6 +30,19 @@ export const SERVER_SECRET_NAMES = [
   'WEBHOOK_ENCRYPTION_KEY',
 ] as const;
 
+/**
+ * The shared node credentials. From 3.0.0 the server runs in NODE_AUTH_MODE=enforce by default and
+ * needs neither (agents enroll with their own keys), so a new project of 3.0.0 or later does not get
+ * them; an older release still requires them. Add both by hand only to run an explicit compat mode.
+ */
+export const SHARED_NODE_SECRET_NAMES: readonly string[] = ['NODE_MANAGER_SECRET', 'RESULT_SIGNING_SECRET'];
+
+/** The secrets a new project of `version` gets. */
+export function serverSecretNames(version: string | undefined): readonly string[] {
+  const major = Number(/^(\d+)\./.exec(version ?? '')?.[1] ?? 'NaN');
+  return Number.isFinite(major) && major >= 3 ? SERVER_SECRET_NAMES.filter((name) => !SHARED_NODE_SECRET_NAMES.includes(name)) : SERVER_SECRET_NAMES;
+}
+
 export interface ServiceUnitOptions {
   project: Project;
   nodePath: string;
@@ -216,6 +229,8 @@ export interface ServerEnvSettings {
   autoMigrate: boolean;
   projectDir: string;
   runtimeFile: string;
+  /** The release the project starts on: from 3.0.0 the shared node credentials are left out. */
+  version?: string;
 }
 
 export function serverEnv(settings: ServerEnvSettings, secrets: Record<string, string>): string {
@@ -239,7 +254,7 @@ export function serverEnv(settings: ServerEnvSettings, secrets: Record<string, s
       { name: 'TLS_KEY_PATH', value: settings.tlsKey },
       ...(settings.extraCaFile ? [{ name: 'NODE_EXTRA_CA_CERTS', value: settings.extraCaFile, comment: 'Agent certificates the server trusts (this host\'s self-signed one; append your CA).' }] : []),
     ] },
-    { title: 'Secrets (generated; each one distinct)', entries: entries(SERVER_SECRET_NAMES) },
+    { title: 'Secrets (generated; each one distinct)', entries: entries(serverSecretNames(settings.version)) },
     { title: 'Upgrades (set any of these to false to run your own release process)', entries: [
       { name: 'MAGNUS_AUTO_MIGRATE', value: String(settings.autoMigrate), comment: 'Back up and apply pending migrations at startup.' },
       { name: 'MAGNUS_AUTO_MIGRATE_BACKUP', value: 'true' },

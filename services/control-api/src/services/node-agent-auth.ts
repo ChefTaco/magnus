@@ -45,6 +45,12 @@ export function noteAgentEvidenceSigning(keyId: string, signs: boolean, now = ne
   });
 }
 
+/** The server keys a node's agent pinned in its recent signed heartbeats, or null when it has not said lately. */
+export function agentServerKeyPins(nodeId: string, now = Date.now()): readonly string[] | null {
+  const entry = pins.get(nodeId);
+  return entry !== undefined && now - entry.at <= PIN_TTL_MS ? entry.keyIds : null;
+}
+
 /** Forget what a node advertised, for example after it refused a signature-only request. */
 export function forgetAgentServerKeyPins(nodeId: string): void {
   pins.delete(nodeId);

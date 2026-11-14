@@ -43,12 +43,16 @@ export function verifiesServerDecisions(): boolean {
  * decides; a malformed or invalid one is refused. Without one (or with a key this agent does not
  * pin), the HMAC check applies, unless this agent enforces node credentials.
  */
-export function verifyServerDecision(kind: ServerAuthorizationKind, payload: string, serverSignature: unknown, legacyHmac: () => boolean): boolean {
+export function verifyServerDecision(kind: ServerAuthorizationKind, payload: string, serverSignature: unknown, legacyHmac: () => boolean,
+  options: { stored?: boolean } = {}): boolean {
   const signature = readEvidenceSignature(serverSignature);
   if (signature === 'MALFORMED') return false;
   if (signature) {
     const identity = boundNodeIdentity();
-    const pinned = identity?.binding.serverKeys.find(key => key.keyId === signature.keyId);
+    // A decision recorded earlier (`stored`) also verifies with a server key a rotation has retired
+    // since; a new decision needs a key pinned now.
+    const keys = [...(identity?.binding.serverKeys ?? []), ...(options.stored ? identity?.binding.retiredServerKeys ?? [] : [])];
+    const pinned = keys.find(key => key.keyId === signature.keyId);
     if (identity && pinned)
       return verifyServerAuthorization(kind, { signature, publicKey: pinned.publicKey, expectedNodeId: identity.binding.nodeId, payload }).ok;
   }

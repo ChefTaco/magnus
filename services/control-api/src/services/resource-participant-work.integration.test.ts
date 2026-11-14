@@ -6,7 +6,11 @@ import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { Server, utils } from 'ssh2';
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+// These cases drive agents that hold no node key (shared secret and shared result key), which 3.0.0
+// accepts only under an explicit NODE_AUTH_MODE=compat; node-credentials-enforce.real-agent covers enforce.
+beforeEach(() => { process.env['NODE_AUTH_MODE'] = 'compat'; });
+afterEach(() => { delete process.env['NODE_AUTH_MODE']; });
 const nodeId = `api-ssh-${randomUUID()}`; const host = `${nodeId}.invalid`;
 describe.skipIf(!process.env['TEST_DATABASE_URL'])('API SSH durable participant ownership (PostgreSQL)', () => {
   let db: ReturnType<typeof import('../db/index.js')['getDb']>;

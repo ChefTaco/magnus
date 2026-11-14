@@ -81,6 +81,11 @@ deploy/                 example systemd units
   agent gets `nodeSignature` through `src/security/evidence-signing.ts` (`nodeEvidenceFields`,
   `withResultEvidence`) at the point it is sent, never in what the ledger stores; decisions from the server
   are checked with `verifyServerDecision`.
+- The agent's own records and the legacy `signature` MAC of its evidence use `src/security/local-evidence-keys.ts`
+  (`resultSigningKey()` to sign, `resultVerificationKeys()` to verify; the reconciliation pair for historical
+  decisions), never `RESULT_SIGNING_SECRET` or `COMMAND_RECONCILIATION_SECRET` directly: from 3.0.0 an agent may have
+  neither, and records written with the shared keys must stay readable.
+- `NODE_AUTH_MODE` defaults to `enforce` (3.0.0): with a bound key the agent neither accepts nor sends `x-node-token`.
 - The agent's own API: an in-process dispatch builds its `Request` with `markLocalDispatch()` (no
   credential); never send `x-node-token` to the agent's own routes.
 - Every request to the Control API that carries the node credential goes through `nodeApiFetch()` or

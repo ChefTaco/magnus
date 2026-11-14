@@ -31,9 +31,9 @@ Options:
 
 Minimal configuration:
   CONTROL_API_URL        magnus-server Control API, e.g. https://magnus.example.com:4000
-  NODE_MANAGER_SECRET    node credential shared with the Control API (32+ characters)
-  RESULT_SIGNING_SECRET  independent result-signing key (32+ characters)
   TLS_CERT_PATH, TLS_KEY_PATH  required when NODE_ENV=production
+  Then run \`magnus-agent enroll --token-file -\` once with a one-time token from the server.
+  NODE_MANAGER_SECRET and RESULT_SIGNING_SECRET are needed only under an explicit NODE_AUTH_MODE=compat.
 
 Run "magnus-agent env-schema" for every setting.`;
 

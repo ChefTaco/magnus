@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
 # Upgrade end-to-end test on a disposable Linux host with systemd and sudo (CI).
 #
-#   1. `magnus init` the published FROM release (default 1.0.3) as system services
-#   2. `magnus upgrade` to the working tree's packed release: migrations, health, runtime version
-#   3. install an agent with `install-service --unprivileged`; it enrolls, reports itself and binds its own
-#      node key, after which the shared node secret can no longer report as that node
+#   1. `magnus init` the published FROM release as system services (default: the release's minUpgradeFrom,
+#      at least 1.0.3; 2.10.2 for 3.0.0)
+#   2. `magnus upgrade` to the working tree's packed release: migrations, health, runtime version; with no
+#      node yet, the start-up guard lets it start in enforce mode (the default since 3.0.0)
+#   3. switch the server to an explicit (deprecated) NODE_AUTH_MODE=compat, as a fleet still on the shared
+#      secret would be, and install an agent with `install-service --unprivileged`; it enrolls, reports itself
+#      and binds its own node key, after which the shared node secret can no longer report as that node
+#   3b. remove the setting: the server starts in enforce mode now that the node is keyed and signs its
+#      evidence, refuses the shared secret and the legacy upgrade, and still reaches the agent; then rotate the
+#      server key (stage, the agent pins it, promote, retire) with the agent reachable throughout
 #   4. pre-seed a high fence on the agent: `agents doctor --heal` moves the server past it;
 #      `magnus-server agents upgrade` to a synthetic release: confirmed
 #   5. upgrade to a synthetic agent that never heartbeats: the launcher reverts it
@@ -18,8 +24,12 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
-FROM=${MAGNUS_E2E_FROM:-1.0.3}
 VERSION=$(node -p "require('$ROOT/package.json').version")
+# The oldest release this one upgrades from (release/<VERSION>.json minUpgradeFrom), but never older than 1.0.3.
+DEFAULT_FROM=$(node -e "const fs=require('fs');const f='$ROOT/release/$VERSION.json';const m=fs.existsSync(f)&&JSON.parse(fs.readFileSync(f,'utf8')).minUpgradeFrom;
+const n=v=>v.split('.').map(Number);const newer=(a,b)=>{const[x,y]=[n(a),n(b)];for(let i=0;i<3;i++)if(x[i]!==y[i])return x[i]>y[i];return false};
+console.log(m&&newer(m,'1.0.3')?m:'1.0.3')")
+FROM=${MAGNUS_E2E_FROM:-$DEFAULT_FROM}
 # Synthetic releases must sort above VERSION (a -ci prerelease of VERSION itself would be a downgrade).
 IFS=. read -r V_MAJOR V_MINOR V_PATCH <<<"${VERSION%%-*}"
 AGENT_OK="$V_MAJOR.$V_MINOR.$((V_PATCH + 1))-ci"
@@ -100,6 +110,8 @@ STATUS=$(magnus status --json --offline)
 [[ $(server_cli migrations --format json | json 'v.pending.length') == 0 ]] || fail "migrations pending after the upgrade"
 curl -fsk "https://127.0.0.1:$SERVER_PORT/api/v1/health" >/dev/null || fail "$VERSION server is not healthy"
 code=$(curl -sk -o /dev/null -w '%{http_code}' "https://127.0.0.1:$UI_PORT/login"); (( code < 500 )) || fail "console answered $code"
+# No node yet: the start-up guard has nothing to protect, so the default mode (enforce) applies.
+sudo journalctl -u magnus-server --no-pager | grep -q 'node-auth mode=enforce (default)' || fail "the upgraded server does not run in enforce mode by default"
 # magnus-server upgrade finds the project from its install path and hands over to the engine.
 "${SUDO[@]}" "$NODE_BIN" "$PROJECT/current/node_modules/@hivemagnus/magnus-server/dist/cli.js" upgrade --source "$PACKS" --dry-run \
   | grep -q "Already on $VERSION" || fail "magnus-server upgrade did not delegate to the project"
@@ -121,10 +133,17 @@ sudo mkdir -p /etc/systemd/system/magnus-server.service.d
 printf '[Service]\nEnvironment=NODE_EXTRA_CA_CERTS=%s\n' "$PROJECT/config/tls/trusted-agents.crt" | sudo tee /etc/systemd/system/magnus-server.service.d/e2e-agent-ca.conf >/dev/null
 # `magnus-server agents` reads it from the env file (init wrote the self-signed certificate there).
 sudo sed -i "s#^NODE_EXTRA_CA_CERTS=.*#NODE_EXTRA_CA_CERTS=$PROJECT/config/tls/trusted-agents.crt#" "$PROJECT/config/magnus-server.env"
+SERVER_ENV="$PROJECT/config/magnus-server.env"
+# A fleet that still runs on the shared secret: an explicit, deprecated compat, as before 3.0.0.
+set_server_mode() { sudo sed -i '/^NODE_AUTH_MODE=/d' "$SERVER_ENV"; [[ -z $1 ]] || echo "NODE_AUTH_MODE=$1" | sudo tee -a "$SERVER_ENV" >/dev/null; }
+server_up() { curl -fsk "https://127.0.0.1:$SERVER_PORT/api/v1/health" >/dev/null; }
+set_server_mode compat
 sudo systemctl daemon-reload && sudo systemctl restart magnus-server
+for ((i = 0; i < 120; i += 3)); do server_up && break; sleep 3; done
+server_up || fail "the server did not start with NODE_AUTH_MODE=compat"
+sudo journalctl -u magnus-server --no-pager | grep -q 'DEPRECATED: NODE_AUTH_MODE=compat is deprecated' || fail "an explicit compat did not log its deprecation"
 "${SUDO[@]}" npm install --prefix "$AGENT_DIR" --omit=dev --no-audit --no-fund --loglevel=error \
   "$PACKS/hivemagnus-magnus-contracts-$VERSION.tgz" "$PACKS/hivemagnus-magnus-agent-$VERSION.tgz"
-SERVER_ENV="$PROJECT/config/magnus-server.env"
 secret() { sudo sed -n "s/^$1=//p" "$SERVER_ENV" | tr -d "'"; }
 sudo tee "$AGENT_DIR/.env" >/dev/null <<ENV
 NODE_ENV=production
@@ -165,6 +184,39 @@ heartbeat_as() { curl -sk -o /dev/null -w '%{http_code}' -X POST -H "x-node-toke
 signed_heartbeat() { [[ $(psql_url "$DATABASE_URL" "SELECT count(*)::int AS n FROM node_credentials WHERE \"lastUsedAt\" IS NOT NULL" | json 'v[0].n') == 1 ]]; }
 wait_for "a signed heartbeat from the agent" 90 signed_heartbeat
 agent_ready || fail "the server cannot reach the agent after it bound its key"
+
+step "Enforce by default: the guard lets the server start once the node is keyed and signs its evidence"
+evidence_signing() { [[ $(psql_url "$DATABASE_URL" "SELECT count(*)::int AS n FROM node_credentials WHERE status = 'ACTIVE' AND \"evidenceSigning\" = true" | json 'v[0].n') == 1 ]]; }
+wait_for "the agent to report that it signs its evidence" 120 evidence_signing
+set_server_mode ''
+sudo systemctl restart magnus-server
+wait_for "the server to start in enforce mode" 120 server_up
+sudo journalctl -u magnus-server --no-pager | grep -q 'node-auth mode=enforce (default)' || fail "the server did not start in enforce mode"
+# The shared secret no longer speaks for any node, and binds nothing.
+[[ $(heartbeat_as "new-node.example.com") == 401 ]] || fail "enforce mode accepted a heartbeat with the shared node secret"
+code=$(curl -sk -o /dev/null -w '%{http_code}' -X POST -H "x-node-token: $(secret NODE_MANAGER_SECRET)" -H 'content-type: application/json' -d '{}' \
+  "https://127.0.0.1:$SERVER_PORT/api/v1/node-enrollment/legacy-upgrade")
+[[ $code == 410 ]] || fail "enforce mode did not close the legacy upgrade (answered $code)"
+wait_for "the server to reach the agent with signatures only" 90 agent_ready
+
+step "Rotate the server key: stage, the agent pins it, promote, retire; the agent stays reachable"
+key_state() { server_cli node-auth server-key status --format json; }
+server_cli node-auth server-key stage >/dev/null || fail "server-key stage"
+NEXT_KEY=$(key_state | json 'v.next.keyId')
+pins_next() { sudo sh -c "cat '$AGENT_DIR'/identity/binding-*.json" | grep -q "$NEXT_KEY"; }
+wait_for "the agent to pin the staged server key" 150 pins_next
+server_cli node-auth server-key promote --force --grace-hours 1 >/dev/null || fail "server-key promote"
+[[ $(key_state | json 'v.active.keyId') == "$NEXT_KEY" ]] || fail "the staged key is not active after the promotion"
+wait_for "the server to reach the agent with the promoted key" 60 agent_ready
+# The heartbeat reply lists the promoted key first; the agent then signs for it.
+signs_for_next() { [[ $(sudo sh -c "cat '$AGENT_DIR'/identity/binding-*.json" | json 'v.serverKeys[0].keyId') == "$NEXT_KEY" ]]; }
+wait_for "the agent to sign for the promoted key" 150 signs_for_next
+server_cli node-auth server-key retire --force >/dev/null || fail "server-key retire"
+[[ $(key_state | json 'v.retired.length') == 1 ]] || fail "the replaced key was not retired"
+RETIRED_AT=$(date +%s)
+wait_for "the server to reach the agent after the retirement" 60 agent_ready
+signed_since() { [[ $(psql_url "$DATABASE_URL" "SELECT count(*)::int AS n FROM node_credentials WHERE \"lastUsedAt\" > to_timestamp($RETIRED_AT)" | json 'v[0].n') == 1 ]]; }
+wait_for "a signed heartbeat after the retirement" 180 signed_since
 
 synthetic() { node "$ROOT/scripts/e2e/synthetic-release.mjs" --from "$PACKS" --out "$SYNTH" "$@" >/dev/null; chmod -R a+rX "$SYNTH"; }
 integrity() { node -e "const c=require('node:crypto');console.log('sha512-'+c.createHash('sha512').update(require('node:fs').readFileSync(process.argv[1])).digest('base64'))" "$1"; }
@@ -243,4 +295,4 @@ magnus rollback --dir "$PROJECT" --health-timeout 240 || fail "rollback"
 [[ $(magnus status --json --offline | json 'v.current') == "$FROM" ]] || fail "rollback did not switch to $FROM"
 curl -fsk "https://127.0.0.1:$SERVER_PORT/api/v1/health" >/dev/null || fail "$FROM is not healthy after the rollback"
 
-step "PASS: init, upgrade, agent upgrade and self-revert, broken-release revert, restore and rollback"
+step "PASS: init, upgrade, compat to enforce, server-key rotation, agent upgrade and self-revert, broken-release revert, restore and rollback"

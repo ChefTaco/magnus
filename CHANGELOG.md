@@ -7,6 +7,55 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+This section is bound for **3.0.0**, a major release: per-node credentials, phase 3 (`enforce`). See
+`docs/NODE_CREDENTIALS.md`, "Upgrading to 3.0.0".
+
+### Breaking changes
+
+- `NODE_AUTH_MODE` defaults to `enforce` on the server and on the agent (it was `compat`). In enforce mode:
+  - the shared node secret (`x-node-token`) is refused on every node route in both directions, and is no longer sent: the server signs every request to an agent, and an agent with a bound key sends only its signature. A signed request that also carries the shared secret (what 2.10.2 agents and servers send) is judged by the signature alone;
+  - evidence that carries only the shared-key HMAC (`RESULT_SIGNING_SECRET`) is refused, and decisions the server makes for a node (command reconciliations, scheduler enrollment stages, scheduler-source settlements) are signed with the server key only and refused when they come back with only the `COMMAND_RECONCILIATION_SECRET` HMAC;
+  - `POST /api/v1/node-enrollment/legacy-upgrade` answers `410 LEGACY_UPGRADE_CLOSED` before it looks at any credential, whatever `NODE_AUTH_LEGACY_UPGRADE_UNTIL` says; new nodes enroll with a one-time token;
+  - `NODE_AUTO_REGISTER` defaults to off;
+  - `POST /api/v1/cron/scheduler-sources/reconcile` (the reviewer-signed settlement) answers `409 NODE_AUTH_ENFORCED`; use the two-ADMIN approval below.
+- **Start-up guard.** A server whose `NODE_AUTH_MODE` is unset refuses to start (exit 1) while any real node has no active key, only revoked keys, an agent that does not sign its evidence, or an agent 2.10.0/2.10.1 (whose managed requests enforce cannot reach). The message names the nodes and the two ways out: enroll or upgrade them, or set `NODE_AUTH_MODE=compat` explicitly. The internal `__control-api__` and `__dashboard__` nodes and decommissioned nodes never count. `magnus upgrade` switches back by itself when the new release does not start.
+- An explicit `NODE_AUTH_MODE=compat` or `warn` keeps working for this major and logs `DEPRECATED` at start; both are removed, with `NODE_MANAGER_SECRET`, `RESULT_SIGNING_SECRET` and `COMMAND_RECONCILIATION_SECRET`, in the next major.
+- `NODE_MANAGER_SECRET` and `RESULT_SIGNING_SECRET` are no longer required by the server or the agent unless the mode is an explicit `compat` or `warn` (they are still honoured when set). `magnus init` of 3.0.0 no longer generates them, and `docker/compose.yml` no longer requires them.
+- The fleet summary gains the blocker code `AGENTS_NEED_UPGRADE`. A strict client must accept it.
+- 3.0.0 upgrades only from 2.10.2 (`minUpgradeFrom`). Agents 2.9.x and older are not supported by a server in enforce mode.
+
+### Upgrade order
+
+1. Server on 2.10.2, every agent on 2.10.2 or later (each with a bound key: `nodeCredential.state: active`).
+2. Set `NODE_AUTH_MODE=warn` on the 2.10.2 server, restart it, and use the fleet normally for a day.
+3. Confirm `GET /api/v1/node-credentials/summary` reports `enforceReady: true` (no blockers).
+4. Remove `NODE_AUTH_MODE` from the server's environment and upgrade the server to 3.0.0 (`magnus upgrade --allow-major`). It applies no migration.
+5. Upgrade the agents to 3.0.0.
+
+### Rollback
+
+- Set `NODE_AUTH_MODE=compat` on the 3.0.0 server and restart it: the shared node secret is accepted (and sent where needed) again, as in 2.10.2. Set the same in an agent's `.env` for that agent to accept it again.
+- Or `magnus rollback` to 2.10.2: there is no migration to undo, the server key file and the database are read as they are, and 3.0.0 agents keep working with it (they sign; 2.10.2 verifies).
+- Before downgrading an agent below 3.0.0, keep `RESULT_SIGNING_SECRET` in its `.env`: records it MACed with its node-local key cannot be read by 2.10.x.
+
+### Added
+
+- Server-key rotation: `POST /api/v1/node-credentials/server-key/stage`, `/promote` and `/retire` (ADMIN), and `magnus-server node-auth server-key status|stage|promote|retire`. A staged key is pinned by agents from the heartbeat reply's `serverKeyIds` before the server signs with it; promote waits until every keyed agent reported pinning it (`409 SERVER_KEY_NOT_PINNED`, or `force`); the replaced key stays an accepted audience for a grace period (default 7 days); a retired key's private part is destroyed and its public key kept, so decisions it signed keep verifying on the server and on agents. An agent that missed a promotion is refused once and pins the new key by itself. The summary carries `serverKeyRotation`.
+- Two-ADMIN scheduler-source settlement: `POST /api/v1/cron/scheduler-sources/reconcile-requests`, `.../:id/approve` and `.../:id/reject`. One ADMIN person requests with a reason, a different one approves within 15 minutes, and the server signs the settlement for the node with its server key (new authorization kind `scheduler-source-settlement`). It replaces the reviewer's `COMMAND_RECONCILIATION_SECRET` signature, a key that agents held too. Agents 3.0.0 advertise `features.schedulerSourceAuthorizations`.
+- The fleet summary reports `modeExplicit`, `modeDeprecated` and `deprecationNotice`, and counts real nodes only.
+- Agents MAC their own records (command ledger, historical mutation observations, receipts and decisions) with node-local keys in `$AGENT_INSTALL_DIR/identity` when the shared keys are absent, and read records signed with the shared keys (also as `RESULT_SIGNING_PREVIOUS_SECRET`), so a ledger written by 2.10.x stays readable without being rewritten.
+- The upgrade end-to-end test starts from the release's `minUpgradeFrom`, runs the fleet in an explicit compat, lets the guard admit enforce once the node is keyed, and rotates the server key with the agent reachable throughout.
+
+### Changed
+
+- A new agent without a shared secret logs that it waits for `magnus-agent enroll --token`, answers a shared-secret request with `401 NODE_SIGNATURE_REQUIRED` instead of `500 CONFIG_ERROR`, and does not attempt the legacy upgrade.
+- `magnus-server` start-up logs the mode and whether it is the default, and the server key with a staged or replaced one.
+- `magnus-agent acceptance` works without `NODE_MANAGER_SECRET`: it signs the probe with the node key (and refuses to run with neither).
+
+**New environment variables:** None. `NODE_AUTH_MODE` and `NODE_AUTO_REGISTER` change their defaults; `NODE_MANAGER_SECRET` and `RESULT_SIGNING_SECRET` become optional outside an explicit compat or warn.
+
+**Migration impact:** No datastore migrations.
+
 ## [2.10.2] - 2026-11-14
 
 ### Fixed

@@ -20,6 +20,7 @@ import { NODE_MANAGER_SECRET } from '../utils/env.js';
 import { assertLegacyMaySpeakFor, authenticateNode } from '../middleware/node-auth.js';
 import { nodeAuthMode, nodeAutoRegister } from '../services/node-auth-config.js';
 import { noteAgentEvidenceSigning, noteAgentServerKeyPins } from '../services/node-agent-auth.js';
+import { serverPublicKeys } from '../services/node-server-key.js';
 import { recordLegacyUse, recordUnattributedLegacyUse } from '../services/node-legacy-use.js';
 import { fqdnClaimMatchesNode, nodeFqdnAliases, reportIdentityMismatch } from '../services/node-credential-service.js';
 import {
@@ -192,6 +193,11 @@ async function tryReverseDns(ipAddress: string): Promise<string | null> {
   }
 }
 
+/** The key ids agents should pin, or nothing when the server key cannot be read (never fails a heartbeat). */
+function currentServerKeyIds(): { serverKeyIds?: string[] } {
+  try { return { serverKeyIds: serverPublicKeys().map(key => key.keyId) }; } catch { return {}; }
+}
+
 /** Fingerprint of a shared secret a signed caller also sent, when it is a valid one; else null. */
 function observedSharedSecret(token: string | undefined): string | null {
   if (!token || !NODE_MANAGER_SECRET) return null;
@@ -327,8 +333,11 @@ heartbeatRouter.post('/', async (c) => {
     ? auth.tokenFingerprint : observedSharedSecret(c.req.header('x-node-token'));
   // What the agent needs to know to move to (or repair) its own key; older agents ignore it.
   // `evidence: 1`: this server verifies evidence signed with the node key (an agent signs it only once told so).
+  // `serverKeyIds`: the server keys to pin (active, a staged next one, a replaced one in its grace); an
+  // agent whose pins differ reads them again from /node-enrollment/server-key (server-key rotation).
   const nodeAuthAck = { supported: true, mode: nodeAuthMode(), method: auth.method, evidence: 1,
-    ...(auth.method === 'legacy' && auth.signatureProblem ? { problem: auth.signatureProblem } : {}) };
+    ...(auth.method === 'legacy' && auth.signatureProblem ? { problem: auth.signatureProblem } : {}),
+    ...currentServerKeyIds() };
 
   const body = await parseBody(c, heartbeatRequestSchema) as HeartbeatRequestBody;
   if (auth.method === 'signature' && typeof body.fqdn === 'string' && body.fqdn

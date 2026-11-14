@@ -168,6 +168,14 @@ const nodeCredentialView = { type: 'object', description: 'Per-node credential s
     legacyUse: { type: 'object', nullable: true, description: 'Per channel, how often and when last the shared credentials were used for this node: `request` (shared node secret accepted from it), `evidence` (evidence accepted on the shared result key), `outbound` (shared node secret still sent to it).',
       properties: Object.fromEntries(['request', 'evidence', 'outbound'].map(channel => [channel, { type: 'object', nullable: true,
         properties: { count: { type: 'integer' }, lastUsedAt: { type: 'string', format: 'date-time' } } }])) } } };
+const serverKeyView = { type: 'object', properties: { keyId: { type: 'string' }, keyFingerprint: { type: 'string' }, createdAt: { type: 'string', format: 'date-time', nullable: true } } };
+const serverKeyRotationState = { type: 'object', properties: { active: serverKeyView, next: { ...serverKeyView, nullable: true },
+  previous: { type: 'object', nullable: true, properties: { ...serverKeyView.properties, promotedAt: { type: 'string', format: 'date-time' }, retireAfter: { type: 'string', format: 'date-time' }, inGrace: { type: 'boolean' } } },
+  retired: { type: 'array', items: { type: 'object', properties: { ...serverKeyView.properties, retiredAt: { type: 'string', format: 'date-time' } } } } } };
+const schedulerReconcileRequest = { type: 'object', properties: Object.fromEntries([
+  ...['id', 'nodeId', 'nodeFqdn', 'barrierId', 'kind', 'sourceSha256', 'disposition', 'reason', 'requestedBy', 'requestedAt', 'expiresAt'].map(name => [name, { type: 'string' }]),
+  ['epoch', { type: 'integer' }], ['count', { type: 'integer' }], ['evidenceSha256', { type: 'string', nullable: true }],
+  ['status', { type: 'string', enum: ['PENDING', 'APPROVED', 'REJECTED', 'EXPIRED'] }], ['decidedBy', { type: 'string', nullable: true }], ['decidedAt', { type: 'string', nullable: true }]]) };
 const pendingBindingView = { type: 'object', properties: { id: { type: 'string' }, nodeId: { type: 'string' }, nodeName: { type: 'string', nullable: true },
   keyId: { type: 'string' }, keyFingerprint: { type: 'string' }, fqdn: { type: 'string' }, peerAddress: { type: 'string' }, recordedAddress: { type: 'string' },
   status: { type: 'string', enum: ['PENDING', 'APPROVED', 'REJECTED', 'EXPIRED'] }, attempts: { type: 'integer' }, createdAt: { type: 'string', format: 'date-time' },
@@ -892,10 +900,18 @@ const paths: Record<string, Record<string, unknown>> = {
         detail: { type: 'string' } } }), 400: err400, 401: err401, 403: err403, 404: err404 } },
   },
   '/node-credentials/summary': {
-    get: { tags: ['Nodes'], summary: 'Fleet progress towards NODE_AUTH_MODE=enforce (ADMIN, OPERATOR)', description: 'Counts of nodes by credential state, shared-credential use in the last 24 hours, open pending bindings, and the blockers that switching the server to enforce would turn into refusals. In warn mode the readiness probe reports a failing non-critical `node-credentials` check while `blockers` is not empty.',
+    get: { tags: ['Nodes'], summary: 'Fleet progress towards NODE_AUTH_MODE=enforce (ADMIN, OPERATOR)', description: 'Counts of real nodes (the internal `__control-api__` and `__dashboard__` log sources and decommissioned nodes never count) by credential state, shared-credential use in the last 24 hours, open pending bindings, the server-key rotation, and the blockers that switching the server to enforce would turn into refusals. In warn mode the readiness probe reports a failing non-critical `node-credentials` check while `blockers` is not empty. A server whose NODE_AUTH_MODE is unset (enforce, the default since 3.0.0) refuses to start while SERVER_KEY_UNAVAILABLE, NODES_WITHOUT_KEY, NODES_REVOKED, NODES_NOT_SIGNING_EVIDENCE or AGENTS_NEED_UPGRADE remains. `modeDeprecated` marks an explicit compat or warn, which is removed in the next major.',
       security: apiSecretAuth,
       responses: { 200: success('Fleet summary', { type: 'object', properties: { mode: { type: 'string', enum: ['compat', 'warn', 'enforce'] },
+        modeExplicit: { type: 'boolean', description: 'NODE_AUTH_MODE is set; unset means enforce' },
+        modeDeprecated: { type: 'boolean', description: 'An explicit compat or warn' },
+        deprecationNotice: { type: 'string', nullable: true },
         serverKey: { type: 'object', nullable: true, properties: { keyId: { type: 'string' }, keyFingerprint: { type: 'string' } } },
+        serverKeyRotation: { type: 'object', nullable: true, description: 'Key ids and fingerprints only. `agents`: what the agents of keyed nodes pinned in their signed heartbeats of the last ten minutes',
+          properties: { active: serverKeyView, next: { ...serverKeyView, nullable: true },
+            previous: { type: 'object', nullable: true, properties: { ...serverKeyView.properties, promotedAt: { type: 'string', format: 'date-time' }, retireAfter: { type: 'string', format: 'date-time' }, inGrace: { type: 'boolean' } } },
+            retired: { type: 'array', items: { type: 'object', properties: { ...serverKeyView.properties, retiredAt: { type: 'string', format: 'date-time' } } } },
+            agents: { type: 'object', properties: Object.fromEntries(['keyedNodes', 'reporting', 'pinningActive', 'pinningNext'].map(name => [name, { type: 'integer' }])) } } },
         legacyUpgrade: { type: 'object', properties: { open: { type: 'boolean' }, until: { type: 'string', format: 'date-time' } } },
         nodes: { type: 'object', properties: Object.fromEntries(['total', 'active', 'none', 'revoked', 'evidenceSigning'].map(name => [name, { type: 'integer' }])) },
         pendingBindings: { type: 'integer' },
@@ -903,9 +919,25 @@ const paths: Record<string, Record<string, unknown>> = {
           outbound: { type: 'integer' }, lastUsedAt: { type: 'string', format: 'date-time', nullable: true }, unattributedSinceStart: { type: 'integer' } } },
         enforceReady: { type: 'boolean' },
         blockers: { type: 'array', items: { type: 'object', properties: { code: { type: 'string', enum: ['SERVER_KEY_UNAVAILABLE', 'NODES_WITHOUT_KEY', 'NODES_REVOKED',
-          'NODES_NOT_SIGNING_EVIDENCE', 'RECENT_SHARED_SECRET_USE', 'PENDING_BINDINGS'] }, count: { type: 'integer' },
+          'NODES_NOT_SIGNING_EVIDENCE', 'AGENTS_NEED_UPGRADE', 'RECENT_SHARED_SECRET_USE', 'PENDING_BINDINGS'] }, count: { type: 'integer' },
           nodes: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, name: { type: 'string' } } } } } } },
         generatedAt: { type: 'string', format: 'date-time' } } }), 401: err401, 403: err403 } },
+  },
+  '/node-credentials/server-key/stage': {
+    post: { tags: ['Nodes'], summary: 'Stage a next server signing key (ADMIN)', description: 'Server-key rotation, step one: creates the next key. Agents pin it from their next heartbeat (agents 3.0.0 and later; older ones read it when they meet it), and the server answers requests signed for its audience, but it signs nothing with it yet. 409 `SERVER_KEY_NEXT_EXISTS` when one is staged. Back the key file up afterwards. See docs/NODE_CREDENTIALS.md, "Rotating the server key".',
+      security: apiSecretAuth, requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', additionalProperties: false } } } },
+      responses: { 200: success('Rotation state', serverKeyRotationState), 401: err401, 403: err403, 409: err409 } },
+  },
+  '/node-credentials/server-key/promote': {
+    post: { tags: ['Nodes'], summary: 'Sign with the staged server key from now on (ADMIN)', description: 'Server-key rotation, step two: the next key becomes active and the replaced one `previous`, still accepted as an audience until `retireAfter` (`graceHours`, default 168). 409 `SERVER_KEY_NOT_PINNED` while a keyed node\'s agent has not reported pinning the staged key in the last ten minutes, unless `force`; 409 `SERVER_KEY_NO_NEXT` or `SERVER_KEY_PREVIOUS_PENDING` out of order.',
+      security: apiSecretAuth, requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', additionalProperties: false, properties: {
+        graceHours: { type: 'integer', minimum: 1, maximum: 2160 }, force: { type: 'boolean' } } } } } },
+      responses: { 200: success('Rotation state', serverKeyRotationState), 400: err400, 401: err401, 403: err403, 409: err409 } },
+  },
+  '/node-credentials/server-key/retire': {
+    post: { tags: ['Nodes'], summary: 'Retire the replaced server key (ADMIN)', description: 'Server-key rotation, step three: destroys the replaced key\'s private part. Its public key is kept, so decisions it signed still verify, but it is no longer pinned or an audience. 409 `SERVER_KEY_GRACE_PENDING` before `retireAfter` unless `force`.',
+      security: apiSecretAuth, requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', additionalProperties: false, properties: { force: { type: 'boolean' } } } } } },
+      responses: { 200: success('Rotation state', serverKeyRotationState), 400: err400, 401: err401, 403: err403, 409: err409 } },
   },
   '/node-credentials/pending-bindings': {
     get: { tags: ['Nodes'], summary: 'Key bindings waiting for an administrator (ADMIN)', description: 'Automatic bindings refused because the agent called from an address other than the one recorded for its node, newest first (at most 200). A request is EXPIRED after seven days without a new attempt.',
@@ -937,7 +969,7 @@ const paths: Record<string, Record<string, unknown>> = {
         legacyUpgrade: { type: 'object', properties: { open: { type: 'boolean' }, until: { type: 'string', format: 'date-time' } } } } }) } },
   },
   '/node-enrollment/legacy-upgrade': {
-    post: { tags: ['Heartbeat'], summary: 'An existing agent binds its first node key', description: 'Authenticated by the shared node secret plus a proof of possession of the submitted key. Binds only when the node exists, has no credential yet, the caller\'s socket address is the address recorded for the node, and the upgrade window is open. Idempotent for the same key.',
+    post: { tags: ['Heartbeat'], summary: 'An existing agent binds its first node key', description: 'Authenticated by the shared node secret plus a proof of possession of the submitted key. Binds only when the node exists, has no credential yet, the caller\'s socket address is the address recorded for the node, and the upgrade window is open. Idempotent for the same key. In enforce mode (the default since 3.0.0) it answers 410 `LEGACY_UPGRADE_CLOSED` before any credential is checked; enroll the node with a token instead.',
       security: nodeTokenAuth, requestBody: requestBody(legacyUpgradeRequestSchema),
       responses: { 200: success('Key bound', nodeBinding), 400: err400, 401: err401, 403: err403, 404: err404, 409: err409, 410: { description: 'The legacy upgrade is closed', content: { 'application/json': { schema: ref('ApiError') } } } } },
   },
@@ -1050,7 +1082,7 @@ const paths: Record<string, Record<string, unknown>> = {
     post: {
       tags: ['Heartbeat'],
       summary: 'Agent heartbeat',
-      description: 'Receives periodic heartbeats from fleet agents. Authenticated by a node signature (`x-magnus-*` headers) or, while `NODE_AUTH_MODE` is not `enforce`, the shared secret in `x-node-token`. The shared secret is refused for a node that has its own key, and adds an unknown agent to the inventory unless `NODE_AUTO_REGISTER=false`. The reply carries `nodeAuth` (mode and the method that was accepted).',
+      description: 'Receives periodic heartbeats from fleet agents. Authenticated by a node signature (`x-magnus-*` headers) or, under an explicit `NODE_AUTH_MODE=compat` or `warn` (deprecated), the shared secret in `x-node-token`; enforce, the default since 3.0.0, refuses the shared secret. The shared secret is refused for a node that has its own key, and adds an unknown agent to the inventory when `NODE_AUTO_REGISTER` allows it (default: on in compat and warn, off in enforce). The reply carries `nodeAuth`: the mode, the method that was accepted and, from 3.0.0, `serverKeyIds` (the server keys to pin; an agent whose pins differ reads them again).',
       security: nodeAuthSecurity,
       requestBody: {
         required: true,
@@ -1438,11 +1470,44 @@ const paths: Record<string, Record<string, unknown>> = {
   '/cron/scheduler-sources/reconcile': {
     post: {
       tags: ['Cron'],
-      summary: 'Reconcile one remembered foreign scheduler source',
-      description: 'Forwards an independently signed evidence decision bound to the exact drain epoch, barrier, source hash and count. Fresh decisions clear only retained uncertainty; an expired exact decision can retrieve only its retained terminal receipt. It never edits or stops the foreign scheduler, and a source observed again becomes a blocker again.',
+      summary: 'Reconcile one remembered foreign scheduler source (reviewer-signed)',
+      description: 'Forwards an independently signed evidence decision bound to the exact drain epoch, barrier, source hash and count. Fresh decisions clear only retained uncertainty; an expired exact decision can retrieve only its retained terminal receipt. It never edits or stops the foreign scheduler, and a source observed again becomes a blocker again. The signature is the COMMAND_RECONCILIATION_SECRET HMAC, a key agents used to hold too: an explicit NODE_AUTH_MODE=compat or warn only. In enforce mode (the default since 3.0.0) it answers 409 `NODE_AUTH_ENFORCED`; use the two-ADMIN `reconcile-requests` routes instead.',
       security: apiSecretAuth,
       requestBody: jsonBody('SchedulerSourceSettlement'),
       responses: { 200: success('Foreign scheduler source reconciled'), 400: err400, 401: err401, 403: err403, 409: err409 },
+    },
+  },
+  '/cron/scheduler-sources/reconcile-requests': {
+    post: {
+      tags: ['Cron'],
+      summary: 'Request a scheduler-source settlement (ADMIN person, step one of two)',
+      description: 'A signed-in ADMIN (not the API secret, not a service identity) asks to settle one remembered foreign scheduler source of a draining node, with a reason (10 to 500 characters) and optionally the digest of external evidence. Nothing reaches the node yet. A different ADMIN approves within 15 minutes; open requests do not survive a server restart. Audited as cron.scheduler-source.reconcile_request.',
+      security: apiSecretAuth,
+      requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', additionalProperties: false, required: ['nodeId', 'kind', 'sourceSha256', 'count', 'disposition', 'reason'], properties: {
+        nodeId: { type: 'string' }, kind: { type: 'string', pattern: '^[A-Z_]{1,80}$' }, sourceSha256: { type: 'string', pattern: '^[a-f0-9]{64}$' }, count: { type: 'integer', minimum: 1 },
+        disposition: { type: 'string', enum: ['effects_verified', 'no_effect_verified'] }, reason: { type: 'string', minLength: 10, maxLength: 500 },
+        evidenceSha256: { type: 'string', pattern: '^[a-f0-9]{64}$' } } } } } },
+      responses: { 201: success('Request recorded', schedulerReconcileRequest), 400: err400, 401: err401, 403: err403, 404: err404, 409: err409 },
+    },
+  },
+  '/cron/scheduler-sources/reconcile-requests/{id}/approve': {
+    post: {
+      tags: ['Cron'],
+      summary: 'Approve a scheduler-source settlement (a second ADMIN person)',
+      description: 'A different ADMIN person than the requester (403 `SECOND_ADMIN_REQUIRED`). The server signs the settlement for that node with its server key (and, outside enforce mode, adds the COMMAND_RECONCILIATION_SECRET HMAC when configured), sends it, and checks the node\'s signed receipt. 409 `AGENT_UPGRADE_REQUIRED` when the agent accepts only the HMAC (agents before 3.0.0) and none can be made; 409 `RECONCILIATION_REQUEST_DECIDED` when approved, rejected or expired. Audited as cron.scheduler-source.reconcile_approve.',
+      security: apiSecretAuth, parameters: [pp('id', 'Request ID')],
+      requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', additionalProperties: false } } } },
+      responses: { 200: success('Foreign scheduler source reconciled'), 401: err401, 403: err403, 404: err404, 409: err409 },
+    },
+  },
+  '/cron/scheduler-sources/reconcile-requests/{id}/reject': {
+    post: {
+      tags: ['Cron'],
+      summary: 'Withdraw a scheduler-source settlement request (ADMIN person)',
+      description: 'Records the decision; nothing reaches the node. Audited as cron.scheduler-source.reconcile_reject.',
+      security: apiSecretAuth, parameters: [pp('id', 'Request ID')],
+      requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', additionalProperties: false } } } },
+      responses: { 200: success('Request withdrawn', schedulerReconcileRequest), 401: err401, 403: err403, 404: err404, 409: err409 },
     },
   },
 
@@ -3108,7 +3173,7 @@ export function buildOpenApiSpec() {
           type: 'apiKey',
           in: 'header',
           name: 'x-node-token',
-          description: 'Shared node secret (`NODE_MANAGER_SECRET`). Accepted while `NODE_AUTH_MODE` is not `enforce`, and never for a node that has its own key.',
+          description: 'Shared node secret (`NODE_MANAGER_SECRET`). Deprecated: accepted only under an explicit `NODE_AUTH_MODE=compat` or `warn` (enforce, the default since 3.0.0, refuses it), and never for a node that has its own key.',
         },
         nodeSignature: {
           type: 'apiKey',

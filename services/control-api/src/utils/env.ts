@@ -11,6 +11,7 @@
  */
 import { loadEnv, type Env } from '../config/env.js';
 import { resolveCredentialSecret } from '../services/credential-rotation-service.js';
+import { nodeAuthMode } from '../services/node-auth-config.js';
 
 // ── Exported resolved secrets ──
 
@@ -83,10 +84,20 @@ export function getValidatedEnv(): Env {
   return validatedEnv;
 }
 
-/** Active node-manager secret, including durable rotations. */
+/**
+ * Active node-manager secret, including durable rotations. Empty in enforce mode when the server has
+ * none: nothing sends or accepts the shared secret then (docs/NODE_CREDENTIALS.md).
+ */
 export function getNodeManagerSecret(): string {
+  if (!NODE_MANAGER_SECRET && nodeAuthMode() === 'enforce') return '';
   return resolveCredentialSecret('NODE_MANAGER_SECRET', NODE_MANAGER_SECRET);
 }
+
+/**
+ * Shared credentials the server needs only while it accepts the shared node secret: in compat and
+ * warn mode. In enforce mode they are optional (still honoured when set).
+ */
+export const SHARED_NODE_SECRET_NAMES = ['NODE_MANAGER_SECRET', 'RESULT_SIGNING_SECRET'] as const;
 
 // ── Startup validation ──
 
@@ -102,9 +113,11 @@ export function listMissingSecrets(): string[] {
   if (usingIam && !IAM_TOKEN_ISSUER) missing.push('IAM_TOKEN_ISSUER');
   if (usingIam && !IAM_TOKEN_AUDIENCE) missing.push('IAM_TOKEN_AUDIENCE');
   if (API_SECRET.length < 32) missing.push('API_SECRET (dedicated, min 32 chars)');
-  if (NODE_MANAGER_SECRET.length < 32) missing.push('NODE_MANAGER_SECRET (dedicated, min 32 chars)');
+  // Only the shared-secret modes need the fleet-wide node credentials (docs/NODE_CREDENTIALS.md).
+  const sharedSecrets = nodeAuthMode() !== 'enforce';
+  if (sharedSecrets && NODE_MANAGER_SECRET.length < 32) missing.push('NODE_MANAGER_SECRET (dedicated, min 32 chars; required while NODE_AUTH_MODE is compat or warn)');
   if (AUDIT_HMAC_SECRET.length < 32) missing.push('AUDIT_HMAC_SECRET (dedicated, min 32 chars)');
-  if (RESULT_SIGNING_SECRET.length < 32) missing.push('RESULT_SIGNING_SECRET (dedicated, min 32 chars)');
+  if (sharedSecrets && RESULT_SIGNING_SECRET.length < 32) missing.push('RESULT_SIGNING_SECRET (dedicated, min 32 chars; required while NODE_AUTH_MODE is compat or warn)');
   if (LOG_INGEST_SIGNING_SECRET.length < 32) missing.push('LOG_INGEST_SIGNING_SECRET (dedicated, min 32 chars)');
   if (CREDENTIAL_ROTATION_KEY.length < 32) missing.push('CREDENTIAL_ROTATION_KEY (dedicated, min 32 chars)');
   if (METRICS_TOKEN.length < 32) missing.push('METRICS_TOKEN (dedicated, min 32 chars)');

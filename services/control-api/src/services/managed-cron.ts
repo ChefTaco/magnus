@@ -19,6 +19,8 @@ import { commandRequestDigest, type CommandRequest } from '../security/command-r
 import { commandResultSigningPayload, verifyCommandResultSignature, type SignedCommandResult } from '../security/command-result-signature.js';
 import { nodeEvidencePolicy, resultKeyHmac } from './node-evidence-policy.js';
 import { signNodeDecision } from './server-authorization.js';
+import { nodeAuthMode } from './node-auth-config.js';
+import type { EvidenceSignature } from '../security/node-evidence.js';
 import { RESULT_SIGNING_SECRET, RESULT_SIGNING_PREVIOUS_SECRET, getNodeManagerSecret } from '../utils/env.js';
 import { getNodeBaseUrl } from '../utils/node-url.js';
 import { commandResultSchema } from '../schemas/node-responses.js';
@@ -334,8 +336,47 @@ export async function revokeManagedCron(cronJobId: string, actorId: string) {
   return prepared;
 }
 
+/** The inventory node and drain barrier a scheduler-source decision is for; refused unless the node is draining under exactly that barrier. */
+async function schedulerSettlementTarget(nodeId: string, nodeFqdn: string | null, epoch: number | null, barrierId: string | null) {
+  const db = getDb();
+  return db.$transaction(async tx => {
+    await lockResourceNode(tx, nodeId);
+    const node = await tx.node.findUnique({ where: { id: nodeId } });
+    const enrollment = await tx.resourceEnrollment.findUnique({ where: { nodeId } });
+    if (!node) throw new HttpError(404, 'NODE_NOT_FOUND', 'Inventory node not found');
+    if ((nodeFqdn !== null && node.hostname !== nodeFqdn) || !enrollment || enrollment.state !== 'draining' || !enrollment.barrierId
+      || (epoch !== null && enrollment.epoch !== epoch) || (barrierId !== null && enrollment.barrierId !== barrierId))
+      fail('Scheduler reconciliation target or drain barrier differs');
+    return { node, epoch: enrollment!.epoch, barrierId: enrollment!.barrierId! };
+  });
+}
+
+/** Hand a signed settlement to the node and check that its signed receipt acknowledges exactly that decision. */
+async function deliverSchedulerSettlement(node: { id: string; ipAddress: string; port: number }, client: NodeApiClient,
+  assertion: Omit<SchedulerSourceSettlement, 'signature'> & { signature?: string; serverSignature?: EvidenceSignature }) {
+  const response = await client.reconcileSchedulerSource(assertion);
+  if (!response.success) return fail('Node rejected scheduler source reconciliation');
+  const { signature: _signature, serverSignature: _serverSignature, ...unsigned } = assertion;
+  const ack = schedulerSourceSettlementAckSchema.parse(response.data);
+  const { receiptSignature, nodeSignature, settled: _settled, replayed: _replayed, ...ackUnsigned } = ack;
+  if (JSON.stringify(ackUnsigned) !== JSON.stringify(unsigned)) return fail('Node acknowledged a different scheduler source decision');
+  const receipt = schedulerSourceSettlementReceiptPayload({ ...ackUnsigned, settled: true, replayed: ack.replayed });
+  if (!(await nodeEvidencePolicy(node.id)).verify('scheduler-settlement-receipt', receipt, nodeSignature, resultKeyHmac(receipt, receiptSignature)))
+    return fail('Scheduler source receipt signature is invalid');
+  return ack;
+}
+
+/**
+ * The reviewer path: an assertion signed in advance with COMMAND_RECONCILIATION_SECRET. That key is
+ * also on every agent that ever needed it (docs/NODE_CREDENTIALS.md, "Settling a scheduler source"),
+ * so it is no second factor: 3.0.0 keeps this path for an explicit compat or warn mode only, and
+ * enforce mode takes the two-ADMIN approval below instead.
+ */
 export async function reconcileForeignSchedulerSource(raw: SchedulerSourceSettlement) {
   const assertion = schedulerSourceSettlementSchema.parse(raw);
+  if (nodeAuthMode() === 'enforce')
+    throw new HttpError(409, 'NODE_AUTH_ENFORCED', 'A reviewer-signed settlement is an HMAC-only decision, which NODE_AUTH_MODE=enforce refuses; '
+      + 'request one with POST /api/v1/cron/scheduler-sources/reconcile-requests and have a second ADMIN approve it');
   const secret = process.env['COMMAND_RECONCILIATION_SECRET'] ?? '';
   const conflicting = [RESULT_SIGNING_SECRET, RESULT_SIGNING_PREVIOUS_SECRET, getNodeManagerSecret(), process.env['NODE_MANAGER_SECRET_PREVIOUS'] ?? '', process.env['API_SECRET'] ?? '',
     process.env['RESOURCE_PARTICIPANT_RECONCILIATION_SECRET'] ?? ''];
@@ -348,27 +389,93 @@ export async function reconcileForeignSchedulerSource(raw: SchedulerSourceSettle
   const expected = createHmac('sha256', secret).update(schedulerSourceSettlementSigningPayload(unsigned)).digest();
   if (!timingSafeEqual(expected, Buffer.from(signature, 'hex')))
     throw new HttpError(403, 'SCHEDULER_RECONCILIATION_INVALID', 'Scheduler reconciliation signature is invalid');
-  const db = getDb();
-  const node = await db.$transaction(async tx => {
-    await lockResourceNode(tx, assertion.nodeId);
-    const node = await tx.node.findUnique({ where: { id: assertion.nodeId } });
-    const enrollment = await tx.resourceEnrollment.findUnique({ where: { nodeId: assertion.nodeId } });
-    if (!node) throw new HttpError(404, 'NODE_NOT_FOUND', 'Inventory node not found');
-    if (node.hostname !== assertion.nodeFqdn || !enrollment || enrollment.state !== 'draining'
-      || enrollment.epoch !== assertion.epoch || enrollment.barrierId !== assertion.barrierId)
-      fail('Scheduler reconciliation target or drain barrier differs');
-    return node;
-  });
+  const { node } = await schedulerSettlementTarget(assertion.nodeId, assertion.nodeFqdn, assertion.epoch, assertion.barrierId);
   const client = new NodeApiClient({ baseUrl: getNodeBaseUrl(node.ipAddress, node.port), nodeId: node.id, nodeToken: getNodeManagerSecret() });
-  const response = await client.reconcileSchedulerSource(assertion);
-  if (!response.success) return fail('Node rejected scheduler source reconciliation');
-  const ack = schedulerSourceSettlementAckSchema.parse(response.data);
-  const { receiptSignature, nodeSignature, settled: _settled, replayed: _replayed, ...ackUnsigned } = ack;
-  if (JSON.stringify(ackUnsigned) !== JSON.stringify(unsigned)) return fail('Node acknowledged a different scheduler source decision');
-  const receipt = schedulerSourceSettlementReceiptPayload({ ...ackUnsigned, settled: true, replayed: ack.replayed });
-  if (!(await nodeEvidencePolicy(node.id)).verify('scheduler-settlement-receipt', receipt, nodeSignature, resultKeyHmac(receipt, receiptSignature)))
-    return fail('Scheduler source receipt signature is invalid');
-  return ack;
+  return deliverSchedulerSettlement(node, client, assertion);
+}
+
+// ── Two-ADMIN approval of a scheduler-source settlement (3.0.0) ──
+//
+// The reviewer's HMAC was meant as a second factor next to the ADMIN role. Its equivalent here is a
+// second person: one ADMIN requests the decision with a reason, a different ADMIN approves it within
+// fifteen minutes, and only then does the server sign it for that node with its server key (agents
+// 3.0.0 and later verify it; they no longer need COMMAND_RECONCILIATION_SECRET). Neither step may be
+// taken by the API secret or a service identity. Requests live in this process (one Control API
+// instance); a restart drops the open ones, which are simply requested again.
+
+export const SCHEDULER_RECONCILE_REQUEST_TTL_MS = 15 * 60_000;
+export interface SchedulerReconcileRequestInput {
+  nodeId: string; kind: string; sourceSha256: string; count: number; disposition: 'effects_verified' | 'no_effect_verified'; reason: string;
+  evidenceSha256?: string | undefined;
+}
+export interface SchedulerReconcileRequest extends Omit<SchedulerReconcileRequestInput, 'evidenceSha256'> {
+  id: string; nodeFqdn: string; epoch: number; barrierId: string; evidenceSha256: string | null;
+  requestedBy: string; requestedAt: string; expiresAt: string; status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'EXPIRED';
+  decidedBy: string | null; decidedAt: string | null;
+}
+const reconcileRequests = new Map<string, SchedulerReconcileRequest>();
+
+function currentRequest(id: string, now: number): SchedulerReconcileRequest {
+  const request = reconcileRequests.get(id);
+  if (!request) throw new HttpError(404, 'NOT_FOUND', 'Scheduler reconciliation request not found (requests do not survive a restart)');
+  if (request.status === 'PENDING' && Date.parse(request.expiresAt) <= now) request.status = 'EXPIRED';
+  return request;
+}
+
+/** Step one: an ADMIN asks for a settlement of one remembered source. Nothing reaches the node yet. */
+export async function requestSchedulerSourceReconciliation(input: SchedulerReconcileRequestInput, actorId: string, now = Date.now()): Promise<SchedulerReconcileRequest> {
+  const target = await schedulerSettlementTarget(input.nodeId, null, null, null);
+  for (const [id, entry] of reconcileRequests) if (Date.parse(entry.expiresAt) <= now - 24 * 60 * 60_000) reconcileRequests.delete(id);
+  if (reconcileRequests.size >= 1000) throw new HttpError(429, 'TOO_MANY_REQUESTS', 'Too many open scheduler reconciliation requests');
+  const request: SchedulerReconcileRequest = { id: randomUUID(), nodeId: target.node.id, nodeFqdn: target.node.hostname, epoch: target.epoch,
+    barrierId: target.barrierId, kind: input.kind, sourceSha256: input.sourceSha256, count: input.count, disposition: input.disposition,
+    reason: input.reason, evidenceSha256: input.evidenceSha256 ?? null, requestedBy: actorId, requestedAt: new Date(now).toISOString(),
+    expiresAt: new Date(now + SCHEDULER_RECONCILE_REQUEST_TTL_MS).toISOString(), status: 'PENDING', decidedBy: null, decidedAt: null };
+  reconcileRequests.set(request.id, request);
+  return { ...request };
+}
+
+export async function rejectSchedulerSourceReconciliation(id: string, actorId: string, now = Date.now()): Promise<SchedulerReconcileRequest> {
+  const request = currentRequest(id, now);
+  if (request.status !== 'PENDING') throw new HttpError(409, 'RECONCILIATION_REQUEST_DECIDED', `This request is ${request.status.toLowerCase()}`);
+  Object.assign(request, { status: 'REJECTED', decidedBy: actorId, decidedAt: new Date(now).toISOString() });
+  return { ...request };
+}
+
+/**
+ * Step two: a second ADMIN approves. The server signs the settlement for the node (and, outside
+ * enforce mode, adds the COMMAND_RECONCILIATION_SECRET HMAC for an agent that only knows that), sends
+ * it, and checks the node's signed receipt.
+ */
+export async function approveSchedulerSourceReconciliation(id: string, actorId: string, now = Date.now()) {
+  const request = currentRequest(id, now);
+  if (request.status !== 'PENDING') throw new HttpError(409, 'RECONCILIATION_REQUEST_DECIDED', `This request is ${request.status.toLowerCase()}`);
+  if (request.requestedBy === actorId)
+    throw new HttpError(403, 'SECOND_ADMIN_REQUIRED', 'A different ADMIN must approve the settlement than the one who requested it');
+  const { node } = await schedulerSettlementTarget(request.nodeId, request.nodeFqdn, request.epoch, request.barrierId);
+  const client = new NodeApiClient({ baseUrl: getNodeBaseUrl(node.ipAddress, node.port), nodeId: node.id, nodeToken: getNodeManagerSecret() });
+  const serverSigned = await client.acceptsServerSignedSchedulerSettlement().catch(() => false);
+  const decidedAt = new Date(now).toISOString();
+  const evidenceSha256 = hash(JSON.stringify({ version: 1, kind: 'magnus.scheduler-source-reconcile', requestId: request.id, nodeId: request.nodeId,
+    nodeFqdn: request.nodeFqdn, epoch: request.epoch, barrierId: request.barrierId, sourceKind: request.kind, sourceSha256: request.sourceSha256,
+    count: request.count, disposition: request.disposition, reason: request.reason, operatorEvidenceSha256: request.evidenceSha256,
+    requestedBy: request.requestedBy, requestedAt: request.requestedAt, approvedBy: actorId, approvedAt: decidedAt }));
+  const unsigned = { version: 1 as const, sourceIdentityVersion: 2 as const, nodeId: request.nodeId, nodeFqdn: request.nodeFqdn, epoch: request.epoch,
+    barrierId: request.barrierId, kind: request.kind, sourceSha256: request.sourceSha256, count: request.count, disposition: request.disposition,
+    evidenceSha256, approvalRef: `magnus:scheduler-source-reconcile:${request.id}`, decisionId: request.id, expiresAt: now + 120_000 };
+  const assertion = signNodeDecision(node.id, 'scheduler-source-settlement', unsigned, schedulerSourceSettlementSigningPayload(unsigned),
+    { agentVerifiesServerSignatures: serverSigned });
+  if (!assertion || (!serverSigned && !assertion.signature))
+    throw new HttpError(409, 'AGENT_UPGRADE_REQUIRED', 'This node\'s agent accepts a scheduler settlement only with COMMAND_RECONCILIATION_SECRET; '
+      + 'upgrade it to 3.0.0 or later (with a node key), or use the reviewer path under NODE_AUTH_MODE=compat');
+  const ack = await deliverSchedulerSettlement(node, client, assertion);
+  Object.assign(request, { status: 'APPROVED', decidedBy: actorId, decidedAt });
+  return { ...ack, requestId: request.id };
+}
+
+/** For tests. */
+export function resetSchedulerReconcileRequests(): void {
+  reconcileRequests.clear();
 }
 
 export async function admitCronOccurrence(raw: SchedulerTrigger) {

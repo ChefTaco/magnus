@@ -5,7 +5,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { parse } from 'dotenv';
-import { readHostBoot, verifyHistoricalObservation, signHistoricalAssertion, validateHistoricalKeys } from './historical-mutation.js';
+import { hostHistoricalKeys, readHostBoot, verifyHistoricalObservation, signHistoricalAssertion, validateHistoricalKeys } from './historical-mutation.js';
 
 async function privateBytes(path: string, maximum = 16_384, installedOwner = 0): Promise<Buffer> {
   const h = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -49,9 +49,11 @@ async function main() {
   }
   const service = execFileSync('systemctl', ['show', 'magnus-agent.service', '--property=ActiveState,MainPID'], { encoding: 'utf8' });
   if (!service.includes('ActiveState=inactive') || !service.includes('MainPID=0')) throw new Error('Stop the node agent before apply');
-  const keys = { result: env['RESULT_SIGNING_SECRET'] ?? '', reconciliation: env['COMMAND_RECONCILIATION_SECRET'] ?? '' };
+  // The shared keys when the agent still has them, else the node-local keys in its identity directory.
+  process.env['AGENT_INSTALL_DIR'] ??= '/opt/magnus-agent';
+  const keys = hostHistoricalKeys();
   validateHistoricalKeys(keys);
-  const before = verifyHistoricalObservation(JSON.parse((await privateBytes(options['--before']!)).toString('utf8')), keys.result);
+  const before = verifyHistoricalObservation(JSON.parse((await privateBytes(options['--before']!)).toString('utf8')), keys.result, keys.previousResult);
   const ids = options['--records']!.split(',');
   if (!ids.length || new Set(ids).size !== ids.length || ids.some(id => !before.records.some(r => r.id === id))) throw new Error('Exact retained record IDs required');
   const boot = await readHostBoot();

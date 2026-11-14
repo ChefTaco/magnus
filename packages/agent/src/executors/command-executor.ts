@@ -1,10 +1,11 @@
 import { recoverEmbermendResponse } from './embermend-execution.js';
+import { resultSigningKey } from '../security/local-evidence-keys.js';
 import { httpReceiptBody } from '../security/managed-http.js';
 import { managedExecution } from '../security/managed-context.js';
 import { Hono } from 'hono';
 import { spawn } from 'node:child_process';
 import { z } from 'zod';
-import { HOST_FQDN, RESULT_SIGNING_SECRET, MAGNUS_EXECUTION_SUPERVISOR_ENABLED } from '../env.js';
+import { HOST_FQDN, MAGNUS_EXECUTION_SUPERVISOR_ENABLED } from '../env.js';
 import { startSpan } from '../collectors/otel-collector.js';
 import { admissionCause, CommandLedger, CommandAdmissionError, commandFenceSchema, commandReconciliationSchema, commandRequestDigest, type CommandReceiptResult } from './command-ledger.js';
 import { commandAbsenceSigningPayload, signCommandEvidence, signCommandResult } from '../security/command-result-signature.js';
@@ -146,7 +147,7 @@ export async function executeCommand(input: ExecuteBody): Promise<CommandReceipt
   // Parse/snapshot even internal callers before awaiting or executing effects.
   const opts = executeBodySchema.parse(input);
   if (draining) throw new CommandAdmissionError('LEDGER_UNAVAILABLE', 'Node is draining; no command executed', { notStarted: true });
-  if (RESULT_SIGNING_SECRET.length < 32) throw new CommandAdmissionError('LEDGER_UNAVAILABLE', 'Command signing is unavailable; no command executed');
+  if (resultSigningKey().length < 32) throw new CommandAdmissionError('LEDGER_UNAVAILABLE', 'Command signing is unavailable; no command executed');
   if (opts.coordination && !MAGNUS_EXECUTION_SUPERVISOR_ENABLED)
     throw new CommandAdmissionError('LEDGER_UNAVAILABLE', 'Managed commands require the node execution supervisor; no command executed', { notStarted: true });
   const pending = commandLedger.execute(opts, (digest) => MAGNUS_EXECUTION_SUPERVISOR_ENABLED
@@ -170,7 +171,7 @@ async function executeSupervised(opts: ExecuteBody, digest: string): Promise<Com
     ...(opts.coordination ? { coordination: { ...opts.coordination, requestSha256: digest } } : {}),
     completion: { registryVersion: 1 as const, registrySha256: completionOwner.registrySha256,
       descriptorId: completionOwner.descriptorId } };
-  return { ...result, signature: signCommandResult(result, RESULT_SIGNING_SECRET) };
+  return { ...result, signature: signCommandResult(result, resultSigningKey()) };
 }
 
 /** Agent restart adopts the original unit's terminal evidence; it never starts it. */
@@ -183,7 +184,7 @@ export async function recoverCommandReceipt(commandId: string) {
       if (native) {
         const unsigned = { commandId, exitCode: 0, stdout: httpReceiptBody('POST', '/embermend/action', native.status, native.body), stderr: '', durationMs: native.durationMs, truncated: false,
           ...(row.coordination ? { coordination: { ...row.coordination, requestSha256: row.requestSha256 } } : {}) };
-        const recovered = await commandLedger.adoptRecoveredResult(commandId, row.requestSha256, { ...unsigned, signature: signCommandResult(unsigned, RESULT_SIGNING_SECRET) });
+        const recovered = await commandLedger.adoptRecoveredResult(commandId, row.requestSha256, { ...unsigned, signature: signCommandResult(unsigned, resultSigningKey()) });
         await mutationBarrier.settleCompletedCommand(commandId, commandLedger); return recovered;
       }
     }
@@ -197,7 +198,7 @@ export async function recoverCommandReceipt(commandId: string) {
       completion: { registryVersion: 1 as const, registrySha256: observation.evidence.completionOwner.registrySha256,
         descriptorId: observation.evidence.completionOwner.descriptorId } };
     const recovered = await commandLedger.adoptRecoveredResult(commandId, row.requestSha256,
-      { ...result, signature: signCommandResult(result, RESULT_SIGNING_SECRET) });
+      { ...result, signature: signCommandResult(result, resultSigningKey()) });
     await mutationBarrier.settleCompletedCommand(commandId, commandLedger);
     return recovered;
   } catch { return row; }
@@ -247,7 +248,7 @@ function executeProcess(opts: ExecuteBody, digest: string): Promise<CommandRecei
       span.setAttribute('command.duration_ms', result.durationMs);
       span.setAttribute('command.truncated', result.truncated);
       span.end(exitCode === 0 ? 'ok' : 'error');
-      try { resolve({ ...result, signature: signCommandResult(result, RESULT_SIGNING_SECRET) }); }
+      try { resolve({ ...result, signature: signCommandResult(result, resultSigningKey()) }); }
       catch (error) { reject(error); }
     };
     // Recheck immediately before spawn, after the durable claim's filesystem IO.
@@ -310,7 +311,7 @@ commandRoutes.get('/receipts/:commandId/trace', async (c) => {
     const unsigned = { commandId: id, nodeFqdn: HOST_FQDN, nonce, ledgerExists: trace.ledgerExists, receipt: trace.receipt, activeLock: trace.activeLock, resourceKey,
       fenceHighWater: trace.fenceHighWater, markerState: trace.marker.state, markerNodeId: trace.marker.marker?.nodeId ?? null, admissionFailedFence: trace.admissionFailedFence };
     const payload = commandAbsenceSigningPayload(unsigned);
-    return c.json({ success: true, data: { ...unsigned, signature: signCommandEvidence(payload, RESULT_SIGNING_SECRET),
+    return c.json({ success: true, data: { ...unsigned, signature: signCommandEvidence(payload, resultSigningKey()),
       ...nodeEvidenceFields('command-absence', payload) } });
   } catch (error) {
     logger.warn(`Command trace ${id} could not be read: ${error instanceof Error ? error.message : String(error)}`);

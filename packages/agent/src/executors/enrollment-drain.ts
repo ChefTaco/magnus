@@ -1,8 +1,9 @@
 /** Node proof for an authority-created enrollment barrier; never action approval. */
 import { createHash, createHmac, randomUUID } from 'node:crypto';
+import { resultSigningKey } from '../security/local-evidence-keys.js';
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { CONTROL_API_URL, HOST_FQDN, NODE_MANAGER_SECRET, RESULT_SIGNING_SECRET, MAGNUS_EXECUTION_SUPERVISOR_ENABLED } from '../env.js';
+import { CONTROL_API_URL, HOST_FQDN, MAGNUS_EXECUTION_SUPERVISOR_ENABLED } from '../env.js';
 import { nodeApiFetch } from '../node-auth.js';
 import { commandLedger, executionSupervisor } from './command-executor.js';
 import { mutationBarrier } from './mutation-barrier.js';
@@ -35,8 +36,7 @@ export function canonicalDrainJson(value: unknown): string {
 export const enrollmentDrainRoutes = new Hono();
 enrollmentDrainRoutes.get('/host-local-writer-proof', async c => {
   const request = writerProofRequest.safeParse(c.req.query());
-  if (!request.success || request.data.nodeFqdn !== HOST_FQDN || RESULT_SIGNING_SECRET.length < 32
-    || RESULT_SIGNING_SECRET === NODE_MANAGER_SECRET)
+  if (!request.success || request.data.nodeFqdn !== HOST_FQDN || resultSigningKey().length < 32)
     return c.json({ success: false, error: { code: 'WRITER_PROOF_INVALID' } }, 409);
   try {
     // The owner reads its durable one-way drain and retained claims under the
@@ -53,7 +53,7 @@ enrollmentDrainRoutes.get('/host-local-writer-proof', async c => {
       mutationInventorySha256: inventory.inventorySha256,
       admissionFenceSha256: createHash('sha256').update(canonicalDrainJson(drain)).digest('hex') };
     const payload = hostLocalWriterSigningPayload(receipt);
-    const signature = createHmac('sha256', RESULT_SIGNING_SECRET).update(payload).digest('hex');
+    const signature = createHmac('sha256', resultSigningKey()).update(payload).digest('hex');
     c.header('Cache-Control', 'no-store');
     return c.json({ success: true, data: { ...receipt, signature, ...nodeEvidenceFields('host-local-writer', payload) } });
   } catch (error) {
@@ -77,8 +77,7 @@ enrollmentDrainRoutes.post('/enrollment-drain', async c => {
   if (!parsed.success) return c.json({ success: false, error: { code: 'INVALID_DRAIN_CHALLENGE' } }, 400);
   const descriptor = parsed.data;
   if (descriptor.nodeFqdn !== HOST_FQDN || descriptor.expiresAt <= Date.now()
-    || descriptor.expiresAt > Date.now() + 300_000 || RESULT_SIGNING_SECRET.length < 32
-    || RESULT_SIGNING_SECRET === NODE_MANAGER_SECRET) return c.json({ success: false, error: { code: 'INVALID_DRAIN_CHALLENGE' } }, 409);
+    || descriptor.expiresAt > Date.now() + 300_000 || resultSigningKey().length < 32) return c.json({ success: false, error: { code: 'INVALID_DRAIN_CHALLENGE' } }, 409);
   // The step in progress names the refusal when a dependency throws.
   let step: DrainFailureReason = 'authority-unavailable'; const started = Date.now();
   try {
@@ -111,7 +110,7 @@ enrollmentDrainRoutes.post('/enrollment-drain', async c => {
     const receipt = { ...descriptor, status: activeCount || unknownCount ? 'pending' : 'drained', activeCount, unknownCount,
       evidenceSha256: createHash('sha256').update(canonicalDrainJson({ mutations, commands, supervisor })).digest('hex') };
     const payload = enrollmentReceiptSigningPayload(receipt);
-    const signature = createHmac('sha256', RESULT_SIGNING_SECRET).update(payload).digest('hex');
+    const signature = createHmac('sha256', resultSigningKey()).update(payload).digest('hex');
     c.header('Cache-Control', 'no-store');
     return c.json({ ...receipt, signature, ...nodeEvidenceFields('enrollment-drain', payload) });
   } catch (error) {

@@ -266,14 +266,33 @@ export const nodeCredentialDowngradeCheckResponseSchema = ok(nodeCredentialDowng
 
 // services/control-api/src/routes/node-credentials.ts: the fleet's progress towards NODE_AUTH_MODE=enforce.
 export const nodeAuthModeSchema = z.enum(['compat', 'warn', 'enforce']);
+// AGENTS_NEED_UPGRADE (3.0.0): agents 2.10.0 and 2.10.1 with a key, whose managed requests enforce mode cannot reach.
 export const enforceBlockerSchema = z.object({
-  code: z.enum(['SERVER_KEY_UNAVAILABLE', 'NODES_WITHOUT_KEY', 'NODES_REVOKED', 'NODES_NOT_SIGNING_EVIDENCE', 'RECENT_SHARED_SECRET_USE', 'PENDING_BINDINGS']),
+  code: z.enum(['SERVER_KEY_UNAVAILABLE', 'NODES_WITHOUT_KEY', 'NODES_REVOKED', 'NODES_NOT_SIGNING_EVIDENCE', 'AGENTS_NEED_UPGRADE',
+    'RECENT_SHARED_SECRET_USE', 'PENDING_BINDINGS']),
   count: z.number().int(),
   nodes: z.array(z.object({ id: z.string(), name: z.string() })),
 });
+// Server-key rotation (3.0.0): ids and fingerprints only. `agents` says how many keyed nodes' agents pinned
+// the active and the staged key in their signed heartbeats of the last ten minutes; promote once pinningNext
+// equals keyedNodes (POST /node-credentials/server-key/promote refuses earlier without `force`).
+export const serverKeyViewSchema = z.object({ keyId: z.string(), keyFingerprint: z.string(), createdAt: z.string().nullable() });
+export const serverKeyRotationSchema = z.object({
+  active: serverKeyViewSchema,
+  next: serverKeyViewSchema.nullable(),
+  previous: serverKeyViewSchema.extend({ promotedAt: z.string(), retireAfter: z.string(), inGrace: z.boolean() }).nullable(),
+  retired: z.array(serverKeyViewSchema.extend({ retiredAt: z.string() })),
+  agents: z.object({ keyedNodes: z.number().int(), reporting: z.number().int(), pinningActive: z.number().int(), pinningNext: z.number().int() }),
+});
 export const nodeCredentialFleetSummarySchema = z.object({
   mode: nodeAuthModeSchema,
+  // 3.0.0 (absent from older servers): whether NODE_AUTH_MODE is set (unset is enforce, the default), and whether
+  // it is a deprecated explicit compat or warn, with the notice to show.
+  modeExplicit: z.boolean().optional(),
+  modeDeprecated: z.boolean().optional(),
+  deprecationNotice: z.string().nullable().optional(),
   serverKey: z.object({ keyId: z.string(), keyFingerprint: z.string() }).nullable(),
+  serverKeyRotation: serverKeyRotationSchema.nullable().optional(),
   legacyUpgrade: z.object({ open: z.boolean(), until: z.string() }),
   nodes: z.object({ total: z.number().int(), active: z.number().int(), none: z.number().int(), revoked: z.number().int(), evidenceSigning: z.number().int() }),
   pendingBindings: z.number().int(),
@@ -3184,7 +3203,7 @@ export const magnusBrowserRoutes: readonly MagnusBrowserRoute[] = [
   { method: 'POST', path: '/nodes/{nodeId}/credentials/revoke', request: nodeCredentialRevokeRequestSchema, response: nodeCredentialRevokeResponseSchema, roles: ADMIN_ONLY, note: 'Without keyId, every valid key. When agentRefused is true the agent is refused until it is enrolled with a new token; the node never falls back to the shared secret. Optional x-idempotency-key header: a repeat answers 409 DUPLICATE_REQUEST. 404 NOT_FOUND or NODE_CREDENTIAL_NOT_FOUND (nothing left to revoke).' },
   { method: 'POST', path: '/nodes/{nodeId}/credentials/reset', request: nodeCredentialResetRequestSchema, response: nodeCredentialResetResponseSchema, roles: ADMIN_ONLY, note: 'Rollback: the node is accepted with the shared node secret again. 409 NODE_AUTH_ENFORCED in enforce mode. Optional x-idempotency-key header: a repeat answers 409 DUPLICATE_REQUEST.' },
   { method: 'GET', path: '/node-credentials/downgrade-check', query: nodeCredentialDowngradeQuerySchema, response: nodeCredentialDowngradeCheckResponseSchema, roles: WRITE_ROLES, note: 'Ask before installing an older agent: an agent older than 2.10.0 is refused for a node with a key until its credentials are reset.' },
-  { method: 'GET', path: '/node-credentials/summary', response: nodeCredentialFleetSummaryResponseSchema, roles: WRITE_ROLES, note: 'In NODE_AUTH_MODE=warn the readiness probe reports a failing non-critical node-credentials check while blockers is not empty.' },
+  { method: 'GET', path: '/node-credentials/summary', response: nodeCredentialFleetSummaryResponseSchema, roles: WRITE_ROLES, note: 'In NODE_AUTH_MODE=warn the readiness probe reports a failing non-critical node-credentials check while blockers is not empty. From 3.0.0: show deprecationNotice when modeDeprecated (an explicit compat or warn), and the server-key rotation from serverKeyRotation.' },
   { method: 'GET', path: '/node-credentials/pending-bindings', query: pendingBindingsQuerySchema, response: pendingBindingsResponseSchema, roles: ADMIN_ONLY },
   { method: 'POST', path: '/node-credentials/pending-bindings/{id}/approve', request: z.object({}).strict(), response: pendingBindingDecisionResponseSchema, roles: ADMIN_ONLY, note: 'Compare keyFingerprint with `magnus-agent identity show` on the host first. 409 when the node has a key by now or in enforce mode, 410 after seven days without a request.' },
   { method: 'POST', path: '/node-credentials/pending-bindings/{id}/reject', request: pendingBindingRejectRequestSchema, response: pendingBindingDecisionResponseSchema, roles: ADMIN_ONLY },

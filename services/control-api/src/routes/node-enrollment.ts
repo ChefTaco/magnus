@@ -26,6 +26,10 @@ nodeEnrollmentRouter.get('/server-key', async c => c.json({ success: true, data:
   keys: serverPublicKeys(), mode: nodeAuthMode(), legacyUpgrade: await legacyUpgradeWindow() } }));
 
 nodeEnrollmentRouter.post('/legacy-upgrade', async c => {
+  // Closed in enforce mode whatever the window says, before any credential is looked at: the shared
+  // node secret binds nothing any more, and an agent learns to enroll with a token instead.
+  if (nodeAuthMode() === 'enforce')
+    throw new HttpError(410, 'LEGACY_UPGRADE_CLOSED', 'The automatic upgrade of existing nodes is closed (NODE_AUTH_MODE=enforce); enroll this node with a token');
   const token = c.req.header('x-node-token') ?? '';
   if (!token || !NODE_MANAGER_SECRET || !verifyWithRotation('NODE_MANAGER_SECRET', NODE_MANAGER_SECRET, token))
     throw new HttpError(401, 'UNAUTHORIZED', 'Node credential required');

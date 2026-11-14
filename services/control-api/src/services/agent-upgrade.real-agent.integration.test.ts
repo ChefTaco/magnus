@@ -12,7 +12,11 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Hono } from 'hono';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+// These cases drive agents that hold no node key (shared secret and shared result key), which 3.0.0
+// accepts only under an explicit NODE_AUTH_MODE=compat; node-credentials-enforce.real-agent covers enforce.
+beforeEach(() => { process.env['NODE_AUTH_MODE'] = 'compat'; });
+afterEach(() => { delete process.env['NODE_AUTH_MODE']; });
 import { getNodeBaseUrl } from '../utils/node-url.js';
 
 const nodeKey = 'real-agent-node-auth-fixture-at-least-32-characters';

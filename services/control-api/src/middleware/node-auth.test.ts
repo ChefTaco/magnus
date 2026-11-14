@@ -68,9 +68,9 @@ beforeEach(() => {
   fake.state.nodes.push(fixtureNode('node-a', 'node-a.example.com', '192.0.2.10'), fixtureNode('node-b', 'node-b.example.com', '192.0.2.20'));
   fixture.audit = []; fixture.notifications = []; fixture.handled = []; fixture.peer = '192.0.2.10';
   resetNodeAuthState(); resetNodeCredentialServiceState();
-  delete process.env['NODE_AUTH_MODE']; delete process.env['NODE_AUTH_LEGACY_UPGRADE_UNTIL'];
+  process.env['NODE_AUTH_MODE'] = 'compat'; delete process.env['NODE_AUTH_LEGACY_UPGRADE_UNTIL'];
 });
-afterEach(() => { delete process.env['NODE_AUTH_MODE']; delete process.env['NODE_AUTH_LEGACY_UPGRADE_UNTIL']; });
+afterEach(() => { process.env['NODE_AUTH_MODE'] = 'compat'; delete process.env['NODE_AUTH_LEGACY_UPGRADE_UNTIL']; });
 
 describe('legacy upgrade: an existing node binds its first key', () => {
   it('binds once, audits and notifies with fingerprints only, and answers a retry of the same key', async () => {
@@ -154,7 +154,7 @@ describe('legacy upgrade: an existing node binds its first key', () => {
     await expect(approvePendingBinding(byKey(first).id, 'admin-1')).rejects.toMatchObject({ code: 'PENDING_BINDING_DECIDED' });
     process.env['NODE_AUTH_MODE'] = 'enforce';
     await expect(approvePendingBinding(byKey(second).id, 'admin-1')).rejects.toMatchObject({ code: 'NODE_AUTH_ENFORCED' });
-    delete process.env['NODE_AUTH_MODE'];
+    process.env['NODE_AUTH_MODE'] = 'compat';
     fixture.peer = '192.0.2.10';
     expect((await upgrade(fixtureAgentKey(), 'node-a.example.com')).status).toBe(200);
     await expect(approvePendingBinding(byKey(second).id, 'admin-1')).rejects.toMatchObject({ code: 'NODE_CREDENTIAL_EXISTS' });

@@ -45,11 +45,14 @@ chmod 600 ~/.magnus/server.env
 `magnus-server env-schema` prints the same list as JSON.
 
 **Required:** `DATABASE_URL` (in production), `REDIS_URL`, `API_SECRET`,
-`JWT_SECRET` (unless Hive IAM is configured), `NODE_MANAGER_SECRET`,
-`AUDIT_HMAC_SECRET`, `RESULT_SIGNING_SECRET`, `LOG_INGEST_SIGNING_SECRET`,
-`CREDENTIAL_ROTATION_KEY`, `METRICS_TOKEN`, `WEBHOOK_ENCRYPTION_KEY`, and in
-production `TLS_CERT_PATH` / `TLS_KEY_PATH`. The server refuses to start while
-any is missing; there are no fallback secret values.
+`JWT_SECRET` (unless Hive IAM is configured), `AUDIT_HMAC_SECRET`,
+`LOG_INGEST_SIGNING_SECRET`, `CREDENTIAL_ROTATION_KEY`, `METRICS_TOKEN`,
+`WEBHOOK_ENCRYPTION_KEY`, and in production `TLS_CERT_PATH` / `TLS_KEY_PATH`.
+`NODE_MANAGER_SECRET` and `RESULT_SIGNING_SECRET` are required only under an
+explicit (deprecated) `NODE_AUTH_MODE=compat` or `warn`: from 3.0.0 the server
+runs in `enforce` mode by default and agents use their own keys
+([per-node credentials](../../docs/NODE_CREDENTIALS.md)). The server refuses to
+start while any is missing; there are no fallback secret values.
 
 Webhooks are refused until `WEBHOOK_ALLOWED_ORIGINS` lists the exact HTTPS origins
 they may target, as a comma-separated list.

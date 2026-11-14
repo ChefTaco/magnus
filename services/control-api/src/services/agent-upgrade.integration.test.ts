@@ -10,7 +10,11 @@ import { createHmac, randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Hono } from 'hono';
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+// These cases drive agents that hold no node key (shared secret and shared result key), which 3.0.0
+// accepts only under an explicit NODE_AUTH_MODE=compat; node-credentials-enforce.real-agent covers enforce.
+beforeEach(() => { process.env['NODE_AUTH_MODE'] = 'compat'; });
+afterEach(() => { delete process.env['NODE_AUTH_MODE']; });
 import { commandRequestDigest } from '../security/command-request.js';
 import { commandRefusalSigningPayload, commandResultSigningPayload, fenceProofSigningPayload } from '../security/command-result-signature.js';
 import { httpIdentity, httpReceiptBody } from '../security/managed-http.js';

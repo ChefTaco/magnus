@@ -200,10 +200,11 @@ export const envSchema = z.object({
   MAGNUS_HERMES_REGISTRY_ENABLED: booleanEnvSchema,
   MAGNUS_REGISTRY_DEPLOY_HOSTS: z.string().default(''),
   // Per-node credentials (docs/NODE_CREDENTIALS.md)
-  NODE_AUTH_MODE: z.enum(['compat', 'warn', 'enforce']).default('compat'),
+  NODE_AUTH_MODE: z.enum(['compat', 'warn', 'enforce']).default('enforce'),
   NODE_AUTH_LEGACY_UPGRADE_UNTIL: z.string().refine(value => !Number.isNaN(new Date(value).getTime()), 'must be an ISO 8601 date').optional(),
   NODE_AUTH_SERVER_KEY_PATH: z.string().min(1).optional(),
-  NODE_AUTO_REGISTER: z.enum(['true', 'false']).default('true').transform((value) => value === 'true'),
+  // Default: on in compat and warn, off in enforce (services/node-auth-config.ts).
+  NODE_AUTO_REGISTER: z.enum(['true', 'false']).optional(),
   MAGNUS_NODE_DNS_SUFFIX: z
     .string()
     .regex(/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i)

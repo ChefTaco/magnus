@@ -12,7 +12,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { readEvidenceSignature, signServerAuthorization, verifyServerAuthorization, type EvidenceSignature,
   type ServerAuthorizationKind } from '../security/node-evidence.js';
 import { nodeAuthMode } from './node-auth-config.js';
-import { serverPublicKeys, serverSigningKey } from './node-server-key.js';
+import { serverSigningKey, serverVerificationKeys } from './node-server-key.js';
 import { API_SECRET, getNodeManagerSecret, RESULT_SIGNING_PREVIOUS_SECRET, RESULT_SIGNING_SECRET } from '../utils/env.js';
 
 /** The server's signature of a decision for `nodeId`, or null when the server key cannot be read (outside enforce mode). */
@@ -34,15 +34,17 @@ export function serverCanSignDecisions(): boolean {
 
 /**
  * Check a decision this server issued for `nodeId`, as returned by the node. A server signature by
- * one of this server's keys decides; without one the HMAC is accepted outside enforce mode.
+ * one of this server's keys decides, whichever key signed it: the active one, a staged or replaced
+ * one, or one retired since (its public key is kept for exactly this), so a decision stored before a
+ * server-key rotation keeps verifying. Without one the HMAC is accepted outside enforce mode.
  */
 export function verifyServerAuthorizationFor(nodeId: string, kind: ServerAuthorizationKind, payload: string, serverSignature: unknown,
   legacyHmac: () => boolean): boolean {
   const signature = readEvidenceSignature(serverSignature);
   if (signature === 'MALFORMED') return false;
   if (signature) {
-    let keys: ReturnType<typeof serverPublicKeys> = [];
-    try { keys = serverPublicKeys(); } catch { /* no server key: the HMAC rules apply */ }
+    let keys: ReturnType<typeof serverVerificationKeys> = [];
+    try { keys = serverVerificationKeys(); } catch { /* no server key: the HMAC rules apply */ }
     const key = keys.find(entry => entry.keyId === signature.keyId);
     if (key) return verifyServerAuthorization(kind, { signature, publicKey: key.publicKey, expectedNodeId: nodeId, payload }).ok;
     // Signed by a key this server no longer has (its key file was replaced): the HMAC rules apply.
@@ -59,6 +61,8 @@ function nodeSecretOrEmpty(): string {
 }
 
 export function commandReconciliationKey(): string | null {
+  // Enforce mode refuses HMAC-only decisions, so it never makes one either.
+  if (nodeAuthMode() === 'enforce') return null;
   const secret = process.env['COMMAND_RECONCILIATION_SECRET'] ?? '';
   const others = [RESULT_SIGNING_SECRET, RESULT_SIGNING_PREVIOUS_SECRET, nodeSecretOrEmpty(), process.env['NODE_MANAGER_SECRET_PREVIOUS'] ?? '',
     process.env['RESOURCE_PARTICIPANT_RECONCILIATION_SECRET'] ?? '', API_SECRET];
@@ -71,14 +75,16 @@ export function decisionIdentity(assertion: { signature?: string | undefined; se
 }
 
 /**
- * Sign a decision for one node: with the server key when its agent verifies server signatures, and
- * with `COMMAND_RECONCILIATION_SECRET` when that is configured (older agents). Null when neither
- * applies; the caller answers 409 RECONCILIATION_UNAVAILABLE.
+ * Sign a decision for one node: with the server key when its agent verifies server signatures (always
+ * in enforce mode), and with `COMMAND_RECONCILIATION_SECRET` when that is configured outside enforce
+ * mode (agents without a node key). Null when neither applies; the caller answers 409
+ * RECONCILIATION_UNAVAILABLE.
  */
 export function signNodeDecision<T extends object>(nodeId: string, kind: ServerAuthorizationKind, unsigned: T, payload: string,
   options: { agentVerifiesServerSignatures: boolean }): (T & { signature?: string; serverSignature?: EvidenceSignature }) | null {
   const key = commandReconciliationKey();
-  const serverSignature = options.agentVerifiesServerSignatures ? serverAuthorizationSignature(nodeId, kind, payload) : null;
+  const serverSignature = options.agentVerifiesServerSignatures || nodeAuthMode() === 'enforce'
+    ? serverAuthorizationSignature(nodeId, kind, payload) : null;
   if (!key && !serverSignature) return null;
   return { ...unsigned, ...(key ? { signature: createHmac('sha256', key).update(payload).digest('hex') } : {}),
     ...(serverSignature ? { serverSignature } : {}) };

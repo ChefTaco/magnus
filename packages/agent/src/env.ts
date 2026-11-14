@@ -56,14 +56,18 @@ export function validateSecrets(): void {
 export function configurationErrors(): string[] {
   const errors: string[] = [];
 
-  if (ENABLE_NODE_MANAGEMENT && !NODE_MANAGER_SECRET) {
-    errors.push('NODE_MANAGER_SECRET is required when ENABLE_NODE_MANAGEMENT=true');
+  // From 3.0.0 the shared node credentials are needed only under an explicit NODE_AUTH_MODE=compat or
+  // warn; in enforce (the default) the agent works with its node key (`magnus-agent enroll --token`).
+  const sharedSecrets = ['compat', 'warn'].includes(process.env['NODE_AUTH_MODE']?.trim().toLowerCase() ?? '');
+  if (ENABLE_NODE_MANAGEMENT && sharedSecrets && !NODE_MANAGER_SECRET) {
+    errors.push('NODE_MANAGER_SECRET is required when NODE_AUTH_MODE is compat or warn');
   }
   if (NODE_MANAGER_SECRET_PREVIOUS && NODE_MANAGER_SECRET_PREVIOUS === NODE_MANAGER_SECRET) {
     errors.push('NODE_MANAGER_SECRET_PREVIOUS must differ from NODE_MANAGER_SECRET');
   }
-  if (ENABLE_NODE_MANAGEMENT && RESULT_SIGNING_SECRET.length < 32) {
-    errors.push('RESULT_SIGNING_SECRET must be a dedicated secret of at least 32 characters');
+  if (ENABLE_NODE_MANAGEMENT && (sharedSecrets || RESULT_SIGNING_SECRET) && RESULT_SIGNING_SECRET.length < 32) {
+    errors.push(sharedSecrets ? 'RESULT_SIGNING_SECRET must be a dedicated secret of at least 32 characters when NODE_AUTH_MODE is compat or warn'
+      : 'RESULT_SIGNING_SECRET, when set, must be a dedicated secret of at least 32 characters');
   }
   const reconciliation = process.env['COMMAND_RECONCILIATION_SECRET'] ?? '';
   if (reconciliation && (reconciliation.length < 32

@@ -46,7 +46,7 @@ export const NODE_EVIDENCE_KINDS = [
 export type NodeEvidenceKind = typeof NODE_EVIDENCE_KINDS[number];
 
 /** Every decision the server signs for one node. */
-export const SERVER_AUTHORIZATION_KINDS = ['command-reconciliation', 'cron-enrollment-stage'] as const;
+export const SERVER_AUTHORIZATION_KINDS = ['command-reconciliation', 'cron-enrollment-stage', 'scheduler-source-settlement'] as const;
 export type ServerAuthorizationKind = typeof SERVER_AUTHORIZATION_KINDS[number];
 
 /** The wire form: `{ alg, v, nodeId, keyId, sig }`, sent as `nodeSignature` or `serverSignature`. */

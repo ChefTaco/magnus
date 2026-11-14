@@ -71,9 +71,12 @@ services:
       # Required secrets (32+ characters each, all different).
       API_SECRET: ${API_SECRET:?API_SECRET is required}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
-      NODE_MANAGER_SECRET: ${NODE_MANAGER_SECRET:?NODE_MANAGER_SECRET is required}
+      # Shared node credentials: only for an explicit NODE_AUTH_MODE=compat or warn (deprecated; enforce, the default
+      # since 3.0.0, needs neither). Agents enroll with their own keys (docs/NODE_CREDENTIALS.md).
+      NODE_AUTH_MODE: ${NODE_AUTH_MODE:-}
+      NODE_MANAGER_SECRET: ${NODE_MANAGER_SECRET:-}
       AUDIT_HMAC_SECRET: ${AUDIT_HMAC_SECRET:?AUDIT_HMAC_SECRET is required}
-      RESULT_SIGNING_SECRET: ${RESULT_SIGNING_SECRET:?RESULT_SIGNING_SECRET is required}
+      RESULT_SIGNING_SECRET: ${RESULT_SIGNING_SECRET:-}
       LOG_INGEST_SIGNING_SECRET: ${LOG_INGEST_SIGNING_SECRET:?LOG_INGEST_SIGNING_SECRET is required}
       CREDENTIAL_ROTATION_KEY: ${CREDENTIAL_ROTATION_KEY:?CREDENTIAL_ROTATION_KEY is required}
       METRICS_TOKEN: ${METRICS_TOKEN:?METRICS_TOKEN is required}

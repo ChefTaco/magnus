@@ -7,6 +7,10 @@ import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+// These cases drive agents that hold no node key (shared secret and shared result key), which 3.0.0
+// accepts only under an explicit NODE_AUTH_MODE=compat; node-credentials-enforce.real-agent covers enforce.
+beforeEach(() => { process.env['NODE_AUTH_MODE'] = 'compat'; });
+afterEach(() => { delete process.env['NODE_AUTH_MODE']; });
 import { commandRequestDigest, type CommandRequest } from '../security/command-request.js';
 import { commandAbsenceSigningPayload, commandRefusalSigningPayload, commandResultSigningPayload } from '../security/command-result-signature.js';
 import { COMMAND_COMPLETION_REGISTRY_SHA256 } from '../security/command-completion-registry.js';
