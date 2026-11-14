@@ -227,6 +227,8 @@ describe('independently packaged command wire compatibility', () => {
       stderr: '', durationMs: 0, truncated: false, coordination: { ...coordination, requestSha256: agentDigest(identity) } };
     const receipt = { ...unsigned, signature: signCommandResult(unsigned, secret) };
     const fetch = vi.fn(async (request: Request) => {
+      // The ping only picks the authentication (agents 2.10.0 and 2.10.1 with a key need the shared secret).
+      if (request.url.endsWith('/ping')) return new Response(JSON.stringify({ success: true, data: { version: '2.10.2', features: { managedMutations: 1, nodeAuth: 1 } } }));
       expect(JSON.parse(await request.text())).toMatchObject({ recoveryOnly: true, commandId });
       return new Response(JSON.stringify({ success: true, data: { response, receipt } }),
         { headers: { 'content-type': 'application/json' } });
@@ -237,7 +239,7 @@ describe('independently packaged command wire compatibility', () => {
     expect(recovered.response.data).toMatchObject({ commandId, bundleSha256: payload.bundleSha256 });
     expect(recovered.evidence).toMatchObject({ commandId, commandSha256: agentDigest(identity),
       receiptSha256: expect.stringMatching(/^[a-f0-9]{64}$/) });
-    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls.filter(([call]) => call.url.endsWith('/commands/managed-http'))).toHaveLength(1);
   });
   it('correlates a signed typed no-effect response from the initial skill dispatch', async () => {
     const payload = { skillName: 'fixture-skill', version: '1.0.0', bundleSha256: 'b'.repeat(64),

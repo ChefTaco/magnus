@@ -14,7 +14,6 @@ import { getHeartbeatStatus } from './agent.js';
 import { ARDENT_AGENT_CAPABILITIES } from './ardent-capabilities.js';
 import { controlApiFetch } from './tls.js';
 import { childEnvironment } from './utils/child-env.js';
-import { ownerExecution } from './utils/owner-exec.js';
 import { boundNodeIdentity } from './security/node-identity.js';
 import { signsNodeEvidence, verifiesServerDecisions } from './security/evidence-signing.js';
 
@@ -64,14 +63,20 @@ export function hermesCliCandidates(env: NodeJS.ProcessEnv = process.env): strin
   return [...new Set([...owners.map(owner => `/home/${owner}/.hermes/hermes-agent/venv/bin/hermes`), 'hermes'])];
 }
 
+/** Each candidate's share of the check; the acceptance probe allows the whole health check 5 seconds. */
+const HERMES_CLI_CHECK_WAIT_MS = 2_000;
+
 async function hermesCliCheck(): Promise<HealthCheck> {
   let last: HealthCheck | null = null;
+  const deadline = Date.now() + HERMES_CLI_CHECK_WAIT_MS;
+  const { hermesCliHealth } = await import('./executors/hermes-manager.js');
   for (const command of hermesCliCandidates()) {
-    // A Hermes CLI inside its owner's home runs as that owner, never as root.
-    const execution = await ownerExecution(command);
-    const result: HealthCheck = execution.ok
-      ? await commandCheck('hermes-cli', execution.command, ['--version'], execution)
-      : { name: 'hermes-cli', status: 'fail', latencyMs: 0, message: execution.reason };
+    // Discovery's cached version probe (a slow `--version` gets 90 seconds in the background) or a
+    // liveness answer; a Hermes CLI inside its owner's home runs as that owner, never as root.
+    const started = performance.now();
+    const health = await hermesCliHealth(command, Math.max(250, deadline - Date.now()));
+    const result: HealthCheck = { name: 'hermes-cli', status: health.ok ? 'pass' : 'fail',
+      latencyMs: Math.round((performance.now() - started) * 100) / 100, message: health.message };
     if (result.status === 'pass') return result;
     last = result;
   }
@@ -281,6 +286,8 @@ export async function createApp(): Promise<Hono> {
     v1.route('/users', userRoutes);
 
     app.route('/api/v1', v1);
+    // v1's `*` middleware already authenticates this route; the explicit mount keeps it authenticated
+    // however v1 is mounted, and nodeAuthMiddleware verifies one request once (its nonce is claimed once).
     app.use('/api/v1/commands/managed-http', nodeAuthMiddleware);
     registerManagedHttp(app);
   }
