@@ -120,7 +120,8 @@ jobs:
 
   upgrade-e2e:
     # Install the published 1.0.3 with `magnus init`, upgrade to this commit's packed release,
-    # then exercise agent self-upgrade and self-revert, a broken release's automatic revert, and rollback.
+    # then move a published 2.10.2 agent to 2.10.3 and across the major with --allow-major, exercise agent
+    # self-upgrade and self-revert, a broken release's automatic revert, and rollback.
     name: Upgrade end to end (Node ${{ matrix.node-version }})
     runs-on: ubuntu-24.04
     timeout-minutes: 60

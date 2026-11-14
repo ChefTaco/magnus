@@ -28,6 +28,7 @@ import {
   AGENT_SELF_UPGRADE_PROTOCOL,
   agentSelfUpgradeStatusSchema,
   checkUpgradeAllowed,
+  classifyUpgrade,
   compareVersions,
   isVersion,
   parseVersion,
@@ -46,6 +47,8 @@ import { SENTINEL_NODE_IDS } from '../utils/sentinel-nodes.js';
 import type { AuditAction } from '../types/auth.js';
 import { CERTAIN_REFUSALS_SINCE, healNode, mapLimit, PREFLIGHT_CONCURRENCY, preflightNode, preflightStatus, selfUpgradeOffCode, type NodePreflight, type PreflightProblem, type PreflightQuery, type PreflightTarget } from './agent-upgrade-preflight.js';
 import { logAuditEvent } from './audit-service.js';
+import { agentMajorUpgradeSigningPayload, signServerAuthorization, type EvidenceSignature } from '../security/node-evidence.js';
+import { serverSigningKey } from './node-server-key.js';
 import { HELD_RESOURCE_STATES, hasFreshOnlineHealth, legacyAdmissionPossible, resourceLeasesRequested } from './command-resource-leases.js';
 import { enrollmentIsComplete } from './resource-enrollment.js';
 import { stickyEnrollmentCause } from './resource-ownership.js';
@@ -335,6 +338,8 @@ export interface CandidateRow {
   managedCronHistory?: boolean;
   /** Participant work in any state (legacy-admission counts it: see resource-ownership.ts). */
   participantHistory?: boolean;
+  /** The node has an active node key, which a major-upgrade authorization is verified against on the agent. */
+  keyed?: boolean;
 }
 
 export interface EligibilityOptions {
@@ -342,10 +347,38 @@ export interface EligibilityOptions {
   leasesRequested?: boolean;
   /** Offer nodes that already reverted this exact version. */
   allowRetryReverted?: boolean;
+  /** Offer agents of another major version, which then get a server-signed major-upgrade authorization. */
+  allowMajor?: boolean;
 }
 
 const day = (value: Date | string | null | undefined) => value ? new Date(value).toISOString().slice(0, 10) : 'an unknown date';
 const ENROLLMENT_DOC = 'docs/COMMAND_RESOURCE_LEASES.md';
+
+/** The first release of an agent's major version that can verify a major-upgrade authorization. */
+export const MAJOR_AUTHORIZATION_SINCE: Readonly<Record<number, string>> = { 2: '2.10.3', 3: '3.0.1' };
+
+/** The version an agent of `version` has to reach first, within its major, before a major upgrade. */
+export function steppingStone(version: string): string {
+  const major = parseVersion(version)?.major;
+  return (major !== undefined ? MAJOR_AUTHORIZATION_SINCE[major] : undefined) ?? `the newest ${major ?? 'same'}.x release`;
+}
+
+/** How long an authorization stays valid: the upgrade of one node, with its retries, not a standing permission. */
+export const MAJOR_AUTHORIZATION_TTL_MS = 60 * 60_000;
+
+export interface MajorUpgradeAuthorization { expiresAt: number; serverSignature: EvidenceSignature }
+
+/**
+ * The server's permission for one node to cross a major version: its node id, the version it runs,
+ * the target, the tarball integrity and an expiry, signed with the server key the agent pins (kind
+ * `agent-major-upgrade`). Throws when the server key cannot be read: there is no unsigned fallback.
+ */
+export function authorizeMajorUpgrade(decision: { nodeId: string; from: string; to: string; integrity: string }, now = Date.now()): MajorUpgradeAuthorization {
+  const key = serverSigningKey();
+  const expiresAt = now + MAJOR_AUTHORIZATION_TTL_MS;
+  const payload = agentMajorUpgradeSigningPayload({ ...decision, packageName: AGENT_PACKAGE, expiresAt });
+  return { expiresAt, serverSignature: signServerAuthorization(key.privateKey, key.keyId, decision.nodeId, 'agent-major-upgrade', payload) };
+}
 
 /** Pure, for tests: why one node can or cannot take `target` now. Mirrors the dispatch preconditions. */
 export function classifyCandidate(row: CandidateRow, target: string, options: EligibilityOptions = {}): UpgradeCandidate {
@@ -362,9 +395,16 @@ export function classifyCandidate(row: CandidateRow, target: string, options: El
   // A node on trial reports the new version already, and can still switch back.
   if (report?.upgrade && (report.upgrade.state === 'staged' || report.upgrade.state === 'trial')) return no('UPGRADE_IN_PROGRESS', `an upgrade to ${report.upgrade.to} is in progress`);
   if (compareVersions(version, target) === 0) return no('ALREADY_CURRENT', 'already on this version');
-  const decision = checkUpgradeAllowed(version, target);
-  if (!decision.allowed) return decision.kind === 'downgrade' ? no('DOWNGRADE', `runs ${version}, newer than ${target}`) : no('MAJOR_VERSION', `${version} -> ${target} crosses a major version; upgrade this node by hand`);
+  const decision = checkUpgradeAllowed(version, target, { allowMajor: options.allowMajor ?? false });
+  if (!decision.allowed) return decision.kind === 'downgrade' ? no('DOWNGRADE', `runs ${version}, newer than ${target}`)
+    : no('MAJOR_VERSION', `${version} -> ${target} crosses a major version; pass --allow-major (allowMajor) to authorize it, or upgrade this node by hand`);
   if (!report) return no('NOT_SELF_UPGRADABLE', `magnus-agent ${version} cannot upgrade itself (needs 1.1.0 or later and \`sudo magnus-agent install-service\`)`);
+  if (decision.kind === 'major') {
+    // The agent verifies the authorization against its own key binding: it must be able to, and have one.
+    if ((report.majorUpgradeAuthorization ?? 0) < 1) return no('MAJOR_NEEDS_STEPPING_STONE', `magnus-agent ${version} cannot verify a major-upgrade authorization; `
+      + `upgrade it to ${steppingStone(version)} first (magnus-server agents upgrade --to ${steppingStone(version)}), then to ${target}`);
+    if (row.keyed === false) return no('MAJOR_NEEDS_NODE_KEY', `${row.name} has no active node key, so it cannot verify a major-upgrade authorization; enroll it or let it bind its key first`);
+  }
   if (report.protocol < AGENT_SELF_UPGRADE_PROTOCOL) return no('PROTOCOL_TOO_OLD', 'agent self-upgrade protocol too old');
   if (!report.enabled) return no(selfUpgradeOffCode(report), report.reason ?? 'self-upgrade disabled on this node');
   const upgrade = report.upgrade;
@@ -407,11 +447,13 @@ export async function listUpgradeCandidates(target: string, nodeIds?: readonly s
     orderBy: { name: 'asc' },
   });
   const ids = rows.map(row => row.id);
-  const [leases, work, crons] = ids.length ? await Promise.all([
+  const [leases, work, crons, keys] = ids.length ? await Promise.all([
     db.commandResourceLease.groupBy({ by: ['nodeId', 'state'], where: { nodeId: { in: ids } }, _count: { _all: true } }),
     db.resourceParticipantWork.groupBy({ by: ['nodeId', 'state'], where: { nodeId: { in: ids } }, _count: { _all: true } }),
     db.managedCronDefinition.groupBy({ by: ['nodeId'], where: { nodeId: { in: ids } }, _count: { _all: true } }),
-  ]) : [[], [], []];
+    // Only a major upgrade depends on the node key: the agent verifies its authorization against it.
+    options.allowMajor ? db.nodeCredential.findMany({ where: { nodeId: { in: ids }, status: 'ACTIVE' }, select: { nodeId: true } }) : Promise.resolve(null),
+  ]) : [[], [], [], null];
   const held = (items: Array<{ nodeId: string; state: string; _count: { _all: number } }>, nodeId: string) =>
     items.filter(item => item.nodeId === nodeId && HELD_RESOURCE_STATES.includes(item.state)).reduce((sum, item) => sum + item._count._all, 0);
   return rows.map(row => classifyCandidate({ ...row,
@@ -420,6 +462,7 @@ export async function listUpgradeCandidates(target: string, nodeIds?: readonly s
     heldWork: held(work, row.id),
     participantHistory: work.some(item => item.nodeId === row.id),
     managedCronHistory: crons.some(item => item.nodeId === row.id),
+    ...(keys ? { keyed: keys.some(key => key.nodeId === row.id) } : {}),
   }, target, options));
 }
 
@@ -473,6 +516,8 @@ export interface UpgradeRun {
   id: string;
   version: string;
   integrity: string;
+  /** Agents of another major version were selected; each gets a server-signed authorization with its request. */
+  allowMajor?: boolean;
   actorId: string;
   status: RunStatus;
   startedAt: string;
@@ -621,9 +666,11 @@ export interface Observation {
   lastHeartbeatAt?: Date | null;
 }
 
+export interface AgentUpgradeBody { version: string; integrity: string; requestId: string; packageName: string; majorAuthorization?: MajorUpgradeAuthorization }
+
 export interface UpgradeDeps {
   /** Throws NotDispatchedError, AgentResponseError or DispatchOutcomeUnknownError (anything else counts as unknown). */
-  request: (nodeId: string, body: { version: string; integrity: string; requestId: string; packageName: string }) => Promise<void>;
+  request: (nodeId: string, body: AgentUpgradeBody) => Promise<void>;
   /** Current report, agent version and last heartbeat of one node. */
   observe: (nodeId: string) => Promise<Observation>;
   /** Eligibility right before dispatch: null, or why the node is skipped now. */
@@ -640,6 +687,8 @@ export interface UpgradeDeps {
   leaseSettled?: (nodeId: string, requestId: string) => Promise<boolean>;
   /** Waits before each end-of-wave retry. */
   retryBackoffMs?: readonly number[];
+  /** Signs a node's major-upgrade authorization (default: with the server key). */
+  authorizeMajor?: typeof authorizeMajorUpgrade;
   sleep: (ms: number) => Promise<void>;
   now: () => number;
   save: (run: UpgradeRun) => Promise<void>;
@@ -672,7 +721,7 @@ export function defaultDeps(store: RunStore = defaultRunStore()): UpgradeDeps {
       return { version: row?.agent?.version ?? null, report: storedSelfUpgrade(row?.metadata), lastHeartbeatAt: row?.lastHeartbeatAt ?? null };
     },
     check: async (nodeId, run) => {
-      const [candidate] = await listUpgradeCandidates(run.version, [nodeId], { ...optional("allowRetryReverted", run.allowRetryReverted) });
+      const [candidate] = await listUpgradeCandidates(run.version, [nodeId], { ...optional("allowRetryReverted", run.allowRetryReverted), ...optional("allowMajor", run.allowMajor) });
       if (!candidate) return { reason: 'node is no longer in the inventory', code: 'NODE_NOT_FOUND' };
       return candidate.eligible ? null : { reason: candidate.reason ?? 'not eligible', code: candidate.code };
     },
@@ -759,8 +808,16 @@ async function upgradeOne(run: UpgradeRun, entry: RunNode, deps: UpgradeDeps, co
   entry.attempts = (entry.attempts ?? 0) + 1;
   await deps.save(run);
   let unknown: DispatchFailure | null = null;
+  const body: AgentUpgradeBody = { version: run.version, integrity: run.integrity, requestId: entry.requestId, packageName: AGENT_PACKAGE };
+  if (run.allowMajor && isVersion(entry.from) && classifyUpgrade(entry.from, run.version) === 'major') {
+    try {
+      body.majorAuthorization = (deps.authorizeMajor ?? authorizeMajorUpgrade)({ nodeId: entry.nodeId, from: entry.from, to: run.version, integrity: run.integrity }, deps.now());
+    } catch (error) {
+      return end('refused', `the major-upgrade authorization could not be signed: ${error instanceof Error ? error.message : String(error)}`, 'SERVER_KEY_UNAVAILABLE');
+    }
+  }
   try {
-    await deps.request(entry.nodeId, { version: run.version, integrity: run.integrity, requestId: entry.requestId, packageName: AGENT_PACKAGE });
+    await deps.request(entry.nodeId, body);
   } catch (error) {
     const failure = classifyDispatchFailure(error);
     if (failure.kind === 'refused') return end('refused', failure.message, failure.code);
@@ -1104,6 +1161,8 @@ export interface StartRunOptions {
   canaryNodeId?: string;
   allowPrerelease?: boolean;
   allowRetryReverted?: boolean;
+  /** Also move agents of another major version, each with a server-signed authorization. */
+  allowMajor?: boolean;
   retryOf?: string;
   /** This run's budget of release failures (default MAGNUS_AGENT_UPGRADE_MAX_FAILURES). */
   maxFailures?: number;
@@ -1130,6 +1189,7 @@ export interface CheckOptions {
   /** Repair what the server owns before judging: fence generations, leases with no trace on the agent. */
   heal?: boolean;
   allowRetryReverted?: boolean | undefined;
+  allowMajor?: boolean | undefined;
 }
 
 /**
@@ -1139,7 +1199,7 @@ export interface CheckOptions {
  */
 export async function checkCandidates(release: Pick<AgentRelease, 'version' | 'engines'>, nodeIds: readonly string[] | undefined, deps: Pick<UpgradeDeps, 'preflight' | 'heal'>,
   options: CheckOptions = {}): Promise<UpgradeCandidate[]> {
-  const list = () => listUpgradeCandidates(release.version, nodeIds, { ...optional("allowRetryReverted", options.allowRetryReverted) });
+  const list = () => listUpgradeCandidates(release.version, nodeIds, { ...optional("allowRetryReverted", options.allowRetryReverted), ...optional("allowMajor", options.allowMajor) });
   let candidates = await list();
   const ask = deps.preflight;
   if (!ask) return candidates;
@@ -1201,7 +1261,7 @@ export interface UpgradeCheckReport {
 }
 
 /** The dry run behind `dryRun`, the console's Check and `agents doctor`: the full per-node report, before anything starts. */
-export async function checkUpgrade(options: Pick<StartRunOptions, 'version' | 'integrity' | 'nodeIds' | 'allowRetryReverted' | 'deps'> & { heal?: boolean; everyOnlineNode?: boolean }): Promise<UpgradeCheckReport> {
+export async function checkUpgrade(options: Pick<StartRunOptions, 'version' | 'integrity' | 'nodeIds' | 'allowRetryReverted' | 'allowMajor' | 'deps'> & { heal?: boolean; everyOnlineNode?: boolean }): Promise<UpgradeCheckReport> {
   const version = options.version ?? AGENT_VERSION;
   if (!isVersion(version)) throw new HttpError(400, 'INVALID_VERSION', `${version} is not an X.Y.Z version`);
   let release: ReleaseVerification;
@@ -1215,7 +1275,7 @@ export async function checkUpgrade(options: Pick<StartRunOptions, 'version' | 'i
     release = { verified: false, integrity: null, reason: error instanceof Error ? error.message : String(error) };
   }
   const deps = options.deps ?? defaultDeps();
-  const candidates = await checkCandidates({ version, engines }, options.nodeIds, deps, { everyOnlineNode: options.everyOnlineNode ?? true, heal: options.heal ?? false, allowRetryReverted: options.allowRetryReverted });
+  const candidates = await checkCandidates({ version, engines }, options.nodeIds, deps, { everyOnlineNode: options.everyOnlineNode ?? true, heal: options.heal ?? false, allowRetryReverted: options.allowRetryReverted, allowMajor: options.allowMajor });
   const nodes = candidates.map(candidate => {
     const remedy = candidate.code ? upgradeRemedy(candidate.code) : null;
     return { ...candidate, cause: remedy?.cause ?? null, remedy: remedy?.remedy ?? null };
@@ -1246,7 +1306,7 @@ export async function startUpgradeRun(options: StartRunOptions): Promise<{ run: 
     holdLock.unref?.();
     let candidates: UpgradeCandidate[];
     try {
-      candidates = await checkCandidates(release, options.nodeIds, deps, { heal: true, allowRetryReverted: options.allowRetryReverted });
+      candidates = await checkCandidates(release, options.nodeIds, deps, { heal: true, allowRetryReverted: options.allowRetryReverted, allowMajor: options.allowMajor });
     } finally {
       clearInterval(holdLock);
     }
@@ -1271,6 +1331,7 @@ export async function startUpgradeRun(options: StartRunOptions): Promise<{ run: 
       startedAt: new Date(deps.now()).toISOString(), finishedAt: null, concurrency: settings.agentUpgradeConcurrency, message: null, summary: null,
       canaryNodeId: eligible[0]!.nodeId, owner: INSTANCE_ID, leaseExpiresAt: new Date(deps.now() + LEASE_MS).toISOString(), stopRequestedBy: null,
       retryOf: options.retryOf ?? null, allowRetryReverted: options.allowRetryReverted ?? false,
+      ...(options.allowMajor ? { allowMajor: true } : {}),
       maxFailures: options.maxFailures ?? settings.agentUpgradeMaxFailures,
       warnings: candidates.flatMap(candidate => (candidate.preflight?.problems ?? []).filter(problem => problem.code === 'FENCE_UNREPORTED')
         .map(problem => ({ nodeId: candidate.nodeId, name: candidate.name, code: problem.code, detail: problem.detail }))),
@@ -1280,7 +1341,8 @@ export async function startUpgradeRun(options: StartRunOptions): Promise<{ run: 
     };
     await store.index(run);
     await deps.save(run);
-    await audit('agent.upgrade_run.started', run, { nodes: run.nodes.map(node => node.name), canary: run.nodes[0]!.name, retryOf: run.retryOf,
+    await audit('agent.upgrade_run.started', run, { nodes: run.nodes.map(node => node.name), canary: run.nodes[0]!.name, retryOf: run.retryOf, allowMajor: run.allowMajor ?? false,
+      majorNodes: run.allowMajor ? run.nodes.filter(node => isVersion(node.from) && classifyUpgrade(node.from, run.version) === 'major').map(node => node.name) : [],
       excluded: run.excluded!.map(node => `${node.name}: ${node.reason}`).slice(0, 50) });
     // Renew the lease while this process runs it; a reader that finds it expired marks the run interrupted.
     const renew = async () => {
@@ -1329,5 +1391,6 @@ export async function retryUpgradeRun(id: string, options: Omit<StartRunOptions,
   const stoppedOnAmbiguity = Boolean(previous.suspectedRelease && previous.nodes.some(isCountedAmbiguous) && !previous.nodes.some(node => node.state === 'confirmed'));
   const holdOldAgents = !options.acknowledgeSuspicion && (stoppedOnAmbiguity || Boolean(previous.excluded?.some(node => node.code === 'RETRY_HELD_SUSPECTED')));
   const { acknowledgeSuspicion: _acknowledged, ...startOptions } = options;
-  return startUpgradeRun({ ...startOptions, store, holdOldAgents, version: previous.version, integrity: previous.integrity, nodeIds, retryOf: previous.id, ...optional("maxFailures", options.maxFailures ?? previous.maxFailures), allowPrerelease: options.allowPrerelease ?? isPrerelease(previous.version) });
+  return startUpgradeRun({ ...startOptions, store, holdOldAgents, version: previous.version, integrity: previous.integrity, nodeIds, retryOf: previous.id,
+    ...(previous.allowMajor ? { allowMajor: true } : {}), ...optional("maxFailures", options.maxFailures ?? previous.maxFailures), allowPrerelease: options.allowPrerelease ?? isPrerelease(previous.version) });
 }

@@ -2543,7 +2543,8 @@ const paths: Record<string, Record<string, unknown>> = {
       summary: 'Which agents can take a version',
       description: 'For every node: its agent version and whether it can upgrade itself to `version` (default: the agent version bundled with this server) now, or why not: offline, not set up with `magnus-agent install-service`, MAGNUS_AGENT_SELF_UPGRADE=false, another major version, already current, already reverted this version, a closed release admission fence, a resource enrollment that is not complete (for example "stuck in draining since <date>"), held participant work or command leases, or an agent whose sticky managed-enrollment marker the server does not share. Each blocked node has a `code` from the upgrade problem catalogue. `preflight` is the latest result of the agent check for this version, when one is recent, and only for ADMIN. `release.verified` is false when the registry does not have the version.',
       security: apiSecretAuth,
-      parameters: [qp('version', 'Target agent version (X.Y.Z)'), qp('allowRetryReverted', '`true` to offer nodes that already reverted this version')],
+      parameters: [qp('version', 'Target agent version (X.Y.Z)'), qp('allowRetryReverted', '`true` to offer nodes that already reverted this version'),
+        qp('allowMajor', '`true` to judge agents of another major version as a run with `allowMajor` would (MAJOR_NEEDS_STEPPING_STONE, MAJOR_NEEDS_NODE_KEY)')],
       responses: { 200: success('Eligibility', { type: 'object', properties: {
         version: { type: 'string' }, serverVersion: { type: 'string' }, upgradesEnabled: { type: 'boolean' }, disabledReason: { type: ['string', 'null'] },
         prerelease: { type: 'boolean' },
@@ -2567,6 +2568,7 @@ const paths: Record<string, Record<string, unknown>> = {
         canaryNodeId: { type: 'string', description: 'Upgrade this node first' },
         allowPrerelease: { type: 'boolean', description: 'Required for a prerelease version' },
         allowRetryReverted: { type: 'boolean', description: 'Also upgrade nodes that already reverted this version' },
+        allowMajor: { type: 'boolean', description: 'Also move agents of another major version. Each request carries a major-upgrade authorization signed with the server key for that node, the version it runs, the target and its integrity, valid one hour; agents older than 2.10.3 are left out with MAJOR_NEEDS_STEPPING_STONE, nodes without an active key with MAJOR_NEEDS_NODE_KEY. Without it such nodes are left out with MAJOR_VERSION. See docs/NODE_CREDENTIALS.md' },
         dryRun: { type: 'boolean', description: 'Report on every selected node and start nothing' },
         maxFailures: { type: 'integer', minimum: 1, maximum: 1000, description: 'Release failures that stop this run (default MAGNUS_AGENT_UPGRADE_MAX_FAILURES)' },
       } } } } },

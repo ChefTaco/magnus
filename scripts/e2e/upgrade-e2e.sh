@@ -9,8 +9,13 @@
 #      secret would be, and install an agent with `install-service --unprivileged`; it enrolls, reports itself
 #      and binds its own node key, after which the shared node secret can no longer report as that node
 #   3b. remove the setting: the server starts in enforce mode now that the node is keyed and signs its
-#      evidence, refuses the shared secret and the legacy upgrade, and still reaches the agent; then rotate the
-#      server key (stage, the agent pins it, promote, retire) with the agent reachable throughout
+#      evidence, refuses the shared secret and the legacy upgrade, and still reaches the agent
+#   3c. across a major version (FROM in an older major): the agent installed in step 3 is the published
+#      AGENT_OLD (2.10.2); without --allow-major the server leaves it out as MAJOR_VERSION, with it the dry run
+#      names the stepping stone; `agents upgrade --to AGENT_STEP` (2.10.3, from the registry) is a managed
+#      patch from this server; then `agents upgrade --to VERSION --allow-major` moves it to this release with
+#      a server-signed authorization
+#   3d. rotate the server key (stage, the agent pins it, promote, retire) with the agent reachable throughout
 #   4. pre-seed a high fence on the agent: `agents doctor --heal` moves the server past it;
 #      `magnus-server agents upgrade` to a synthetic release: confirmed
 #   5. upgrade to a synthetic agent that never heartbeats: the launcher reverts it
@@ -35,6 +40,12 @@ IFS=. read -r V_MAJOR V_MINOR V_PATCH <<<"${VERSION%%-*}"
 AGENT_OK="$V_MAJOR.$V_MINOR.$((V_PATCH + 1))-ci"
 AGENT_SILENT="$V_MAJOR.$V_MINOR.$((V_PATCH + 2))-ci"
 SERVER_BROKEN="$V_MAJOR.$V_MINOR.$((V_PATCH + 3))-ci"
+# A fleet that comes from an older major starts with a real published agent of that major, which moves to the
+# stepping stone and then across the major through the managed upgrade.
+CROSS_MAJOR=false
+[[ ${FROM%%.*} != "$V_MAJOR" ]] && CROSS_MAJOR=true
+AGENT_OLD=${MAGNUS_E2E_AGENT_OLD:-2.10.2}
+AGENT_STEP=${MAGNUS_E2E_AGENT_STEP:-2.10.3}
 WORK=$(mktemp -d)
 PACKS=$WORK/packs
 PROJECT=/opt/magnus-e2e
@@ -142,8 +153,15 @@ sudo systemctl daemon-reload && sudo systemctl restart magnus-server
 for ((i = 0; i < 120; i += 3)); do server_up && break; sleep 3; done
 server_up || fail "the server did not start with NODE_AUTH_MODE=compat"
 sudo journalctl -u magnus-server --no-pager | grep -q 'DEPRECATED: NODE_AUTH_MODE=compat is deprecated' || fail "an explicit compat did not log its deprecation"
-"${SUDO[@]}" npm install --prefix "$AGENT_DIR" --omit=dev --no-audit --no-fund --loglevel=error \
-  "$PACKS/hivemagnus-magnus-contracts-$VERSION.tgz" "$PACKS/hivemagnus-magnus-agent-$VERSION.tgz"
+if $CROSS_MAJOR; then
+  # The published agent of the older major, from the registry, as a production node runs it.
+  "${SUDO[@]}" npm install --prefix "$AGENT_DIR" --omit=dev --no-audit --no-fund --loglevel=error "@hivemagnus/magnus-agent@$AGENT_OLD"
+  AGENT_START=$AGENT_OLD
+else
+  "${SUDO[@]}" npm install --prefix "$AGENT_DIR" --omit=dev --no-audit --no-fund --loglevel=error \
+    "$PACKS/hivemagnus-magnus-contracts-$VERSION.tgz" "$PACKS/hivemagnus-magnus-agent-$VERSION.tgz"
+  AGENT_START=$VERSION
+fi
 secret() { sudo sed -n "s/^$1=//p" "$SERVER_ENV" | tr -d "'"; }
 sudo tee "$AGENT_DIR/.env" >/dev/null <<ENV
 NODE_ENV=production
@@ -166,7 +184,10 @@ wait_for() { # description, seconds, command...
   for ((i = 0; i < seconds; i += 3)); do "$@" >/dev/null 2>&1 && return 0; sleep 3; done
   fail "timed out waiting for $description"
 }
-agent_ready() { server_cli agents upgrade --allow-prerelease --to $AGENT_OK --integrity "sha512-$(printf 'A%.0s' {1..86})==" --dry-run 2>/dev/null | grep -q "will upgrade"; }
+# A version the running agent can take within its major: the server reaches it and judges it eligible.
+READY_TO=$AGENT_OK
+$CROSS_MAJOR && READY_TO="${AGENT_OLD%%.*}.99.0-ci"
+agent_ready() { server_cli agents upgrade --allow-prerelease --to $READY_TO --integrity "sha512-$(printf 'A%.0s' {1..86})==" --dry-run 2>/dev/null | grep -q "will upgrade"; }
 wait_for "the agent to enroll with the launcher layout" 120 agent_ready
 
 step "The agent binds its own node key, and the shared secret can no longer report as that node"
@@ -179,7 +200,7 @@ JOURNAL=$(sudo journalctl -u magnus-agent-e2e -u magnus-server --no-pager)
 grep -q "Node key bound" <<<"$JOURNAL" || fail "the agent did not log its key binding"
 grep -q "PRIVATE KEY" <<<"$JOURNAL" && fail "a private key reached the journal"
 heartbeat_as() { curl -sk -o /dev/null -w '%{http_code}' -X POST -H "x-node-token: $(secret NODE_MANAGER_SECRET)" -H 'content-type: application/json' \
-  -d "{\"agentVersion\":\"$VERSION\",\"fqdn\":\"$1\"}" "https://127.0.0.1:$SERVER_PORT/api/v1/heartbeat"; }
+  -d "{\"agentVersion\":\"$AGENT_START\",\"fqdn\":\"$1\"}" "https://127.0.0.1:$SERVER_PORT/api/v1/heartbeat"; }
 [[ $(heartbeat_as "$BOUND_HOST") == 401 ]] || fail "the shared node secret still reports as a node that has its own key"
 signed_heartbeat() { [[ $(psql_url "$DATABASE_URL" "SELECT count(*)::int AS n FROM node_credentials WHERE \"lastUsedAt\" IS NOT NULL" | json 'v[0].n') == 1 ]]; }
 wait_for "a signed heartbeat from the agent" 90 signed_heartbeat
@@ -199,6 +220,51 @@ code=$(curl -sk -o /dev/null -w '%{http_code}' -X POST -H "x-node-token: $(secre
 [[ $code == 410 ]] || fail "enforce mode did not close the legacy upgrade (answered $code)"
 wait_for "the server to reach the agent with signatures only" 90 agent_ready
 
+synthetic() { node "$ROOT/scripts/e2e/synthetic-release.mjs" --from "$PACKS" --out "$SYNTH" "$@" >/dev/null; chmod -R a+rX "$SYNTH"; }
+integrity() { node -e "const c=require('node:crypto');console.log('sha512-'+c.createHash('sha512').update(require('node:fs').readFileSync(process.argv[1])).digest('base64'))" "$1"; }
+
+if $CROSS_MAJOR; then
+  step "Across a major version: $AGENT_OLD -> $AGENT_STEP (managed patch) -> $VERSION (--allow-major)"
+  AGENT_TARBALL=$PACKS/hivemagnus-magnus-agent-$VERSION.tgz
+  # Without permission the major is left out, and nothing is asked of the agent.
+  server_cli agents upgrade --to "$VERSION" --integrity "$(integrity "$AGENT_TARBALL")" --dry-run | tee "$WORK/major-1.log" || fail "major dry run"
+  grep -q "crosses a major version; pass --allow-major" "$WORK/major-1.log" || fail "a major agent upgrade was offered without --allow-major"
+  # With it, an agent that cannot verify an authorization is told to take the stepping stone first.
+  server_cli agents upgrade --to "$VERSION" --integrity "$(integrity "$AGENT_TARBALL")" --allow-major --dry-run | tee "$WORK/major-2.log" || fail "major dry run"
+  grep -q "Needs a stepping stone first: .*($AGENT_OLD -> $AGENT_STEP)" "$WORK/major-2.log" || fail "the dry run did not name the stepping stone"
+  set +e
+  server_cli agents upgrade --to "$VERSION" --integrity "$(integrity "$AGENT_TARBALL")" --allow-major > "$WORK/major-3.log" 2>&1
+  rc=$?
+  set -e
+  (( rc != 0 )) && grep -q "cannot verify a major-upgrade authorization" "$WORK/major-3.log" || fail "a $AGENT_OLD agent was asked to cross the major"
+  [[ $(sudo readlink "$AGENT_DIR/current") == versions/$AGENT_OLD ]] || fail "the refused major run changed the agent"
+
+  # The stepping stone: the published release from the registry, integrity read from the registry by the server.
+  sudo find "$SYNTH" -maxdepth 1 -name '*.tgz' -delete
+  (cd "$SYNTH" && npm pack --silent "@hivemagnus/magnus-agent@$AGENT_STEP" "@hivemagnus/magnus-contracts@$AGENT_STEP" >/dev/null)
+  chmod -R a+rX "$SYNTH"
+  server_cli agents upgrade --to "$AGENT_STEP" | tee "$WORK/step.log" || fail "agent upgrade $AGENT_OLD -> $AGENT_STEP from this server"
+  grep -q "confirmed" "$WORK/step.log" || fail "the stepping-stone upgrade was not confirmed"
+  [[ $(sudo readlink "$AGENT_DIR/current") == versions/$AGENT_STEP ]] || fail "agent ./current is not $AGENT_STEP"
+  READY_TO="${AGENT_STEP%%.*}.99.0-ci"
+  can_cross() { server_cli agents upgrade --to "$VERSION" --integrity "$(integrity "$AGENT_TARBALL")" --allow-major --dry-run 2>/dev/null | grep -q "will upgrade"; }
+  wait_for "the $AGENT_STEP agent to report that it verifies major-upgrade authorizations" 120 can_cross
+
+  # The major itself: this release's agent, with the server's signed authorization for this node.
+  sudo find "$SYNTH" -maxdepth 1 -name '*.tgz' -delete
+  cp "$PACKS/hivemagnus-magnus-contracts-$VERSION.tgz" "$AGENT_TARBALL" "$SYNTH/"
+  chmod -R a+rX "$SYNTH"
+  server_cli agents upgrade --to "$VERSION" --integrity "$(integrity "$AGENT_TARBALL")" --allow-major | tee "$WORK/major-4.log" \
+    || fail "authorized major agent upgrade $AGENT_STEP -> $VERSION"
+  grep -q "confirmed" "$WORK/major-4.log" || fail "the major agent upgrade was not confirmed"
+  [[ $(sudo readlink "$AGENT_DIR/current") == versions/$VERSION ]] || fail "agent ./current is not $VERSION"
+  wait_for "last-good to record $VERSION" 30 bash -c "[[ \$(sudo readlink '$AGENT_DIR/last-good') == versions/$VERSION ]]"
+  JOURNAL=$(sudo journalctl -u magnus-agent-e2e --no-pager)
+  grep -q "SELF_UPGRADE_MAJOR_UNAUTHORIZED" <<<"$JOURNAL" && fail "an agent refused the server's major-upgrade authorization"
+  READY_TO=$AGENT_OK
+  wait_for "the server to reach the $VERSION agent" 90 agent_ready
+fi
+
 step "Rotate the server key: stage, the agent pins it, promote, retire; the agent stays reachable"
 key_state() { server_cli node-auth server-key status --format json; }
 server_cli node-auth server-key stage >/dev/null || fail "server-key stage"
@@ -217,9 +283,6 @@ RETIRED_AT=$(date +%s)
 wait_for "the server to reach the agent after the retirement" 60 agent_ready
 signed_since() { [[ $(psql_url "$DATABASE_URL" "SELECT count(*)::int AS n FROM node_credentials WHERE \"lastUsedAt\" > to_timestamp($RETIRED_AT)" | json 'v[0].n') == 1 ]]; }
 wait_for "a signed heartbeat after the retirement" 180 signed_since
-
-synthetic() { node "$ROOT/scripts/e2e/synthetic-release.mjs" --from "$PACKS" --out "$SYNTH" "$@" >/dev/null; chmod -R a+rX "$SYNTH"; }
-integrity() { node -e "const c=require('node:crypto');console.log('sha512-'+c.createHash('sha512').update(require('node:fs').readFileSync(process.argv[1])).digest('base64'))" "$1"; }
 
 step "A ledger with a fence far above the server's: the check reports it, and a repair moves the server past it"
 NODE_ID=$(psql_url "$DATABASE_URL" "SELECT id FROM nodes WHERE metadata LIKE '%agentSelfUpgrade%' LIMIT 1" | node -e "process.stdin.on('data',d=>console.log(JSON.parse(d)[0].id))")
@@ -295,4 +358,4 @@ magnus rollback --dir "$PROJECT" --health-timeout 240 || fail "rollback"
 [[ $(magnus status --json --offline | json 'v.current') == "$FROM" ]] || fail "rollback did not switch to $FROM"
 curl -fsk "https://127.0.0.1:$SERVER_PORT/api/v1/health" >/dev/null || fail "$FROM is not healthy after the rollback"
 
-step "PASS: init, upgrade, compat to enforce, server-key rotation, agent upgrade and self-revert, broken-release revert, restore and rollback"
+step "PASS: init, upgrade, compat to enforce, $($CROSS_MAJOR && echo "agent $AGENT_OLD -> $AGENT_STEP -> $VERSION across the major, ")server-key rotation, agent upgrade and self-revert, broken-release revert, restore and rollback"

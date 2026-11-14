@@ -19,6 +19,7 @@ import { delimiter, dirname, join, resolve } from 'node:path';
 import {
   AGENT_SELF_UPGRADE_PROTOCOL,
   checkUpgradeAllowed,
+  classifyUpgrade,
   compareVersions,
   satisfiesRange,
   type AgentDiskHealth,
@@ -29,6 +30,7 @@ import {
 } from '@hivemagnus/magnus-contracts';
 import { childEnvironment } from '../utils/child-env.js';
 import { logger } from '../utils/logger.js';
+import { checkMajorAuthorization, MAJOR_UPGRADE_AUTHORIZATION_PROTOCOL } from './major-authorization.js';
 
 export const STATE_FILE = 'upgrade-state.json';
 export const LOCK_FILE = 'upgrade-state.lock';
@@ -319,6 +321,7 @@ export function selfUpgradeStatus(version: string, env: NodeJS.ProcessEnv = proc
     reasonCode,
     confirmSeconds: confirmWindowSeconds(env, layout),
     upgrade: state ? reportOf(state) : { state: 'idle', from: null, to: version },
+    majorUpgradeAuthorization: MAJOR_UPGRADE_AUTHORIZATION_PROTOCOL,
   };
 }
 
@@ -614,7 +617,14 @@ export async function stageUpgrade(options: StageOptions): Promise<StageResult> 
   if (!status.enabled) throw new SelfUpgradeError('SELF_UPGRADE_UNAVAILABLE', status.reason ?? 'self-upgrade is unavailable');
   if (request.packageName !== AGENT_PACKAGE) throw new SelfUpgradeError('SELF_UPGRADE_PACKAGE', `only ${AGENT_PACKAGE} can be installed`, 422);
   if (compareVersions(request.version, from) === 0) throw new SelfUpgradeError('SELF_UPGRADE_CURRENT', `already running ${from}`);
-  const decision = checkUpgradeAllowed(from, request.version);
+  // A major version only with the server's signed permission for this node, this version change and this tarball.
+  let allowMajor = false;
+  if (classifyUpgrade(from, request.version) === 'major' && request.majorAuthorization) {
+    const verdict = checkMajorAuthorization(request, from);
+    if (!verdict.ok) throw new SelfUpgradeError('SELF_UPGRADE_MAJOR_UNAUTHORIZED', `${from} -> ${request.version} crosses a major version and ${verdict.reason}`, 422);
+    allowMajor = true;
+  }
+  const decision = checkUpgradeAllowed(from, request.version, { allowMajor });
   if (!decision.allowed) throw new SelfUpgradeError('SELF_UPGRADE_REFUSED', decision.reason ?? 'upgrade refused', 422);
   const previous = status.upgrade?.state;
   if (previous === 'staged' || previous === 'trial') throw new SelfUpgradeError('SELF_UPGRADE_BUSY', `an upgrade to ${status.upgrade?.to} is still on trial`);

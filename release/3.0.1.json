@@ -1,0 +1,9 @@
+{
+  "summary": "Agents can now be moved across a major version through the managed upgrade. magnus-server agents upgrade --to <3.x> --allow-major (allowMajor in POST /api/v1/agents/upgrade) adds to each request that crosses a major an authorization signed with the server key for that node, the version it runs, the target and its tarball integrity, valid one hour; 2.10.3 and later agents with a bound key verify it against the server key they pin, and refuse anything else. Without --allow-major such nodes stay MAJOR_VERSION. The dry run lists agents 2.10.0 to 2.10.2 as needing the 2.10.3 stepping stone, which this server installs as an ordinary patch. Procedure for a 2.10.2 fleet: agents upgrade --to 2.10.3, then --to 3.0.1 --allow-major. The 3.0.1 agent verifies the same authorization. No migrations and no new settings. See docs/NODE_CREDENTIALS.md, Moving agents across a major version.",
+  "breaking": false,
+  "minUpgradeFrom": "2.10.2",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}

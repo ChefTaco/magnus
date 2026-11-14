@@ -10,6 +10,9 @@ import {
   STAGE_BUDGET_MS, tarballName, upgradeLauncher, writeUpgradeState, type Runner,
 } from './self-upgrade.js';
 import { stableCodePath } from './stable-path.js';
+import { agentMajorUpgradeSigningPayload, signServerAuthorization } from '../security/node-evidence.js';
+import { ensureNodeKey, resetNodeIdentityCache, saveNodeBinding } from '../security/node-identity.js';
+import { generateSigningKey, privateKeyFromPem } from '../security/node-request-auth.js';
 
 const minute = 60_000;
 const asRoot = process.getuid?.() === 0;
@@ -239,6 +242,86 @@ describe('staging an upgrade', () => {
       .rejects.toMatchObject({ code: 'SELF_UPGRADE_UNAVAILABLE', message: expect.stringMatching(/versions\/1\.0\.4/) });
     writeUpgradeState(dir, { state: 'trial', from: '1.0.2', to: '1.0.3', requestId: 'r0' });
     await expect(stageUpgrade({ request: request('1.1.0', integrity, 'r'), version: '1.0.3', env, run: fakeNpm([], '1.1.0') })).rejects.toMatchObject({ code: 'SELF_UPGRADE_BUSY' });
+  });
+
+  describe('across a major version, with a server-signed authorization', () => {
+    const server = generateSigningKey();
+    const other = generateSigningKey();
+    afterEach(() => { vi.unstubAllEnvs(); resetNodeIdentityCache(); });
+    /** A versioned install whose node key is bound to node-a and pins `server`. */
+    const boundInstall = (pinned = [server]) => {
+      const dir = versionedInstall();
+      vi.stubEnv('AGENT_INSTALL_DIR', dir);
+      resetNodeIdentityCache();
+      const key = ensureNodeKey();
+      saveNodeBinding({ version: 1, nodeId: 'node-a', keyId: key.keyId, serverKeys: pinned.map(({ keyId, publicKey }) => ({ keyId, publicKey })),
+        origin: 'legacy-upgrade', boundAt: '2026-11-13T00:00:00.000Z' });
+      return dir;
+    };
+    const authorize = (fields: { to: string; integrity: string; from?: string; nodeId?: string; expiresAt?: number; key?: typeof server }) => {
+      const expiresAt = fields.expiresAt ?? Date.now() + 30 * minute;
+      const signer = fields.key ?? server;
+      const nodeId = fields.nodeId ?? 'node-a';
+      const payload = agentMajorUpgradeSigningPayload({ nodeId, packageName: '@hivemagnus/magnus-agent', from: fields.from ?? '1.0.3', to: fields.to,
+        integrity: fields.integrity, expiresAt });
+      return { expiresAt, serverSignature: signServerAuthorization(privateKeyFromPem(signer.privateKeyPem), signer.keyId, nodeId, 'agent-major-upgrade', payload) };
+    };
+    const major = (integrity: string, majorAuthorization: unknown, requestId = 'm') => ({ ...request('2.0.0', integrity, requestId), majorAuthorization }) as ReturnType<typeof request>;
+
+    it('refuses without, or with a wrong, expired, other-node or unpinned authorization, and changes nothing', async () => {
+      const dir = boundInstall();
+      const { source, integrity } = tarball(dir, '2.0.0');
+      const env = launcherEnv(dir, { MAGNUS_AGENT_UPGRADE_SOURCE_DIR: source });
+      const stage = (majorAuthorization: unknown) => stageUpgrade({ request: major(integrity, majorAuthorization), version: '1.0.3', nodeVersion: '24.22.3', env, run: fakeNpm([], '2.0.0') });
+      await expect(stage(undefined)).rejects.toMatchObject({ code: 'SELF_UPGRADE_REFUSED', status: 422, message: expect.stringMatching(/crosses a major version/) });
+      const refused = (pattern: RegExp) => ({ code: 'SELF_UPGRADE_MAJOR_UNAUTHORIZED', status: 422, message: expect.stringMatching(pattern) });
+      await expect(stage(authorize({ to: '2.0.0', integrity, expiresAt: Date.now() - 1 }))).rejects.toMatchObject(refused(/expired/));
+      await expect(stage(authorize({ to: '2.0.0', integrity, expiresAt: Date.now() + 25 * 60 * minute }))).rejects.toMatchObject(refused(/longer than 24 hours/));
+      await expect(stage(authorize({ to: '2.0.0', integrity, nodeId: 'node-b' }))).rejects.toMatchObject(refused(/another node/));
+      await expect(stage(authorize({ to: '2.0.0', integrity, key: other }))).rejects.toMatchObject(refused(/does not pin/));
+      // Signed by another key under the pinned key's id: the signature does not verify.
+      const forged = authorize({ to: '2.0.0', integrity, key: other });
+      await expect(stage({ ...forged, serverSignature: { ...forged.serverSignature, keyId: server.keyId } })).rejects.toMatchObject(refused(/does not verify/));
+      // Genuine signatures for another target, tarball, running version or expiry.
+      await expect(stage(authorize({ to: '3.0.0', integrity }))).rejects.toMatchObject(refused(/does not verify/));
+      await expect(stage(authorize({ to: '2.0.0', integrity: `sha512-${'B'.repeat(86)}==` }))).rejects.toMatchObject(refused(/does not verify/));
+      await expect(stage(authorize({ to: '2.0.0', integrity, from: '1.0.2' }))).rejects.toMatchObject(refused(/does not verify/));
+      const genuine = authorize({ to: '2.0.0', integrity });
+      await expect(stage({ ...genuine, expiresAt: genuine.expiresAt + 1 })).rejects.toMatchObject(refused(/does not verify/));
+      await expect(stage({ expiresAt: genuine.expiresAt })).rejects.toMatchObject(refused(/not signed/));
+      await expect(stage({ ...genuine, serverSignature: { ...genuine.serverSignature, sig: 'short' } })).rejects.toMatchObject(refused(/malformed/));
+      expect(readlinkSync(join(dir, 'current'))).toBe(join('versions', '1.0.3'));
+      expect(readUpgradeState(dir)).toBeNull();
+    });
+
+    it('refuses even a genuine authorization on a node without a bound key', async () => {
+      const dir = versionedInstall();
+      vi.stubEnv('AGENT_INSTALL_DIR', dir);
+      resetNodeIdentityCache();
+      const { source, integrity } = tarball(dir, '2.0.0');
+      await expect(stageUpgrade({ request: major(integrity, authorize({ to: '2.0.0', integrity })), version: '1.0.3', nodeVersion: '24.22.3',
+        env: launcherEnv(dir, { MAGNUS_AGENT_UPGRADE_SOURCE_DIR: source }), run: fakeNpm([], '2.0.0') }))
+        .rejects.toMatchObject({ code: 'SELF_UPGRADE_MAJOR_UNAUTHORIZED', message: expect.stringMatching(/no bound node key/) });
+      expect(readlinkSync(join(dir, 'current'))).toBe(join('versions', '1.0.3'));
+    });
+
+    it('stages a major upgrade the pinned server key authorized for this node, version and tarball', async () => {
+      const dir = boundInstall([other, server]);
+      const { source, integrity } = tarball(dir, '2.0.0');
+      expect(selfUpgradeStatus('1.0.3', launcherEnv(dir)).majorUpgradeAuthorization).toBe(1);
+      const result = await stageUpgrade({ request: major(integrity, authorize({ to: '2.0.0', integrity })), version: '1.0.3', nodeVersion: '24.22.3',
+        env: launcherEnv(dir, { MAGNUS_AGENT_UPGRADE_SOURCE_DIR: source }), run: fakeNpm([], '2.0.0') });
+      expect(result).toMatchObject({ from: '1.0.3', to: '2.0.0' });
+      expect(readlinkSync(join(dir, 'current'))).toBe(join('versions', '2.0.0'));
+      expect(readUpgradeState(dir)).toMatchObject({ state: 'staged', from: '1.0.3', to: '2.0.0', requestId: 'm' });
+    });
+
+    it('ignores an authorization on an upgrade within the same major', async () => {
+      const dir = boundInstall();
+      const { source, integrity } = tarball(dir, '1.1.0');
+      await expect(stageUpgrade({ request: { ...request('1.1.0', integrity, 'p'), majorAuthorization: { expiresAt: 1, serverSignature: 'x' } }, version: '1.0.3',
+        nodeVersion: '24.22.3', env: launcherEnv(dir, { MAGNUS_AGENT_UPGRADE_SOURCE_DIR: source }), run: fakeNpm([], '1.1.0') })).resolves.toMatchObject({ to: '1.1.0' });
+    });
   });
 
   it('refuses an install that does not report the requested version', async () => {

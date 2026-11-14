@@ -7,6 +7,37 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [3.0.1] - 2026-11-14
+
+3.0.0 left no supported way to move an existing agent from 2.10.x to 3.0.x: the managed upgrade
+stayed within a major and a 2.10.2 agent refused a major request. 3.0.1 adds an explicit,
+server-signed path. See `docs/NODE_CREDENTIALS.md`, "Moving agents across a major version".
+
+### Added
+
+- `magnus-server agents upgrade --to <X.Y.Z> --allow-major`, and `allowMajor` in `POST /api/v1/agents/upgrade` (and in `GET /api/v1/agents/upgrade/eligibility`): agents of another major version are selected too, and each request that crosses a major carries a `majorAuthorization`, an Ed25519 signature with the server key (authorization kind `agent-major-upgrade`) over the node id, the package, the version the agent runs, the target version, the tarball integrity and an expiry one hour ahead. The agent verifies it against the server key it pins, so a signature for another node, version change or tarball does not verify, and the shared node secret never authorizes a major. A retry keeps the run's `allowMajor`; the run start audit records it and the nodes it moves across the major. Without `--allow-major` such nodes stay `MAJOR_VERSION`, as before.
+- The dry run (`--dry-run`, **Check**, `dryRun`) judges agents as the run would: 2.10.3 and later with an active node key are eligible; agents 2.10.0 to 2.10.2, which cannot verify the authorization, are listed as `MAJOR_NEEDS_STEPPING_STONE` (the CLI prints `Needs a stepping stone first: <node> (2.10.2 -> 2.10.3)`); a node without an active key as `MAJOR_NEEDS_NODE_KEY`. New upgrade problem codes: `MAJOR_NEEDS_STEPPING_STONE`, `MAJOR_NEEDS_NODE_KEY`, `SELF_UPGRADE_MAJOR_UNAUTHORIZED` (an agent refused the authorization) and `SERVER_KEY_UNAVAILABLE` (the server could not sign it; nothing is sent). A strict client must accept them.
+- Node agent: the 3.0.1 agent accepts a major self-upgrade on the same terms as the 2.10.3 agent (only with a valid authorization, only with a bound key) and reports `majorUpgradeAuthorization: 1` in its self-upgrade status, so the next major can be crossed the same way.
+- The upgrade end-to-end test (CI) installs the published 2.10.2 agent next to this server, moves it to the published 2.10.3 with an ordinary managed upgrade from this server, checks that without `--allow-major` it is left out and that with it the stepping stone is named, and then moves it to this release with `--allow-major`.
+- Release tooling: a release older than npm's `latest` is published under the dist-tag `maintenance-<major>.<minor>` instead of `latest`.
+
+### Changed
+
+- The console's agent upgrade dialog points at the cross-major procedure instead of a manual upgrade on each node; the remedies of `MAJOR_VERSION` and `SELF_UPGRADE_REFUSED` say how to authorize a major.
+
+### Upgrading
+
+- A 3.0.0 server upgrades to 3.0.1 in place (`magnus upgrade`); a 2.10.2 server follows "Upgrading to 3.0.0" in `docs/NODE_CREDENTIALS.md` with `--allow-major`, straight to 3.0.1.
+- Then, on the server host, for a fleet on 2.10.x agents:
+  1. `magnus-server agents upgrade --to 3.0.1 --allow-major --dry-run` lists who needs the stepping stone;
+  2. `magnus-server agents upgrade --to 2.10.3` (a patch within 2.10, from this server; 2.10.3 is on npm under `maintenance-2.10`);
+  3. `magnus-server agents upgrade --to 3.0.1 --allow-major`.
+- Rotate the server key only after the agents are on 3.0.x.
+
+**New environment variables:** None.
+
+**Migration impact:** No datastore migrations.
+
 ## [3.0.0] - 2026-11-14
 
 3.0.0 is a major release: per-node credentials, phase 3 (`enforce`). See

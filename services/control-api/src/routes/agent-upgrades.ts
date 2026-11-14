@@ -21,7 +21,7 @@ agentUpgradesRouter.get('/eligibility', async c => {
   const target = version.safeParse(c.req.query('version') ?? AGENT_VERSION);
   if (!target.success) throw new HttpError(400, 'INVALID_VERSION', 'version must be X.Y.Z');
   const [nodes, release, latestRun] = await Promise.all([
-    listUpgradeCandidates(target.data, undefined, { allowRetryReverted: c.req.query('allowRetryReverted') === 'true' }),
+    listUpgradeCandidates(target.data, undefined, { allowRetryReverted: c.req.query('allowRetryReverted') === 'true', allowMajor: c.req.query('allowMajor') === 'true' }),
     verifyAgentRelease(target.data), latestUpgradeRun()]);
   return c.json({ success: true, data: {
     version: target.data, serverVersion: AGENT_VERSION, upgradesEnabled: upgradeSettings().agentUpgrades,
@@ -39,6 +39,8 @@ const startSchema = z.object({
   canaryNodeId: nodeId.optional(),
   allowPrerelease: z.boolean().optional(),
   allowRetryReverted: z.boolean().optional(),
+  /** Also move agents of another major version, each with a server-signed authorization. */
+  allowMajor: z.boolean().optional(),
   /** Report on every selected node and start nothing: the console's Check action. */
   dryRun: z.boolean().optional(),
   maxFailures: maxFailures.optional(),
@@ -53,8 +55,8 @@ const parseBody = async <T extends z.ZodType>(schema: T, raw: unknown): Promise<
 agentUpgradesRouter.post('/', requireRole('ADMIN'), async c => {
   const body = await parseBody(startSchema, await c.req.json().catch(() => ({})));
   const { dryRun, ...options } = body;
-  if (dryRun) return c.json({ success: true, data: { dryRun: true, ...await checkUpgrade({ ...optional("version", options.version), ...optional("integrity", options.integrity), ...optional("nodeIds", options.nodeIds), ...optional("allowRetryReverted", options.allowRetryReverted) }) } });
-  const { run } = await startUpgradeRun({ ...optional("version", options.version), ...optional("integrity", options.integrity), ...optional("nodeIds", options.nodeIds), ...optional("canaryNodeId", options.canaryNodeId), ...optional("allowPrerelease", options.allowPrerelease), ...optional("allowRetryReverted", options.allowRetryReverted), ...optional("maxFailures", options.maxFailures), actorId: getUser(c).userId });
+  if (dryRun) return c.json({ success: true, data: { dryRun: true, ...await checkUpgrade({ ...optional("version", options.version), ...optional("integrity", options.integrity), ...optional("nodeIds", options.nodeIds), ...optional("allowRetryReverted", options.allowRetryReverted), ...optional("allowMajor", options.allowMajor) }) } });
+  const { run } = await startUpgradeRun({ ...optional("version", options.version), ...optional("integrity", options.integrity), ...optional("nodeIds", options.nodeIds), ...optional("canaryNodeId", options.canaryNodeId), ...optional("allowPrerelease", options.allowPrerelease), ...optional("allowRetryReverted", options.allowRetryReverted), ...optional("allowMajor", options.allowMajor), ...optional("maxFailures", options.maxFailures), actorId: getUser(c).userId });
   return c.json({ success: true, data: run }, 202);
 });
 
