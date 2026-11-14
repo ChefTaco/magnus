@@ -1,6 +1,6 @@
 {
   "name": "@hivemagnus/magnus",
-  "version": "2.9.1",
+  "version": "2.10.0",
   "description": "Install, upgrade and roll back a Magnus server and console with one command: `npx @hivemagnus/magnus init`, then `magnus upgrade`. Pins exact, tested component versions, backs up PostgreSQL before every migration and reverts automatically when the new version fails its health check.",
   "keywords": [
     "magnus",
@@ -47,7 +47,7 @@
     "clean": "node -e \"const fs=require('node:fs');fs.rmSync('dist',{recursive:true,force:true});fs.rmSync('tsconfig.tsbuildinfo',{force:true})\""
   },
   "dependencies": {
-    "@hivemagnus/magnus-contracts": "2.9.1"
+    "@hivemagnus/magnus-contracts": "2.10.0"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
@@ -56,29 +56,71 @@
   },
   "magnusRelease": {
     "schema": 1,
-    "version": "2.9.1",
+    "version": "2.10.0",
     "engines": {
       "node": "^24.22.3 || ^26.13.1"
     },
     "components": {
-      "@hivemagnus/magnus-server": "2.9.1",
-      "@hivemagnus/magnus-ui": "2.9.1",
-      "@hivemagnus/magnus-contracts": "2.9.1",
-      "@hivemagnus/magnus-agent": "2.9.1"
+      "@hivemagnus/magnus-server": "2.10.0",
+      "@hivemagnus/magnus-ui": "2.10.0",
+      "@hivemagnus/magnus-contracts": "2.10.0",
+      "@hivemagnus/magnus-agent": "2.10.0"
     },
     "breaking": false,
     "minUpgradeFrom": "1.0.0",
     "engineProtocol": 2,
     "newRequiredEnv": [],
-    "newOptionalEnv": [],
+    "newOptionalEnv": [
+      {
+        "name": "NODE_AUTH_MODE",
+        "component": "server",
+        "secret": false,
+        "description": "compat (default): node signature or shared node secret; warn: also log each use of the shared secret; enforce: signatures only."
+      },
+      {
+        "name": "NODE_AUTH_LEGACY_UPGRADE_UNTIL",
+        "component": "server",
+        "secret": false,
+        "description": "ISO 8601 date until which existing agents may bind their first node key with the shared node secret. Unset means 30 days after the first start."
+      },
+      {
+        "name": "NODE_AUTH_SERVER_KEY_PATH",
+        "component": "server",
+        "secret": false,
+        "description": "File holding the server's Ed25519 signing key (mode 0600, created on first start). Default $MAGNUS_HOME/state/node-auth/server-signing-key.json."
+      },
+      {
+        "name": "NODE_AUTO_REGISTER",
+        "component": "server",
+        "secret": false,
+        "description": "Add unknown agents that present the shared node secret to the inventory (default true)."
+      },
+      {
+        "name": "NODE_AUTH_MODE",
+        "component": "agent",
+        "secret": false,
+        "description": "compat (default) or warn: the agent accepts the shared node secret on its own API (warn logs each use); enforce: once the node has a bound key, requests that carry only the shared secret are refused, and reconciliation decisions must be signed by the server key."
+      }
+    ],
     "removedEnv": [],
-    "migrations": [],
+    "migrations": [
+      {
+        "name": "20261113120000_node_credentials",
+        "impact": "fast",
+        "note": ""
+      },
+      {
+        "name": "20261114090000_node_credentials_phase2",
+        "impact": "fast",
+        "note": ""
+      }
+    ],
     "agent": {
       "selfUpgradeProtocol": 1,
       "minLauncher": 1
     },
-    "summary": "Assistant model routes send their own model to non-Ollama providers.",
-    "notesUrl": "https://github.com/ChefTaco/magnus/releases/tag/v2.9.1",
+    "summary": "Per-node credentials, phases 1 and 2: each node agent gets its own Ed25519 key, the server signs its requests to agents, existing nodes move over by themselves, node evidence is signed with the node key and command reconciliation decisions with the server key. The shared node secret keeps working and is refused only for a node that has its own key; NODE_AUTH_MODE=enforce is opt-in. ADMIN users can list, revoke and reset node keys from a browser UI. A root agent now runs a user-installed Hermes as the account that owns it instead of as root. Server, gateway, installer and skill hardening from a review pass. Two additive migrations. Upgrade the server before the agents and before switching any agent to enforce, back up the server key file with the database, and see docs/NODE_CREDENTIALS.md before downgrading an agent that has bound a key.",
+    "notesUrl": "https://github.com/ChefTaco/magnus/releases/tag/v2.10.0",
     "allowScripts": {
       "@prisma/engines": true,
       "argon2": true,
