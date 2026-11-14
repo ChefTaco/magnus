@@ -1,15 +1,15 @@
 {
   "name": "@hivemagnus/magnus-agent",
-  "version": "2.9.1",
+  "version": "2.10.0",
   "lockfileVersion": 3,
   "requires": true,
   "packages": {
     "": {
       "name": "@hivemagnus/magnus-agent",
-      "version": "2.9.1",
+      "version": "2.10.0",
       "license": "Apache-2.0",
       "dependencies": {
-        "@hivemagnus/magnus-contracts": "2.9.1",
+        "@hivemagnus/magnus-contracts": "2.10.0",
         "@hono/node-server": "^2.1.6",
         "dotenv": "^18.0.9",
         "fast-xml-parser": "5.12.0",
@@ -25,7 +25,7 @@
         "magnus-agent": "dist/index.js"
       },
       "devDependencies": {
-        "@hivemagnus/ardent": "3.1.2",
+        "@hivemagnus/ardent": "3.1.3",
         "@types/node": "^24.19.2",
         "@types/tar-stream": "^3.1.5",
         "tsx": "^4.23.15",
@@ -567,9 +567,9 @@
       }
     },
     "node_modules/@hivemagnus/ardent": {
-      "version": "3.1.2",
-      "resolved": "https://registry.npmjs.org/@hivemagnus/ardent/-/ardent-3.1.2.tgz",
-      "integrity": "sha512-ZgxpLsro4YgwkoDFJFIxBicVkLPPqs0PCDoBwVE37Po8n+GpnCSUM+b9CZpqtlH6fvsGC2yd5bfk3zNCm/yA9A==",
+      "version": "3.1.3",
+      "resolved": "https://registry.npmjs.org/@hivemagnus/ardent/-/ardent-3.1.3.tgz",
+      "integrity": "sha512-38LA0x7cBg2ge5ZkPYoNYXy1wjqkuIwqEhV9B8Jo2MvQ8FyigLEcUODvj1RSNl3WLRHEv8NzjSblOZZTWIXMiw==",
       "dev": true,
       "license": "Apache-2.0",
       "dependencies": {
@@ -628,9 +628,9 @@
       }
     },
     "node_modules/@hivemagnus/magnus-contracts": {
-      "version": "2.9.1",
-      "resolved": "https://registry.npmjs.org/@hivemagnus/magnus-contracts/-/magnus-contracts-2.9.1.tgz",
-      "integrity": "sha512-OLwe1O90h87DVodchNps/lGOcpa6QcfwFC64Sk1fnT1QuUkz0RUR9f0iA1LjYd5nWzvRaVBmit+vBUdI0H4p7A==",
+      "version": "2.10.0",
+      "resolved": "https://registry.npmjs.org/@hivemagnus/magnus-contracts/-/magnus-contracts-2.10.0.tgz",
+      "integrity": "sha512-JXWrA6lGLOkpVvN3Xxw7chEfgxz7h2T5YtPN86HPk2kzSuoOdT1QkSrrd1wtT7RjZUZHucRPwWypuKxJBI+RTQ==",
       "license": "Apache-2.0",
       "dependencies": {
         "openapi-fetch": "^0.17.0",

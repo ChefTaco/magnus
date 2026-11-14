@@ -1,6 +1,6 @@
 {
   "name": "magnus",
-  "version": "2.9.1",
+  "version": "2.10.0",
   "private": true,
   "description": "Magnus: self-hosted fleet management for Linux hosts and AI agents (UI, server, node agent)",
   "license": "Apache-2.0",
@@ -104,7 +104,7 @@
   },
   "devDependencies": {
     "@apidevtools/swagger-parser": "13.1.0",
-    "@hivemagnus/ardent": "3.1.2",
+    "@hivemagnus/ardent": "3.1.3",
     "eslint": "10.14.0",
     "eslint-plugin-react-hooks": "7.1.1",
     "openapi-typescript": "7.13.0",
