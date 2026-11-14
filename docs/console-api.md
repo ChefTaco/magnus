@@ -12,7 +12,7 @@ moved without updating it.
 |---|---|---|---|
 | `browser` | A person's console drives it with a user token | 155 | Allow the exact method and path |
 | `machine` | Agents, services and integrations, with their own credentials | 86 | Deny |
-| `exclude` | Reachable with a user token, but no console needs it, or it was written for a server-side caller | 143 | Deny until a feature needs it and it is reviewed |
+| `exclude` | Reachable with a user token, but no console needs it, or it was written for a server-side caller | 149 | Deny until a feature needs it and it is reviewed |
 | `retired` | Always answers 404 or 410 | 64 | Deny |
 
 The `Wave 1` column marks routes whose request and response shapes are published in
@@ -234,6 +234,14 @@ times, never key material. Each is `Cache-Control: no-store`.
 
 Issuing an enrollment token (`POST /api/v1/nodes/:nodeId/enrollment-token`) is not a browser route: its response is
 a secret. Neither are the shared-secret lifecycle routes under `/api/v1/credentials/:name`.
+
+From 3.0.0 the server runs in `enforce` mode by default, so a reset answers 409 `NODE_AUTH_ENFORCED` unless the server
+sets an explicit (deprecated) `NODE_AUTH_MODE=compat` or `warn`; offer it only when the summary's `mode` is not
+`enforce`. The fleet summary (`GET /api/v1/node-credentials/summary`) also carries what a console shows for 3.0.0:
+`modeExplicit`, `modeDeprecated` with a `deprecationNotice` to display, `serverKeyRotation` (the active, staged,
+replaced and retired server keys by fingerprint, and how many keyed agents pin the active and the staged key) and the
+blocker `AGENTS_NEED_UPGRADE`. These fields are absent from a server before 3.0.0. The server-key rotation itself
+(`POST /api/v1/node-credentials/server-key/stage`, `/promote`, `/retire`) stays with the API and the command line for now.
 
 ## Suite event feed
 
@@ -661,7 +669,10 @@ Each row is a non-browser route that a broader `browser` pattern also matches. D
 | GET | `/api/v1/credentials/:name/status` | exclude | `user:ADMIN` | Credential lifecycle status for reviewed runbooks; no console caller. |
 | GET | `/api/v1/credentials/rotations` | exclude | `user:ADMIN` | Credential lifecycle status for reviewed runbooks; no console caller. |
 | POST | `/api/v1/cron/:cronId/managed` | exclude | `user:ADMIN` | No dashboard call site. Add when a console feature needs it. |
-| POST | `/api/v1/cron/scheduler-sources/reconcile` | exclude | `user:ADMIN` | No dashboard call site. Add when a console feature needs it. |
+| POST | `/api/v1/cron/scheduler-sources/reconcile` | exclude | `user:ADMIN` | Reviewer-signed settlement (COMMAND_RECONCILIATION_SECRET); explicit `compat` or `warn` only, 409 `NODE_AUTH_ENFORCED` in enforce. No dashboard call site. |
+| POST | `/api/v1/cron/scheduler-sources/reconcile-requests` | exclude | `user:ADMIN` | Step one of the two-ADMIN scheduler-source settlement (people only). No dashboard call site yet. See [NODE_CREDENTIALS.md](NODE_CREDENTIALS.md#settling-a-scheduler-source). |
+| POST | `/api/v1/cron/scheduler-sources/reconcile-requests/:id/approve` | exclude | `user:ADMIN` | Step two: a different ADMIN person; the server signs the settlement for the node. No dashboard call site yet. |
+| POST | `/api/v1/cron/scheduler-sources/reconcile-requests/:id/reject` | exclude | `user:ADMIN` | Withdraws an open settlement request. No dashboard call site yet. |
 | POST | `/api/v1/dependencies/scan` | exclude | `user:ADMIN\|OPERATOR` | No dashboard call site. Add when a console feature needs it. |
 | GET | `/api/v1/drift/:nodeId` | exclude | `user:any` | No dashboard call site. Add when a console feature needs it. |
 | GET | `/api/v1/drift/:nodeId/latest` | exclude | `user:any` | No dashboard call site. Add when a console feature needs it. |
@@ -678,6 +689,9 @@ Each row is a non-browser route that a broader `browser` pattern also matches. D
 | GET | `/api/v1/hermes/profiles/:id/api-server/status` | exclude | `user:any` | No call site: an unused client wrapper only. Add when a console feature needs it. |
 | POST | `/api/v1/nodes/:nodeId/change-password` | exclude | `user:ADMIN\|OPERATOR` | Handles OS passwords in the body; no console caller. |
 | POST | `/api/v1/nodes/:nodeId/provision-user` | exclude | `user:ADMIN\|OPERATOR` | Handles OS passwords in the body; no console caller. |
+| POST | `/api/v1/node-credentials/server-key/promote` | exclude | `user:ADMIN` | Server-key rotation for reviewed runbooks (409 `SERVER_KEY_NOT_PINNED` until every keyed agent pins the staged key, unless `force`); no console caller. The rotation state is in `GET /api/v1/node-credentials/summary`. |
+| POST | `/api/v1/node-credentials/server-key/retire` | exclude | `user:ADMIN` | Server-key rotation for reviewed runbooks: destroys the replaced key's private part after its grace; no console caller. |
+| POST | `/api/v1/node-credentials/server-key/stage` | exclude | `user:ADMIN` | Server-key rotation for reviewed runbooks: creates the next key agents pin; no console caller. |
 | POST | `/api/v1/nodes/:nodeId/enrollment-token` | exclude | `user:ADMIN` | Returns a one-time enrollment token, a secret. Issue it with the API or CLI, not from a browser. |
 | POST | `/api/v1/nodes/:nodeId/repair-address` | exclude | `user:ADMIN\|OPERATOR` | No call site: an unused client wrapper only. Add when a console feature needs it. |
 | GET | `/api/v1/nodes/:nodeId/wazuh` | exclude | `user:any` | No call site: an unused client wrapper only. Add when a console feature needs it. |

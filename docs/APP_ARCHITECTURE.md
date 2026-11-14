@@ -124,8 +124,10 @@ The OpenAPI 3.1 document is the route-level reference. The server serves it, wit
 documentation, at `https://<server>:4000/api/docs`.
 
 Every command sent to an agent is signed, carries a deadline, and has a durable receipt on the
-node; see [command receipts and recovery](COMMAND_RECEIPTS.md). Results are signed with
-`RESULT_SIGNING_SECRET`, which is separate from the node credential.
+node; see [command receipts and recovery](COMMAND_RECEIPTS.md). Results are signed with the node's
+own key, and the server signs its requests and decisions with its key; from 3.0.0 the shared
+`NODE_MANAGER_SECRET` and `RESULT_SIGNING_SECRET` are needed only under an explicit compat mode
+([per-node credentials](NODE_CREDENTIALS.md)).
 
 Prometheus metrics are served at `/metrics` behind `METRICS_TOKEN`. Request logs, error responses
 and SSH execution logs redact values that look like secrets. Set `OTEL_EXPORTER_OTLP_ENDPOINT` to

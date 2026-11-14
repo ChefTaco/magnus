@@ -144,9 +144,11 @@ sudo npm install --prefix /opt/magnus-agent @hivemagnus/magnus-agent
 sudo install -m 0600 /opt/magnus-agent/node_modules/@hivemagnus/magnus-agent/.env.example /opt/magnus-agent/.env
 ```
 
-Register the node in the console (or through the API) with the host's FQDN and a node secret, then
-set `CONTROL_API_URL`, `NODE_MANAGER_SECRET`, `RESULT_SIGNING_SECRET` and the TLS paths in
-`/opt/magnus-agent/.env`. Validate the configuration and enable the example systemd unit:
+Register the node in the console (or through the API) with the host's FQDN, set `CONTROL_API_URL`
+and the TLS paths in `/opt/magnus-agent/.env`, and enroll the agent once with a one-time token
+(`magnus-agent enroll --token-file -`, see [per-node credentials](docs/NODE_CREDENTIALS.md#new-nodes)).
+From 3.0.0 no shared node secret is needed. Validate the configuration and enable the example
+systemd unit:
 
 ```bash
 cd /opt/magnus-agent

@@ -4,12 +4,13 @@ Every agent used to authenticate with one fleet-wide value, `NODE_MANAGER_SECRET
 `x-node-token` header in both directions. Whoever held it could report as any node and could call
 the management API of every agent.
 
-From this release each node has its own Ed25519 key, and the server has one too. Requests are
-signed, and a signature names exactly one node. The shared secret keeps working while the fleet
-moves over. It is removed in a later release (see [Phases](#phases)).
-
-Nothing has to be done on the nodes. Upgrade the server and the agents in either order, and each
-agent binds its own key by itself.
+Since 2.10.0 each node has its own Ed25519 key, and the server has one too. Requests are signed,
+and a signature names exactly one node. **From 3.0.0 the server and the agent run in `enforce` mode
+by default**: the shared secret is refused and no longer sent, in both directions, evidence and
+decisions must be signed with the node key or the server key, and the automatic legacy upgrade is
+closed. A server whose mode is unset refuses to start while that would lock out part of its fleet
+(see [Upgrading to 3.0.0](#upgrading-to-300)). `compat` and `warn` still work when set explicitly,
+for this major only (see [Phases](#phases)).
 
 ## The model
 
@@ -41,7 +42,72 @@ With a signature, the key decides which node is speaking. Fields in a request bo
 with `403 NODE_IDENTITY_MISMATCH`, audited, and reported as a notification. A heartbeat can no
 longer rename or re-address another node.
 
+## Upgrading to 3.0.0
+
+3.0.0 is a major release: it changes the default of `NODE_AUTH_MODE` from `compat` to `enforce` on
+the server and on the agent. Upgrade in this order:
+
+1. **Run the server on 2.10.2** (3.0.0 upgrades only from 2.10.2), with every agent on 2.10.2 or later.
+2. **Set `NODE_AUTH_MODE=warn` on the 2.10.2 server** and restart it. Wait a day of normal use.
+3. **Confirm `GET /api/v1/node-credentials/summary` has no blockers** (`enforceReady: true`). The
+   start-up guard of 3.0.0 checks `NODES_WITHOUT_KEY`, `NODES_REVOKED`, `NODES_NOT_SIGNING_EVIDENCE`
+   and `AGENTS_NEED_UPGRADE` (agents 2.10.0 and 2.10.1, which enforce cannot reach); `RECENT_SHARED_SECRET_USE`
+   and `PENDING_BINDINGS` are worth clearing too, and the readiness probe reports them in `warn`.
+4. **Remove `NODE_AUTH_MODE` from the server's environment** (or set `enforce`) and upgrade the server
+   to 3.0.0 (`magnus upgrade --allow-major`). It applies no migration.
+5. **Upgrade the agents to 3.0.0**, from the Nodes page or with `magnus-server agents upgrade`. A
+   3.0.0 agent enforces by default too: it accepts only the server's signature on its API and sends
+   only its own.
+
+**The start-up guard.** With `NODE_AUTH_MODE` unset, a 3.0.0 server reads its inventory before it
+listens. Real nodes only count: decommissioned nodes and the internal `__control-api__` and
+`__dashboard__` log sources never do. While any real node has no active key, only revoked keys, an
+agent that does not sign its evidence, or a 2.10.0/2.10.1 agent, it exits with code 1 and a message
+like:
+
+```text
+[startup] Refusing to start: NODE_AUTH_MODE is not set, so this server would run in enforce mode (the default since 3.0.0), which accepts
+node signatures and node-signed evidence only. Enforce mode would lock out:
+  - 1 node(s) without a node key (still on the shared node secret): web-1 (Hk2...)
+Either:
+  1. enroll or upgrade them first: run the previous release again (`magnus upgrade` switches back by itself when a start fails),
+     upgrade those agents to 2.10.2 or later and let each bind its key (or `magnus-agent enroll --token` with a token from
+     POST /api/v1/nodes/<nodeId>/enrollment-token), and start this release once GET /api/v1/node-credentials/summary reports no blockers; or
+  2. set NODE_AUTH_MODE=compat (or warn) explicitly in this server's environment: the shared node secret keeps working for this
+     major (deprecated, removed in the next), and you switch to enforce once the summary is clean.
+See docs/NODE_CREDENTIALS.md, "Upgrading to 3.0.0".
+```
+
+`magnus upgrade` sees the failed start and switches back to 2.10.2 by itself. An explicit mode is
+the operator's decision and is never checked: `enforce` starts as it is, and `compat` or `warn`
+start with a `DEPRECATED` warning in the log and `modeDeprecated: true` in the summary.
+
+**Rollback.** Set `NODE_AUTH_MODE=compat` on the 3.0.0 server and restart it: the shared secret is
+accepted (and sent to agents whose pins are not current) again, the legacy upgrade reopens while
+its window lasts, and nothing else changes. To go back to 2.10.2, run `magnus rollback`: 2.10.2
+reads the same database (3.0.0 adds no migration) and the same server key file. 3.0.0 agents work
+with a 2.10.2 server (they sign, it verifies). An agent that should accept the shared secret again
+needs `NODE_AUTH_MODE=compat` in its `.env`.
+
+**New installations.** `magnus init` of 3.0.0 no longer generates `NODE_MANAGER_SECRET` or
+`RESULT_SIGNING_SECRET` for the server, and a new agent needs neither: register the node, issue an
+enrollment token and run `magnus-agent enroll --token-file -` on the host ([New nodes](#new-nodes)).
+
+### Versions that work together
+
+| Server | Agent | Works | How |
+|---|---|---|---|
+| 3.0.0 (enforce) | 3.0.0 | yes | Signatures only, both ways |
+| 3.0.0 (enforce) | 2.10.2 with a key | yes | The agent signs and also sends the shared secret; the server goes by the signature and ignores the secret. The server signs only; the agent pins its key. Evidence carries the node signature next to the HMAC |
+| 3.0.0 (enforce) | 2.10.0 or 2.10.1 with a key | no (guard) | Its managed HTTP route refuses every signed request; upgrade it first (`AGENTS_NEED_UPGRADE`) |
+| 3.0.0 (enforce) | 2.9.x or a node without a key | no (guard) | It has only the shared secret (`NODES_WITHOUT_KEY`) |
+| 3.0.0 (explicit compat) | any of the above | yes | As 2.10.2 does |
+| 2.10.2 (compat) | 3.0.0 | yes | The agent signs only; 2.10.2 verifies the signature and signs its own requests and decisions, which the agent accepts. A 3.0.0 agent upgraded from 2.10.x keeps its shared keys in `.env`, so its HMACs still verify too |
+
 ## What happens to existing nodes
+
+This is how 2.10.x moved nodes to their own keys. In 3.0.0 it happens only under an explicit
+`compat` or `warn` mode; `enforce` closes the automatic upgrade.
 
 1. **Upgrade the server.** It applies one additive database migration, creates its signing key and
    starts a 30-day window for the automatic upgrade. The start-up log shows the mode, the server
@@ -139,6 +205,8 @@ fingerprint and address. One of the two is not the genuine node:
 
 ## New nodes
 
+From 3.0.0 this is the only way a node gets a key in enforce mode.
+
 Register the node with `POST /api/v1/nodes/register`. The reply carries a one-time
 `enrollmentToken`, valid for one hour. For an existing node, an administrator issues one with:
 
@@ -161,8 +229,9 @@ A running agent picks the new identity up within a few seconds. The server store
 of a token, a token works once, and issuing a new one withdraws the previous one. Enrolling with a
 token replaces whatever key the node had.
 
-Unknown agents that present the shared secret are still added to the inventory on their first
-heartbeat. Set `NODE_AUTO_REGISTER=false` on the server to require registration first.
+Under an explicit `compat` or `warn`, unknown agents that present the shared secret are still added
+to the inventory on their first heartbeat unless `NODE_AUTO_REGISTER=false`. In enforce mode the
+default is off (and the shared secret is refused anyway): register the node first.
 
 ## Signed evidence
 
@@ -192,22 +261,76 @@ that node (`serverSignature`) and verified by the agent against the key it pins.
 the secret is set, for agents without a key; an agent of this release advertises
 `features.serverAuthorizations` in `/api/v1/ping`, and with it the secret is no longer needed.
 
-Still on the shared keys, and why:
+In enforce mode (the default from 3.0.0) the server refuses evidence that carries only the HMAC, and
+signs every decision with its server key only: it adds no `COMMAND_RECONCILIATION_SECRET` HMAC, and
+refuses a decision that comes back with only one. A decision keeps verifying after a
+[server-key rotation](#rotating-the-server-key): it names the key that signed it, and the server
+keeps the public part of every key it retired.
 
-- `POST /api/v1/cron/scheduler-sources/reconcile` takes an assertion signed in advance by a
-  reviewer who holds `COMMAND_RECONCILIATION_SECRET`: a second factor next to the ADMIN role, not a
-  node credential. It is unchanged.
-- The agent's own records (its command ledger, historical mutation observations and the
-  `historical-mutation` command) are checked with `RESULT_SIGNING_SECRET` and
-  `COMMAND_RECONCILIATION_SECRET` on the node itself, so an older agent version can still read
-  them after a downgrade. A stored command result gets its node signature when it leaves the host.
-- The drain receipts of the console (`RESOURCE_ENROLLMENT_DASHBOARD_SECRET`) and the API
-  participant (`RESOURCE_PARTICIPANT_RECONCILIATION_SECRET`) are not node evidence.
+Not node credentials, and unchanged: the drain receipts of the console
+(`RESOURCE_ENROLLMENT_DASHBOARD_SECRET`) and the API participant
+(`RESOURCE_PARTICIPANT_RECONCILIATION_SECRET`).
+
+### Settling a scheduler source
+
+`POST /api/v1/cron/scheduler-sources/reconcile` settles one remembered foreign scheduler source
+during an enrollment drain. It takes an assertion signed in advance with
+`COMMAND_RECONCILIATION_SECRET`, meant as a second factor next to the ADMIN role. Magnus never
+produces that signature (no route or command does); whoever signs it needs the key, and the key is
+not the server's alone: it sits in the server's environment and, because agents before node keys
+needed it, in every agent's `.env` that an installer gave it to. A copy from any node could sign a
+settlement. So in 3.0.0:
+
+- In enforce mode the reviewer route answers `409 NODE_AUTH_ENFORCED`. Under an explicit `compat`
+  or `warn` it works as before.
+- Its replacement is a **two-ADMIN approval**. One ADMIN person requests the settlement with a
+  reason, a different ADMIN person approves it within 15 minutes, and only then does the server sign
+  it for that node with its server key. The API secret and service identities can take neither step.
+
+```bash
+# ADMIN 1: request (nodeId, the source's kind, sourceSha256 and count from the drain status, a disposition and a reason)
+curl -X POST -H "Authorization: Bearer $TOKEN_1" -H 'content-type: application/json' \
+  -d '{"nodeId":"<nodeId>","kind":"USER_CRONTAB","sourceSha256":"<sha256>","count":1,"disposition":"no_effect_verified","reason":"checked by hand: removed last week"}' \
+  https://magnus.example.com:4000/api/v1/cron/scheduler-sources/reconcile-requests
+# ADMIN 2: approve (or POST .../reject to withdraw it)
+curl -X POST -H "Authorization: Bearer $TOKEN_2" -H 'content-type: application/json' -d '{}' \
+  https://magnus.example.com:4000/api/v1/cron/scheduler-sources/reconcile-requests/<id>/approve
+```
+
+The evidence digest of the decision binds both people, both times, the reason and the drain
+barrier; each step is audited (`cron.scheduler-source.reconcile_request`, `_approve`, `_reject`).
+A 3.0.0 agent verifies the server's signature (`features.schedulerSourceAuthorizations`); an older
+agent knows only the HMAC, so the approval answers `409 AGENT_UPGRADE_REQUIRED` in enforce mode and
+adds the HMAC under an explicit `compat` with the key configured. Open requests live in the server
+process and do not survive a restart.
+
+### The agent's own records
+
+An agent MACs its own records (the command ledger, historical mutation observations, receipts and
+decisions) and the legacy `signature` field of its evidence. Up to 2.10.2 it used the shared
+`RESULT_SIGNING_SECRET` and `COMMAND_RECONCILIATION_SECRET`. A 3.0.0 agent needs neither:
+
+- **Signing.** With the shared key configured it keeps using it, so an agent downgraded to 2.10.x
+  still reads every record. Without it the agent uses node-local keys,
+  `$AGENT_INSTALL_DIR/identity/local-result.key` and `local-reconciliation.key` (0600, created on
+  first use, never sent). They are separate from the node key, so `identity rotate` or a
+  re-enrollment orphans nothing. What the server relies on is the node signature next to the MAC.
+- **Reading.** A record verifies with any key it may have been signed with: the shared key, its
+  previous value (`RESULT_SIGNING_PREVIOUS_SECRET`) and the node-local key. A ledger written by
+  2.10.x stays readable as is; nothing is rewritten.
+- **Retiring the shared key from an upgraded agent.** Move its value from `RESULT_SIGNING_SECRET`
+  to `RESULT_SIGNING_PREVIOUS_SECRET`: new records are MACed with the node-local key, old ones keep
+  verifying. Removing it outright makes records signed with it unreadable (the agent says so and
+  names the variable). An agent that wrote records with a node-local key cannot be downgraded to
+  2.10.x without losing them.
+- The `historical-mutation` tool on the host signs its settlements with `COMMAND_RECONCILIATION_SECRET`
+  when the agent has it, else with the node-local reconciliation key.
 
 ## Agent-side enforce
 
-With `NODE_AUTH_MODE=enforce` in an agent's `.env`, and once that node has a bound key, the agent
-refuses every `/api/v1/*` request that carries only `x-node-token` (`401 NODE_SIGNATURE_REQUIRED`).
+From 3.0.0 this is the agent's default. With `NODE_AUTH_MODE` unset or `enforce`, and once that node
+has a bound key, the agent refuses every `/api/v1/*` request that carries only `x-node-token`
+(`401 NODE_SIGNATURE_REQUIRED`), and an agent without a shared secret refuses it before it has a key.
 It accepts:
 
 - requests signed by a server key it pins, made for this node, fresh and not replayed;
@@ -217,11 +340,12 @@ It accepts:
 
 It also refuses reconciliation and scheduler decisions that carry only the
 `COMMAND_RECONCILIATION_SECRET` HMAC. This is what closes lateral movement: a node's `.env` no longer
-opens this agent's management API. The agent keeps *sending* the shared secret to the server in this
-release, so a server that lost its records of the key can still recognise it. Without a bound key
-the agent stays in `compat` and its log says so. The default stays `compat`.
+opens this agent's management API. In enforce mode the agent also stops *sending* the shared secret
+to the server (under an explicit `compat` or `warn` it still sends it next to its signature). Without
+a bound key the agent works as in `compat` and its log says so; without a shared secret either, it
+waits to be enrolled with a token.
 
-To switch one node:
+To switch one node of a 2.10.x fleet ahead of 3.0.0:
 
 1. Check the node is ready: `magnus-agent identity show` reports `bound`, and the server's node view
    shows `nodeCredential.state: active` and `evidenceSigning: true`.
@@ -261,6 +385,10 @@ settles it at once. Both act only on the agent's signed ledger account.
 
 ## Readiness for enforce
 
+The summary counts real nodes only (never `__control-api__`, `__dashboard__` or decommissioned
+nodes), and also carries `modeExplicit`, `modeDeprecated` with a `deprecationNotice`, and the
+[server-key rotation](#rotating-the-server-key) as `serverKeyRotation`.
+
 `GET /api/v1/node-credentials/summary` (ADMIN, OPERATOR) counts nodes by credential state, sums the
 use of the shared credentials over the last 24 hours, and lists what switching the server to
 `enforce` would refuse:
@@ -270,7 +398,8 @@ use of the shared credentials over the last 24 hours, and lists what switching t
 | `SERVER_KEY_UNAVAILABLE` | The server signing key cannot be read |
 | `NODES_WITHOUT_KEY` | Nodes still on the shared secret |
 | `NODES_REVOKED` | Nodes whose keys were revoked; enroll them with a token |
-| `NODES_NOT_SIGNING_EVIDENCE` | Agents older than this release, or not told yet that the server verifies node evidence |
+| `NODES_NOT_SIGNING_EVIDENCE` | Agents older than 2.10.0, or not told yet that the server verifies node evidence |
+| `AGENTS_NEED_UPGRADE` | Agents 2.10.0 or 2.10.1 with a key: enforce mode cannot reach their managed HTTP route |
 | `RECENT_SHARED_SECRET_USE` | The shared node secret or the shared result key was used for these nodes in the last 24 hours |
 | `PENDING_BINDINGS` | Bindings waiting for an administrator |
 
@@ -308,7 +437,42 @@ secret.
 
 The routes and their schemas are in [console-api.md](console-api.md#node-key-administration).
 
+## Rotating the server key
+
+The server key signs every request to an agent and every decision the server makes for a node. To
+replace it (on a schedule, or because the key file may have been copied), move a new key through
+three steps. Each step changes the key file: back it up with the database afterwards.
+
+| Step | Route (ADMIN) or command on the server host | Effect |
+|---|---|---|
+| Stage | `POST /api/v1/node-credentials/server-key/stage` `{}`, or `magnus-server node-auth server-key stage` | A next key. Agents pin it from their next heartbeat (3.0.0 agents read the heartbeat reply's `serverKeyIds`). The server accepts requests signed for its audience but signs nothing with it |
+| Promote | `POST .../server-key/promote` `{"graceHours":168}`, or `... promote --force --grace-hours 168` | The next key signs from now on. The replaced key stays pinned and accepted as an audience until `retireAfter` |
+| Retire | `POST .../server-key/retire` `{}` (after `retireAfter`, or `{"force":true}`), or `... retire [--force]` | The replaced key's private part is destroyed. Its public key is kept, so decisions it signed still verify; it is no longer pinned or accepted |
+
+1. Stage, then wait until `GET /api/v1/node-credentials/summary` shows
+   `serverKeyRotation.agents.pinningNext` equal to `keyedNodes` (a few heartbeats). The promote
+   route refuses earlier with `409 SERVER_KEY_NOT_PINNED` unless `force`; the command line cannot see
+   the pins and always needs `--force`.
+2. Promote. Requests to agents are signed with the new key; agents sign for it once the heartbeat
+   reply lists it first.
+3. After the grace period (default 7 days), retire.
+4. Back up `$MAGNUS_HOME/state/node-auth/server-signing-key.json` with the database.
+5. Check: the start-up line shows the new fingerprint, and `magnus-agent identity show` on a node
+   lists it first among the pinned server keys.
+
+An agent that was offline for all of it recovers by itself: the first request signed with a key it
+does not pin is refused once, the agent reads the keys again from
+`GET /api/v1/node-enrollment/server-key` over verified TLS and pins them, and the next request
+passes. It keeps the public key it no longer pins only to verify decisions it recorded while that
+key was pinned. A 2.10.2 agent pins a staged key only when it restarts or meets a key it does not
+know; rotate once the agents are on 3.0.0, so that decisions they recorded keep verifying.
+
+A 2.10.2 server reads a rotated key file: it uses `active` and `next` and ignores the rest.
+
 ## Rollback
+
+Under 3.0.0 the reset below needs an explicit `NODE_AUTH_MODE=compat` (or `warn`) on the server, and
+the agent the same in its `.env`: enforce mode has no way back to the shared secret.
 
 **One node back to the shared secret.** Both sides have to forget the key:
 
@@ -351,8 +515,9 @@ them the shared secret as well, because they do not pin its new key yet. Back th
 the database to avoid this.
 
 **The database lost a node's credential** (restored from an older backup): the agent's signature
-is unknown, the shared secret it also sends is accepted, and the heartbeat reply tells the agent to
-bind the same key again.
+is unknown. Under an explicit `compat` the shared secret it also sends is accepted, and the
+heartbeat reply tells the agent to bind the same key again. In enforce mode the node is refused
+(`401 NODE_CREDENTIAL_UNKNOWN`) until it is enrolled with a token.
 
 ## Settings
 
@@ -360,33 +525,35 @@ Server:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `NODE_AUTH_MODE` | `compat` | `compat`: signature or shared secret, with the per-node ratchet. `warn`: the same, and each use of the shared secret is logged. `enforce`: signatures only; the shared secret is refused and not sent, the automatic upgrade is closed, and credentials cannot be reset |
-| `NODE_AUTH_LEGACY_UPGRADE_UNTIL` | 30 days after the first start | ISO 8601 date that ends the automatic upgrade |
-| `NODE_AUTH_SERVER_KEY_PATH` | `$MAGNUS_HOME/state/node-auth/server-signing-key.json` | The server signing key file |
-| `NODE_AUTO_REGISTER` | `true` | Add unknown agents that present the shared secret |
+| `NODE_AUTH_MODE` | `enforce` (3.0.0) | `enforce`: signatures and node-signed evidence only; the shared secret is refused and not sent, the automatic upgrade is closed, credentials cannot be reset. Unset, the [start-up guard](#upgrading-to-300) applies. `compat` (signature or shared secret, with the per-node ratchet) and `warn` (the same, and each use of the shared secret is logged): deprecated, honoured when set explicitly, removed in the next major |
+| `NODE_AUTH_LEGACY_UPGRADE_UNTIL` | 30 days after the first start | ISO 8601 date that ends the automatic upgrade (compat and warn only) |
+| `NODE_AUTH_SERVER_KEY_PATH` | `$MAGNUS_HOME/state/node-auth/server-signing-key.json` | The server signing key file, with its [rotation](#rotating-the-server-key) |
+| `NODE_AUTO_REGISTER` | `false` in enforce, `true` in compat and warn | Add unknown agents that present the shared secret |
+| `NODE_MANAGER_SECRET`, `RESULT_SIGNING_SECRET` | none | Required only under an explicit compat or warn; optional (and still honoured) in enforce |
 
 Agent:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `NODE_AUTH_MODE` | `compat` | `compat`: the agent's API accepts a server signature or the shared secret. `warn`: the same, and each use of the shared secret is logged. `enforce`: see [Agent-side enforce](#agent-side-enforce) |
+| `NODE_AUTH_MODE` | `enforce` (3.0.0) | `enforce`: see [Agent-side enforce](#agent-side-enforce). `compat` (the agent's API accepts a server signature or the shared secret) and `warn` (the same, logged): deprecated |
+| `NODE_MANAGER_SECRET`, `RESULT_SIGNING_SECRET`, `COMMAND_RECONCILIATION_SECRET` | none | Needed only under an explicit compat or warn (and by the automatic legacy upgrade). An upgraded agent keeps them for its [own records](#the-agents-own-records) |
 
-Do not set `NODE_AUTH_MODE=enforce` on the server while `GET /api/v1/node-credentials/summary`
-reports blockers.
+Do not run the server in enforce mode while `GET /api/v1/node-credentials/summary` reports
+blockers; with the mode unset, the start-up guard stops it.
 
 `magnus-server` command-line processes that call agents (`magnus-server agents ...`) read the
 server's package `.env` like `start` does and sign with the server's key file; they never create a
 key of their own. Without that file (another `MAGNUS_HOME`, no `--env-file`), they say so and, outside
 `enforce`, fall back to the shared secret. Each run prints the key fingerprint it signs with: it
-must match the server's start-up line.
+must match the server's start-up line. `magnus-server node-auth server-key` edits the same file; a
+running server notices the change within a second.
 
 ## What is not covered yet
 
-- An agent accepts the shared secret on its own API unless it runs in agent-side `enforce`.
-  Until a node does, stealing another node's `.env` still opens its management API.
-- `RESULT_SIGNING_SECRET` is still required and still signs every piece of evidence alongside the
-  node key, and agents keep sending the shared node secret, so older servers keep working.
-- The shared keys listed under [Signed evidence](#signed-evidence) as still in use.
+- An explicit `compat` or `warn`, on the server or an agent, still accepts the shared secret, as in
+  2.10.x. Both are removed in the next major.
+- The replay cache lives in the server process: run one Control API instance. Open two-ADMIN
+  scheduler-source requests live there too.
 - Log forwarding (`LOG_INGEST_TOKEN`) and the Hermes registry token are separate credentials and
   are unchanged.
 
@@ -400,6 +567,11 @@ must match the server's start-up line.
    (agent-side enforce); bindings refused for their address can be approved; use of the shared
    credentials is counted per node, audited in `warn` and fails the readiness check there; the
    fleet summary lists what blocks `enforce`.
-3. **enforce.** The shared secret is refused and no longer sent, in both directions; the automatic
-   upgrade is closed; the shared secrets leave the boot checks and templates. `enforce` is never
-   switched on automatically: it becomes the default only in that release.
+3. **enforce (3.0.0).** `enforce` is the default on the server and the agent, behind the start-up
+   guard. The shared secret is refused and no longer sent, in both directions; HMAC-only evidence
+   and decisions are refused; the automatic upgrade is closed; `NODE_AUTO_REGISTER` is off; the
+   shared secrets leave the boot checks, catalogues and templates; agents MAC their own records with
+   node-local keys; the server key can be rotated; the reviewer-signed scheduler-source settlement
+   gives way to a two-ADMIN approval. An explicit `compat` or `warn` keeps working, deprecated.
+4. **Next major.** `compat`, `warn`, `NODE_MANAGER_SECRET`, `RESULT_SIGNING_SECRET` and
+   `COMMAND_RECONCILIATION_SECRET` are removed.
