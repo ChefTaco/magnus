@@ -90,14 +90,18 @@ test('real publication requires the version tag and checks all packages before a
   assert.equal(publications, 0);
 });
 
-test('dry runs validate all packages without registry access or provenance publication', async t => {
+test('dry runs validate all packages without version lookups or provenance publication, under the tag a release would use', async t => {
   const root = releaseFixture(t);
   const calls = [];
-  await publishPackages({ root, dryRun: true, ref: 'refs/heads/main', fetcher: () => { throw new Error('unexpected registry lookup'); },
-    run: (...args) => calls.push(args) });
+  await publishPackages({ root, dryRun: true, ref: 'refs/heads/main', fetcher: async url => {
+    if (!url.endsWith('/dist-tags')) throw new Error('unexpected registry lookup');
+    return Response.json({ latest: url.includes('package-0') ? '2.0.0' : '1.0.0' });
+  }, run: (...args) => calls.push(args) });
   assert.equal(calls.length, PACKAGE_DIRECTORIES.length);
   assert.equal(PACKAGE_DIRECTORIES.at(-1), 'packages/magnus');
-  assert.deepEqual(calls[0][1], ['publish', '--dry-run', '--ignore-scripts', '--access', 'public', '--registry', 'https://registry.npmjs.org/']);
+  assert.deepEqual(calls[0][1], ['publish', '--dry-run', '--tag', 'maintenance-1.0', '--ignore-scripts', '--access', 'public', '--registry', 'https://registry.npmjs.org/']);
+  assert.deepEqual(calls[1][1].slice(0, 3), ['publish', '--dry-run', '--tag']);
+  assert.equal(calls[1][1][3], 'latest');
   assert.equal(calls[0][2].cwd, join(root, PACKAGE_DIRECTORIES[0]));
 });
 
@@ -138,7 +142,7 @@ test('a workspace outside npm stays private and on the release version, and is b
   await assert.rejects(publishPackages(options(root)), /must bundle @example\/unpublished-0/);
   writeFileSync(join(root, 'services/control-api/package.json'), needs(['@example/unpublished-0']));
   let publications = 0;
-  await publishPackages({ root, dryRun: true, run: () => { publications++; } });
+  await publishPackages({ root, dryRun: true, fetcher: async () => new Response('', { status: 404 }), run: () => { publications++; } });
   assert.equal(publications, PACKAGE_DIRECTORIES.length);
 });
 

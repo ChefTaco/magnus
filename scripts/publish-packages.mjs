@@ -105,7 +105,8 @@ export async function publishPackages({ root, dryRun, ref, fetcher = fetch, run 
   // Finish every registry lookup before the first mutation. A registry or authentication
   // failure must not be mistaken for an unpublished version or leave a partial release.
   const existing = dryRun ? [] : await Promise.all(packages.map(pkg => publishedVersionExists(pkg.name, pkg.version, fetcher)));
-  const tags = dryRun ? [] : await Promise.all(packages.map(async pkg => distTagFor(pkg.version, await latestDistTag(pkg.name, fetcher))));
+  // Dry runs too: npm refuses to apply `latest` implicitly to a version below the current one, even with --dry-run.
+  const tags = await Promise.all(packages.map(async pkg => distTagFor(pkg.version, await latestDistTag(pkg.name, fetcher))));
   for (const [index, pkg] of packages.entries()) {
     if (existing[index]) { console.log(`${pkg.name}@${pkg.version} is already on npm; skipping`); continue; }
     if (tags[index] && tags[index] !== 'latest') console.log(`${pkg.name}@${pkg.version} is older than npm's latest; publishing it as ${tags[index]}`);
