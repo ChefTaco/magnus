@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parse } from 'yaml';
-import { PACKAGE_DIRECTORIES, UNPUBLISHED_DIRECTORIES, assertBootstrapMode, publishedVersionExists, publishPackages } from './publish-packages.mjs';
+import { PACKAGE_DIRECTORIES, UNPUBLISHED_DIRECTORIES, assertBootstrapMode, distTagFor, latestDistTag, publishedVersionExists, publishPackages } from './publish-packages.mjs';
 
 function releaseFixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'magnus-release-'));
@@ -151,4 +151,27 @@ test('real publication skips existing versions and stops on the first publish fa
   assert.equal(calls.length, 1);
   assert.equal(calls[0][2].cwd, join(root, PACKAGE_DIRECTORIES[1]));
   assert.ok(calls[0][1].includes('--provenance'));
+});
+
+test('a release older than npm latest is published under a maintenance tag, never as latest', async t => {
+  assert.equal(distTagFor('1.0.1', null), 'latest');
+  assert.equal(distTagFor('1.0.1', '1.0.0'), 'latest');
+  assert.equal(distTagFor('2.0.0', '1.9.9'), 'latest');
+  assert.equal(distTagFor('2.10.3', '3.0.0'), 'maintenance-2.10');
+  assert.equal(distTagFor('2.9.2', '2.10.3'), 'maintenance-2.9');
+  assert.equal(await latestDistTag('@example/package', async url => {
+    assert.equal(url, 'https://registry.npmjs.org/-/package/%40example%2Fpackage/dist-tags');
+    return Response.json({ latest: '3.0.0', 'maintenance-2.10': '2.10.3' });
+  }), '3.0.0');
+  assert.equal(await latestDistTag('@example/package', async () => new Response('', { status: 404 })), null);
+  await assert.rejects(latestDistTag('@example/package', async () => new Response('', { status: 503 })), /HTTP 503/);
+  await assert.rejects(latestDistTag('@example/package', async () => Response.json({ latest: 'not a version' })), /Unexpected npm dist-tags/);
+
+  const root = releaseFixture(t);
+  const calls = [];
+  await publishPackages({ root, dryRun: false, ref: 'refs/tags/v1.0.1', run: (...args) => calls.push(args), fetcher: async url =>
+    url.includes('dist-tags') ? Response.json({ latest: url.includes('package-0') ? '2.0.0' : '1.0.0' }) : new Response('', { status: 404 }) });
+  assert.equal(calls.length, PACKAGE_DIRECTORIES.length);
+  assert.deepEqual(calls[0][1].slice(0, 4), ['publish', '--provenance', '--tag', 'maintenance-1.0']);
+  assert.deepEqual(calls[1][1].slice(0, 4), ['publish', '--provenance', '--tag', 'latest']);
 });

@@ -259,6 +259,38 @@ holds no receipt for it, so past the lease deadline the server's readiness monit
 `not-dispatched` by itself (at most hourly per node), and `magnus-server agents doctor --heal`
 settles it at once. Both act only on the agent's signed ledger account.
 
+## Moving agents across a major version
+
+The managed upgrade (the console's **Upgrade agents**, `magnus-server agents upgrade`) stays inside
+one major version unless the server explicitly authorizes the change for each node. From 2.10.3 an
+agent accepts a self-upgrade to another major version only when the request carries a
+`majorAuthorization`: an Ed25519 signature by a server key the agent pins (authorization kind
+`agent-major-upgrade`) over
+
+```text
+{"domain":"magnus.agent-major-upgrade.v1","version":1,"nodeId":…,"packageName":"@hivemagnus/magnus-agent",
+ "from":<the version the agent runs>,"to":<the target>,"integrity":<the tarball's sha512>,"expiresAt":<ms>}
+```
+
+with the node id inside the signed bytes as for every server authorization. The agent builds this
+payload from what it knows (its own node id, its own version, the requested version and integrity),
+so a signature made for another node, another version change or another tarball does not verify. It
+also refuses an authorization that has expired or is valid for more than 24 hours. The shared node
+secret plays no part: a node without a bound key and a pinned server key refuses the major upgrade.
+Once accepted, the upgrade is an ordinary one: the exact integrity, the provenance check, the trial
+and the automatic switch-back apply.
+
+| Reply | Meaning |
+|---|---|
+| `SELF_UPGRADE_REFUSED` | No authorization at all (every agent before 2.10.3 answers this way to any major) |
+| `SELF_UPGRADE_MAJOR_UNAUTHORIZED` | An authorization that is expired, too long, unsigned, malformed, for another node, version or tarball, or signed by a key this agent does not pin |
+
+A 3.0.1 or later server produces the authorization with `magnus-server agents upgrade --to <3.x>
+--allow-major` (and the matching option of its admin API). A 2.10.x server never does. The 2.10.3
+agent reports `majorUpgradeAuthorization: 1` in its self-upgrade status; agents 2.10.0 to 2.10.2
+first move to 2.10.3 with an ordinary managed upgrade (a patch). The full procedure is in the
+3.0.1 version of this document.
+
 ## Readiness for enforce
 
 `GET /api/v1/node-credentials/summary` (ADMIN, OPERATOR) counts nodes by credential state, sums the

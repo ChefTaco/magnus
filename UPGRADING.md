@@ -406,6 +406,7 @@ means the request may have run, so it is never repeated automatically.
 | `SELF_UPGRADE_ENGINE` | node | The new version does not support the Node.js on this node. | Upgrade Node.js on the node. |
 | `SELF_UPGRADE_PACKAGE` | node | The agent refused to install a package other than magnus-agent. | Report this: the server sent an unexpected package name. |
 | `SELF_UPGRADE_REFUSED` | node | The agent refused the version change. | Read the detail. Crossing a major version is done by hand. |
+| `SELF_UPGRADE_MAJOR_UNAUTHORIZED` | node | The request crosses a major version, and its major-upgrade authorization is missing, expired, for another node, version or tarball, or not signed by a server key this agent pins. | Start the run again from a server that authorizes major upgrades (`magnus-server agents upgrade --allow-major`); the node needs a bound node key (`magnus-agent identity show` reports bound). |
 | `PREFLIGHT_NOT_WRITABLE` | node | The agent cannot write to its install directory. | Run `sudo magnus-agent install-service` again on the node, which repairs ownership. |
 | `PREFLIGHT_DISK_LOW` | node | The install directory has less free space than an upgrade needs. | Free disk space on the node. |
 | `PREFLIGHT_NPM` | node | npm is missing on the node or too old. | Install npm beside the agent's Node.js, or set MAGNUS_AGENT_NPM. |
