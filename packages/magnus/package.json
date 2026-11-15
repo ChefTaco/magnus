@@ -1,6 +1,6 @@
 {
   "name": "@hivemagnus/magnus",
-  "version": "3.0.2",
+  "version": "3.0.3",
   "description": "Install, upgrade and roll back a Magnus server and console with one command: `npx @hivemagnus/magnus init`, then `magnus upgrade`. Pins exact, tested component versions, backs up PostgreSQL before every migration and reverts automatically when the new version fails its health check.",
   "keywords": [
     "magnus",
@@ -47,7 +47,7 @@
     "clean": "node -e \"const fs=require('node:fs');fs.rmSync('dist',{recursive:true,force:true});fs.rmSync('tsconfig.tsbuildinfo',{force:true})\""
   },
   "dependencies": {
-    "@hivemagnus/magnus-contracts": "3.0.2"
+    "@hivemagnus/magnus-contracts": "3.0.3"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
@@ -56,42 +56,29 @@
   },
   "magnusRelease": {
     "schema": 1,
-    "version": "3.0.2",
+    "version": "3.0.3",
     "engines": {
       "node": "^24.22.3 || ^26.13.1"
     },
     "components": {
-      "@hivemagnus/magnus-server": "3.0.2",
-      "@hivemagnus/magnus-ui": "3.0.2",
-      "@hivemagnus/magnus-contracts": "3.0.2",
-      "@hivemagnus/magnus-agent": "3.0.2"
+      "@hivemagnus/magnus-server": "3.0.3",
+      "@hivemagnus/magnus-ui": "3.0.3",
+      "@hivemagnus/magnus-contracts": "3.0.3",
+      "@hivemagnus/magnus-agent": "3.0.3"
     },
     "breaking": false,
     "minUpgradeFrom": "2.10.2",
     "engineProtocol": 2,
     "newRequiredEnv": [],
-    "newOptionalEnv": [
-      {
-        "name": "RESULT_SIGNING_PREVIOUS_SECRET",
-        "component": "server",
-        "secret": true,
-        "description": "Verify-only previous value of RESULT_SIGNING_SECRET: evidence and console drain findings stored with it keep verifying; nothing new is signed with it. Move RESULT_SIGNING_SECRET here to retire the shared key."
-      },
-      {
-        "name": "COMMAND_RECONCILIATION_PREVIOUS_SECRET",
-        "component": "agent",
-        "secret": true,
-        "description": "Verify-only previous value of COMMAND_RECONCILIATION_SECRET: historical-mutation settlements and recorded decisions stored with it keep verifying; nothing new is signed with it. After magnus-agent historical-settlements reseal --apply it can be removed."
-      }
-    ],
+    "newOptionalEnv": [],
     "removedEnv": [],
     "migrations": [],
     "agent": {
       "selfUpgradeProtocol": 1,
       "minLauncher": 1
     },
-    "summary": "Lets a fleet drop the last two shared node secrets. Server: the console drain finding it records for itself (RESOURCE_ENROLLMENT_DASHBOARD_PARTICIPANT=absent) is signed with the server Ed25519 key (keyId stored, verifies across rotation) instead of RESULT_SIGNING_SECRET, the host-local and OS scheduler writer proofs are fetched whether or not RESULT_SIGNING_SECRET is set (agents sign them with their node key), and evidence and findings stored with the shared key verify from RESULT_SIGNING_PREVIOUS_SECRET alone. Agent: COMMAND_RECONCILIATION_PREVIOUS_SECRET is a verify-only slot for historical-mutation settlements and recorded decisions; magnus-agent historical-settlements list | reseal | prune --unverifiable reports how each settlement verifies, re-MACs those signed with a shared key with the node-local keys, and archives those no key verifies to a root-only directory (dry run by default). No migrations. Mixes with 3.0.1 in both directions. See docs/NODE_CREDENTIALS.md, Retiring the shared keys.",
-    "notesUrl": "https://github.com/ChefTaco/magnus/releases/tag/v3.0.2",
+    "summary": "Node agent: installing or updating the Ardent package failed on an owner account without the install prefix's parent directory (for example a fresh account without ~/.local/share), because the private staging directory beside the prefix was created without -p. The agent now creates each missing parent inside the owner home as the owner, one level at a time with mode 0700, refuses a parent that resolves outside the home, and still creates the staging directory itself without -p. No migrations and no new settings. Only the agent changed; either side can go first.",
+    "notesUrl": "https://github.com/ChefTaco/magnus/releases/tag/v3.0.3",
     "allowScripts": {
       "@prisma/engines": true,
       "argon2": true,

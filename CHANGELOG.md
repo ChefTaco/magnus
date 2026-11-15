@@ -7,6 +7,20 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [3.0.3] - 2026-11-15
+
+### Fixed
+
+- Node agent: installing or updating the Ardent package (**Update package** in the console, the `package-install` action) failed on an owner account that had never had anything under the install prefix's parent, such as a fresh account without `~/.local/share` for the default `~/.local/share/ardent`. Since 2.4.0 the agent created its private staging directory beside the prefix with `mkdir -m 700` and no `-p`, so the owner command failed when that parent was missing. The agent now first creates, as the owner, each missing directory between the owner home and that parent, one level at a time and each as a new 0700 directory (never `mkdir -p`). Every level, new or existing, must resolve to a directory inside the owner home before the next is touched, so a symbolic link that leads out of the home (or nowhere) is refused and nothing is created through it; a link to a directory inside the home still works, as before. The staging directory itself is still created without `-p`, so one that already exists fails.
+
+### Upgrading
+
+- 3.0.2 (and any release from 2.10.2) upgrades to 3.0.3 in place: agents with `magnus-server agents upgrade --to 3.0.3`, the server with `magnus upgrade`. Only the agent changed; either side can go first. Retry a failed **Update package** after the agent is on 3.0.3.
+
+**New environment variables:** None.
+
+**Migration impact:** No datastore migrations.
+
 ## [3.0.2] - 2026-11-15
 
 3.0.0 retired the shared node secrets from every path but two: the server still needed
