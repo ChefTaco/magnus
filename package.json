@@ -15,7 +15,7 @@
     "packages/*"
   ],
   "overrides": {
-    "@hono/node-server": "2.1.6",
+    "@hono/node-server": "2.1.8",
     "@prisma/config": {
       "deepmerge-ts": "8.0.1"
     },
