@@ -11,9 +11,9 @@ append-only audit log. Magnus can also manage the AI agents that run on those ho
 the Codex CLI and the [Ardent](https://github.com/ChefTaco/Ardent) runtime) and ships a catalogue of Ubuntu operations skills for
 them.
 
-## Browser console
+## Browser UI
 
-[HiveXUI](https://github.com/ChefTaco/HiveXUI) is the browser console of the Hive:Magnus suite,
+[HiveXUI](https://github.com/ChefTaco/HiveXUI) is the UI of the Hive:Magnus suite,
 including the Magnus fleet pages, and the [Hive installer](https://github.com/ChefTaco/hive) deploys
 it. Magnus keeps its own independent API and still runs on its own, without HiveXUI or any other
 suite product.
@@ -24,8 +24,8 @@ module passes acceptance. Published versions stay available.
 
 The browser web terminal in HiveXUI needs [`services/fleet-gateway`](services/fleet-gateway), a
 separate gateway that is off by default. Opening a terminal requires an `ADMIN` account link, the
-`magnus:terminal` permission and fresh identity verification. Its image is published from the next
-tagged release; until then, build it from `services/fleet-gateway/Dockerfile`.
+`magnus:terminal` permission and fresh identity verification. Each release publishes its image as
+`ghcr.io/cheftaco/magnus-fleet-gateway` (see its [README](services/fleet-gateway/README.md)).
 
 ## Components
 
@@ -189,7 +189,7 @@ them, and `magnus-server check` and `magnus-ui check` print which ones are on.
 | Integration | What it adds | Enable with |
 |---|---|---|
 | [Hive IAM](https://github.com/ChefTaco/hive) login | Named-user OIDC sign-in to the console, and IAM-issued access tokens for the API | Console: `HIVE_OAUTH_DISCOVERY_URL`, `HIVE_OAUTH_CLIENT_ID`, `HIVE_OAUTH_ISSUER`, `HIVE_OAUTH_API_AUDIENCE`. Server: `IAM_CORE_URL`, `IAM_TOKEN_ISSUER`, `IAM_TOKEN_AUDIENCE` |
-| Oathweave browser console | HiveXUI calls the API directly with short-lived resource tokens, through a same-origin ingress ([route inventory](docs/console-api.md)). Cannot be combined with `IAM_CORE_URL` | Server: `OATHWEAVE_ISSUER`, `OATHWEAVE_JWKS_URL`, `OATHWEAVE_USERINFO_URL`, `MAGNUS_OATHWEAVE_IDENTITIES_JSON`, and optionally `MAGNUS_HERMES_ENABLED`, `MAGNUS_CONSOLE_BASE_PATH` |
+| Oathweave browser UI | HiveXUI calls the API directly with short-lived resource tokens, through a same-origin ingress ([route inventory](docs/console-api.md)). Cannot be combined with `IAM_CORE_URL` | Server: `OATHWEAVE_ISSUER`, `OATHWEAVE_JWKS_URL`, `OATHWEAVE_USERINFO_URL`, `MAGNUS_OATHWEAVE_IDENTITIES_JSON`, and optionally `MAGNUS_HERMES_ENABLED`, `MAGNUS_CONSOLE_BASE_PATH` |
 | [Emberpath](https://github.com/ChefTaco/Emberpath) | Model routing for managed Hermes Agents. The standalone console can also embed the admin UI of a release that still bundles one; Emberpath's current source has none | Server: `MAGNUS_ROUTER_URL`, `MAGNUS_ROUTER_MODEL`, `MAGNUS_ROUTER_API_KEY`. Console: `HIVE_ROUTER_ADMIN_URL` |
 | [HiveMem](https://github.com/ChefTaco/HiveMem) | Shared long-term memory for Hermes Agents, Ardent and operational lessons | Server: `HIVEMEM_URL`, `HIVEMEM_TOKEN`. Ardent: `memory.provider: hivemem` |
 | External security console | Exports security observations and links the standalone console's security pages to it | Server: `SECURITY_FUSION_MODE=remote`, `MAGNUS_SECURITY_CONSOLE_URL`, `SECURITY_EXPORT_ENABLED=true`. Console: `MAGNUS_SECURITY_CONSOLE_URL` |

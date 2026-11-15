@@ -146,14 +146,16 @@ enrollment therefore has an agent that refuses direct requests; complete its enr
 Enrollment requires a proven drain of four fixed participants: the agent, the API server, the
 console and the managed scheduler. The server pulls signed evidence from each one; operators
 cannot submit counts or acknowledgements on a participant's behalf. Agent evidence is signed with
-`RESULT_SIGNING_SECRET` and console evidence with `RESOURCE_ENROLLMENT_DASHBOARD_SECRET`, which must
-differ from every other key.
+the node key and console evidence with `RESOURCE_ENROLLMENT_DASHBOARD_SECRET`, which must differ
+from every other key.
 
 The console participant is the [fleet gateway](../services/fleet-gateway/README.md), reached at
 `FLEET_GATEWAY_URL`; it answers from the durable counts on this server, and it keeps the participant
 name `dashboard` on the wire. Without a usable URL the refresh stays pending with the cause
 `gateway-origin-unavailable`. An installation with no gateway sets
-`RESOURCE_ENROLLMENT_DASHBOARD_PARTICIPANT=absent`. The server then records the evidence itself, but
+`RESOURCE_ENROLLMENT_DASHBOARD_PARTICIPANT=absent`. The server then records the evidence itself,
+signed with its server key (from 3.0.2; see
+[Retiring the shared keys](NODE_CREDENTIALS.md#retiring-the-shared-keys)), but
 only while the node has no `dashboard` work rows in any state: otherwise the cause is
 `dashboard-work-exists`, and completing enrollment re-checks this. Evidence recorded in one mode does
 not verify in the other.

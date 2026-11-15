@@ -234,7 +234,7 @@ It moves the install into `/opt/magnus-agent/versions/<X>`, links `./current`, i
   managed-enrollment marker the server does not share (see below).
 - From the server host: `magnus-server agents upgrade [--to X.Y.Z] [--nodes a,b] [--canary NODE] [--max-failures N] [--dry-run]`.
 - Across a major version (for example 2.10.x agents to 3.0.x), only from the server host and only
-  when asked: `magnus-server agents upgrade --to 3.0.1 --allow-major` (`allowMajor` in
+  when asked: `magnus-server agents upgrade --to 3.0.2 --allow-major` (`allowMajor` in
   `POST /api/v1/agents/upgrade`). The server signs a one-hour authorization for each node, which a
   2.10.3 or later agent with a bound node key verifies against the server key it pins. Agents
   2.10.0 to 2.10.2 take 2.10.3 first (`--to 2.10.3`, an ordinary patch). See
