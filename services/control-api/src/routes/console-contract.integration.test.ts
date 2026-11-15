@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -18,6 +20,14 @@ const API_SECRET = 'fixture-console-contract-api-secret-at-least-32';
 describe.skipIf(!process.env['TEST_DATABASE_URL'])('browser contract against real responses', () => {
   const prefix = `contract-${randomUUID()}`;
   const nodeId = prefix;
+  const softwareNodeId = `${prefix}-software`;
+  const softwareData = {
+    checkedAt: '2026-11-01T00:00:00.000Z',
+    versions: { node: 'v24.22.3', npm: '11.19.1', python3: '3.12.3', redis: null, docker: '29.0.0', tailscale: null, 'magnus-agent': '3.0.3' },
+    packageUpdates: { supported: true, pending: 4, source: 'local-package-cache', cacheRefreshedAt: null },
+  };
+  const agentRequests: Array<{ method: string; path: string; authenticated: boolean }> = [];
+  let agent: Server | undefined;
   const commandId = `${prefix}-command`;
   const cronId = `${prefix}-cron`;
   const runId = `${prefix}-run`;
@@ -48,6 +58,28 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('browser contract against rea
     db = (await import('../db/index.js')).getDb();
     app = (await import('../server.js')).app;
     contract = await import('@hivemagnus/magnus-contracts/browser');
+
+    // Exercise the real route, node lookup, signed SDK request and response parser.
+    // This fixture serves metadata only; any command or unexpected request fails.
+    const { nodeAudience, readNodeAuthHeaders, verifyNodeRequest } = await import('../security/node-request-auth.js');
+    const { serverPublicKeys } = await import('../services/node-server-key.js');
+    agent = createServer((request, response) => {
+      const headers = readNodeAuthHeaders(name => request.headers[name] as string | undefined);
+      const key = headers && headers !== 'MALFORMED' ? serverPublicKeys().find(value => value.keyId === headers.keyId) : undefined;
+      const authenticated = !!(headers && headers !== 'MALFORMED' && key && verifyNodeRequest({ headers, publicKey: key.publicKey,
+        expectedNodeId: softwareNodeId, audiences: [nodeAudience(softwareNodeId)], method: request.method!, pathWithQuery: request.url!, body: '' }).ok);
+      agentRequests.push({ method: request.method!, path: request.url!, authenticated });
+      response.setHeader('content-type', 'application/json');
+      if (!authenticated || request.method !== 'GET' || request.url !== '/api/v1/health/software') {
+        response.writeHead(authenticated ? 404 : 401).end(JSON.stringify({ success: false }));
+        return;
+      }
+      response.end(JSON.stringify({ success: true, data: softwareData }));
+    });
+    await new Promise<void>(resolve => agent!.listen(0, '127.0.0.1', resolve));
+    await db.node.create({ data: { id: softwareNodeId, name: `${prefix}-software`, hostname: 'software.example.com',
+      ipAddress: '127.0.0.1', port: (agent.address() as AddressInfo).port, os: 'linux', arch: 'x64',
+      token: `node-${randomUUID()}`, status: 'ONLINE' } });
 
     const now = new Date();
     await db.node.create({ data: {
@@ -120,9 +152,10 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('browser contract against rea
       await db.role.deleteMany({ where: { id: prefix } });
       await db.maintenanceWindow.deleteMany({ where: { reason: { startsWith: prefix } } });
       await db.libraryFile.deleteMany({ where: { name: { startsWith: prefix } } });
-      await db.node.delete({ where: { id: nodeId } });
+      await db.node.deleteMany({ where: { id: { in: [nodeId, softwareNodeId] } } });
       await (await import('../db/index.js')).disconnectDb();
     }
+    if (agent) await new Promise<void>((resolve, reject) => agent!.close(error => error ? reject(error) : resolve()));
     if (home) rmSync(home, { recursive: true, force: true });
     vi.unstubAllEnvs();
   });
@@ -162,6 +195,7 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('browser contract against rea
     '/nodes/{nodeId}': `/nodes/${nodeId}`,
     '/nodes/{nodeId}/gpu': `/nodes/${nodeId}/gpu`,
     '/nodes/{nodeId}/health': `/nodes/${nodeId}/health`,
+    '/nodes/{nodeId}/software': `/nodes/${softwareNodeId}/software`,
     '/nodes/{nodeId}/health/history': `/nodes/${nodeId}/health/history`,
     '/nodes/{nodeId}/health/timeseries': `/nodes/${nodeId}/health/timeseries`,
     '/health/{nodeId}/forecast': `/health/${nodeId}/forecast`,
@@ -246,6 +280,16 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('browser contract against rea
     expect(JSON.stringify(webhooks.json)).not.toMatch(/fixture-signing-value|fixture-value/);
     const parsed = expectParses('GET /webhooks', contract.webhookListResponseSchema, webhooks.json) as { data: { endpoints: Array<{ id: string; url: string; secretConfigured: boolean }> } };
     expect(parsed.data.endpoints.find((endpoint) => endpoint.id === webhookId)).toMatchObject({ url: 'https://hooks.example.com', secretConfigured: true });
+  });
+
+  it('carries software metadata through a signed read without allocating a command', async () => {
+    const before = await db.remoteCommand.count({ where: { nodeId: softwareNodeId } });
+    agentRequests.length = 0;
+    const { status, json } = await call('GET', `/nodes/${softwareNodeId}/software`);
+    expect(status).toBe(200);
+    expect(expectParses('GET /nodes/{nodeId}/software', contract.nodeSoftwareResponseSchema, json)).toEqual({ success: true, data: softwareData });
+    expect(agentRequests).toEqual([{ method: 'GET', path: '/api/v1/health/software', authenticated: true }]);
+    expect(await db.remoteCommand.count({ where: { nodeId: softwareNodeId } })).toBe(before);
   });
 
   it('parses the remediation, notification, webhook and topology writes', async () => {
