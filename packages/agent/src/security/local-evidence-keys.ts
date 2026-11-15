@@ -13,7 +13,10 @@
  *   verifying    every key a record may have been signed with: the shared key, its previous value
  *                during a rotation, and the node-local key, so a ledger written by 2.10.x stays
  *                readable after the upgrade, and stays readable after the shared key is removed as
- *                long as it is kept as `RESULT_SIGNING_PREVIOUS_SECRET`
+ *                long as it is kept as `RESULT_SIGNING_PREVIOUS_SECRET` (and, for the reconciliation
+ *                key, `COMMAND_RECONCILIATION_PREVIOUS_SECRET`, from 3.0.2)
+ *   re-sealing   `magnus-agent historical-settlements reseal` MACs stored historical settlements
+ *                again with the node-local keys only, after which neither previous slot is needed
  *
  * What the Control API relies on is the node signature (`nodeSignature`) next to the MAC; the MAC
  * made with a node-local key is only this agent's own check. Never log or return a key.
@@ -113,10 +116,16 @@ export function reconciliationSigningKey(): string {
     process.env['RESULT_SIGNING_PREVIOUS_SECRET'] ?? '']) || localKey('reconciliation', { create: true }) || '';
 }
 
+/**
+ * Every key a stored reconciliation decision of this agent may carry a MAC of: the shared key, its
+ * verify-only previous value (`COMMAND_RECONCILIATION_PREVIOUS_SECRET`, the shared key retired from
+ * this agent; nothing new is signed with it) and the node-local key. Never a result key.
+ */
 export function reconciliationVerificationKeys(): string[] {
   const results = new Set(resultVerificationKeys());
   const shared = usable(process.env['COMMAND_RECONCILIATION_SECRET'], [nodeSecret()]);
-  return [...new Set([shared, localKey('reconciliation') ?? ''].filter(key => key && !results.has(key)))];
+  const previous = usable(process.env['COMMAND_RECONCILIATION_PREVIOUS_SECRET'], [nodeSecret()]);
+  return [...new Set([shared, previous, localKey('reconciliation') ?? ''].filter(key => key && !results.has(key)))];
 }
 
 /** For tests. */

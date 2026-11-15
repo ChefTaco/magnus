@@ -11,9 +11,9 @@ import { getDb } from '../db/index.js';
 import type { Prisma } from '../db/generated/prisma/client.js';
 import { HttpError } from '../middleware/error-handler.js';
 import { getNodeBaseUrl } from '../utils/node-url.js';
-import { RESULT_SIGNING_SECRET } from '../utils/env.js';
 import { agentAuthHeaders } from './node-agent-auth.js';
-import { nodeEvidencePolicy } from './node-evidence-policy.js';
+import { nodeEvidencePolicy, resultKeyHmac } from './node-evidence-policy.js';
+import { signServerOwnEvidence, verifyServerOwnEvidence } from './server-own-evidence.js';
 import { evidenceSignatureSchema } from '../schemas/node-evidence.js';
 import { canonicalEvidenceJson, enrollmentReceiptSigningPayload } from '../security/node-evidence.js';
 
@@ -52,14 +52,10 @@ export function dashboardEnrollmentSecret(): string {
 export function dashboardParticipantAbsent(): boolean {
   return process.env['RESOURCE_ENROLLMENT_DASHBOARD_PARTICIPANT'] === 'absent';
 }
-/**
- * The key that signs stored console evidence. In absent mode no participant exists to hold a shared
- * key, so this server signs its own finding. Changing mode invalidates evidence from the other mode.
- */
-export function dashboardReceiptKey(): string {
-  if (!dashboardParticipantAbsent()) return dashboardEnrollmentSecret();
-  if (RESULT_SIGNING_SECRET.length < 32) throw new HttpError(503, 'RESOURCE_PARTICIPANT_UNCONFIGURED', 'Result signing credential is required');
-  return RESULT_SIGNING_SECRET;
+/** Constant-time check of a hex HMAC-SHA256 made with `key` (at least 32 characters). */
+function hmacMatches(key: string, payload: string, signature: string): boolean {
+  return key.length >= 32 && /^[a-f0-9]{64}$/.test(signature)
+    && timingSafeEqual(createHmac('sha256', key).update(payload).digest(), Buffer.from(signature, 'hex'));
 }
 /** Absent mode holds only while no console work was ever recorded on this node, in any state. */
 export async function assertDashboardStillAbsent(tx: Tx, nodeId: string): Promise<void> {
@@ -139,6 +135,41 @@ export const drainReceiptSchema = drainDescriptorSchema.extend({ status: z.enum(
   evidenceSha256: z.string().regex(/^[a-f0-9]{64}$/), signature: z.string().regex(/^[a-f0-9]{64}$/),
   nodeSignature: evidenceSignatureSchema.optional() }).strict();
 const hex = z.string().regex(/^[a-f0-9]{64}$/);
+/**
+ * The console drain finding this server writes for itself when no console participant exists
+ * (absent mode), signed with the server key (server-own-evidence.ts). Before 3.0.2 it was a
+ * `drainReceiptSchema` receipt with an HMAC by `RESULT_SIGNING_SECRET`.
+ */
+export const absentDashboardReceiptSchema = drainDescriptorSchema.extend({ participant: z.literal('dashboard'),
+  status: z.literal('drained'), activeCount: z.literal(0), unknownCount: z.literal(0), evidenceSha256: hex,
+  serverSignature: evidenceSignatureSchema }).strict();
+export type DashboardReceipt = Omit<z.infer<typeof drainReceiptSchema>, 'signature' | 'nodeSignature'>;
+/**
+ * A stored console drain receipt, without its signature, once it verifies for `nodeId`; null otherwise.
+ * With a console participant (`gateway`) it carries the participant's HMAC with
+ * `RESOURCE_ENROLLMENT_DASHBOARD_SECRET`. In absent mode it is this server's own finding: signed with
+ * the server key (any key the server holds or retired, so a rotation does not invalidate it), or,
+ * written by 3.0.1 and earlier, an HMAC with the shared result key, which verifies with
+ * `RESULT_SIGNING_SECRET` or `RESULT_SIGNING_PREVIOUS_SECRET`. Evidence of the other mode never verifies.
+ */
+export function verifiedDashboardReceipt(nodeId: string, raw: unknown): DashboardReceipt | null {
+  if (!dashboardParticipantAbsent()) {
+    const parsed = drainReceiptSchema.safeParse(raw);
+    if (!parsed.success || parsed.data.nodeSignature !== undefined || parsed.data.participant !== 'dashboard') return null;
+    const { signature, nodeSignature: _nodeSignature, ...unsigned } = parsed.data;
+    return hmacMatches(dashboardEnrollmentSecret(), enrollmentSigningPayload(unsigned), signature) ? unsigned : null;
+  }
+  const own = absentDashboardReceiptSchema.safeParse(raw);
+  if (own.success) {
+    const { serverSignature, ...unsigned } = own.data;
+    return unsigned.nodeId === nodeId
+      && verifyServerOwnEvidence('console-drain-receipt', nodeId, enrollmentSigningPayload(unsigned), serverSignature) ? unsigned : null;
+  }
+  const legacy = drainReceiptSchema.safeParse(raw);
+  if (!legacy.success || legacy.data.nodeSignature !== undefined || legacy.data.participant !== 'dashboard') return null;
+  const { signature, nodeSignature: _nodeSignature, ...unsigned } = legacy.data;
+  return unsigned.nodeId === nodeId && resultKeyHmac(enrollmentSigningPayload(unsigned), signature)() ? unsigned : null;
+}
 const schedulerExternalSourceSchema = z.object({ identityVersion: z.literal(2), kind: z.string().regex(/^[A-Z_]{1,80}$/),
   sourceSha256: hex, count: z.number().int().positive().max(1_000_000) }).strict();
 const EXTERNAL_SCHEDULER_KINDS = new Set(['LEGACY_OR_UNSUPPORTED_CRONTAB', 'SYSTEM_ANACRON', 'SYSTEM_CRONTAB',
@@ -235,16 +266,17 @@ export async function refreshEnrollmentParticipant(nodeId: string, participant: 
   if (participant === 'dashboard' && dashboardParticipantAbsent()) return recordAbsentDashboard(nodeId, prepared.descriptor);
   let receipt: z.infer<typeof drainReceiptSchema> | z.infer<typeof schedulerBoundaryReceiptSchema>;
   try {
-    let url: string; let headers: Record<string, string>; let key: string;
+    let url: string; let headers: Record<string, string>; let legacyHmac: (payload: string, signature: string) => boolean;
     if (participant === 'agent' || participant === 'scheduler') {
       // The node key signs these receipts; the shared result key is only the fallback for older agents.
-      key = RESULT_SIGNING_SECRET;
+      legacyHmac = (payload, signature) => resultKeyHmac(payload, signature)();
       if (new URL(prepared.baseUrl).protocol !== 'https:') throw new ParticipantEvidenceError('https-endpoint-required');
       url = prepared.baseUrl.replace(/\/$/, '') + (participant === 'scheduler'
         ? '/api/v1/cron/enrollment-drain' : '/api/v1/commands/enrollment-drain');
       headers = agentAuthHeaders({ nodeId }, 'POST', url, JSON.stringify(prepared.descriptor));
     } else {
-      key = dashboardEnrollmentSecret();
+      const key = dashboardEnrollmentSecret();
+      legacyHmac = (payload, signature) => hmacMatches(key, payload, signature);
       let origin: URL;
       try { origin = new URL(process.env['FLEET_GATEWAY_URL'] ?? ''); }
       catch { throw new ParticipantEvidenceError('gateway-origin-unavailable'); }
@@ -266,7 +298,7 @@ export async function refreshEnrollmentParticipant(nodeId: string, participant: 
       ? (({ scope: _scope, externalBlockers: _externalBlockers, ...value }) => value)(remaining as typeof remaining & { scope: string; externalBlockers: unknown })
       : remaining;
     const payload = enrollmentSigningPayload(unsigned);
-    const hmac = () => key.length >= 32 && timingSafeEqual(Buffer.from(signature, 'hex'), createHmac('sha256', key).update(payload).digest());
+    const hmac = () => legacyHmac(payload, signature);
     const authentic = participant === 'dashboard' ? nodeSignature === undefined && hmac()
       : (await nodeEvidencePolicy(nodeId)).verify(participant === 'scheduler' ? 'scheduler-drain' : 'enrollment-drain', payload, nodeSignature, hmac);
     if (canonical(descriptor) !== canonical(prepared.descriptor) || receipt.expiresAt <= Date.now() || !authentic)
@@ -305,7 +337,6 @@ export async function refreshEnrollmentParticipant(nodeId: string, participant: 
 }
 /** No participant exists to ask, so this server records what its own ledger shows, or refuses. */
 async function recordAbsentDashboard(nodeId: string, descriptor: { nodeId: string; nodeFqdn: string; epoch: number; barrierId: string; challengeId: string; expiresAt: number; version: 1; participant: Participant }) {
-  const key = dashboardReceiptKey();
   return getDb().$transaction(async tx => {
     await lockResourceNode(tx, nodeId);
     const { row } = await identity(tx, nodeId);
@@ -319,7 +350,8 @@ async function recordAbsentDashboard(nodeId: string, descriptor: { nodeId: strin
     failures.delete(`${nodeId}\ndashboard`);
     const { evidenceSha256 } = await participantSnapshot(tx, nodeId, 'dashboard');
     const unsigned = { ...descriptor, status: 'drained' as const, activeCount: 0, unknownCount: 0, evidenceSha256 };
-    const receipt = { ...unsigned, signature: createHmac('sha256', key).update(enrollmentSigningPayload(unsigned)).digest('hex') };
+    // This server's own finding, signed with its server key: no shared key is involved.
+    const receipt = { ...unsigned, serverSignature: signServerOwnEvidence('console-drain-receipt', nodeId, enrollmentSigningPayload(unsigned)) };
     await tx.resourceDrainParticipant.update({ where: { nodeId_participant: { nodeId, participant: 'dashboard' } }, data: {
       status: 'verified', evidenceSha256, receiptJson: JSON.stringify(receipt), verifiedAt: new Date() } });
     return { participant: 'dashboard' as const, status: 'verified', reason: 'declared-absent-no-work' };
@@ -341,8 +373,7 @@ export async function acceptSchedulerBoundaryAttestation(nodeId: string, raw: un
     catch (error) { warnEvidence('scheduler receipt', nodeId, error); fail('SCHEDULER_BOUNDARY_EVIDENCE_INVALID', 'Current signed scheduler receipt is required'); }
     const { signature: receiptSignature, nodeSignature: receiptNodeSignature, ...receiptUnsigned } = receipt;
     const receiptPayload = enrollmentSigningPayload(receiptUnsigned);
-    const receiptAuthentic = policy.verify('scheduler-drain', receiptPayload, receiptNodeSignature, () => RESULT_SIGNING_SECRET.length >= 32
-      && timingSafeEqual(createHmac('sha256', RESULT_SIGNING_SECRET).update(receiptPayload).digest(), Buffer.from(receiptSignature, 'hex')));
+    const receiptAuthentic = policy.verify('scheduler-drain', receiptPayload, receiptNodeSignature, resultKeyHmac(receiptPayload, receiptSignature));
     const central = await participantSnapshot(tx, nodeId, 'scheduler');
     const externalKeys = receipt.externalBlockers.map(source => source.kind + ':' + source.sourceSha256);
     if (row?.state !== 'draining' || !row.barrierId || nodeId !== assertion.nodeId || node.hostname !== assertion.nodeFqdn
@@ -398,6 +429,9 @@ export async function acceptApiDrainAttestation(nodeId: string, raw: unknown) {
     return { participant: 'api' as const, status: 'verified' as const, reason: 'signed-reviewed-current-drain' as const };
   });
 }
+/** The fields every stored drain receipt is checked on, whichever key signed it. */
+type StoredDrainReceipt = { participant: string; nodeId: string; nodeFqdn: string; epoch: number; barrierId: string;
+  challengeId: string; expiresAt: number; status: string; activeCount: number; unknownCount: number; evidenceSha256: string };
 export async function completeEnrollment(nodeId: string) {
   const policy = await nodeEvidencePolicy(nodeId);
   return getDb().$transaction(async tx => {
@@ -421,8 +455,7 @@ export async function completeEnrollment(nodeId: string) {
         const { signature: nodeHmac, nodeSignature, ...nodeUnsigned } = receipt;
         const { signature: reviewSignature, ...reviewUnsigned } = assertion;
         const nodePayload = enrollmentSigningPayload(nodeUnsigned);
-        const nodeAuthentic = policy.verify('scheduler-drain', nodePayload, nodeSignature, () => RESULT_SIGNING_SECRET.length >= 32
-          && timingSafeEqual(createHmac('sha256', RESULT_SIGNING_SECRET).update(nodePayload).digest(), Buffer.from(nodeHmac, 'hex')));
+        const nodeAuthentic = policy.verify('scheduler-drain', nodePayload, nodeSignature, resultKeyHmac(nodePayload, nodeHmac));
         const reviewSigned = createHmac('sha256', reconciliationSecret()).update(schedulerBoundaryAttestationSigningPayload(reviewUnsigned)).digest();
         const rawReceipt = JSON.stringify(receipt);
         if (receipt.nodeId !== nodeId || receipt.nodeFqdn !== node.hostname || receipt.epoch !== row.epoch
@@ -439,21 +472,30 @@ export async function completeEnrollment(nodeId: string) {
           fail('RESOURCE_DRAIN_INCOMPLETE', 'Stored scheduler boundary failed current reviewed verification');
         continue;
       }
-      let receipt: z.infer<typeof drainReceiptSchema> | z.infer<typeof apiDrainAttestationSchema>;
-      try { receipt = participant === 'api'
-        ? apiDrainAttestationSchema.parse(JSON.parse(ack.receiptJson ?? 'null'))
-        : drainReceiptSchema.parse(JSON.parse(ack.receiptJson ?? 'null')); }
-      catch (error) { warnEvidence(`${participant} receipt`, nodeId, error); fail('RESOURCE_DRAIN_INCOMPLETE', 'Stored participant receipt is unavailable'); }
-      const { signature, nodeSignature, ...unsigned } = receipt as typeof receipt & { nodeSignature?: unknown };
-      if (participant === 'dashboard') await assertDashboardStillAbsent(tx, nodeId);
-      const key = participant === 'dashboard' ? dashboardReceiptKey()
-        : participant === 'api' ? reconciliationSecret() : RESULT_SIGNING_SECRET;
-      const payload = participant === 'api'
-        ? apiDrainAttestationSigningPayload(unsigned as Omit<z.infer<typeof apiDrainAttestationSchema>, 'signature'>)
-        : enrollmentSigningPayload(unsigned);
-      const hmac = () => key.length >= 32 && timingSafeEqual(createHmac('sha256', key).update(payload).digest(), Buffer.from(signature, 'hex'));
-      // Only the agent's receipt is node evidence; the API and console receipts are signed by their own keys.
-      const authentic = participant === 'agent' ? policy.verify('enrollment-drain', payload, nodeSignature, hmac) : nodeSignature === undefined && hmac();
+      let receipt: StoredDrainReceipt; let authentic: boolean;
+      if (participant === 'dashboard') {
+        await assertDashboardStillAbsent(tx, nodeId);
+        let raw: unknown;
+        try { raw = JSON.parse(ack.receiptJson ?? 'null'); }
+        catch (error) { warnEvidence('dashboard receipt', nodeId, error); fail('RESOURCE_DRAIN_INCOMPLETE', 'Stored participant receipt is unavailable'); }
+        const verified = verifiedDashboardReceipt(nodeId, raw);
+        if (!verified) fail('RESOURCE_DRAIN_INCOMPLETE', 'Stored participant receipt failed exact current drain verification');
+        receipt = verified; authentic = true;
+      } else {
+        let parsed: z.infer<typeof drainReceiptSchema> | z.infer<typeof apiDrainAttestationSchema>;
+        try { parsed = participant === 'api'
+          ? apiDrainAttestationSchema.parse(JSON.parse(ack.receiptJson ?? 'null'))
+          : drainReceiptSchema.parse(JSON.parse(ack.receiptJson ?? 'null')); }
+        catch (error) { warnEvidence(`${participant} receipt`, nodeId, error); fail('RESOURCE_DRAIN_INCOMPLETE', 'Stored participant receipt is unavailable'); }
+        const { signature, nodeSignature, ...unsigned } = parsed as typeof parsed & { nodeSignature?: unknown };
+        const payload = participant === 'api'
+          ? apiDrainAttestationSigningPayload(unsigned as Omit<z.infer<typeof apiDrainAttestationSchema>, 'signature'>)
+          : enrollmentSigningPayload(unsigned);
+        // Only the agent's receipt is node evidence; the API receipt is signed by its reviewer key.
+        authentic = participant === 'agent' ? policy.verify('enrollment-drain', payload, nodeSignature, resultKeyHmac(payload, signature))
+          : nodeSignature === undefined && hmacMatches(reconciliationSecret(), payload, signature);
+        receipt = parsed;
+      }
       if (receipt.participant !== participant || receipt.nodeId !== nodeId || receipt.nodeFqdn !== node.hostname
         || receipt.epoch !== row.epoch || receipt.barrierId !== row.barrierId
         || receipt.challengeId !== ack.challengeId || receipt.expiresAt !== ack.challengeExpiresAt.getTime()

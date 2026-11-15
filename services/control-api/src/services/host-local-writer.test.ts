@@ -7,12 +7,16 @@ afterEach(() => { delete process.env['NODE_AUTH_MODE']; });
 process.env['NODE_AUTH_MODE'] = 'compat';
 
 const secret = 'dedicated-result-signing-secret-for-owner-proof';
-vi.mock('../utils/env.js', () => ({ RESULT_SIGNING_SECRET: secret,
-  getNodeManagerSecret: () => 'node-token' }));
+// Mutable, so a case can retire the shared key to the previous slot (or remove it).
+const resultKeys = vi.hoisted(() => ({ current: 'dedicated-result-signing-secret-for-owner-proof', previous: '' }));
+vi.mock('../utils/env.js', () => ({ get RESULT_SIGNING_SECRET() { return resultKeys.current; },
+  get RESULT_SIGNING_PREVIOUS_SECRET() { return resultKeys.previous; }, getNodeManagerSecret: () => 'node-token' }));
+const agentFetch = vi.hoisted(() => vi.fn());
+vi.mock('./node-agent-auth.js', () => ({ agentFetch }));
 const { evidencePolicyFor } = await import('./node-evidence-policy.js');
 const { createFakeCredentialStore, fixtureAgentKey } = await import('./node-credential-test-fixture.js');
 const policy = evidencePolicyFor('node-1', []);
-const { verifyHostLocalWriterProof } = await import('./host-local-writer.js');
+const { fetchHostLocalWriterProof, verifyHostLocalWriterProof } = await import('./host-local-writer.js');
 const { canonical } = await import('./resource-enrollment.js');
 const DOMAIN = 'magnus.host-local-writer.v1\n';
 
@@ -73,5 +77,28 @@ describe('owner-signed host-local writer proof', () => {
     fake.state.credentials[0]!.evidenceSigning = true;
     expect(verifyHostLocalWriterProof(proof, expected, 1_001_000, evidencePolicyFor('node-1', fake.state.credentials))).toBeNull();
     expect(verifyHostLocalWriterProof({ ...proof, nodeSignature }, expected, 1_001_000, evidencePolicyFor('node-1', fake.state.credentials))).not.toBeNull();
+  });
+  it('verifies with the shared key moved to RESULT_SIGNING_PREVIOUS_SECRET, and refuses once neither holds it', () => {
+    const proof = signed();
+    const expected = { nodeId: proof.nodeId, nodeFqdn: proof.nodeFqdn, nonce: proof.nonce, epoch: proof.epoch, barrierId: proof.barrierId };
+    try {
+      resultKeys.previous = resultKeys.current; resultKeys.current = '';
+      expect(verifyHostLocalWriterProof(proof, expected, 1_001_000, policy)).not.toBeNull();
+      resultKeys.previous = '';
+      expect(verifyHostLocalWriterProof(proof, expected, 1_001_000, policy)).toBeNull();
+    } finally { resultKeys.current = secret; resultKeys.previous = ''; }
+  });
+  it('fetches the proof from the agent although this server holds no shared result key', async () => {
+    vi.stubEnv('TLS_CERT_PATH', 'fixture'); vi.stubEnv('TLS_KEY_PATH', 'fixture');
+    resultKeys.current = '';
+    try {
+      agentFetch.mockResolvedValueOnce(new Response(JSON.stringify({ success: true, data: { proof: 1 } })));
+      const nonce = randomUUID();
+      expect(await fetchHostLocalWriterProof({ id: 'node-1', ipAddress: '192.0.2.10', port: 4100 }, 'magnus.example.test', nonce)).toEqual({ proof: 1 });
+      const [identity, url] = agentFetch.mock.calls[0]! as [unknown, URL];
+      expect(identity).toEqual({ nodeId: 'node-1' });
+      expect(url.pathname).toBe('/api/v1/commands/host-local-writer-proof');
+      expect(url.searchParams.get('nonce')).toBe(nonce);
+    } finally { resultKeys.current = secret; vi.unstubAllEnvs(); }
   });
 });

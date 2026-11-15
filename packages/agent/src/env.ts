@@ -75,6 +75,12 @@ export function configurationErrors(): string[] {
       process.env['RESULT_SIGNING_PREVIOUS_SECRET'] ?? ''].some(value => value && value === reconciliation))) {
     errors.push('COMMAND_RECONCILIATION_SECRET must be an independent secret of at least 32 characters');
   }
+  const previousReconciliation = process.env['COMMAND_RECONCILIATION_PREVIOUS_SECRET'] ?? '';
+  if (previousReconciliation && (previousReconciliation.length < 32
+    || [NODE_MANAGER_SECRET, NODE_MANAGER_SECRET_PREVIOUS, RESULT_SIGNING_SECRET, process.env['RESULT_SIGNING_PREVIOUS_SECRET'] ?? '',
+      reconciliation].some(value => value && value === previousReconciliation))) {
+    errors.push('COMMAND_RECONCILIATION_PREVIOUS_SECRET must be an independent secret of at least 32 characters, other than COMMAND_RECONCILIATION_SECRET');
+  }
   if ((process.env['ENABLE_LOG_FORWARDING'] ?? 'false').toLowerCase() === 'true' && LOG_INGEST_TOKEN.length < 32) {
     errors.push('LOG_INGEST_TOKEN is required when ENABLE_LOG_FORWARDING=true');
   }

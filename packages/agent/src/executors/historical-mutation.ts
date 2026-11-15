@@ -116,6 +116,22 @@ export function verifyHistoricalReceipt(raw: unknown, keys: HistoricalKeys): His
     throw new Error('Historical receipt timing differs');
   return value; // Accepted receipts remain durable after the decision's expiry.
 }
+/**
+ * The same settlement with every MAC made again with `keys`: the observation and the receipt with the
+ * result key, the decision with the reconciliation key. Only for a receipt that verified already
+ * (`magnus-agent historical-settlements reseal`): what it settles, the boot proof and its timing are
+ * unchanged, so it reads exactly as before, without the shared keys it was first signed with.
+ */
+export function resealHistoricalReceipt(receipt: HistoricalReceipt, keys: HistoricalKeys): HistoricalReceipt {
+  validateHistoricalKeys(keys);
+  const { signature: _receiptSignature, assertion, ...receiptFields } = receipt;
+  const { signature: _assertionSignature, before, ...assertionFields } = assertion;
+  const { signature: _observationSignature, ...observation } = before;
+  const sealedBefore = signHistoricalObservation(observation, keys.result);
+  const sealedAssertion = signHistoricalAssertion({ ...assertionFields, before: sealedBefore }, keys.reconciliation);
+  return verifyHistoricalReceipt(signHistoricalReceipt({ ...receiptFields, assertion: sealedAssertion }, keys.result),
+    { result: keys.result, reconciliation: keys.reconciliation });
+}
 export async function readHostBoot(): Promise<HostBoot> {
   const id = (await readFile('/proc/sys/kernel/random/boot_id', 'utf8')).trim();
   const stat = await readFile('/proc/stat', 'utf8');

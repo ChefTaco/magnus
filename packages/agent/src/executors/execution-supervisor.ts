@@ -69,7 +69,7 @@ export class SystemdSupervisorBackend implements SupervisorBackend {
       '--property=Description='+unitDescription(intent),
       '--property=StandardInput=null','--property=StandardOutput=null','--property=StandardError=null',
       '--property=NoNewPrivileges=yes','--property=UMask=0077',
-      '--property=UnsetEnvironment=NODE_OPTIONS NODE_PATH NODE_MANAGER_SECRET API_SECRET RESULT_SIGNING_SECRET COMMAND_RECONCILIATION_SECRET',
+      '--property=UnsetEnvironment=NODE_OPTIONS NODE_PATH NODE_MANAGER_SECRET API_SECRET RESULT_SIGNING_SECRET RESULT_SIGNING_PREVIOUS_SECRET COMMAND_RECONCILIATION_SECRET COMMAND_RECONCILIATION_PREVIOUS_SECRET',
       '--','/usr/bin/node',join(directory,'execution-supervisor-worker.js'),directory,
     ]);
   }
@@ -119,7 +119,7 @@ export class ExecutionSupervisor {
       ||!Number.isInteger(input.timeoutSeconds)||input.timeoutSeconds<1||input.timeoutSeconds>3600||Buffer.byteLength(JSON.stringify(input))>128*1024)throw new Error('Invalid finite execution');
     if(input.workingDirectory!==undefined&&(!input.workingDirectory.startsWith('/')||input.workingDirectory.includes('\0')))throw new Error('Absolute execution directory required');
     for(const[key,value]of Object.entries(input.environment??{})){
-      if(!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key)||typeof value!=='string'||value.includes('\0')||/^(NODE_MANAGER_SECRET|API_SECRET|RESULT_SIGNING_SECRET|COMMAND_RECONCILIATION_SECRET)(_|$)/.test(key))throw new Error('Unsafe command environment');
+      if(!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key)||typeof value!=='string'||value.includes('\0')||/^(NODE_MANAGER_SECRET|API_SECRET|RESULT_SIGNING_SECRET|RESULT_SIGNING_PREVIOUS_SECRET|COMMAND_RECONCILIATION_SECRET|COMMAND_RECONCILIATION_PREVIOUS_SECRET)(_|$)/.test(key))throw new Error('Unsafe command environment');
     }
     if(input.coordination&&(!Number.isSafeInteger(input.coordination.expiresAt)||input.coordination.expiresAt<=Date.now()))throw new Error('Execution deadline expired');
   }

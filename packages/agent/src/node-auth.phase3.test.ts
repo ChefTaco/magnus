@@ -133,6 +133,37 @@ describe('a 3.0.0 agent without shared secrets', () => {
   });
 });
 
+describe('retiring COMMAND_RECONCILIATION_SECRET from an upgraded agent (3.0.2)', () => {
+  it('verifies with COMMAND_RECONCILIATION_PREVIOUS_SECRET only, signs new settlements with the node-local key, and refuses it equal to the current key', async () => {
+    const shared = 'agent-phase3-shared-reconciliation-key-32-chars!';
+    const { hostHistoricalKeys } = await import('./executors/historical-mutation.js');
+    try {
+      // 3.0.1 configuration: the shared key signs and verifies.
+      vi.stubEnv('COMMAND_RECONCILIATION_SECRET', shared);
+      expect(hostHistoricalKeys().reconciliation).toBe(shared);
+      // Moved to the previous slot: still verifies what it signed, never signs again.
+      vi.stubEnv('COMMAND_RECONCILIATION_SECRET', ''); vi.stubEnv('COMMAND_RECONCILIATION_PREVIOUS_SECRET', shared);
+      const host = hostHistoricalKeys();
+      expect(host.reconciliation).toBe(keys.localKey('reconciliation'));
+      expect(host.reconciliation).not.toBe(shared);
+      expect(host.previousReconciliation).toEqual([shared]);
+      expect(keys.reconciliationVerificationKeys()).toEqual([shared, host.reconciliation]);
+      // Never a result key, even when someone reuses one there.
+      vi.stubEnv('RESULT_SIGNING_PREVIOUS_SECRET', shared);
+      expect(keys.reconciliationVerificationKeys()).not.toContain(shared);
+      expect(configurationErrors().some(entry => entry.startsWith('COMMAND_RECONCILIATION_PREVIOUS_SECRET'))).toBe(true);
+      vi.stubEnv('RESULT_SIGNING_PREVIOUS_SECRET', '');
+      expect(configurationErrors().some(entry => entry.startsWith('COMMAND_RECONCILIATION_PREVIOUS_SECRET'))).toBe(false);
+      vi.stubEnv('COMMAND_RECONCILIATION_SECRET', shared);
+      expect(configurationErrors().some(entry => entry.startsWith('COMMAND_RECONCILIATION_PREVIOUS_SECRET'))).toBe(true);
+      vi.stubEnv('COMMAND_RECONCILIATION_SECRET', ''); vi.stubEnv('COMMAND_RECONCILIATION_PREVIOUS_SECRET', 'short');
+      expect(configurationErrors().some(entry => entry.startsWith('COMMAND_RECONCILIATION_PREVIOUS_SECRET'))).toBe(true);
+    } finally {
+      vi.stubEnv('COMMAND_RECONCILIATION_SECRET', ''); vi.stubEnv('COMMAND_RECONCILIATION_PREVIOUS_SECRET', ''); vi.stubEnv('RESULT_SIGNING_PREVIOUS_SECRET', '');
+    }
+  });
+});
+
 describe('server-key rotation on the agent', () => {
   it('pins a staged next key from the heartbeat reply, active first, and never a retired one', async () => {
     await enroll();

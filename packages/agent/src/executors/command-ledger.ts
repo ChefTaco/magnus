@@ -134,9 +134,11 @@ export class CommandLedger {
   private resultKeys(): string[] {
     return this.authority.resultSecret !== undefined ? [this.authority.resultSecret] : resultVerificationKeys();
   }
-  private reconciliationKeys(): string[] {
+  /** A new decision verifies with the current key only; a recorded one also with its verify-only previous value. */
+  private reconciliationKeys(stored = false): string[] {
     return this.authority.reconciliationSecret !== undefined ? [this.authority.reconciliationSecret]
-      : [process.env['COMMAND_RECONCILIATION_SECRET'] ?? ''].filter(Boolean);
+      : [process.env['COMMAND_RECONCILIATION_SECRET'] ?? '',
+        ...(stored ? [process.env['COMMAND_RECONCILIATION_PREVIOUS_SECRET'] ?? ''] : [])].filter(Boolean);
   }
 
   /** Linux flock locks the open file description, retained by this parent FD after
@@ -252,7 +254,7 @@ export class CommandLedger {
     const resultKeys = new Set(this.resultKeys());
     // A recorded decision verifies with the server key that signed it, also after a server-key rotation.
     const authentic = verifyServerDecision('command-reconciliation', commandReconciliationSigningPayload(assertion), assertion.serverSignature,
-      () => typeof assertion.signature === 'string' && this.reconciliationKeys().some(secret => !resultKeys.has(secret) && secret !== NODE_MANAGER_SECRET
+      () => typeof assertion.signature === 'string' && this.reconciliationKeys(!fresh).some(secret => !resultKeys.has(secret) && secret !== NODE_MANAGER_SECRET
         && verifyCommandReconciliation({ ...assertion, signature: assertion.signature! }, secret)), { stored: !fresh });
     if (!authentic
       || assertion.nodeFqdn !== this.authority.nodeFqdn || assertion.commandId !== row.commandId

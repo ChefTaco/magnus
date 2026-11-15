@@ -7,6 +7,44 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [3.0.2] - 2026-11-15
+
+3.0.0 retired the shared node secrets from every path but two: the server still needed
+`RESULT_SIGNING_SECRET` for the console drain finding it records for itself and to fetch writer
+proofs, and an agent still needed `COMMAND_RECONCILIATION_SECRET` to read the historical-mutation
+settlements it stored with it. 3.0.2 removes both needs. See `docs/NODE_CREDENTIALS.md`,
+"Retiring the shared keys".
+
+### Added
+
+- Node agent: `COMMAND_RECONCILIATION_PREVIOUS_SECRET`, a verify-only slot for the shared reconciliation key. Historical-mutation settlements (`.magnus/mutation-barrier/historical-*.json`) and recorded command reconciliations stored with it keep verifying; nothing new is signed with it, and new settlements use the node-local reconciliation key. It must differ from every other secret, including `COMMAND_RECONCILIATION_SECRET`.
+- Node agent: `magnus-agent historical-settlements list [--json] [--check]` reports every stored settlement: whether it verifies with the node-local keys alone, only with a shared key, or with no key the agent holds, whether the request record it settles is still retained, and whether the agent honours it. `--check` exits 1 while any settlement needs a shared key, verifies with none, or is refused.
+- Node agent: `magnus-agent historical-settlements reseal [--apply]` MACs the settlements that verify only with a shared key again with the node-local keys (observation and receipt with the result key, the decision with the reconciliation key). What a settlement settles, its boot proof and its timing are unchanged; afterwards the shared key and its previous slot can be removed.
+- Node agent: `magnus-agent historical-settlements prune --unverifiable [--with-records] [--apply]` moves settlements that no key of this agent verifies (or that are not settlements) out of the mutation barrier. Without `--with-records` the record each one settled stays and counts as unknown again until it is settled anew; with it, that record is moved too, but only when its bytes are the ones the settlement names and it was accepted before the current kernel boot.
+- Both writing commands are dry runs without `--apply`, need root with it, take the barrier's lock (the agent can keep running), keep a file owner's ownership, and keep every file they replace or remove, with a `manifest.json`, in a new 0700 directory under `$AGENT_INSTALL_DIR/.magnus/historical-settlement-archive/`. Nothing is deleted.
+- `magnus-agent --env-file` may be given more than once; an earlier file wins.
+
+### Changed
+
+- Server: the console drain finding the server records for itself when no console participant exists (`RESOURCE_ENROLLMENT_DASHBOARD_PARTICIPANT=absent`) is signed with the server's Ed25519 key, in a protocol of its own (`magnus.server-own-evidence.v1`, so it can never pass as node evidence or as a decision for an agent), as `serverSignature` with the signing key's id. It keeps verifying after a server-key rotation. It used to be an HMAC with `RESULT_SIGNING_SECRET`, and the server refused absent-mode drains without that key (`503 RESOURCE_PARTICIPANT_UNCONFIGURED`); without a readable server key it now answers `503 SERVER_KEY_UNAVAILABLE`.
+- Server: the host-local mutation and OS scheduler writer proofs (the transfer-authority snapshot's independent writer coverage) are fetched from the agent whether or not `RESULT_SIGNING_SECRET` is set. Agents sign them with their node key; without the shared key the server used to skip the fetch, so both writer classes stayed `unverified`.
+- Server: `RESULT_SIGNING_PREVIOUS_SECRET` verifies on its own. Findings and evidence stored with the shared key (console drain findings written by 3.0.1, and, under an explicit `compat` or `warn`, HMAC-only agent evidence: drain receipts, writer proofs, terminal receipts, results, refusals and absences) verify with `RESULT_SIGNING_SECRET` or with `RESULT_SIGNING_PREVIOUS_SECRET`, so the shared key can be moved to the previous slot. Before, the previous key counted only next to a current one. It is now in the server's environment catalogue.
+- Node agent: the execution supervisor also refuses and unsets `RESULT_SIGNING_PREVIOUS_SECRET` and `COMMAND_RECONCILIATION_PREVIOUS_SECRET` in a command's environment, and child processes never inherit the latter.
+
+### Upgrading
+
+- 3.0.1 upgrades to 3.0.2 in place: the server with `magnus upgrade`, agents with `magnus-server agents upgrade --to 3.0.2` (same major; no `--allow-major`). Either side can go first: a 3.0.2 server reads the console findings 3.0.1 stored and fetches writer proofs from 3.0.1 agents, and a 3.0.1 server receives the same node-signed evidence from 3.0.2 agents.
+- Nothing changes until an operator moves a key. Then, on the server: replace `RESULT_SIGNING_SECRET=` with `RESULT_SIGNING_PREVIOUS_SECRET=` (same value) and restart. On each agent: replace `COMMAND_RECONCILIATION_SECRET=` with `COMMAND_RECONCILIATION_PREVIOUS_SECRET=`, restart, run `magnus-agent historical-settlements reseal --apply` as root, check with `historical-settlements list --check`, then remove `COMMAND_RECONCILIATION_PREVIOUS_SECRET`. Settlements no key verifies: `historical-settlements prune --unverifiable` (add `--with-records` to retire the records they settled).
+- A stored settlement the agent cannot verify is not only reported: every read of the mutation barrier that consults settlements fails on it, so on that node `GET /api/v1/commands/mutation-inventory` and `GET /api/v1/commands/host-local-writer-proof` answer 409, its enrollment drain is refused (`inventory-failed`) and `historical-mutation-cli inspect` stops. Managed requests, upgrades and readiness are not affected. Removing the shared key without the previous slot does this to every settlement signed with it.
+- A server rolled back to 3.0.1 does not read the console findings 3.0.2 signed with its key: refresh the console participant of a draining node after a rollback (findings expire with their 30-second challenge anyway). A 3.0.1 agent reads re-sealed settlements (it verifies with the node-local keys too).
+
+### New environment variables
+
+- Server, optional, secret: `RESULT_SIGNING_PREVIOUS_SECRET` (verify-only previous value of `RESULT_SIGNING_SECRET`).
+- Node agent, optional, secret: `COMMAND_RECONCILIATION_PREVIOUS_SECRET` (verify-only previous value of `COMMAND_RECONCILIATION_SECRET`).
+
+**Migration impact:** No datastore migrations.
+
 ## [3.0.1] - 2026-11-14
 
 3.0.0 left no supported way to move an existing agent from 2.10.x to 3.0.x: the managed upgrade

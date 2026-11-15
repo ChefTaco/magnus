@@ -9,7 +9,8 @@ import { HOST_FQDN } from '../env.js';
 import { commandRequestDigest, type CommandIdentity, type CommandLedger } from './command-ledger.js';
 import { historicalHash, signHistoricalObservation, signHistoricalReceipt, verifyHistoricalAssertion,
   verifyHistoricalReceipt, readHostBoot, reviewedHistoricalRecords, type ReviewedHistoricalRecords,
-  hostHistoricalKeys, type HistoricalKeys, type HistoricalReceipt, type HostBoot } from './historical-mutation.js';
+  hostHistoricalKeys, historicalReceiptSchema, resealHistoricalReceipt, type HistoricalKeys, type HistoricalReceipt,
+  type HostBoot } from './historical-mutation.js';
 
 const identitySchema = z.object({ nodeId: z.string().min(1).max(128), nodeFqdn: z.string().min(1).max(253),
   epoch: z.number().int().positive(), barrierId: z.string().guid() }).strict();
@@ -23,6 +24,41 @@ const recordSchema = z.object({ version: z.literal(1), id: z.string().guid(), no
 type MutationRecord = z.infer<typeof recordSchema>;
 export interface MutationToken { id: string; nonce: string }
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+const SETTLEMENT_FILE = /^historical-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.json$/;
+const reason = (error: unknown) => error instanceof Error ? error.message : String(error);
+
+/**
+ * One stored historical settlement (`historical-<record id>.json`), as
+ * `magnus-agent historical-settlements` reports it. `state` says which keys it verifies with:
+ *   node-local    the node-local keys alone
+ *   shared-key    only with a shared key this agent still holds (COMMAND_RECONCILIATION_SECRET,
+ *                 RESULT_SIGNING_SECRET or their *_PREVIOUS_SECRET values): `reseal` fixes that
+ *   unverifiable  with no key this agent holds (or its signed timing is broken)
+ *   malformed     not a historical settlement at all
+ * The agent reads a settlement only while the request record it settles is still retained
+ * (`record: 'retained'`); then `agentRefusal` is null when the agent honours it, else why it does not,
+ * and every mutation inventory, host-local writer proof and enrollment drain of this node fails on it.
+ */
+export interface HistoricalSettlementEntry {
+  recordId: string;
+  state: 'node-local' | 'shared-key' | 'unverifiable' | 'malformed';
+  record: 'retained' | 'completed' | 'absent';
+  agentRefusal: string | null;
+  /** The retained record's bytes are the ones the settlement names (null: no record, or no readable settlement). */
+  recordMatches: boolean | null;
+  /** The retained record was accepted before the current kernel boot, so no process of it still runs. */
+  recordAcceptedBeforeBoot: boolean | null;
+  recordedAt: number | null;
+  approvalRef: string | null;
+  problem: string | null;
+}
+/** What `archiveUnverifiableSettlements` did, or would do, with one settlement. */
+export interface SettlementArchivePlan {
+  recordId: string;
+  state: HistoricalSettlementEntry['state'];
+  /** `archived` (or `would-archive` in a dry run), else why the record stays where it is. */
+  record: 'archived' | 'would-archive' | 'retained-unsettled' | 'not-retained' | 'kept-bytes-differ' | 'kept-not-before-boot';
+}
 
 export class MutationBarrier {
   private readonly active = new Set<string>();
@@ -46,15 +82,35 @@ export class MutationBarrier {
     const handle = await open(this.root, constants.O_RDONLY);
     try { await handle.sync(); } finally { await handle.close(); }
   }
-  private async read(name: string): Promise<unknown | undefined> {
+  private async readBytes(name: string): Promise<Buffer | undefined> {
     let handle;
     try { handle = await open(join(this.root, name), constants.O_RDONLY | constants.O_NOFOLLOW); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error; }
     try {
       const info = await handle.stat();
       if (!info.isFile() || info.nlink !== 1 || info.mode & 0o077 || info.size > 16_384) throw new Error('Invalid mutation barrier record');
-      return JSON.parse(await handle.readFile('utf8')) as unknown;
+      return await handle.readFile();
     } finally { await handle.close(); }
+  }
+  private async read(name: string): Promise<unknown | undefined> {
+    const bytes = await this.readBytes(name);
+    return bytes === undefined ? undefined : JSON.parse(bytes.toString('utf8')) as unknown;
+  }
+  /** Replace an existing file in one rename, keeping its owner (root may run the operator tool for an unprivileged agent). */
+  private async replace(name: string, value: unknown) {
+    const target = join(this.root, name);
+    const owner = await lstat(target);
+    if (!owner.isFile() || owner.isSymbolicLink()) throw new Error('Invalid mutation barrier record');
+    const temporary = join(this.root, '.write-' + randomUUID());
+    const handle = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+    try {
+      try {
+        await handle.writeFile(JSON.stringify(value));
+        if (process.getuid?.() === 0) await handle.chown(owner.uid, owner.gid);
+        await handle.sync();
+      } finally { await handle.close(); }
+      await rename(temporary, target); await this.sync();
+    } catch (error) { await unlink(temporary).catch(() => {}); throw error; }
   }
   private async write(name: string, value: unknown) {
     const temporary = join(this.root, '.write-' + randomUUID());
@@ -188,6 +244,114 @@ export class MutationBarrier {
         if (prior === undefined) await this.write('historical-' + item.id + '.json', receipt);
       }
       return receipt;
+    });
+  }
+
+  /** Every stored historical settlement and how it verifies (see {@link HistoricalSettlementEntry}). Read-only. */
+  async historicalSettlements(localKeys: HistoricalKeys | null): Promise<HistoricalSettlementEntry[]> {
+    return this.lockedRead(() => this.inspectSettlements(localKeys));
+  }
+
+  private async inspectSettlements(localKeys: HistoricalKeys | null): Promise<HistoricalSettlementEntry[]> {
+    const names = (await readdir(this.root)).filter(name => name.startsWith('historical-') && name.endsWith('.json')).sort();
+    if (names.length > 10_000) throw new Error('Mutation inventory requires reconciliation');
+    let drain: DrainIdentity | null = null;
+    try { drain = await this.identity(); } catch { /* every retained settlement is then refused, as the agent does */ }
+    const boot = await this.bootReader();
+    const entries: HistoricalSettlementEntry[] = [];
+    for (const name of names) {
+      const recordId = SETTLEMENT_FILE.exec(name)?.[1];
+      if (!recordId) continue;
+      const entry: HistoricalSettlementEntry = { recordId, state: 'malformed', record: 'absent', agentRefusal: null,
+        recordMatches: null, recordAcceptedBeforeBoot: null, recordedAt: null, approvalRef: null, problem: null };
+      let receipt: HistoricalReceipt | null = null;
+      try {
+        const parsed = historicalReceiptSchema.safeParse(await this.read(name));
+        if (!parsed.success) entry.problem = 'Not a historical settlement';
+        else {
+          receipt = parsed.data;
+          entry.recordedAt = receipt.recordedAt; entry.approvalRef = receipt.assertion.approvalRef;
+          let local = false;
+          if (localKeys) { try { verifyHistoricalReceipt(receipt, localKeys); local = true; } catch { /* not sealed with the node-local keys */ } }
+          if (local) entry.state = 'node-local';
+          else {
+            try { verifyHistoricalReceipt(receipt, this.historicalKeys); entry.state = 'shared-key'; }
+            catch (error) { entry.state = 'unverifiable'; entry.problem = reason(error); }
+          }
+        }
+      } catch (error) { entry.problem = reason(error); }
+      let row: MutationRecord | null = null;
+      try {
+        const raw = await this.read('request-' + recordId + '.json');
+        if (raw !== undefined) {
+          row = recordSchema.parse(raw);
+          entry.record = row.state === 'completed' ? 'completed' : 'retained';
+          entry.recordAcceptedBeforeBoot = row.acceptedAt < boot.startedAt;
+          const named = receipt?.assertion.records.find(item => item.id === recordId)?.recordSha256;
+          entry.recordMatches = named === undefined ? null : named === await this.recordDigest(recordId);
+        }
+      } catch (error) { entry.record = 'retained'; entry.agentRefusal = reason(error); }
+      if (row && entry.record === 'retained' && entry.agentRefusal === null) {
+        try { await this.historicalSettlement(row, drain); }
+        catch (error) { entry.agentRefusal = reason(error); }
+      }
+      entries.push(entry);
+    }
+    return entries;
+  }
+
+  /**
+   * MAC the settlements that verify only with a shared key again with `localKeys` (the node-local
+   * keys), keeping each original in `archive` first. A re-sealed settlement settles exactly what it
+   * did before. Returns the record ids re-sealed.
+   */
+  async resealHistoricalSettlements(localKeys: HistoricalKeys, archive: (name: string, bytes: Buffer) => Promise<void>): Promise<string[]> {
+    return this.locked(async () => {
+      const due = (await this.inspectSettlements(localKeys)).filter(entry => entry.state === 'shared-key');
+      for (const entry of due) {
+        const name = 'historical-' + entry.recordId + '.json';
+        const bytes = await this.readBytes(name);
+        if (bytes === undefined) continue;
+        const sealed = resealHistoricalReceipt(verifyHistoricalReceipt(JSON.parse(bytes.toString('utf8')), this.historicalKeys), localKeys);
+        await archive(name, bytes);
+        await this.replace(name, sealed);
+      }
+      return due.map(entry => entry.recordId);
+    });
+  }
+
+  /**
+   * Move every settlement that no key of this agent verifies (or that is not a settlement) into
+   * `archive`, and with `withRecords` the retained request record it settles too, but only when that
+   * record's bytes are the ones the settlement names and it was accepted before the current kernel
+   * boot (so nothing it started still runs). A record left in place counts as unknown again until it
+   * is settled anew. Without `archive` nothing changes and the result is the plan.
+   */
+  async archiveUnverifiableSettlements(options: { localKeys: HistoricalKeys | null; withRecords: boolean;
+    archive: ((name: string, bytes: Buffer) => Promise<void>) | null }): Promise<SettlementArchivePlan[]> {
+    return this.locked(async () => {
+      const entries = (await this.inspectSettlements(options.localKeys)).filter(entry => entry.state === 'unverifiable' || entry.state === 'malformed');
+      const plans: SettlementArchivePlan[] = [];
+      for (const entry of entries) {
+        const record: SettlementArchivePlan['record'] = entry.record !== 'retained' ? 'not-retained'
+          : !options.withRecords ? 'retained-unsettled'
+          : entry.recordMatches !== true ? 'kept-bytes-differ'
+          : entry.recordAcceptedBeforeBoot !== true ? 'kept-not-before-boot'
+          : options.archive ? 'archived' : 'would-archive';
+        const retire = record === 'archived';
+        plans.push({ recordId: entry.recordId, state: entry.state, record });
+        if (!options.archive) continue;
+        const settlement = 'historical-' + entry.recordId + '.json';
+        const bytes = await this.readBytes(settlement);
+        if (bytes !== undefined) { await options.archive(settlement, bytes); await unlink(join(this.root, settlement)); }
+        if (retire) {
+          const request = 'request-' + entry.recordId + '.json';
+          const rowBytes = await this.readBytes(request);
+          if (rowBytes !== undefined) { await options.archive(request, rowBytes); await unlink(join(this.root, request)); }
+        }
+        await this.sync();
+      }
+      return plans;
     });
   }
 

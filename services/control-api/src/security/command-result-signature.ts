@@ -25,9 +25,10 @@ export function verifyCommandResultSignature(
   activeSecret: string,
   previousSecret = '',
 ): boolean {
-  if (activeSecret.length < 32 || !/^[a-f0-9]{64}$/i.test(result.signature)) return false;
+  // The previous key verifies on its own too: the shared key retired to RESULT_SIGNING_PREVIOUS_SECRET.
+  const candidates = [activeSecret, previousSecret].filter(secret => secret.length >= 32);
+  if (candidates.length === 0 || !/^[a-f0-9]{64}$/i.test(result.signature)) return false;
   const actual = Buffer.from(result.signature, 'hex');
-  const candidates = [activeSecret, ...(previousSecret.length >= 32 ? [previousSecret] : [])];
   let matched = false;
   for (const secret of candidates) {
     const expected = createHmac('sha256', secret)
@@ -75,9 +76,12 @@ export interface CommandAbsence {
   nodeSignature?: unknown;
 }
 
-/** HMAC check of a signed refusal or absence payload against the active or previous result key. */
+/**
+ * HMAC check of a signed payload against the active or previous result key. Either may be unset: a
+ * server that retired the shared key keeps only the previous one, which then verifies stored evidence.
+ */
 export function verifyCommandEvidence(payload: string, signature: unknown, activeSecret: string, previousSecret = ''): boolean {
-  if (typeof signature !== 'string' || !/^[a-f0-9]{64}$/.test(signature) || activeSecret.length < 32) return false;
+  if (typeof signature !== 'string' || !/^[a-f0-9]{64}$/.test(signature)) return false;
   const actual = Buffer.from(signature, 'hex');
   return [activeSecret, previousSecret].filter(secret => secret.length >= 32)
     .some(secret => timingSafeEqual(actual, createHmac('sha256', secret).update(payload).digest()));
