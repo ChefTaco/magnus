@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { gzipSync } from 'node:zlib';
-import { ardentArtifactMaxBytes, ardentPackageNames, ardentUserUnit, createArdentRoutes, hermesTrafficConsumersDisabled, installSkill, ownerCommand, packageTreeDigest, promoteArdentPackage, readArdentState, relayBody, SkillInstallRefused, verifiedInstalledArdentPackage, withArdentLifecycle, writeProfileCredential } from './ardent-manager.js';
+import { ardentArtifactMaxBytes, ardentPackageNames, ardentUserUnit, createArdentInstallStage, createArdentRoutes, type OwnerRunner, hermesTrafficConsumersDisabled, installSkill, ownerCommand, packageTreeDigest, promoteArdentPackage, readArdentState, relayBody, SkillInstallRefused, verifiedInstalledArdentPackage, withArdentLifecycle, writeProfileCredential } from './ardent-manager.js';
 
 const dirs: string[] = [];
 const servers: Server[] = [];
@@ -96,6 +96,97 @@ describe('Ardent package checkpoint rotation', () => {
       await expect(withArdentLifecycle(install, async () => true)).rejects.toThrow('action is in progress');
     } finally { held.resolve(); await first; }
     await expect(withArdentLifecycle(install, async () => true)).resolves.toBe(true);
+  });
+});
+
+describe('Ardent install staging directory', () => {
+  const calls: string[][] = [];
+  afterEach(() => { calls.length = 0; });
+  // Runs the owner command as the test user and records it.
+  const runOwner: OwnerRunner = async (_root, args) => {
+    calls.push(args);
+    return new Promise<string>((resolve, reject) => execFile(args[0]!, args.slice(1), (error, stdout) => error ? reject(error) : resolve(stdout)));
+  };
+  async function owner(prefix = '.local/share/ardent') {
+    const home = await mkdtemp(join(tmpdir(), 'magnus-ardent-stage-'));
+    dirs.push(home);
+    return { owner: 'operator', home, root: join(home, '.ardent'), install: join(home, prefix) };
+  }
+  const mkdirCalls = () => calls.filter(args => args[0] === '/usr/bin/mkdir');
+
+  it('creates the missing parents of the install prefix in a fresh owner home, then the stage', async () => {
+    const root = await owner();
+    const stage = await createArdentInstallStage(root, runOwner);
+    expect(stage.startsWith(join(root.home, '.local/share', '.ardent-install-'))).toBe(true);
+    for (const path of [join(root.home, '.local'), join(root.home, '.local/share'), stage]) {
+      const info = await lstat(path);
+      expect(info.isDirectory() && !info.isSymbolicLink()).toBe(true);
+      expect(info.mode & 0o777).toBe(0o700);
+    }
+    expect(mkdirCalls()).toEqual([
+      ['/usr/bin/mkdir', '-m', '700', '--', join(root.home, '.local')],
+      ['/usr/bin/mkdir', '-m', '700', '--', join(root.home, '.local/share')],
+      ['/usr/bin/mkdir', '-m', '700', '--', stage],
+    ]);
+    expect(await readdir(join(root.home, '.local/share'))).toEqual([stage.split('/').pop()]);
+  });
+
+  it('creates only the stage when the parents exist, and keeps their modes', async () => {
+    const root = await owner();
+    await mkdir(join(root.home, '.local/share'), { recursive: true, mode: 0o755 });
+    const before = await lstat(join(root.home, '.local/share'));
+    const stage = await createArdentInstallStage(root, runOwner);
+    expect(mkdirCalls()).toEqual([['/usr/bin/mkdir', '-m', '700', '--', stage]]);
+    expect((await lstat(join(root.home, '.local/share'))).mode).toBe(before.mode);
+  });
+
+  it('fails when the stage already exists instead of reusing it', async () => {
+    const root = await owner();
+    const planted: string[] = [];
+    await expect(createArdentInstallStage(root, async (target, args) => {
+      const path = args.at(-1)!;
+      if (path.includes('.ardent-install-')) { await mkdir(path, { mode: 0o700 }); planted.push(path); }
+      return runOwner(target, args, 10_000);
+    })).rejects.toThrow();
+    expect(planted).toHaveLength(1);
+    expect(mkdirCalls().at(-1)).toEqual(['/usr/bin/mkdir', '-m', '700', '--', planted[0]]);
+  });
+
+  it.each(['outside-directory', 'dangling', 'file'])('refuses a parent that is a %s and creates nothing through it', async kind => {
+    const root = await owner();
+    const outside = await mkdtemp(join(tmpdir(), 'magnus-ardent-outside-'));
+    dirs.push(outside);
+    if (kind === 'outside-directory') await symlink(outside, join(root.home, '.local'));
+    if (kind === 'dangling') await symlink(join(outside, 'missing'), join(root.home, '.local'));
+    if (kind === 'file') await writeFile(join(root.home, '.local'), 'not a directory\n');
+    await expect(createArdentInstallStage(root, runOwner)).rejects.toThrow('escapes the owner home or is not a directory');
+    expect(mkdirCalls()).toEqual([]);
+    expect(await readdir(outside)).toEqual([]);
+  });
+
+  it('refuses a symbolic link deeper in the prefix that leads out of the home', async () => {
+    const root = await owner();
+    const outside = await mkdtemp(join(tmpdir(), 'magnus-ardent-outside-'));
+    dirs.push(outside);
+    await mkdir(join(root.home, '.local'), { mode: 0o700 });
+    await symlink(outside, join(root.home, '.local/share'));
+    await expect(createArdentInstallStage(root, runOwner)).rejects.toThrow('escapes the owner home');
+    expect(await readdir(outside)).toEqual([]);
+  });
+
+  it('accepts a parent that links to a directory inside the owner home', async () => {
+    const root = await owner();
+    await mkdir(join(root.home, 'dotfiles/local'), { recursive: true });
+    await symlink(join(root.home, 'dotfiles/local'), join(root.home, '.local'));
+    const stage = await createArdentInstallStage(root, runOwner);
+    expect((await lstat(join(root.home, 'dotfiles/local/share'))).isDirectory()).toBe(true);
+    expect((await lstat(stage)).isDirectory()).toBe(true);
+  });
+
+  it('refuses an install prefix whose staging path leaves the owner home before running anything', async () => {
+    const root = await owner();
+    await expect(createArdentInstallStage({ ...root, install: root.home }, runOwner)).rejects.toThrow('staging path escapes owner home');
+    expect(calls).toEqual([]);
   });
 });
 

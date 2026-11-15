@@ -1,0 +1,9 @@
+{
+  "summary": "Node agent: installing or updating the Ardent package failed on an owner account without the install prefix's parent directory (for example a fresh account without ~/.local/share), because the private staging directory beside the prefix was created without -p. The agent now creates each missing parent inside the owner home as the owner, one level at a time with mode 0700, refuses a parent that resolves outside the home, and still creates the staging directory itself without -p. No migrations and no new settings. Only the agent changed; either side can go first.",
+  "breaking": false,
+  "minUpgradeFrom": "2.10.2",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}

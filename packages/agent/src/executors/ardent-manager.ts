@@ -579,6 +579,35 @@ export async function withArdentLifecycle<T>(install: string, operation: () => P
   finally { ardentLifecycleOperations.delete(install); }
 }
 
+/** Runs an owner command; tests substitute one that runs as the test user. */
+export type OwnerRunner = (root: ArdentRoot, args: string[], timeout: number) => Promise<string>;
+
+/**
+ * Create, as the owner, the private staging directory beside the install prefix and return its path.
+ * A fresh account may not have the prefix's parent yet (`~/.local/share` for the default prefix), so
+ * every missing directory between the owner home and that parent is created first, one level at a time
+ * and each as a new 0700 directory (never `mkdir -p`). Each level, new or existing, must resolve to a
+ * directory inside the owner home before the next one is touched, so nothing is created through a
+ * symbolic link that leads out of it. The stage itself is created without `-p`: one that already
+ * exists fails.
+ */
+export async function createArdentInstallStage(root: ArdentRoot, runOwner: OwnerRunner = runAsOwner): Promise<string> {
+  const parent = dirname(root.install);
+  const stage = join(parent, `.ardent-install-${randomUUID()}`);
+  if (!within(root.home, stage) || !within(root.home, `${root.install}.previous`)) throw new Error('Ardent install staging path escapes owner home');
+  const home = await realpath(root.home);
+  let path = root.home;
+  for (const segment of relative(root.home, parent).split(sep).filter(Boolean)) {
+    path = join(path, segment);
+    if (!await optionalStat(path)) await runOwner(root, ['/usr/bin/mkdir', '-m', '700', '--', path], 10_000);
+    const real = await realpath(path).catch(() => null);
+    if (!real || !within(home, real) || !(await lstat(real)).isDirectory())
+      throw new Error('Ardent install directory parent escapes the owner home or is not a directory');
+  }
+  await runOwner(root, ['/usr/bin/mkdir', '-m', '700', '--', stage], 10_000);
+  return stage;
+}
+
 async function installPackage(root: ArdentRoot): Promise<object> {
   if (process.getuid?.() !== 0) throw new Error('Ardent package installation requires a root node manager');
   const staged = await stagedPackage();
@@ -591,9 +620,7 @@ async function installPackage(root: ArdentRoot): Promise<object> {
   const extensions = await readArdentExtensionBundle(root.install, owner.uid, current?.extensionBundleSha256, packageTreeDigest);
   for (const profile of await safeProfiles(root.root)) assertArdentPluginsRetained((await profileConfig(root.root, profile)).config.plugins, extensions);
   const archive = process.env['ARDENT_STAGED_PACKAGE'] ?? '/opt/magnus-agent/ardent-package.tgz';
-  const stage = join(dirname(root.install), `.ardent-install-${randomUUID()}`);
-  if (!within(root.home, stage) || !within(root.home, `${root.install}.previous`)) throw new Error('Ardent install staging path escapes owner home');
-  await runAsOwner(root, ['/usr/bin/mkdir', '-m', '700', '--', stage], 10_000);
+  const stage = await createArdentInstallStage(root);
   try {
     if (extensions) {
       await runAsOwner(root, ['/usr/bin/cp', '--no-clobber', '--', archive, join(stage, 'core-package.tgz')], 10_000);
