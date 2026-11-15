@@ -7,6 +7,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-11-15
+
 ### Added
 
 - A root-only native snapshot CLI discovers every managed Ardent profile, captures complete
@@ -30,6 +32,14 @@ All notable changes to this project are documented in this file. The format is b
   leaves its verified completion held by a server that requires node signatures. Retained receipt
   bytes and their original HMAC remain unchanged; retrying settlement after an interruption signs
   the same completion evidence without reopening the shell.
+
+### Upgrading
+
+- 3.0.x (and any release from 2.10.2) upgrades to 3.1.0 in place: the server with `magnus upgrade`, agents with `magnus-server agents upgrade --to 3.1.0`. Either side can go first. Until an agent is on 3.1.0, the node's software read answers `SOFTWARE_STATUS_UNAVAILABLE` with update guidance (no command runs), and `magnus-agent native-snapshot` is not available on that node.
+
+**New environment variables:** None.
+
+**Migration impact:** No datastore migrations.
 
 ## [3.0.3] - 2026-11-15
 

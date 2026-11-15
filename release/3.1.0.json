@@ -1,0 +1,9 @@
+{
+  "summary": "Node agent: magnus-agent native-snapshot (root only, a local CLI, not an HTTP route) discovers every managed Ardent profile and captures, verifies, restores and resumes a stopped snapshot of its profile and runtime state, so a backup tool can include native profiles (see docs/NATIVE_SNAPSHOTS.md). Server: GET /api/v1/nodes/:nodeId/software reads fixed software metadata and cached package-update counts from a new read-only agent route instead of running a shell command; agents older than 3.1.0 answer SOFTWARE_STATUS_UNAVAILABLE with update guidance and nothing is executed. Agent: managed terminal completion receipts are signed with the node key, so closing a restricted terminal no longer leaves its completion held. No migrations and no new settings. Mixes with 3.0.x in both directions; upgrade agents to 3.1.0 to use the software read and native snapshots.",
+  "breaking": false,
+  "minUpgradeFrom": "2.10.2",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}
