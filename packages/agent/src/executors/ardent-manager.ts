@@ -64,14 +64,14 @@ type ConfigSummary = z.infer<typeof configSummary>;
 function channelStates(config: ConfigSummary): Record<string, boolean> {
   return Object.fromEntries(Object.entries(config.channels).map(([name, channel]) => [name, channel.enabled]));
 }
-type ArdentRoot = { owner: string; home: string; root: string; install: string };
+export type ArdentRoot = { owner: string; home: string; root: string; install: string };
 
 function within(parent: string, child: string): boolean {
   const path = relative(parent, child);
   return path === '' || (path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path));
 }
 
-async function ardentRoot(): Promise<ArdentRoot> {
+export async function ardentRoot(): Promise<ArdentRoot> {
   const owner = process.env['ARDENT_OWNER_USER'] ?? process.env['HERMES_USER'] ?? (process.getuid?.() === 0 ? '' : userInfo().username);
   if (!/^[a-z_][a-z0-9_-]{0,31}$/.test(owner)) throw new Error('Ardent owner user is not configured');
   const accounts = await readFile('/etc/passwd', 'utf8');
@@ -97,7 +97,7 @@ async function safeProfiles(root: string): Promise<string[]> {
   }
 }
 
-async function profileConfig(root: string, name: string): Promise<{ config: ConfigSummary; dir: string }> {
+export async function profileConfig(root: string, name: string): Promise<{ config: ConfigSummary; dir: string }> {
   profileName.parse(name);
   const dir = join(root, 'profiles', name);
   const file = join(dir, 'config.yaml');
@@ -176,7 +176,7 @@ async function optionalStat(path: string) {
   });
 }
 
-async function verifiedPackageReceipt(install: string): Promise<z.infer<typeof installedPackageReceipt> | null> {
+export async function verifiedPackageReceipt(install: string): Promise<z.infer<typeof installedPackageReceipt> | null> {
   const directory = await optionalStat(install);
   if (!directory) return null;
   if (!directory.isDirectory() || directory.isSymbolicLink()) throw new Error('Ardent installation path is unsafe');

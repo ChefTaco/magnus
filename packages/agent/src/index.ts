@@ -26,6 +26,9 @@ Usage:
                                                     (root) Re-MAC settlements signed with a shared key with the node-local keys
   magnus-agent historical-settlements prune --unverifiable [--with-records] [--apply]
                                                     (root) Archive settlements no key of this agent verifies
+  magnus-agent native-snapshot inspect --json         (root) Discover managed native profile storage
+  magnus-agent native-snapshot ACTION --request-file -
+                                                    (root) Quiesce, capture, verify, restore or resume a stopped snapshot
   magnus-agent --help | --version
 
 Options:
@@ -74,6 +77,19 @@ export async function main(argv: string[]): Promise<number | null> {
   }
 
   switch (cli.command) {
+    case 'native-snapshot': {
+      if (!process.env['AGENT_INSTALL_DIR'] && cli.envFile) process.env['AGENT_INSTALL_DIR'] = dirname(resolve(cli.envFile));
+      config({ path: resolve(process.env['AGENT_INSTALL_DIR'] ?? process.cwd(), '.env'), quiet: true });
+      try {
+        const { runNativeSnapshot } = await import('./native-snapshot/cli.js');
+        console.log(JSON.stringify(await runNativeSnapshot(cli.rest)));
+        return 0;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Native snapshot failed';
+        console.log(JSON.stringify({ success: false, error: { code: 'NATIVE_SNAPSHOT_REFUSED', message } }));
+        return 1;
+      }
+    }
     case 'acceptance': {
       // The node key lives next to the .env: the probe signs with it (an agent in enforce mode needs that).
       if (!process.env['AGENT_INSTALL_DIR'] && cli.envFile) process.env['AGENT_INSTALL_DIR'] = dirname(resolve(cli.envFile));
@@ -83,10 +99,13 @@ export async function main(argv: string[]): Promise<number | null> {
       else console.log(result.ok ? 'Native agent health and heartbeat accepted.' : `Native agent acceptance failed: ${result.reason}`);
       return result.ok ? 0 : 1;
     }
-    case 'start':
+    case 'start': {
       if (cli.rest.length > 0) return fail(`unexpected argument for start: ${cli.rest[0]}`);
+      const { assertNoNativeSnapshotReservation } = await import('./native-snapshot/reservation.js');
+      await assertNoNativeSnapshotReservation();
       await import('./start.js');
       return null;
+    }
     case 'env-schema': {
       const { buildEnvSchemaDocument } = await import('./env-catalog.js');
       console.log(JSON.stringify(buildEnvSchemaDocument(), null, 2));

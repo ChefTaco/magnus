@@ -292,6 +292,15 @@ For adopting Emberfold without replacing the existing runtime, see
 bundles the exact context adapter and engine; managed staging verifies continuity
 in isolated data before activation exercises an actual old-runtime rollback.
 
+## Native profile backup and restore
+
+The root-only `native-snapshot` CLI dynamically inventories managed Ardent profiles and captures
+their complete stopped state with the shared runtime and generated service files. It validates
+staged restores before promotion and preserves uncertain work without replay. The caller owns a
+reversible Control API admission fence; normal daemon startup refuses a held snapshot reservation.
+See [stopped native profile snapshots](../../docs/NATIVE_SNAPSHOTS.md) for commands, protected storage,
+restore pins and failure recovery.
+
 ## Development
 
 ```bash

@@ -7,6 +7,16 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Added
+
+- A root-only native snapshot CLI discovers every managed Ardent profile, captures complete
+  stopped profile/runtime state, verifies protected bundles, and stages same-host restores before
+  promotion. Source service enablement and initial active state are retained. Pending or uncertain
+  work stays preserved and blocks activation; interrupted sessions keep their recovery journal.
+  SQLite checks use private database/WAL copies without touching source sidecars. An explicit,
+  pinned recovery command can re-observe a refused initial quiescence while retaining its exact
+  failed journal; it never restarts work or replays capture or restore.
+
 ### Fixed
 
 - Node software version checks use an authenticated read-only metadata endpoint instead of a
