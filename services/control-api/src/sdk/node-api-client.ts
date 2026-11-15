@@ -9,7 +9,7 @@ import { nativeCompletionDescriptor, nativeCompletionResourceKey } from '../secu
 import { COMMAND_COMPLETION_REGISTRY, COMMAND_COMPLETION_REGISTRY_SHA256, commandCompletionDescriptor } from '../security/command-completion-registry.js';
 import { commandReconciliationSchema } from '../schemas/command-reconciliation.js';
 import { admitResourceCommand, markResourceDispatched, failResourceCommand, settleResourceResult, settleResourceReconciliation, type ResourceAdmission, type ResourceCommandContext } from '../services/command-resource-leases.js';
-import { commandFenceSchema, commandResultSchema } from '../schemas/node-responses.js';
+import { commandFenceSchema, commandResultSchema, softwareStatusResponseSchema } from '../schemas/node-responses.js';
 import { advanceCommandFence } from '../services/command-fence-repair.js';
 import type { CronEnrollmentStage, ManagedCronIdentity, ManagedCronSpec, SchedulerSourceSettlement } from '../schemas/managed-cron.js';
 import { commandRequestDigest, type CommandRequest } from '../security/command-request.js';
@@ -460,6 +460,17 @@ export class NodeApiClient {
 
   async collectHealth(): Promise<ApiResponse<HealthSnapshot>> {
     return this.api.get('health/collect').json();
+  }
+
+  async softwareStatus(): Promise<z.output<typeof softwareStatusResponseSchema>> {
+    try {
+      return softwareStatusResponseSchema.parse(await this.api.get('health/software', { retry: 0, timeout: 5000 }).json());
+    } catch (error) {
+      // no-reason-needed: old agents lack this read; upstream diagnostics may quote private metadata, so return fixed guidance.
+      if (error instanceof HTTPError && error.response.status === 404)
+        throw new HttpError(409, 'SOFTWARE_STATUS_UNAVAILABLE', 'Update the node agent to read software metadata. No command was executed.');
+      throw new HttpError(503, 'SOFTWARE_STATUS_UNAVAILABLE', 'Software metadata could not be read from this node. No command was executed.');
+    }
   }
 
   async enableSystemUpdates(): Promise<ApiResponse<SystemUpdateInfo>> {

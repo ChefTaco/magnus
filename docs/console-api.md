@@ -10,7 +10,7 @@ moved without updating it.
 
 | Class | Meaning | Rows | At the ingress |
 |---|---|---|---|
-| `browser` | A person's console drives it with a user token | 155 | Allow the exact method and path |
+| `browser` | A person's console drives it with a user token | 156 | Allow the exact method and path |
 | `machine` | Agents, services and integrations, with their own credentials | 86 | Deny |
 | `exclude` | Reachable with a user token, but no console needs it, or it was written for a server-side caller | 149 | Deny until a feature needs it and it is reviewed |
 | `retired` | Always answers 404 or 410 | 64 | Deny |
@@ -265,6 +265,20 @@ no `success` envelope:
 - Any role may read the feed, as it may read notifications. Ardent notifications are listed for `ADMIN`
   only, as on the Ardent routes. A linked service identity cannot reach it.
 
+## Read-only software status
+
+`GET /api/v1/nodes/:nodeId/software` is available to any authenticated node reader. It reads
+the running Node.js and agent versions, npm package metadata, and fixed installed-package
+metadata for Python, Redis tools/server, Docker and Tailscale. Package-manager versions include
+the distribution revision; unavailable metadata is `null`. It executes no discovered software,
+login shell or generic command and acquires no command owner.
+
+`packageUpdates` reports only the local APT cache: `pending`, `supported`,
+`source: "local-package-cache"`, and `cacheRefreshedAt` from its last successful refresh stamp,
+or `null` when that time is unknown. It neither refreshes repositories nor installs packages.
+Older agents report `SOFTWARE_STATUS_UNAVAILABLE` with update guidance; callers must never fall
+back to a shell probe. Explicit package upgrades retain their separate governed mutation flow.
+
 ## Web terminal
 
 No route on this server offers a terminal, and `POST /api/v1/terminal/ticket` stays retired, so this
@@ -433,6 +447,7 @@ unless these rows change. `POST /api/v1/hermes/deploy` is retired and always ans
 | GET | `/api/v1/nodes/:nodeId/health` | browser | `user:any` | yes |
 | GET | `/api/v1/nodes/:nodeId/health/history` | browser | `user:any` | yes |
 | GET | `/api/v1/nodes/:nodeId/health/timeseries` | browser | `user:any` | yes |
+| GET | `/api/v1/nodes/:nodeId/software` | browser | `user:any` | yes |
 | POST | `/api/v1/nodes/:nodeId/system-updates/enable` | browser | `user:ADMIN\|OPERATOR` | yes |
 | POST | `/api/v1/nodes/register` | browser | `user:ADMIN\|OPERATOR` | yes |
 | GET | `/api/v1/nodes/system-updates/summary` | browser | `user:any` | yes |

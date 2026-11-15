@@ -1,8 +1,11 @@
 import { Hono } from 'hono';
 import { collectSystemHealth } from './health-collector.js';
 import { enableSystemUpdates } from './system-updates.js';
+import { collectSoftwareStatus } from './software-status.js';
 
 export const healthRoutes = new Hono();
+
+healthRoutes.get('/software', async c => c.json({ success: true, data: await collectSoftwareStatus() }));
 
 // ── Collect and return full health snapshot ──
 healthRoutes.get('/collect', async (c) => {

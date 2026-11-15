@@ -92,3 +92,13 @@ export const heartbeatHealthSchema = z.object({
   cockpitAvailable: z.boolean().optional().default(false),
   source: z.string().optional().default('system-probe'),
 });
+/** Fixed read-only package metadata from the node, never generic command output. */
+export const softwareStatusSchema = z.object({
+  checkedAt: z.string().datetime(),
+  versions: z.object({ node: z.string().max(128).nullable(), npm: z.string().max(128).nullable(),
+    python3: z.string().max(128).nullable(), redis: z.string().max(128).nullable(), docker: z.string().max(128).nullable(),
+    tailscale: z.string().max(128).nullable(), 'magnus-agent': z.string().max(128).nullable() }).strict(),
+  packageUpdates: z.object({ supported: z.boolean(), pending: z.number().int().nonnegative().nullable(),
+    source: z.literal('local-package-cache'), cacheRefreshedAt: z.string().datetime().nullable() }).strict(),
+}).strict();
+export const softwareStatusResponseSchema = z.object({ success: z.literal(true), data: softwareStatusSchema });

@@ -7,6 +7,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Hono } from 'hono';
+import { createHmac, randomUUID } from 'node:crypto';
+import { managedTerminalReceiptPayload, type ManagedTerminalReceipt } from '@hivemagnus/magnus-contracts';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as wire from './security/node-request-auth.js';
 import * as evidence from './security/node-evidence.js';
@@ -29,6 +31,7 @@ const client = await import('./node-auth.js');
 const enrollment = await import('./node-enrollment.js');
 const { markLocalDispatch, nodeAuthMiddleware } = await import('./middleware.js');
 const signing = await import('./security/evidence-signing.js');
+const terminal = await import('./executors/managed-terminal.js');
 const { probeAgentAcceptance, selfSignedHealthCheckHeaders } = await import('./acceptance.js');
 const { logger } = await import('./utils/logger.js');
 for (const level of ['info', 'warn', 'error', 'debug'] as const) vi.spyOn(logger, level).mockImplementation(() => undefined);
@@ -164,6 +167,62 @@ describe('agent-side enforce', () => {
 
 describe('signed evidence on the agent', () => {
   const result = { commandId: 'cmd-1', exitCode: 0, stdout: 'ok', stderr: '', durationMs: 1, truncated: false, signature: 'a'.repeat(64) };
+
+  function terminalReceipt(): ManagedTerminalReceipt {
+    const unit = 'magnus-terminal-' + 'a'.repeat(64) + '.service';
+    const unsigned = { workId: randomUUID(), ownerId: randomUUID(), nodeId: 'node-a', nodeFqdn: 'node-a.example.com',
+      epoch: 1, barrierId: randomUUID(), operationSha256: 'a'.repeat(64), requestSha256: 'b'.repeat(64), fence: '1',
+      deadline: Date.now() + 60000, version: 1 as const, boundary: 'restricted-terminal-process-v1' as const,
+      bootId: randomUUID(), unit, invocationId: 'b'.repeat(32), cgroup: '/system.slice/' + unit,
+      startedAt: Date.now() - 1000, terminalAt: Date.now(), groupEmpty: true as const };
+    return { ...unsigned, signature: createHmac('sha256', 'synthetic-original-terminal-result-key').update(managedTerminalReceiptPayload(unsigned)).digest('hex') };
+  }
+
+  it('signs retained terminal completion for its node without changing the stored receipt or HMAC', async () => {
+    const receipt = terminalReceipt(); const original = JSON.stringify(receipt);
+    await bind();
+    expect(terminal.withTerminalReceiptEvidence(receipt)).toEqual(receipt);
+    enrollment.onHeartbeatAcknowledged({ supported: true, mode: 'enforce', method: 'signature', evidence: 1 });
+    identity.resetNodeIdentityCache();
+    const bound = identity.boundNodeIdentity()!;
+    const signed = terminal.withTerminalReceiptEvidence(receipt);
+    expect(signed.signature).toBe(receipt.signature);
+    expect(JSON.stringify(receipt)).toBe(original);
+    const payload = managedTerminalReceiptPayload(receipt);
+    expect(evidence.verifyNodeEvidence('terminal-receipt', { signature: signed.nodeSignature!, publicKey: bound.publicKey, expectedNodeId: 'node-a', payload })).toEqual({ ok: true });
+    expect(evidence.verifyNodeEvidence('terminal-receipt', { signature: signed.nodeSignature!, publicKey: bound.publicKey, expectedNodeId: 'node-other', payload }).ok).toBe(false);
+    expect(evidence.verifyNodeEvidence('terminal-receipt', { signature: signed.nodeSignature!, publicKey: bound.publicKey, expectedNodeId: 'node-a',
+      payload: managedTerminalReceiptPayload({ ...receipt, terminalAt: receipt.terminalAt + 1 }) }).ok).toBe(false);
+    enrollment.onHeartbeatAcknowledged({ supported: true, mode: 'compat', method: 'signature' });
+    identity.resetNodeIdentityCache();
+    expect(terminal.withTerminalReceiptEvidence(signed)).toEqual(receipt);
+  });
+
+  it('retries only the exact retained terminal receipt after a lost acknowledgement', async () => {
+    await bind();
+    enrollment.onHeartbeatAcknowledged({ supported: true, mode: 'enforce', method: 'signature', evidence: 1 });
+    identity.resetNodeIdentityCache();
+    const bound = identity.boundNodeIdentity()!; const receipt = terminalReceipt(); const original = JSON.stringify(receipt);
+    const request = vi.fn().mockRejectedValueOnce(new Error('synthetic lost acknowledgement')).mockResolvedValue({ state: 'released' });
+    const service = new terminal.ManagedTerminals('terminal', request);
+    const internals = service as unknown as { settle: (intent: { receipt: ManagedTerminalReceipt; settled: boolean }) => Promise<void>; save: (intent: unknown) => Promise<void> };
+    const save = vi.spyOn(internals, 'save').mockResolvedValue();
+    const intent = { receipt, settled: false };
+    await expect(internals.settle(intent)).rejects.toThrow('synthetic lost acknowledgement');
+    expect(intent.settled).toBe(false); expect(save).not.toHaveBeenCalled();
+    await internals.settle(intent);
+    expect(intent.settled).toBe(true); expect(save).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledTimes(2);
+    for (const [path, value] of request.mock.calls) {
+      expect(path).toBe('terminal-receipt');
+      expect(value.signature).toBe(receipt.signature);
+      expect(managedTerminalReceiptPayload(value)).toBe(managedTerminalReceiptPayload(receipt));
+      expect(evidence.verifyNodeEvidence('terminal-receipt', { signature: value.nodeSignature, publicKey: bound.publicKey, expectedNodeId: 'node-a',
+        payload: managedTerminalReceiptPayload(receipt) })).toEqual({ ok: true });
+    }
+    expect(JSON.stringify(receipt)).toBe(original);
+    save.mockRestore();
+  });
 
   it('signs evidence only once the server says it verifies it, and stops after a server downgrade', async () => {
     await bind();

@@ -1025,6 +1025,30 @@ const paths: Record<string, Record<string, unknown>> = {
       },
     },
   },
+  '/nodes/{nodeId}/software': {
+    get: {
+      tags: ['Nodes'],
+      summary: 'Read node software versions',
+      description: 'Reads fixed installed-package metadata and the running Node.js and Magnus agent versions. Executes no software version binaries, shell or generic command. Older agents report SOFTWARE_STATUS_UNAVAILABLE.',
+      security: apiSecretAuth,
+      parameters: [pp('nodeId', 'Node ID')],
+      responses: {
+        200: success('Software metadata', { type: 'object', required: ['checkedAt', 'versions', 'packageUpdates'], properties: {
+          checkedAt: { type: 'string', format: 'date-time' },
+          versions: { type: 'object', required: ['node', 'npm', 'python3', 'redis', 'docker', 'tailscale', 'magnus-agent'],
+            properties: Object.fromEntries(['node', 'npm', 'python3', 'redis', 'docker', 'tailscale', 'magnus-agent'].map(name => [name, { type: ['string', 'null'], maxLength: 128 }])), additionalProperties: false },
+          packageUpdates: { type: 'object', required: ['supported', 'pending', 'source', 'cacheRefreshedAt'], properties: {
+            supported: { type: 'boolean' }, pending: { type: ['integer', 'null'], minimum: 0 },
+            source: { type: 'string', enum: ['local-package-cache'] }, cacheRefreshedAt: { type: ['string', 'null'], format: 'date-time' },
+          }, additionalProperties: false },
+        }, additionalProperties: false }),
+        401: err401,
+        404: err404,
+        409: err409,
+        503: { description: 'Software metadata is unavailable from this node' },
+      },
+    },
+  },
   '/nodes/{nodeId}/gpu': {
     get: {
       tags: ['Nodes'],

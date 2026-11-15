@@ -4,10 +4,21 @@ import { readFileSync } from 'node:fs';
 import {
   agentActorIdSchema, agentIdentityResponseSchema, agentRefSchema,
   consoleSessionResponseSchema, cronUpdateResponseSchema, fleetReadinessResponseSchema, magnusBrowserContractVersion,
-  magnusBrowserResponseSchema, magnusBrowserRoute, magnusBrowserRoutes, nodeListItemSchema, registerNodeResponseSchema, roleSchema,
+  magnusBrowserResponseSchema, magnusBrowserRoute, magnusBrowserRoutes, nodeListItemSchema, nodeSoftwareResponseSchema, registerNodeResponseSchema, roleSchema,
   UPGRADE_REMEDIES, upgradeFailureClass, upgradeRemedy,
 } from '../dist/browser.js';
 import * as remedySource from '../dist/upgrade-remedies.js';
+
+test('software status is an authenticated metadata read with explicit missing and cached package data', () => {
+  const route = magnusBrowserRoute('/nodes/node-a/software', 'GET');
+  assert.deepEqual(route.roles, ['ADMIN', 'OPERATOR', 'VIEWER']);
+  const value = { success: true, data: { checkedAt: '2026-11-01T00:00:00.000Z', versions: { node: 'v24.22.3', npm: null,
+    python3: null, redis: null, docker: null, tailscale: null, 'magnus-agent': '3.0.3' },
+    packageUpdates: { supported: true, pending: 2, source: 'local-package-cache', cacheRefreshedAt: null } } };
+  assert.deepEqual(nodeSoftwareResponseSchema.parse(value), value);
+  assert.throws(() => nodeSoftwareResponseSchema.parse({ ...value, data: { ...value.data, token: 'obviously-fake-token' } }));
+  assert.throws(() => nodeSoftwareResponseSchema.parse({ ...value, data: { ...value.data, packageUpdates: { ...value.data.packageUpdates, source: 'live-refresh' } } }));
+});
 
 test('imports only zod', () => {
   const source = readFileSync(new URL('../src/browser.ts', import.meta.url), 'utf8');

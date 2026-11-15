@@ -26,6 +26,7 @@ import { z } from 'zod';
 import { credentialDetail, credentialView, issueEnrollmentToken, NODE_CREDENTIAL_REASON_MAX, resetNodeCredentials, revokeNodeCredentials } from '../services/node-credential-service.js';
 import { enforceIdempotencyFromHeader } from '../utils/idempotency.js';
 import { nodeCredentialStore } from '../services/node-credential-store.js';
+import { nodeSoftwareRouter } from './nodes-software.js';
 import {
   parseTailscaleNodeKeyPosture,
   summarizeTailscaleNodeKeys,
@@ -170,6 +171,7 @@ export const nodesRouter = new Hono<AppVariables>();
 
 // All routes require auth
 nodesRouter.use('*', authMiddleware);
+nodesRouter.route('/', nodeSoftwareRouter);
 
 // ── List nodes ──
 nodesRouter.get('/', async (c) => {

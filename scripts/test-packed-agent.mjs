@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -15,6 +16,11 @@ test('omitting development packages still rejects an inconsistent development gr
   execFileSync('tar', ['-xzf', agent, '-C', work]);
   const lockPath = join(work, 'package/npm-shrinkwrap.json');
   const lock = JSON.parse(readFileSync(lockPath));
+  // This disposable artifact uses the local contracts pack. Keep that fixture
+  // binding local; source-only contract changes must not rewrite the published
+  // package's integrity in the repository merely to reach the graph assertion.
+  lock.packages['node_modules/@hivemagnus/magnus-contracts'].integrity =
+    'sha512-' + createHash('sha512').update(readFileSync(contracts)).digest('base64');
   // Reproduce 2.3.3: a workspace override selected nanoid below postcss's
   // standalone requirement. npm validates this graph even with --omit=dev.
   const nanoid = lock.packages['node_modules/postcss/node_modules/nanoid'];

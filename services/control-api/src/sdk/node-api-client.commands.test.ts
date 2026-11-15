@@ -41,6 +41,33 @@ function serve(response: unknown, capability = 1) {
 }
 afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); mocks.admit.mockResolvedValue(null); });
 
+describe('read-only software metadata', () => {
+  const data = { checkedAt: '2026-11-01T00:00:00.000Z', versions: { node: 'v24.22.3', npm: null, python3: null,
+    redis: null, docker: null, tailscale: null, 'magnus-agent': '3.0.3' },
+    packageUpdates: { supported: true, pending: 2, source: 'local-package-cache', cacheRefreshedAt: null } };
+  it('uses only the fixed metadata read and allocates no command owner', async () => {
+    const fetch = serve(data);
+    expect((await client().softwareStatus()).data).toEqual(data);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0]![0].url).toBe('http://node.invalid/api/v1/health/software');
+    expect(fetch.mock.calls[0]![0].method).toBe('GET');
+    expect(mocks.admit).not.toHaveBeenCalled();
+    expect(mocks.mark).not.toHaveBeenCalled();
+  });
+  it('gives update guidance for older agents without dispatching a shell fallback', async () => {
+    const fetch = vi.fn(async () => Response.json({ error: 'not found' }, { status: 404 }));
+    vi.stubGlobal('fetch', fetch);
+    await expect(client().softwareStatus()).rejects.toMatchObject({ status: 409, code: 'SOFTWARE_STATUS_UNAVAILABLE' });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(mocks.admit).not.toHaveBeenCalled();
+  });
+  it('refuses malformed or secret-bearing software responses', async () => {
+    serve({ ...data, versions: { ...data.versions, token: 'obviously-fake-token' } });
+    await expect(client().softwareStatus()).rejects.toMatchObject({ code: 'SOFTWARE_STATUS_UNAVAILABLE' });
+    expect(mocks.admit).not.toHaveBeenCalled();
+  });
+});
+
 it('dispatches enrolled Codex updates through the exact managed HTTP claim and settles only its signed response', async () => {
   mocks.admit.mockImplementation(async (_context, identity) => ({
     leaseId: 'codex-lease', commandId: identity.commandId, nodeId: 'fixture', nodeFqdn: 'node-1.example.com',

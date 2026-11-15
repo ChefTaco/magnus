@@ -7,6 +7,20 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Fixed
+
+- Node software version checks use an authenticated read-only metadata endpoint instead of a
+  generic shell command. The agent reports installed package metadata and its running Node.js
+  and agent versions without executing discovered software or package-update hooks. Older agents
+  return explicit update guidance; there is no command fallback. Package-update counts read only
+  the local APT cache and report its last successful refresh time when known; checking never
+  refreshes repositories or installs packages.
+- The node agent signs managed terminal completion receipts with its node key when sending them
+  to Magnus or returning them through the terminal relay. Closing a restricted terminal no longer
+  leaves its verified completion held by a server that requires node signatures. Retained receipt
+  bytes and their original HMAC remain unchanged; retrying settlement after an interruption signs
+  the same completion evidence without reopening the shell.
+
 ## [3.0.3] - 2026-11-15
 
 ### Fixed

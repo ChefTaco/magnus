@@ -499,6 +499,17 @@ export const healthSnapshotSchema = z.object({
 // services/control-api/src/routes/nodes.ts (404 NOT_FOUND when the node has no snapshot)
 export const nodeHealthResponseSchema = ok(healthSnapshotSchema);
 
+/** Fixed package metadata reads; unavailable entries are null. No software binary is executed. */
+export const softwareStatusSchema = z.object({
+  checkedAt: z.string().datetime(),
+  versions: z.object({ node: z.string().max(128).nullable(), npm: z.string().max(128).nullable(),
+    python3: z.string().max(128).nullable(), redis: z.string().max(128).nullable(), docker: z.string().max(128).nullable(),
+    tailscale: z.string().max(128).nullable(), 'magnus-agent': z.string().max(128).nullable() }).strict(),
+  packageUpdates: z.object({ supported: z.boolean(), pending: z.number().int().nonnegative().nullable(),
+    source: z.literal('local-package-cache'), cacheRefreshedAt: z.string().datetime().nullable() }).strict(),
+}).strict();
+export const nodeSoftwareResponseSchema = ok(softwareStatusSchema);
+
 // services/control-api/src/routes/nodes.ts (query; limit defaults to 100 and is clamped to 500)
 export const nodeHealthHistoryQuerySchema = z.object({
   limit: z.coerce.number().optional(),
@@ -3215,6 +3226,7 @@ export const magnusBrowserRoutes: readonly MagnusBrowserRoute[] = [
   { method: 'POST', path: '/node-credentials/pending-bindings/{id}/approve', request: z.object({}).strict(), response: pendingBindingDecisionResponseSchema, roles: ADMIN_ONLY, note: 'Compare keyFingerprint with `magnus-agent identity show` on the host first. 409 when the node has a key by now or in enforce mode, 410 after seven days without a request.' },
   { method: 'POST', path: '/node-credentials/pending-bindings/{id}/reject', request: pendingBindingRejectRequestSchema, response: pendingBindingDecisionResponseSchema, roles: ADMIN_ONLY },
   { method: 'GET', path: '/nodes/{nodeId}/health', response: nodeHealthResponseSchema, roles: ANY_ROLE, note: '404 when the node has no snapshot. For a list, read health from GET /nodes.' },
+  { method: 'GET', path: '/nodes/{nodeId}/software', response: nodeSoftwareResponseSchema, roles: ANY_ROLE, note: 'Fixed read-only software metadata. Older agents report SOFTWARE_STATUS_UNAVAILABLE; never fall back to command execution.' },
   { method: 'GET', path: '/nodes/{nodeId}/health/history', query: nodeHealthHistoryQuerySchema, response: nodeHealthHistoryResponseSchema, roles: ANY_ROLE },
   { method: 'GET', path: '/nodes/{nodeId}/health/timeseries', query: nodeHealthTimeseriesQuerySchema, response: nodeHealthTimeseriesResponseSchema, roles: ANY_ROLE },
   { method: 'GET', path: '/health/{nodeId}/forecast', query: nodeForecastQuerySchema, response: nodeForecastResponseSchema, roles: ANY_ROLE },

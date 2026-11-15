@@ -1,6 +1,7 @@
 /** Restricted PTYs live in systemd cgroups. Socket closure is never completion evidence. */
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { resultSigningKey } from '../security/local-evidence-keys.js';
+import { nodeEvidenceFields } from '../security/evidence-signing.js';
 import { promisify } from 'node:util';
 import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
@@ -71,6 +72,12 @@ export function terminalFailureReason(error: unknown): string {
   return error instanceof Error ? reasons[error.message] ?? 'authority-or-supervision-unavailable' : 'unknown-failure';
 }
 
+/** Retained HMAC receipts stay immutable; attach the current node key only on transmission. */
+export function withTerminalReceiptEvidence(receipt: ManagedTerminalReceipt): ManagedTerminalReceipt {
+  const { signature, nodeSignature: _stale, ...unsigned } = receipt;
+  return { ...unsigned, signature, ...nodeEvidenceFields('terminal-receipt', managedTerminalReceiptPayload(unsigned)) };
+}
+
 async function authorityRequest(path: string, body: unknown): Promise<Record<string, unknown>> {
   const response = await nodeApiFetch(CONTROL_API_URL.replace(/\/$/, '') + '/api/v1/resource-leases/enrollment/' + path,
     { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(5000),
@@ -133,7 +140,7 @@ export class ManagedTerminals {
   }
   private async settle(intent: Intent) {
     if (intent.receipt && !intent.settled) {
-      const result = await this.request('terminal-receipt', intent.receipt);
+      const result = await this.request('terminal-receipt', withTerminalReceiptEvidence(intent.receipt));
       if (result['state'] !== 'released') throw new Error('Terminal settlement not acknowledged');
       intent.settled = true; await this.save(intent);
     }
@@ -241,9 +248,9 @@ export class ManagedTerminals {
       const first = live.chunks.shift() ?? Buffer.alloc(0); const chunk = first.subarray(0, 24 * 1024);
       if (first.length > chunk.length) live.chunks.unshift(first.subarray(chunk.length));
       live.bytes -= chunk.length; if (live.bytes < MAX_BUFFER / 2) live.child?.stdout.resume();
-      return { state: live.intent.receipt ? 'completed' : 'running', dataBase64: chunk.toString('base64'), ...(live.intent.receipt ? { receipt: live.intent.receipt } : {}) };
+      return { state: live.intent.receipt ? 'completed' : 'running', dataBase64: chunk.toString('base64'), ...(live.intent.receipt ? { receipt: withTerminalReceiptEvidence(live.intent.receipt) } : {}) };
     }
-    return { state: live.intent.receipt ? 'completed' : 'running', ...(live.intent.receipt ? { receipt: live.intent.receipt } : {}) };
+    return { state: live.intent.receipt ? 'completed' : 'running', ...(live.intent.receipt ? { receipt: withTerminalReceiptEvidence(live.intent.receipt) } : {}) };
   }
 }
 
