@@ -43,14 +43,14 @@
   },
   "peerDependencies": {
     "@hivemagnus/hive-common": "^0.4.0",
-    "jose": "^6.2.13",
+    "jose": "^6.2.17",
     "zod": "^4.6.7"
   },
   "devDependencies": {
     "@hivemagnus/hive-common": "^0.4.0",
     "@types/node": "^24.19.2",
     "typescript": "^6.0.3",
-    "jose": "^6.2.13",
+    "jose": "^6.2.17",
     "zod": "^4.6.7"
   }
 }
