@@ -7,6 +7,12 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Changed
+
+- Update runtime dependencies: `@hono/node-server` 2.1.8 (server, fleet gateway and agent),
+  `dotenv` 18.0.10, `jose` 6.2.17, `ws` 8.22.2, `bullmq` 6.7.5 and `next` 16.4.6. The root
+  `@hono/node-server` override and the agent's standalone shrinkwrap now pin 2.1.8.
+
 ## [3.1.0] - 2026-11-15
 
 ### Added

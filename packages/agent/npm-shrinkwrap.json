@@ -10,8 +10,8 @@
       "license": "Apache-2.0",
       "dependencies": {
         "@hivemagnus/magnus-contracts": "3.1.0",
-        "@hono/node-server": "^2.1.6",
-        "dotenv": "^18.0.9",
+        "@hono/node-server": "^2.1.8",
+        "dotenv": "^18.0.10",
         "fast-xml-parser": "5.12.0",
         "hono": "^4.13.18",
         "ky": "^2.2.0",
@@ -641,9 +641,9 @@
       }
     },
     "node_modules/@hono/node-server": {
-      "version": "2.1.6",
-      "resolved": "https://registry.npmjs.org/@hono/node-server/-/node-server-2.1.6.tgz",
-      "integrity": "sha512-p/KH9MnfNcsm3sR6x4lNgm5j+QN4Et8srKredl9DZfXiyZ1UQ3aQ2YVpFLbqktYN5JI+DB+VZFKM2PqE5hLKjQ==",
+      "version": "2.1.8",
+      "resolved": "https://registry.npmjs.org/@hono/node-server/-/node-server-2.1.8.tgz",
+      "integrity": "sha512-jdf7FHh6A1lzjpHHQUgxsg2GeER2vMetnAOfeActzcoli6jamlK+NAwL6Dsr5Fl3BS3tYUQzCdtZjU8Qxv7bEA==",
       "license": "MIT",
       "engines": {
         "node": ">=20"
@@ -1659,12 +1659,12 @@
       "license": "MIT"
     },
     "node_modules/dotenv": {
-      "version": "18.0.9",
-      "resolved": "https://registry.npmjs.org/dotenv/-/dotenv-18.0.9.tgz",
-      "integrity": "sha512-3fVOW4cB02R066PUSwn8O4TJyz9NckQl7F81blIbaq9jKBm2tSmOKky7ZHIXzGvkVPXCSn6jkpziBPZdGFs8Tw==",
+      "version": "18.0.10",
+      "resolved": "https://registry.npmjs.org/dotenv/-/dotenv-18.0.10.tgz",
+      "integrity": "sha512-89FAA1xchzK2mxVWdr5F/0rldwiueXs6zJM86rO66EzekR1iBdiXRthyG+m5GvkJaFH3C2LESzamTkgndmLT2A==",
       "license": "BSD-2-Clause",
       "bin": {
-        "dotenv": "dist/index.cjs"
+        "dotenv": "dist/cli.cjs"
       },
       "engines": {
         "node": ">=12"
