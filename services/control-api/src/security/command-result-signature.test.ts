@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   commandResultSigningPayload,
   type SignedCommandResult,
+  verifyCommandEvidence,
   verifyCommandResultSignature,
 } from './command-result-signature.js';
 
@@ -45,5 +46,20 @@ describe('command result verification', () => {
     } as SignedCommandResult;
     expect(verifyCommandResultSignature(previousResult, secret, previous)).toBe(true);
     expect(verifyCommandResultSignature(previousResult, secret, 'node-manager-purpose-secret-is-at-least-32-characters')).toBe(false);
+  });
+
+  it('verifies with the previous key alone, the shared key retired to RESULT_SIGNING_PREVIOUS_SECRET', () => {
+    const result = signed();
+    expect(verifyCommandResultSignature(result, '', secret)).toBe(true);
+    expect(verifyCommandResultSignature(result, '', 'another-previous-secret-is-at-least-32-characters')).toBe(false);
+    expect(verifyCommandResultSignature(result, '', '')).toBe(false);
+    expect(verifyCommandResultSignature(result, '', 'short')).toBe(false);
+    const payload = '{"domain":"magnus.command-refusal.v1"}';
+    const mac = createHmac('sha256', secret).update(payload).digest('hex');
+    expect(verifyCommandEvidence(payload, mac, '', secret)).toBe(true);
+    expect(verifyCommandEvidence(payload, mac, secret)).toBe(true);
+    expect(verifyCommandEvidence(payload, mac, '', '')).toBe(false);
+    expect(verifyCommandEvidence(payload + ' ', mac, '', secret)).toBe(false);
+    expect(verifyCommandEvidence(payload, mac.toUpperCase(), '', secret)).toBe(false);
   });
 });

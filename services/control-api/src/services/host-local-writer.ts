@@ -1,13 +1,12 @@
 /** Fresh, owner-signed proof of the node agent's one-way mutation drain.
  * A proof is only one independent writer class; it cannot transfer release
  * traffic or settle a retained unknown claim. */
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { canonical } from './resource-enrollment.js';
 import { getNodeBaseUrl } from '../utils/node-url.js';
-import { RESULT_SIGNING_SECRET } from '../utils/env.js';
 import { agentFetch } from './node-agent-auth.js';
-import type { NodeEvidencePolicy } from './node-evidence-policy.js';
+import { resultKeyHmac, type NodeEvidencePolicy } from './node-evidence-policy.js';
 import { evidenceSignatureSchema } from '../schemas/node-evidence.js';
 import { hostLocalWriterSigningPayload } from '../security/node-evidence.js';
 
@@ -36,9 +35,9 @@ export function verifyHostLocalWriterProof(raw: unknown, expected: {
     nodeFqdn: expected.nodeFqdn, epoch: expected.epoch, barrierId: expected.barrierId })).digest('hex');
   if (receipt.admissionFenceSha256 !== exactFence) return null;
   const payload = hostLocalWriterSigningPayload(receipt);
-  // The node key signs the proof; the shared result key is the fallback for older agents.
-  if (!policy.verify('host-local-writer', payload, nodeSignature, () => RESULT_SIGNING_SECRET.length >= 32
-    && timingSafeEqual(createHmac('sha256', RESULT_SIGNING_SECRET).update(payload).digest(), Buffer.from(signature, 'hex')))) return null;
+  // The node key signs the proof; the shared result key (or its previous value) is the fallback for
+  // agents without a key, outside enforce mode only.
+  if (!policy.verify('host-local-writer', payload, nodeSignature, resultKeyHmac(payload, signature))) return null;
   return { ownerReceiptSha256: createHash('sha256').update(canonical(parsed.data)).digest('hex'),
     admissionFenceSha256: receipt.admissionFenceSha256,
     mutationInventorySha256: receipt.mutationInventorySha256 };
@@ -61,10 +60,10 @@ async function boundedJson(response: Response): Promise<unknown> {
   } finally { await reader.cancel().catch(() => undefined); }
 }
 
+/** The agent signs the proof with its node key: fetching it needs no shared key on this server. */
 export async function fetchHostLocalWriterProof(node: { id?: string; ipAddress: string; port: number },
   nodeFqdn: string, nonce: string): Promise<unknown | null> {
   try {
-    if (RESULT_SIGNING_SECRET.length < 32) return null;
     const base = getNodeBaseUrl(node.ipAddress, node.port);
     if (new URL(base).protocol !== 'https:') return null;
     const url = new URL(base + '/api/v1/commands/host-local-writer-proof');

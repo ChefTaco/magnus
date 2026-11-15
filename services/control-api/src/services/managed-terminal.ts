@@ -1,4 +1,4 @@
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { managedTerminalAuthoritySchema, managedTerminalOperation, managedTerminalReceiptPayload,
   managedTerminalReceiptSchema, type ManagedTerminalAction } from '@hivemagnus/magnus-contracts';
 import { getDb } from '../db/index.js';
@@ -6,8 +6,7 @@ import { HttpError } from '../middleware/error-handler.js';
 import { lockResourceNode } from './resource-node-lock.js';
 import { assertNodeAdmissionOpen } from './admission-fence.js';
 import { getNodeBaseUrl } from '../utils/node-url.js';
-import { RESULT_SIGNING_SECRET } from '../utils/env.js';
-import { nodeEvidencePolicy } from './node-evidence-policy.js';
+import { nodeEvidencePolicy, resultKeyHmac } from './node-evidence-policy.js';
 import { agentFetch } from './node-agent-auth.js';
 import { hasFreshOnlineHealth } from './resource-node-health.js';
 
@@ -46,8 +45,7 @@ export async function settleManagedTerminal(raw: unknown) {
   const { signature, nodeSignature, ...unsigned } = receipt;
   const payload = managedTerminalReceiptPayload(unsigned);
   // The receipt names its node: the node key signs it, the shared result key only for older agents.
-  if (!(await nodeEvidencePolicy(receipt.nodeId)).verify('terminal-receipt', payload, nodeSignature, () => RESULT_SIGNING_SECRET.length >= 32
-    && timingSafeEqual(Buffer.from(signature, 'hex'), createHmac('sha256', RESULT_SIGNING_SECRET).update(payload).digest()))) fail();
+  if (!(await nodeEvidencePolicy(receipt.nodeId)).verify('terminal-receipt', payload, nodeSignature, resultKeyHmac(payload, signature))) fail();
   return getDb().$transaction(async tx => {
     await lockResourceNode(tx, receipt.nodeId);
     const work = await tx.resourceParticipantWork.findUnique({ where: { workId: receipt.workId } });

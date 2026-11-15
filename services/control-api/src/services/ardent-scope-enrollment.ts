@@ -5,11 +5,10 @@ import type { Prisma } from '../db/generated/prisma/client.js';
 import { getDb } from '../db/index.js';
 import { HttpError } from '../middleware/error-handler.js';
 import { apiDrainAttestationSchema, apiDrainAttestationSigningPayload, canonical,
-  assertDashboardStillAbsent, dashboardReceiptKey, drainReceiptSchema, enrollmentSigningPayload } from './resource-enrollment.js';
+  assertDashboardStillAbsent, drainReceiptSchema, enrollmentSigningPayload, verifiedDashboardReceipt } from './resource-enrollment.js';
 import { lockResourceNode, resourceNodeIdentity } from './resource-node-lock.js';
 import { reconciliationSecret } from './resource-participant-work.js';
-import { RESULT_SIGNING_SECRET } from '../utils/env.js';
-import { nodeEvidencePolicy } from './node-evidence-policy.js';
+import { nodeEvidencePolicy, resultKeyHmac } from './node-evidence-policy.js';
 
 type Tx = Prisma.TransactionClient;
 const PARTICIPANTS = ['agent', 'api', 'dashboard'] as const;
@@ -29,6 +28,9 @@ export const ardentScopeActivationSchema = z.object({
 export type ArdentScopeActivation = z.infer<typeof ardentScopeActivationSchema>;
 export function ardentScopeSigningPayload(value: Omit<ArdentScopeActivation, 'signature'>): string {
   return 'magnus.ardent-scope-activation.v1\n' + canonical(value);
+}
+function hmacOf(key: string, payload: string, signature: string): boolean {
+  return key.length >= 32 && timingSafeEqual(createHmac('sha256', key).update(payload).digest(), Buffer.from(signature, 'hex'));
 }
 function fail(): never {
   throw new HttpError(409, 'ARDENT_SCOPE_EVIDENCE_INVALID', 'Current reviewed Ardent scope evidence is required');
@@ -54,20 +56,30 @@ async function receiptHash(tx: Tx, nodeId: string, nodeFqdn: string, epoch: numb
   const ack = await tx.resourceDrainParticipant.findUnique({ where: { nodeId_participant: { nodeId, participant } } });
   if (!ack || ack.status !== 'verified' || ack.epoch !== epoch || ack.barrierId !== barrierId
     || ack.challengeExpiresAt.getTime() <= Date.now() || !ack.receiptJson) fail();
-  let receipt: z.infer<typeof drainReceiptSchema> | z.infer<typeof apiDrainAttestationSchema>;
-  try { receipt = participant === 'api' ? apiDrainAttestationSchema.parse(JSON.parse(ack.receiptJson))
-    : drainReceiptSchema.parse(JSON.parse(ack.receiptJson)); } catch { fail(); }
-  const { signature, nodeSignature, ...unsigned } = receipt as typeof receipt & { nodeSignature?: unknown };
-  if (participant === 'dashboard') await assertDashboardStillAbsent(tx, nodeId);
-  const key = participant === 'api' ? reconciliationSecret()
-    : participant === 'dashboard' ? dashboardReceiptKey() : RESULT_SIGNING_SECRET;
-  const payload = participant === 'api'
-    ? apiDrainAttestationSigningPayload(unsigned as Omit<z.infer<typeof apiDrainAttestationSchema>, 'signature'>)
-    : enrollmentSigningPayload(unsigned);
-  const hmac = () => key.length >= 32 && timingSafeEqual(createHmac('sha256', key).update(payload).digest(), Buffer.from(signature, 'hex'));
-  // Only the agent's receipt is node evidence (node key, or the shared result key for older agents).
-  const authentic = participant === 'agent'
-    ? (await nodeEvidencePolicy(nodeId)).verify('enrollment-drain', payload, nodeSignature, hmac) : nodeSignature === undefined && hmac();
+  let raw: unknown;
+  try { raw = JSON.parse(ack.receiptJson); } catch { fail(); }
+  let receipt: { participant: string; nodeId: string; nodeFqdn: string; epoch: number; barrierId: string; challengeId: string;
+    expiresAt: number; status: string; activeCount: number; unknownCount: number; evidenceSha256: string };
+  let authentic: boolean;
+  if (participant === 'dashboard') {
+    await assertDashboardStillAbsent(tx, nodeId);
+    // The console participant's HMAC, or (absent mode) this server's own signed finding.
+    const verified = verifiedDashboardReceipt(nodeId, raw);
+    if (!verified) fail();
+    receipt = verified; authentic = true;
+  } else {
+    let parsed: z.infer<typeof drainReceiptSchema> | z.infer<typeof apiDrainAttestationSchema>;
+    try { parsed = participant === 'api' ? apiDrainAttestationSchema.parse(raw) : drainReceiptSchema.parse(raw); } catch { fail(); }
+    const { signature, nodeSignature, ...unsigned } = parsed as typeof parsed & { nodeSignature?: unknown };
+    const payload = participant === 'api'
+      ? apiDrainAttestationSigningPayload(unsigned as Omit<z.infer<typeof apiDrainAttestationSchema>, 'signature'>)
+      : enrollmentSigningPayload(unsigned);
+    // Only the agent's receipt is node evidence (node key, or the shared result key for older agents).
+    authentic = participant === 'agent'
+      ? (await nodeEvidencePolicy(nodeId)).verify('enrollment-drain', payload, nodeSignature, resultKeyHmac(payload, signature))
+      : nodeSignature === undefined && hmacOf(reconciliationSecret(), payload, signature);
+    receipt = parsed;
+  }
   if (receipt.participant !== participant || receipt.nodeId !== nodeId || receipt.nodeFqdn !== nodeFqdn
     || receipt.epoch !== epoch || receipt.barrierId !== barrierId
     || receipt.challengeId !== ack.challengeId || receipt.expiresAt !== ack.challengeExpiresAt.getTime()

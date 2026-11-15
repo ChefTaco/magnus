@@ -125,6 +125,23 @@ describe('explicit uncertain-command reconciliation', () => {
     expect(await restarted.receipt(request.commandId)).toMatchObject({ state: 'reconciled', reconciliation: decision });
   });
 
+  it('reads a recorded decision with COMMAND_RECONCILIATION_PREVIOUS_SECRET, but accepts no new decision signed with it', async () => {
+    const request = input('uncertain-previous', '12');
+    await expect(ledger.execute(request, async () => { throw new Error('lost result'); })).rejects.toMatchObject({ code: 'OUTCOME_UNKNOWN' });
+    const decision = assertion(request);
+    await ledger.reconcile(decision);
+    // The shared key retired from this agent: only the verify-only previous slot holds it.
+    const reader = new CommandLedger(root, { resultSecret: authority.resultSecret, nodeFqdn: authority.nodeFqdn });
+    vi.stubEnv('COMMAND_RECONCILIATION_SECRET', '');
+    try {
+      await expect(reader.receipt(request.commandId)).rejects.toMatchObject({ code: 'INVALID_RECONCILIATION' });
+      vi.stubEnv('COMMAND_RECONCILIATION_PREVIOUS_SECRET', authority.reconciliationSecret);
+      expect(await reader.receipt(request.commandId)).toMatchObject({ state: 'reconciled', reconciliation: decision });
+      const other = input('uncertain-previous-2', '13');
+      await expect(reader.execute(other, async () => { throw new Error('lost result'); })).rejects.toMatchObject({ code: 'OUTCOME_UNKNOWN' });
+      await expect(reader.reconcile(assertion(other))).rejects.toMatchObject({ code: 'INVALID_RECONCILIATION' });
+    } finally { vi.unstubAllEnvs(); }
+  });
   it('cannot reconcile a live process, even with valid operator attestation', async () => {
     const request = input(); let resolve!: () => void, started!: () => void;
     const ready = new Promise<void>(r => { started = r; });

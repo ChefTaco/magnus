@@ -221,13 +221,16 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('durable enrollment and parti
       await addWork('released');
       await expect(service.assertDashboardStillAbsent(db as never, nodeId)).rejects.toMatchObject({ code: 'RESOURCE_DRAIN_INCOMPLETE' });
     });
-    it('absent evidence does not verify once the mode changes to a real gateway', async () => {
+    it('signs absent evidence with the server key, never a shared key, and it does not verify once the mode changes to a real gateway', async () => {
       await service.beginEnrollmentDrain(nodeId, 'fixture');
       expect(await service.refreshEnrollmentParticipant(nodeId, 'dashboard')).toMatchObject({ status: 'verified' });
       const ack = await db.resourceDrainParticipant.findUniqueOrThrow({ where: { nodeId_participant: { nodeId, participant: 'dashboard' } } });
-      const { signature, ...unsigned } = JSON.parse(ack.receiptJson!);
-      expect(signature).toBe(createHmac('sha256', resultKey).update(service.enrollmentSigningPayload(unsigned)).digest('hex'));
-      expect(signature).not.toBe(createHmac('sha256', dashboardKey).update(service.enrollmentSigningPayload(unsigned)).digest('hex'));
+      const stored = JSON.parse(ack.receiptJson!);
+      expect(stored).not.toHaveProperty('signature');
+      expect(stored.serverSignature).toMatchObject({ alg: 'ed25519', v: 1, nodeId });
+      expect(service.verifiedDashboardReceipt(nodeId, stored)).not.toBeNull();
+      vi.stubEnv('RESOURCE_ENROLLMENT_DASHBOARD_PARTICIPANT', ''); vi.stubEnv('RESOURCE_ENROLLMENT_DASHBOARD_SECRET', dashboardKey);
+      expect(service.verifiedDashboardReceipt(nodeId, stored)).toBeNull();
     });
   });
   it('rejects zero-count dashboard claims contradicted by central durable work', async () => {
@@ -311,8 +314,8 @@ try { const value = process.argv[2] === 'start' ? await startDashboardWork(proce
     await expect(service.completeEnrollment(nodeId)).rejects.toMatchObject({ code: 'RESOURCE_DRAIN_INCOMPLETE' });
     expect((await service.inspectEnrollment(nodeId)).state).toBe('draining');
   });
-  it.each(['gateway', 'absent'])('requires independent API and scheduler boundary reviews before one-way enrollment (console participant: %s)', async mode => {
-    vi.stubEnv('RESOURCE_ENROLLMENT_DASHBOARD_PARTICIPANT', mode === 'absent' ? 'absent' : '');
+  it.each(['gateway', 'absent', 'absent, finding stored by 3.0.1'])('requires independent API and scheduler boundary reviews before one-way enrollment (console participant: %s)', async mode => {
+    vi.stubEnv('RESOURCE_ENROLLMENT_DASHBOARD_PARTICIPANT', mode.startsWith('absent') ? 'absent' : '');
     const drain = await service.beginEnrollmentDrain(nodeId, 'fixture');
     const prepared = await service.refreshEnrollmentParticipant(nodeId, 'api');
     expect(prepared).toMatchObject({ participant: 'api', status: 'pending', reason: 'signed-reviewed-evidence-required' });
@@ -344,6 +347,12 @@ try { const value = process.argv[2] === 'start' ? await startDashboardWork(proce
     }));
     for (const participant of ['agent', 'dashboard'] as const)
       expect(await service.refreshEnrollmentParticipant(nodeId, participant)).toMatchObject({ status: 'verified' });
+    if (mode === 'absent, finding stored by 3.0.1') {
+      // The same finding as 3.0.1 stored it: an HMAC with the shared result key instead of the server signature.
+      const where = { nodeId_participant: { nodeId, participant: 'dashboard' } };
+      const { serverSignature: _serverSignature, ...unsigned } = JSON.parse((await db.resourceDrainParticipant.findUniqueOrThrow({ where })).receiptJson!);
+      await db.resourceDrainParticipant.update({ where, data: { receiptJson: JSON.stringify(sign(unsigned, resultKey)) } });
+    }
     expect(await service.refreshEnrollmentParticipant(nodeId, 'scheduler')).toMatchObject({ status: 'pending', reason: 'reviewed-boundary-required' });
     await expect(service.completeEnrollment(nodeId)).rejects.toMatchObject({ code: 'RESOURCE_DRAIN_INCOMPLETE' });
     const schedulerAck = await db.resourceDrainParticipant.findUniqueOrThrow({ where: { nodeId_participant: { nodeId, participant: 'scheduler' } } });

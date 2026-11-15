@@ -193,12 +193,20 @@ magnus-agent enroll --token-file <path|->         The same, reading the token fr
 magnus-agent identity show [--json]               Print the node id and key fingerprints (never the key)
 magnus-agent identity rotate                      Replace the node key
 magnus-agent identity reset                       Remove the node key and return to the shared node secret
+magnus-agent historical-settlements list [--json] [--check]
+                                                  How each stored historical-mutation settlement verifies
+magnus-agent historical-settlements reseal [--apply]
+                                                  (root) Re-MAC settlements signed with a shared key with the node-local keys
+magnus-agent historical-settlements prune --unverifiable [--with-records] [--apply]
+                                                  (root) Archive settlements no key of this agent verifies
 magnus-agent env-schema                           Print the configuration schema as JSON
 magnus-agent --help | --version
 ```
 
-Variables already set in the environment win over `--env-file`. The agent also
-reads `$AGENT_INSTALL_DIR/.env` (default `./.env`).
+Variables already set in the environment win over `--env-file`, which may be repeated (an earlier
+file wins). The agent also reads `$AGENT_INSTALL_DIR/.env` (default `./.env`). The
+`historical-settlements` commands are how an agent stops needing `COMMAND_RECONCILIATION_SECRET`; see
+[Retiring the shared keys](https://github.com/ChefTaco/magnus/blob/main/docs/NODE_CREDENTIALS.md#retiring-the-shared-keys).
 
 ## Configuration
 
@@ -211,6 +219,7 @@ and `magnus-agent env-schema` prints them as JSON.
 | `NODE_AUTH_MODE` | `enforce` (default from 3.0.0): once the node has a bound key, only requests signed by the pinned server key are accepted, and the agent sends only its own signature (see [agent-side enforce](https://github.com/ChefTaco/magnus/blob/main/docs/NODE_CREDENTIALS.md#agent-side-enforce)). `compat` and `warn` (deprecated) also accept the shared node secret |
 | `NODE_MANAGER_SECRET` | Deprecated shared node credential (32+ characters): only for an explicit `compat` or `warn`, or the automatic legacy upgrade of a 2.10.x fleet. The node key lives in `$AGENT_INSTALL_DIR/identity`; see [per-node credentials](https://github.com/ChefTaco/magnus/blob/main/docs/NODE_CREDENTIALS.md) |
 | `RESULT_SIGNING_SECRET` | Deprecated shared result key (32+ characters). Without it the agent MACs its own records with a node-local key; an upgraded agent keeps it, or moves it to `RESULT_SIGNING_PREVIOUS_SECRET`, so older records stay readable |
+| `COMMAND_RECONCILIATION_PREVIOUS_SECRET` | Verify-only previous value of the shared reconciliation key (3.0.2): historical settlements stored with it still verify until `historical-settlements reseal` moves them to the node-local keys |
 | `TLS_CERT_PATH` / `TLS_KEY_PATH` | Listener TLS, required in production |
 | `HOST_FQDN` | Host identity override (default `hostname --fqdn`) |
 | `NODE_MANAGER_PORT` / `NODE_MANAGER_BIND_HOST` | Listener port (default `4100`) and address |

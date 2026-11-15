@@ -20,12 +20,19 @@ Usage:
   magnus-agent identity show [--json]               Print this node's id and key fingerprints (never the key)
   magnus-agent identity rotate                      Replace the node key (signed with the key it replaces)
   magnus-agent identity reset                       Remove the node key and return to the shared node secret
+  magnus-agent historical-settlements list [--json] [--check]
+                                                    How each stored historical-mutation settlement verifies
+  magnus-agent historical-settlements reseal [--apply]
+                                                    (root) Re-MAC settlements signed with a shared key with the node-local keys
+  magnus-agent historical-settlements prune --unverifiable [--with-records] [--apply]
+                                                    (root) Archive settlements no key of this agent verifies
   magnus-agent --help | --version
 
 Options:
-  --env-file <path>  Load environment variables from a dotenv file first.
-                     Variables already set in the environment win. The agent
-                     also reads $AGENT_INSTALL_DIR/.env (default ./.env).
+  --env-file <path>  Load environment variables from a dotenv file first (may be
+                     repeated; an earlier file wins). Variables already set in the
+                     environment win. The agent also reads $AGENT_INSTALL_DIR/.env
+                     (default ./.env).
   -h, --help         Show this help.
   -v, --version      Print the version.
 
@@ -61,9 +68,9 @@ export async function main(argv: string[]): Promise<number | null> {
     if (runtime.status === 'fail') return fail(runtime.message);
   }
 
-  if (cli.envFile) {
-    const loaded = config({ path: resolve(cli.envFile), quiet: true });
-    if (loaded.error) return fail(`cannot read --env-file ${cli.envFile}: ${loaded.error.message}`);
+  for (const file of cli.envFiles) {
+    const loaded = config({ path: resolve(file), quiet: true });
+    if (loaded.error) return fail(`cannot read --env-file ${file}: ${loaded.error.message}`);
   }
 
   switch (cli.command) {
@@ -155,6 +162,23 @@ export async function main(argv: string[]): Promise<number | null> {
         return 0;
       }
       return fail('usage: magnus-agent identity show [--json] | rotate | reset');
+    }
+    case 'historical-settlements': {
+      // The same install directory, keys and barrier as the running agent (`--env-file` names its .env).
+      if (!process.env['AGENT_INSTALL_DIR'] && cli.envFile) process.env['AGENT_INSTALL_DIR'] = dirname(resolve(cli.envFile));
+      const installDir = resolve(process.env['AGENT_INSTALL_DIR'] ?? process.cwd());
+      process.env['AGENT_INSTALL_DIR'] = installDir;
+      config({ path: resolve(installDir, '.env'), quiet: true });
+      const { MutationBarrier } = await import('./executors/mutation-barrier.js');
+      const { localKey } = await import('./security/local-evidence-keys.js');
+      const { keepIdentityOwner, runHistoricalSettlements } = await import('./historical-settlements-cli.js');
+      return runHistoricalSettlements(cli.rest, { installDir, uid: process.getuid?.(),
+        barrier: new MutationBarrier(resolve(installDir, '.magnus/mutation-barrier')),
+        localKeys: create => {
+          const result = localKey('result', { create }); const reconciliation = localKey('reconciliation', { create });
+          if (create) keepIdentityOwner(installDir, ['local-result.key', 'local-reconciliation.key']);
+          return result && reconciliation ? { result, reconciliation } : null;
+        } });
     }
     case 'install-service': {
       const { installService } = await import('./upgrade/install-service.js');

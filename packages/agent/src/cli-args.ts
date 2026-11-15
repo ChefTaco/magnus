@@ -1,17 +1,19 @@
 /** Argument parsing for the `magnus-agent` CLI, kept free of side effects. */
-export interface ParsedCli { command: string; rest: string[]; envFile?: string; help: boolean; version: boolean }
+/** `envFile` is the first `--env-file`; `envFiles` all of them, in order (a variable set by an earlier one wins). */
+export interface ParsedCli { command: string; rest: string[]; envFile?: string; envFiles: string[]; help: boolean; version: boolean }
 
 export class UsageError extends Error {}
 
 export function parseCli(argv: string[]): ParsedCli {
-  const parsed: ParsedCli = { command: 'start', rest: [], help: false, version: false };
+  const parsed: ParsedCli = { command: 'start', rest: [], envFiles: [], help: false, version: false };
   let commandSeen = false;
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]!;
     if (arg === '--env-file' || arg.startsWith('--env-file=')) {
       const value = arg === '--env-file' ? argv[++index] : arg.slice('--env-file='.length);
       if (!value) throw new UsageError('--env-file needs a path');
-      parsed.envFile = value;
+      parsed.envFile ??= value;
+      parsed.envFiles.push(value);
       continue;
     }
     if (!commandSeen) {

@@ -1,0 +1,22 @@
+{
+  "summary": "Lets a fleet drop the last two shared node secrets. Server: the console drain finding it records for itself (RESOURCE_ENROLLMENT_DASHBOARD_PARTICIPANT=absent) is signed with the server Ed25519 key (keyId stored, verifies across rotation) instead of RESULT_SIGNING_SECRET, the host-local and OS scheduler writer proofs are fetched whether or not RESULT_SIGNING_SECRET is set (agents sign them with their node key), and evidence and findings stored with the shared key verify from RESULT_SIGNING_PREVIOUS_SECRET alone. Agent: COMMAND_RECONCILIATION_PREVIOUS_SECRET is a verify-only slot for historical-mutation settlements and recorded decisions; magnus-agent historical-settlements list | reseal | prune --unverifiable reports how each settlement verifies, re-MACs those signed with a shared key with the node-local keys, and archives those no key verifies to a root-only directory (dry run by default). No migrations. Mixes with 3.0.1 in both directions. See docs/NODE_CREDENTIALS.md, Retiring the shared keys.",
+  "breaking": false,
+  "minUpgradeFrom": "2.10.2",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [
+    {
+      "name": "RESULT_SIGNING_PREVIOUS_SECRET",
+      "component": "server",
+      "secret": true,
+      "description": "Verify-only previous value of RESULT_SIGNING_SECRET: evidence and console drain findings stored with it keep verifying; nothing new is signed with it. Move RESULT_SIGNING_SECRET here to retire the shared key."
+    },
+    {
+      "name": "COMMAND_RECONCILIATION_PREVIOUS_SECRET",
+      "component": "agent",
+      "secret": true,
+      "description": "Verify-only previous value of COMMAND_RECONCILIATION_SECRET: historical-mutation settlements and recorded decisions stored with it keep verifying; nothing new is signed with it. After magnus-agent historical-settlements reseal --apply it can be removed."
+    }
+  ],
+  "removedEnv": [],
+  "migrations": []
+}
