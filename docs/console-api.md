@@ -1,6 +1,6 @@
 # Console API route inventory
 
-[HiveXUI](https://github.com/ChefTaco/HiveXUI), the suite's static browser console, reaches the
+[HiveXUI](https://github.com/ChefTaco/HiveXUI), the suite's static browser UI, reaches the
 control API directly, through a same-origin ingress, with a short-lived Oathweave resource token. This inventory is the ingress allowlist. It covers every route
 mounted on the server, audited from the router files, and
 `services/control-api/src/routes/console-inventory.test.ts` fails when a route is added, removed or

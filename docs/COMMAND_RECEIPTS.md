@@ -61,11 +61,13 @@ and a signed assertion with these fields:
   `expiresAt`;
 - `disposition`: `effects_verified` or `no_effect_verified`;
 - `evidenceSha256`, `approvalRef` and an immutable `decisionId`;
-- the assertion's `expiresAt` (epoch milliseconds) and a lowercase hex `signature`.
+- the assertion's `expiresAt` (epoch milliseconds) and its signature (below).
 
-The signature is HMAC-SHA256 with `COMMAND_RECONCILIATION_SECRET` over the domain
-`magnus.command-reconciliation.v1` and the canonical JSON defined by
-`commandReconciliationSigningPayload` in the agent and the server SDK. A fresh assertion expires
+The payload is the canonical JSON defined by `commandReconciliationSigningPayload` in the agent and
+the server SDK, under the domain `magnus.command-reconciliation.v1`. An agent with a node key
+verifies `serverSignature`, the server key's signature for that node. The lowercase hex
+`signature`, HMAC-SHA256 with `COMMAND_RECONCILIATION_SECRET`, is only for agents without a node
+key under an explicit (deprecated) `NODE_AUTH_MODE=compat`. A fresh assertion expires
 within five minutes; a recorded attestation still verifies later.
 
 Before you sign, review evidence of what the command actually did (or that it did nothing) and

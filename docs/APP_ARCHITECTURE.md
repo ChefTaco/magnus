@@ -4,8 +4,8 @@ Magnus has three runtime parts: a browser console, an API server, and an agent o
 Linux host. Ardent is a separate agent runtime that Magnus can manage, and the skills catalogue is
 data the server publishes to hosts.
 
-There are two consoles. [HiveXUI](https://github.com/ChefTaco/HiveXUI) is the Hive:Magnus suite's
-console, a separate static application that calls the API directly with Oathweave resource tokens
+There are two browser UIs. [HiveXUI](https://github.com/ChefTaco/HiveXUI) is the Hive:Magnus suite's
+UI, a separate static application that calls the API directly with Oathweave resource tokens
 ([route inventory](console-api.md)). `apps/dashboard` remains for standalone installs, and is what
 the diagram and the Console section below describe. It will be deprecated once HiveXUI's Magnus
 module passes acceptance; published versions stay available.

@@ -118,10 +118,11 @@ identity cannot reconcile. It settles nothing that may still be running:
    settles it, when it proves the request never ran; otherwise 409 `RECEIPT_ABSENT_UNPROVEN`.
 4. A receipt the agent still runs answers 409 `COMMAND_IN_PROGRESS`.
 5. Only an outcome the agent itself records as unknown takes the ADMIN's decision. The server signs it
-   with `COMMAND_RECONCILIATION_SECRET`, bound to the exact request and fence, the ADMIN, their reason
+   for that node with its server key, bound to the exact request and fence, the ADMIN, their reason
    and a digest of the node's Ardent inventory, and the node agent records it under its execution
-   lock. The same independent key must be set on the server and the node agent; without it the
-   answer is 409 `RECONCILIATION_UNAVAILABLE`.
+   lock. An agent without a node key (explicit, deprecated `NODE_AUTH_MODE=compat` or `warn` only)
+   needs the same `COMMAND_RECONCILIATION_SECRET` on the server and the agent instead; with neither
+   the answer is 409 `RECONCILIATION_UNAVAILABLE`.
 
 The command is never run again, and every attempt, settled or refused, is audited as
 `ardent.command-reconcile` with the decision and reason.
