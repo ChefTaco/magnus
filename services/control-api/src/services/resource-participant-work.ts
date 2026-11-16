@@ -24,7 +24,7 @@ import {
   verifyNodeSessionReceiptSignature,
 } from '../schemas/node-session-receipt.js';
 import { RESULT_SIGNING_PREVIOUS_SECRET, RESULT_SIGNING_SECRET } from '../utils/env.js';
-import { COMMAND_COMPLETION_REGISTRY, COMMAND_COMPLETION_REGISTRY_SHA256 } from '../security/command-completion-registry.js';
+import { COMMAND_COMPLETION_REGISTRY, knownCommandCompletionIdentity } from '../security/command-completion-registry.js';
 import { isManagedTerminalWork } from './managed-terminal.js';
 import { hasFreshOnlineHealth } from './resource-node-health.js';
 import { nodeEvidencePolicy } from './node-evidence-policy.js';
@@ -168,7 +168,7 @@ export async function settleParticipantWorkFromNodeReceipt(raw: unknown) {
     if (!exact || recomputed !== work.requestSha256 || !work.nodeFqdn || !work.operationSha256 || !work.requestSha256 || work.fence === null || !work.deadline)
       fail('RESOURCE_EVIDENCE_INVALID', 'Node receipt does not bind the exact participant authority');
     const descriptor = COMMAND_COMPLETION_REGISTRY.descriptors.find(item => item.id === value.completionDescriptorId);
-    if (value.completionRegistrySha256 !== COMMAND_COMPLETION_REGISTRY_SHA256 || !descriptor
+    if (!knownCommandCompletionIdentity(1, value.completionRegistrySha256, value.completionDescriptorId) || !descriptor
       || !descriptor.participantAuthority.allowedKinds.some(kind => kind === value.kind)
       || descriptor.participantAuthority.effectSemantics !== 'read-only-node-diagnostic'
       || value.effectBoundary !== descriptor.participantAuthority.effectBoundary)

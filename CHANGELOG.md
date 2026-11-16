@@ -7,6 +7,14 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Fixed
+
+- Quick commands reject unsupported operations before registering work or dispatching to a node,
+  with actionable guidance. The existing Magnus status button maps only its exact fixed arguments
+  to a registered read-only service diagnostic with supervised completion evidence. Existing uptime
+  receipts retain their original registry authority; prior uncertain commands require independent
+  reconciliation and are never replayed or relabeled.
+
 ### Changed
 
 - Update runtime dependencies: `@hono/node-server` 2.1.8 (server, fleet gateway and agent),

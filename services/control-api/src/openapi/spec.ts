@@ -1393,8 +1393,8 @@ const paths: Record<string, Record<string, unknown>> = {
   '/quick-command/{nodeId}/exec': {
     post: {
       tags: ['Quick Command'],
-      summary: 'Execute command synchronously',
-      description: 'Execute a command directly on a node and wait for the result. Bypasses the BullMQ queue for interactive use.',
+      summary: 'Run a registered finite diagnostic',
+      description: 'Runs only exact registered command shapes through managed admission. Unsupported commands return QUICK_COMMAND_UNAVAILABLE before work registration or execution. The existing fixed systemctl status magnus-agent --no-pager request with timeout 15 is canonicalized to /usr/bin/systemctl; no other relative command is aliased.',
       security: apiSecretAuth,
       parameters: [pp('nodeId', 'Target node ID')],
       requestBody: jsonBody('QuickCommand'),
@@ -1404,6 +1404,7 @@ const paths: Record<string, Record<string, unknown>> = {
         401: err401,
         403: err403,
         404: err404,
+        409: { ...err409, description: 'Unsupported quick command or held node authority' },
       },
     },
   },

@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { CONTROL_API_URL } from '../env.js';
 import type { ExecutionSupervisor, SupervisorStatus } from '../executors/execution-supervisor.js';
 import { nodeApiFetch } from '../node-auth.js';
-import { COMMAND_COMPLETION_REGISTRY, COMMAND_COMPLETION_REGISTRY_SHA256 } from './command-completion-registry.js';
+import { COMMAND_COMPLETION_REGISTRY, knownCommandCompletionIdentity } from './command-completion-registry.js';
 import { nodeSessionReceiptSigningPayload as sharedNodeSessionReceiptSigningPayload } from './node-evidence.js';
 import { nodeEvidenceFields } from './evidence-signing.js';
 
@@ -64,7 +64,7 @@ export function issueNodeSessionReceipt(rawAuthority: unknown, status: Superviso
   if (evidence.requestSha256 !== authority.operationSha256 || evidence.deadline !== authority.deadline)
     throw new Error('Supervisor evidence differs from participant authority');
   const descriptor = COMMAND_COMPLETION_REGISTRY.descriptors.find(value => value.id === evidence.completionOwner.descriptorId);
-  if (evidence.completionOwner.registrySha256 !== COMMAND_COMPLETION_REGISTRY_SHA256 || !descriptor
+  if (!knownCommandCompletionIdentity(evidence.completionOwner.version, evidence.completionOwner.registrySha256, evidence.completionOwner.descriptorId) || !descriptor
     || !descriptor.participantAuthority.allowedKinds.some(kind => kind === authority.kind)
     || descriptor.participantAuthority.effectSemantics !== 'read-only-node-diagnostic'
     || descriptor.participantAuthority.effectBoundary !== 'bounded-node-process')

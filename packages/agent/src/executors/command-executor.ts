@@ -13,7 +13,7 @@ import { nodeEvidenceFields, withResultEvidence } from '../security/evidence-sig
 import { refusalError, refusalStatus } from './command-refusal.js';
 import { ExecutionSupervisor } from './execution-supervisor.js';
 import { mutationBarrier } from './mutation-barrier.js';
-import { COMMAND_COMPLETION_REGISTRY, COMMAND_COMPLETION_REGISTRY_SHA256, commandCompletionDescriptor } from '../security/command-completion-registry.js';
+import { COMMAND_COMPLETION_REGISTRY_SHA256, commandCompletionDescriptor, knownCommandCompletionIdentity } from '../security/command-completion-registry.js';
 import { childEnvironment } from '../utils/child-env.js';
 import { logger } from '../utils/logger.js';
 
@@ -191,8 +191,8 @@ export async function recoverCommandReceipt(commandId: string) {
     const observation = await executionSupervisor.status(commandId, row.requestSha256);
     if (observation.state !== 'completed' || !observation.result || observation.evidence.requestSha256 !== row.requestSha256
       || observation.evidence.completionOwner?.version !== 1
-      || observation.evidence.completionOwner.registrySha256 !== COMMAND_COMPLETION_REGISTRY_SHA256
-      || !COMMAND_COMPLETION_REGISTRY.descriptors.some(descriptor => descriptor.id === observation.evidence.completionOwner?.descriptorId)) return row;
+      || !knownCommandCompletionIdentity(observation.evidence.completionOwner.version,
+        observation.evidence.completionOwner.registrySha256, observation.evidence.completionOwner.descriptorId)) return row;
     const result = { commandId, ...observation.result,
       ...(row.coordination ? { coordination: { ...row.coordination, requestSha256: row.requestSha256 } } : {}),
       completion: { registryVersion: 1 as const, registrySha256: observation.evidence.completionOwner.registrySha256,

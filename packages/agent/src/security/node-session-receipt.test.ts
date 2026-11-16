@@ -20,6 +20,14 @@ const completed = (value: ReturnType<typeof authority>) => ({ state: 'completed'
   result: { exitCode: 0, stdout: 'done', stderr: '', durationMs: 1, truncated: false } });
 
 describe('node session receipt producer', () => {
+  it('retains original uptime evidence while refusing new descriptors under the old registry', () => {
+    const work = authority(); const status = completed(work);
+    status.evidence.completionOwner.registrySha256 = '2909a7be52ea7242fe37c6dc38e817895989c12d13affbeb4254eb65c46b0029';
+    expect(receipt.issueNodeSessionReceipt(work, status).completionRegistrySha256)
+      .toBe(status.evidence.completionOwner.registrySha256);
+    status.evidence.completionOwner.descriptorId = 'diagnostics-magnus-status-v1';
+    expect(() => receipt.issueNodeSessionReceipt(work, status)).toThrow('approved bounded completion owner');
+  });
   it('signs the exact authority and independently supervised terminal evidence', () => {
     const work = authority(); const result = receipt.issueNodeSessionReceipt(work, completed(work));
     const { signature, ...unsigned } = result;

@@ -91,6 +91,15 @@ turned off again.
 
 ### Operator API
 
+`POST /api/v1/quick-command/:nodeId/exec` accepts only exact finite diagnostic shapes from the
+command completion registry: `/usr/bin/uptime` with no arguments and timeout 60, and
+`/usr/bin/systemctl` with arguments `status`, `magnus-agent`, `--no-pager` and timeout 15. Both
+require no custom environment or working directory. Only that exact status request also accepts
+the existing button's relative spelling `systemctl`. Other quick commands return 409
+`QUICK_COMMAND_UNAVAILABLE` before registering a command or dispatching anything. Previously
+uncertain requests keep their original authority and still require the independent reconciliation
+below; adding a diagnostic never relabels historical execution.
+
 - `GET /api/v1/commands/:commandId/resource-lease` returns ownership metadata, fence, timestamps
   and evidence hashes, without the command's environment or output.
 - `POST /api/v1/commands/:commandId/reconcile-resource` (operator or admin). An empty body reads

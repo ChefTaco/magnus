@@ -84,7 +84,7 @@ describe('server', () => {
     expect(body.data).not.toHaveProperty('fingerprints');
     expect(body.data.features.commandReconciliation).toBe(0);
     expect(body.data.features.commandCompletionRegistry).toEqual({ version: 1,
-      sha256: '2909a7be52ea7242fe37c6dc38e817895989c12d13affbeb4254eb65c46b0029', enabled: 1 });
+      sha256: '9a3c624e02974750c5f96821afdc8a5753413d643f91be3d0f197f39abe7ce47', enabled: 1 });
   });
 
   it('GET /api/v1/ping reports the Studio level the Ardent bridge implements, which the server gates skill-install on', async () => {

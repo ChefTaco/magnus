@@ -21,7 +21,7 @@ import { commandAbsenceSigningPayload, commandRefusalSigningPayload, commandResu
 import { nodeEvidencePolicy, resultKeyHmac, type NodeEvidencePolicy } from './node-evidence-policy.js';
 import { RESULT_SIGNING_SECRET, RESULT_SIGNING_PREVIOUS_SECRET } from '../utils/env.js';
 import { getNodeBaseUrl } from '../utils/node-url.js';
-import { COMMAND_COMPLETION_REGISTRY, COMMAND_COMPLETION_REGISTRY_SHA256, commandCompletionDescriptor } from '../security/command-completion-registry.js';
+import { COMMAND_COMPLETION_REGISTRY, COMMAND_COMPLETION_REGISTRY_SHA256, commandCompletionDescriptor, knownCommandCompletionIdentity } from '../security/command-completion-registry.js';
 import { MANAGED_HTTP_COMMAND } from '../security/managed-http.js';
 import { NATIVE_COMPLETION_REGISTRY, NATIVE_COMPLETION_REGISTRY_SHA256, nativeCompletionDescriptor, nativeCompletionResourceKey, knownNativeCompletionIdentity } from '../security/native-completion-registry.js';
 import { logAuditEvent } from './audit-service.js';
@@ -366,9 +366,7 @@ export async function settleResourceResult(commandId: string, result: SignedComm
   const row = await db.commandResourceLease.findUnique({ where: { commandId } });
   if (!row) return;
   const registered = row.completionClass === 'node-supervised-command'
-    && row.completionRegistryVersion === COMMAND_COMPLETION_REGISTRY.version
-    && row.completionRegistrySha256 === COMMAND_COMPLETION_REGISTRY_SHA256
-    && COMMAND_COMPLETION_REGISTRY.descriptors.some(descriptor => descriptor.id === row.completionDescriptorId);
+    && knownCommandCompletionIdentity(row.completionRegistryVersion, row.completionRegistrySha256, row.completionDescriptorId);
   const native = row.completionClass === 'native-http'
     && knownNativeCompletionIdentity(row.completionRegistryVersion, row.completionRegistrySha256, row.completionDescriptorId);
   const scheduler = row.completionClass === 'managed-scheduler'

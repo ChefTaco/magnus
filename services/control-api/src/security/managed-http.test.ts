@@ -26,7 +26,7 @@ describe('native HTTP wire compatibility', () => {
   it('shares the exact finite command completion registry and digest', () => {
     expect(controlCommandRegistry.COMMAND_COMPLETION_REGISTRY).toEqual(nodeCommandRegistry.COMMAND_COMPLETION_REGISTRY);
     expect(controlCommandRegistry.COMMAND_COMPLETION_REGISTRY_SHA256).toBe(nodeCommandRegistry.COMMAND_COMPLETION_REGISTRY_SHA256);
-    expect(controlCommandRegistry.COMMAND_COMPLETION_REGISTRY_SHA256).toBe('2909a7be52ea7242fe37c6dc38e817895989c12d13affbeb4254eb65c46b0029');
+    expect(controlCommandRegistry.COMMAND_COMPLETION_REGISTRY_SHA256).toBe('9a3c624e02974750c5f96821afdc8a5753413d643f91be3d0f197f39abe7ce47');
     expect(controlCommandRegistry.commandCompletionDescriptor({ commandId: 'diagnostic', command: '/usr/bin/uptime', args: [],
       timeoutSeconds: 60, coordination: { version: 1, resourceKey: 'node:fixture', fence: '1', expiresAt: Date.now() + 60_000 } }))
       .toEqual(nodeCommandRegistry.commandCompletionDescriptor({ commandId: 'diagnostic', command: '/usr/bin/uptime', args: [],

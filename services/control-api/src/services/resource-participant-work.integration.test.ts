@@ -113,7 +113,7 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('API SSH durable participant 
     expect((await enrollment.inspectEnrollment(nodeId)).api.unknownCount).toBe(1);
     await expect(enrollment.completeEnrollment(nodeId)).rejects.toMatchObject({ code: 'RESOURCE_DRAIN_INCOMPLETE' });
   });
-  it('settles once from exact signed supervisor evidence and replays only the same receipt', async () => {
+  it.each(['current', 'historical'])('settles once from exact signed %s supervisor evidence and replays only the same receipt', async identity => {
     const saved = await work.apiParticipantWork.reserve(input()); await work.apiParticipantWork.start(saved.workId, saved);
     await expect(work.apiParticipantWork.finish(saved.workId, { ownerId: saved.ownerId, disposition: 'remote-ended',
       evidenceSha256: '0'.repeat(64) })).resolves.toMatchObject({ state: 'unknown' });
@@ -127,7 +127,8 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('API SSH durable participant 
       bootId: randomUUID(), unit: `magnus-exec-${'c'.repeat(64)}.service`, invocationId: 'd'.repeat(32),
       cgroup: `/system.slice/magnus-exec-${'c'.repeat(64)}.service`, startedAt: now, terminalAt: now + 1,
       disposition: 'succeeded', resultSha256: 'e'.repeat(64), groupEmpty: true, effectBoundary: 'bounded-node-process',
-      completionRegistrySha256: registry.COMMAND_COMPLETION_REGISTRY_SHA256, completionDescriptorId: 'diagnostics-uptime-v1',
+      completionRegistrySha256: identity === 'historical' ? '2909a7be52ea7242fe37c6dc38e817895989c12d13affbeb4254eb65c46b0029'
+        : registry.COMMAND_COMPLETION_REGISTRY_SHA256, completionDescriptorId: 'diagnostics-uptime-v1',
     });
     const receipt = { ...unsigned, signature: createHmac('sha256', resultKey).update(schema.nodeSessionReceiptSigningPayload(unsigned)).digest('hex') };
     const unregisteredUnsigned = { ...unsigned, completionRegistrySha256: 'f'.repeat(64) };

@@ -13,13 +13,14 @@ import { quickCommandSchema } from '../schemas/commands.js';
 import { safeParse } from '../utils/validate.js';
 import { quickCommandResponseSchema } from '../schemas/node-responses.js';
 import { NodeApiClient } from '../sdk/node-api-client.js';
+import { commandCompletionRequestDescriptor } from '../security/command-completion-registry.js';
 
 export const quickCommandRouter = new Hono<AppVariables>();
 quickCommandRouter.use('*', authMiddleware);
 
 /**
- * Execute a command on a node synchronously (bypasses the BullMQ queue).
- * Ideal for quick admin commands where you want to see results immediately.
+ * Run an exact registered finite diagnostic synchronously through managed
+ * admission. Unsupported shell operations are refused before creating work.
  */
 quickCommandRouter.post(
   '/:nodeId/exec',
@@ -36,8 +37,17 @@ quickCommandRouter.post(
       throw new HttpError(409, 'INVALID_STATE', `Node is ${node.status}, must be ONLINE`);
     }
 
-    const commandId = `cmd-${nanoid()}`;
     const timeoutSeconds = body.timeoutSeconds ?? 120;
+    const args = body.args ?? [];
+    // Only the existing fixed status button has a relative spelling alias. No
+    // shell strings, changed argv, CWD or timeout acquire this diagnostic scope.
+    const command = body.command === 'systemctl' && timeoutSeconds === 15 && body.workingDirectory === undefined
+      && JSON.stringify(args) === JSON.stringify(['status', 'magnus-agent', '--no-pager'])
+      ? '/usr/bin/systemctl' : body.command;
+    if (!commandCompletionRequestDescriptor({ command, args, timeoutSeconds, ...optional('workingDirectory', body.workingDirectory) }))
+      throw new HttpError(409, 'QUICK_COMMAND_UNAVAILABLE',
+        'This quick command has no reviewed completion boundary. Use node diagnostics or a supported managed operation. No command was registered or executed.');
+    const commandId = `cmd-${nanoid()}`;
 
     try {
       const client = new NodeApiClient({
@@ -47,7 +57,7 @@ quickCommandRouter.post(
         timeout: (timeoutSeconds + 5) * 1_000,
       });
 
-      const rawResponse = await client.executeCommand({ commandId, command: body.command, args: body.args ?? [], ...optional("workingDirectory", body.workingDirectory), timeoutSeconds });
+      const rawResponse = await client.executeCommand({ commandId, command, args, ...optional("workingDirectory", body.workingDirectory), timeoutSeconds });
 
       // Validate response shape from node-manager
       const parsed = safeParse(rawResponse, quickCommandResponseSchema);
@@ -71,6 +81,7 @@ quickCommandRouter.post(
 
       return c.json({ success: true, data: response.data });
     } catch (err: unknown) {
+      if (err instanceof HttpError) throw err;
       const message =
         err instanceof Error ? err.message : 'Failed to execute command on node';
       throw new HttpError(502, 'NODE_EXEC_FAILED', message);
