@@ -57,7 +57,7 @@ An unauthenticated dry run cannot prove npm ownership or OIDC configuration.
 5. Review and approve the `npm-publish` deployment in GitHub Actions. Real
    publication requires the matching release tag, including manual retries.
    The npm publisher must already be configured before approving an OIDC run.
-6. Verify all seven package versions and provenance on npm, and the image tags
+6. Verify all six published package versions and provenance on npm, and the image tags
    on GHCR (see [Container images](#container-images)). A retry skips versions
    already published. Registry failures stop publication; a publication failure
    stops subsequent packages and may leave earlier packages published.

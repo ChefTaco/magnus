@@ -7,6 +7,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [3.1.1] - 2026-11-15
+
 ### Fixed
 
 - Quick commands reject unsupported operations before registering work or dispatching to a node,

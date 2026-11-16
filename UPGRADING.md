@@ -1,8 +1,8 @@
 # Upgrading Magnus
 
 Magnus releases the server, the console, the agent and the shared contracts together, under one
-version number. Within a major version (1.x), every release can be applied in place, and a 1.x
-server works with any 1.x agent. Releases follow [semver](https://semver.org/). Read the
+version number. Same-major releases retain their documented mixed-version behavior; individual
+capabilities can require matching server and agent versions. Releases follow [semver](https://semver.org/). Read the
 [CHANGELOG](CHANGELOG.md) entry of each release you skip, in particular its **New environment
 variables** and **Migration impact** sections.
 
@@ -18,6 +18,18 @@ The rules every upgrade path follows:
 - **Slow and one-way migrations ask first.** Each release lists the impact of its migrations (`fast`,
   `slow` or `one-way`). Upgrades print slow and one-way migrations and wait for confirmation
   (`--yes`). Startup auto-migrate refuses them unless `MAGNUS_AUTO_MIGRATE_ALLOW_SLOW=true` is set.
+
+## Version 3.1.1
+
+There are no database migrations or new settings. Upgrade both the server and node agent to 3.1.1
+to use the **magnus status** quick action with registered, supervised completion evidence. A node
+with a different completion registry is refused before dispatch; there is no unverified fallback.
+Previously issued uptime receipts retain their original completion authority.
+
+Unsupported quick commands now return `QUICK_COMMAND_UNAVAILABLE` before registering work or
+executing anything. An uncertain command from an older release still requires independently
+reviewed [signed reconciliation](docs/COMMAND_RECEIPTS.md#reconciling-an-uncertain-command).
+The upgrade never replays it or relabels its old evidence as a newly registered diagnostic.
 
 ## Managed install (`magnus init`)
 

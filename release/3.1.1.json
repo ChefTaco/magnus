@@ -1,0 +1,9 @@
+{
+  "summary": "Quick commands refuse unsupported operations before registering work or dispatching to a node. The exact Magnus service-status diagnostic now has supervised whole-effect completion evidence; upgrade the server and node agent together to 3.1.1 for this diagnostic. Existing uptime receipts retain their original registry authority, while prior uncertain commands still require independent signed reconciliation and are never replayed or relabeled. Runtime dependencies and secret-detection test fixtures are updated. No migrations, new settings or protocol changes; Ardent remains pinned to 3.1.3.",
+  "breaking": false,
+  "minUpgradeFrom": "2.10.2",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}
