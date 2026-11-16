@@ -103,9 +103,9 @@ if awk '/^\[\[/ { if (paths && !rules) bad = 1; global = ($0 == "[[allowlists]]"
 fi
 allowlisted_files=(services/control-api/src/middleware/auth.test.ts services/control-api/src/services/ardent-hivemem.test.ts)
 # File allowlists excuse only their exact reviewed values. Any other credential placed
-# in an allowlisted file must still be reported. Tokens are random and generated here.
+# in an allowlisted file must still be reported. Reuse the positive fixture already
+# detected above: random strings can match Gitleaks' word and letters-only exclusions.
 scoped="$temporary/scoped"
-random_token() { head -c 96 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | cut -c1-36; }
 for allowlisted in "${allowlisted_files[@]}"; do
   rm -rf "$scoped"
   mkdir -p "$scoped/scripts" "$scoped/$(dirname "$allowlisted")" "$scoped/elsewhere"
@@ -127,7 +127,7 @@ for allowlisted in "${allowlisted_files[@]}"; do
   rm -rf elsewhere
   # A credential for another rule, then for the same rule, is reported in that file.
   for line in 'note: ghp_%s' 'api_key = "%s"'; do
-    foreign="$(random_token)"
+    foreign="${fixture#ghp_}"
     cp "$root/$allowlisted" "$allowlisted"
     printf "\n$line\n" "$foreign" >> "$allowlisted"
     git add "$allowlisted"
