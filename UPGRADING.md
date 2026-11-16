@@ -9,7 +9,7 @@ variables** and **Migration impact** sections.
 The rules every upgrade path follows:
 
 - **Never across a major version by itself.** `magnus upgrade`, the update notices, the agent
-  upgrade action and the `:1` image tags all stay on the current major. A new major needs
+  upgrade action and the major image tags (such as `:3`) all stay on the current major. A new major needs
   `--allow-major` (or a new image tag) and its own notes; for agents, `--allow-major` also needs a
   server-signed authorization that each agent verifies.
 - **Always back up before migrating.** Every path that migrates dumps PostgreSQL first and stops if
@@ -38,7 +38,7 @@ A project created with `npx @hivemagnus/magnus init` upgrades with one command o
 ```bash
 magnus upgrade --dry-run      # what would change: releases, notes, new settings, migrations
 magnus upgrade                # newest release of the current major
-magnus upgrade --to 1.2.0     # a specific release
+magnus upgrade --to 3.1.1     # a specific release
 ```
 
 `magnus-server upgrade` does the same; it finds the project from its own install path, or from
@@ -166,9 +166,9 @@ docker compose pull && docker compose up -d
 
 `MAGNUS_VERSION` in the Compose `.env` selects the tag:
 
-- `1` follows every 1.x release.
-- `1.1` takes patch releases only.
-- `1.1.0` pins one release.
+- `3` follows every 3.x release.
+- `3.1` takes patch releases only.
+- `3.1.1` pins one release.
 
 To go back, set the previous version and run `docker compose up -d`. If the newer version migrated
 the database and the old one does not start, restore the dump from the backups volume with the
@@ -191,7 +191,7 @@ with a migration that failed halfway is refused before any dump, with the way ou
 Upgrades through pulls are safe to automate as long as the tag stays on one major. Options:
 
 - [Watchtower](https://containrrr.dev/watchtower/), limited to the Magnus containers. Keep
-  `MAGNUS_VERSION` on a major tag such as `1`, never a tag that could cross majors:
+  `MAGNUS_VERSION` on a major tag such as `3`, never a tag that could cross majors:
 
   ```yaml
   services:

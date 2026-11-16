@@ -61,7 +61,8 @@ Main areas:
 - Agents: `/ardent` and `/ardent/profiles` for Ardent, `/codex` and `/codex/installations` for
   the Codex CLI, and, when Hermes Agent is enabled, `/orchestra`, `/orchestra/installations`,
   `/orchestra/profiles`, `/orchestra/web-gateway`, `/hermes-drift` and `/hermes-security`.
-- Security: `/security-fusion` when Security Fusion runs locally in the server.
+- Security: `/security-fusion`, a summary of and links into an external security console
+  (Cindertrace) when `MAGNUS_SECURITY_CONSOLE_URL` is set; see [Cindertrace migration](CINDERTRACE_MIGRATION.md).
 - Embedded services: the Hermes dashboard under `/api/hermes/dashboard` and a router admin UI under
   `/api/hive-router/dashboard`, each only when its integration is configured. Emberpath's current
   source has no admin UI to embed; only a release that still bundles one does.
@@ -107,7 +108,7 @@ limits. Its domains, all under `/api/v1`:
 
 - nodes, heartbeats, health, drift, topology and dependencies;
 - commands, quick commands, cron, files, logs, skills, roles and the script library;
-- rollouts, deployments and agent self-update;
+- rollouts and agent upgrades (the browser-driven deployment routes are retired and answer 410);
 - anomalies, predictions, remediation plans and fleet checks;
 - notifications, alerts and webhooks;
 - users, authentication, credentials and the append-only audit log;
@@ -118,16 +119,18 @@ limits. Its domains, all under `/api/v1`:
   retention, trace map, incidents, package security posture, application probes;
 - an AI fleet assistant and a small read-only tool interface for agents (`/api/v1/mcp`);
 - resource leases ([command resource leases](COMMAND_RESOURCE_LEASES.md));
-- Security Fusion (`/api/v1/security-fusion`) when `SECURITY_FUSION_MODE` is `local`.
+- security observation export and the optional response adapter for Cindertrace
+  (`/api/v1/security-integration`). The embedded Security Fusion is retired: with
+  `SECURITY_FUSION_MODE=remote`, `/api/v1/security-fusion/*` answers `410 SECURITY_FUSION_MOVED`.
 
 The OpenAPI 3.1 document is the route-level reference. The server serves it, with interactive
 documentation, at `https://<server>:4000/api/docs`.
 
 Every command sent to an agent is signed, carries a deadline, and has a durable receipt on the
 node; see [command receipts and recovery](COMMAND_RECEIPTS.md). Results are signed with the node's
-own key, and the server signs its requests and decisions with its key; from 3.0.0 the shared
-`NODE_MANAGER_SECRET` and `RESULT_SIGNING_SECRET` are needed only under an explicit compat mode
-([per-node credentials](NODE_CREDENTIALS.md)).
+own key, and the server signs its requests and decisions with its key. `NODE_AUTH_MODE` defaults
+to `enforce`; the shared `NODE_MANAGER_SECRET` and `RESULT_SIGNING_SECRET` matter only under an
+explicit, deprecated `compat` or `warn` ([per-node credentials](NODE_CREDENTIALS.md)).
 
 Prometheus metrics are served at `/metrics` behind `METRICS_TOKEN`. Request logs, error responses
 and SSH execution logs redact values that look like secrets. Set `OTEL_EXPORTER_OTLP_ENDPOINT` to
@@ -144,8 +147,9 @@ The agent runs on each managed host and:
 
 - sends a heartbeat to `POST /api/v1/heartbeat` every 30 seconds, with CPU, memory, disk, network,
   services, GPU and security posture;
-- serves management routes under `/api/v1/*`, authenticated with the node credential
-  (`x-node-token`);
+- serves management routes under `/api/v1/*`, which, once the node has a key, accept only requests
+  signed with the server key the agent pinned (the shared `x-node-token` only under an explicit, deprecated `compat` or
+  `warn`);
 - runs commands, cron changes, file operations and skill installs, and keeps a durable,
   signed receipt for each command;
 - manages Hermes Agent through the local `hermes` CLI, the Codex CLI through its App Server, and

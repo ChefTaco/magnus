@@ -1,6 +1,6 @@
 # @hivemagnus/magnus-fleet-gateway
 
-The web terminal for the Magnus browser console. A separate small service holds the restricted SSH
+The web terminal for the Magnus fleet pages in HiveXUI, the suite's UI. A separate small service holds the restricted SSH
 key, so neither the browser nor the Magnus API process ever does. It speaks HTTP streaming with a
 bearer token: no WebSockets and no tickets.
 
@@ -44,7 +44,7 @@ fails closed.
 - **Token renewal.** A browser token lives at most 15 minutes, so a session needs a later token. Any
   call by the owner carrying a newer token from the same Oathweave session replaces the one being
   watched. The session ends when the newest token expires, which is what makes a closed tab end the
-  shell. A console should call `POST /terminal/renew` about once a minute. A token from another
+  shell. The UI should call `POST /terminal/renew` about once a minute. A token from another
   Oathweave session is refused, even for the same person.
 - **Losing the permission.** Permissions are claims inside the token, and the online check says only
   whether the Oathweave session is alive. So removing `magnus:terminal` ends the terminal when a token

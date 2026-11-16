@@ -61,7 +61,7 @@ installation ID and node ID to exact addresses and expected SHA-256 host keys. S
 When the server installs or updates Hermes on a host, it can pass a managed configuration that the
 agent writes into the Hermes config:
 
-- `router`: an OpenAI-compatible model router (for example Hive Router) with base URL, model and
+- `router`: an OpenAI-compatible model router (for example [Emberpath](https://github.com/ChefTaco/Emberpath), formerly Hive Router) with base URL, model and
   optional API key;
 - `hiveMem`: a HiveMem API URL, token and workspace for shared memory;
 - `openaiRuntime: codex_app_server`: run OpenAI models through the Codex App Server and a ChatGPT

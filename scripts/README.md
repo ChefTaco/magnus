@@ -13,6 +13,14 @@ catalogue; each package README lists its own build and test commands.
 | OpenAPI contract | `npm run openapi:check` | `check-openapi-contract.mjs`: the server's OpenAPI document is valid 3.1 and every operation has a summary, tags and responses. Needs a server build. |
 | npm package contents | `npm run check:packs` | `check-npm-packs.mjs`: dry-runs `npm pack` for every published package, checks required files, and scans file names and contents for credentials, private infrastructure and local state |
 | Context-only runtime adoption | `npm run ardent:context:integration` | Offline container acceptance against an older published Ardent runtime; compaction, recovery, real gateway restarts and runtime rollback with a synthetic provider |
+| Skills catalogue | `npm run skills:check` | The generated `SKILL.md` files match their manifests |
+| Swallowed failure reasons | `npm run check:reasons` | `check-swallowed-reasons.mjs`: a bare `catch` that answers an HTTP error in the upgrade, ledger, managed-http, enrollment and scheduler paths must log its cause (tests: `npm run reasons:test`) |
+| Upgrade remedies | `npm run check:remedies` | `check-upgrade-remedies.mjs`: the problem-code table in `UPGRADING.md` matches `packages/contracts/src/upgrade-remedies.ts` (`--write` regenerates it) |
+| Ardent client types | `npm run ardent:openapi:check` | `check-ardent-openapi.mjs`: `packages/contracts/src/ardent-openapi.ts` matches the pinned `@hivemagnus/ardent` (`npm run ardent:openapi:write` regenerates it) |
+| Ardent pin is current | `npm run ardent:latest:check` | `check-ardent-latest.mjs`: fails while the pinned `@hivemagnus/ardent` is behind npm's latest (tests: `npm run ardent:latest:test`) |
+| Version bump | `npm run release:bump X.Y.Z` | `bump-version.mjs`: every workspace version, internal pins, `agent-version.json`, the lockfile, the release manifest and a CHANGELOG stub |
+| Release manifest | `npm run release:manifest` / `npm run release:manifest:check` | `check-release-manifest.mjs`: writes or checks `magnusRelease` in `packages/magnus/package.json` from `release/X.Y.Z.json` (tests: `npm run release:test`) |
+| Native artifacts | `npm run test:native-artifact`, `npm run build:native-agent` | Native agent, Hermes Agent and Codex artifact builders and their tests (see `tooling/`) |
 | Lockfile | `npm run lockfile:check` | `validate-lockfile.mjs`: `package-lock.json` agrees with every workspace manifest and each registry package has an integrity hash |
 | Documentation | `npm run docs:check` | `check-repository-docs.mjs` and `check-documentation.mjs`. Needs a console build (`npm run dashboard:build`). |
 | Documentation, no build | `npm run docs:links` | `check-repository-docs.mjs`: package guides, package maps and local Markdown links |
