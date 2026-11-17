@@ -70,9 +70,6 @@ export const MAGNUS_SHARED_RESOURCE_TOKEN_SHA256 =
 export const MAGNUS_SHARED_RESOURCE_TOKEN_DIGESTS_JSON =
   process.env['MAGNUS_SHARED_RESOURCE_TOKEN_DIGESTS_JSON'] ?? '{}';
 export const MAGNUS_FLEET_CHECK_TOKEN_SHA256 = process.env['MAGNUS_FLEET_CHECK_TOKEN_SHA256'] ?? '';
-export const SECURITY_FUSION_RECEIPT_SIGNING_KEY = process.env['SECURITY_FUSION_RECEIPT_SIGNING_KEY'] ?? '';
-/** Security Fusion mode: `off` (default), `local` (in-process) or `remote` (external console). */
-export const SECURITY_FUSION_MODE = process.env['SECURITY_FUSION_MODE'] ?? 'off';
 export const METRICS_TOKEN = process.env['METRICS_TOKEN'] ?? '';
 export const WEBHOOK_ENCRYPTION_KEY = process.env['WEBHOOK_ENCRYPTION_KEY'] ?? '';
 
@@ -122,9 +119,6 @@ export function listMissingSecrets(): string[] {
   if (CREDENTIAL_ROTATION_KEY.length < 32) missing.push('CREDENTIAL_ROTATION_KEY (dedicated, min 32 chars)');
   if (METRICS_TOKEN.length < 32) missing.push('METRICS_TOKEN (dedicated, min 32 chars)');
   if (WEBHOOK_ENCRYPTION_KEY.length < 32) missing.push('WEBHOOK_ENCRYPTION_KEY (dedicated, min 32 chars)');
-  if (SECURITY_FUSION_MODE === 'local' && SECURITY_FUSION_RECEIPT_SIGNING_KEY.length < 32) {
-    missing.push('SECURITY_FUSION_RECEIPT_SIGNING_KEY (dedicated, min 32 chars; required when SECURITY_FUSION_MODE=local)');
-  }
   if (MAGNUS_PLUGIN_API_ENABLED && MAGNUS_PLUGIN_READ_TOKEN_DIGESTS_JSON === '{}') {
     missing.push('MAGNUS_PLUGIN_READ_TOKEN_DIGESTS_JSON (per-installation read credentials; required when MAGNUS_PLUGIN_API_ENABLED=true)');
   }

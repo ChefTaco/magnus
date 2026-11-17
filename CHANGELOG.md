@@ -7,6 +7,22 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Fixed
+
+- `docker/compose.yml` defaults `MAGNUS_VERSION` to `3`, the current major, instead of `1`. A
+  release test now keeps the Compose default and `docker/.env.example` on the package major.
+- `magnus-server --help` names `--allow-major` in the `agents upgrade` summary, as
+  `magnus-server agents --help` already did.
+
+### Removed
+
+- `magnus-server env-schema` no longer lists the retired Security Fusion local-mode settings
+  (`SECURITY_FUSION_RECEIPT_SIGNING_KEY`, `SECURITY_FUSION_EVIDENCE_DIR`,
+  `SECURITY_FUSION_CONTAINMENT_COMMAND` and `SECURITY_FUSION_MATTERMOST_*`), and
+  `SECURITY_FUSION_MODE` documents only `off` and `remote`. The dead local-mode secret check is
+  gone from startup validation; `SECURITY_FUSION_MODE=local` is still refused with migration
+  instructions.
+
 ## [3.1.1] - 2026-11-15
 
 ### Fixed

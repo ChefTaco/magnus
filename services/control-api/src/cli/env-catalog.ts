@@ -127,10 +127,7 @@ export const ENV_CATALOG: readonly EnvVariable[] = [
   { name: 'CINDERTRACE_RESPONSE_SECRET', group: 'security', description: 'Dedicated HMAC credential for the optional Cindertrace managed response bridge.' },
   { name: 'CINDERTRACE_RESTART_ALLOWLIST', group: 'security', description: 'Comma-separated allowlisted response service names; empty by default.' },
   { name: 'CINDERTRACE_PROTECTED_TARGET_IDS', group: 'security', description: 'Comma-separated node IDs that Cindertrace must never isolate.' },
-  { name: 'SECURITY_FUSION_MODE', group: 'security', default: 'off', description: 'off (feature disabled), local (cases and evidence in this server) or remote (export to an external security console).' },
-  { name: 'SECURITY_FUSION_RECEIPT_SIGNING_KEY', group: 'security', secret: true, requiredWhen: 'SECURITY_FUSION_MODE=local', description: 'Dedicated key that signs Security Fusion deletion receipts (min 32 chars).' },
-  { name: 'SECURITY_FUSION_EVIDENCE_DIR', group: 'security', description: 'Private evidence directory (local mode).' },
-  { name: 'SECURITY_FUSION_CONTAINMENT_COMMAND', group: 'security', description: 'Absolute path of an operator-installed containment helper on managed nodes (local mode release).' },
+  { name: 'SECURITY_FUSION_MODE', group: 'security', default: 'off', description: 'off (feature disabled) or remote (export to an external security console). The embedded local mode is retired and refused at startup (docs/CINDERTRACE_MIGRATION.md).' },
   { name: 'MAGNUS_SECURITY_CONSOLE_URL', group: 'security', description: 'External security console URL returned to clients in remote mode.' },
   { name: 'SECURITY_FUSION_API_URL', group: 'security', description: 'External security console API base URL (HTTPS) for exports and summaries (remote mode).' },
   { name: 'SECURITY_EXPORT_ENABLED', group: 'security', default: 'false', description: 'Export heartbeat service observations to SECURITY_FUSION_API_URL (remote mode).' },
@@ -139,9 +136,6 @@ export const ENV_CATALOG: readonly EnvVariable[] = [
   { name: 'SECURITY_INVENTORY_TOKEN_SHA256', group: 'security', description: 'SHA-256 digest of the bearer the external console uses to read node inventory.' },
   { name: 'SECURITY_BACKUP_TOKEN_SHA256', group: 'security', description: 'SHA-256 digest of the bearer allowed to upload encrypted security backups.' },
   { name: 'SECURITY_BACKUP_DIRECTORY', group: 'security', default: '$MAGNUS_HOME/security-backups', description: 'Destination for uploaded security backups.' },
-  { name: 'SECURITY_FUSION_MATTERMOST_URL', group: 'security', description: 'Optional Mattermost server for Security Fusion case notifications.' },
-  { name: 'SECURITY_FUSION_MATTERMOST_BOT_TOKEN', group: 'security', secret: true, description: 'Mattermost bot token.' },
-  { name: 'SECURITY_FUSION_MATTERMOST_CHANNEL_ID', group: 'security', description: 'Mattermost channel ID.' },
 
   // ── Hermes Agent plugin API ──
   { name: 'MAGNUS_PLUGIN_API_ENABLED', group: 'plugins', default: 'false', description: 'Accept Hermes Agent plugin credentials on the plugin-scoped routes.' },

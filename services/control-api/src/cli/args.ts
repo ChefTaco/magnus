@@ -35,7 +35,7 @@ Commands:
   restore FILE  Replace the database with a dump (stop the server first; asks unless --yes)
   upgrade       Upgrade a \`magnus init\` project (runs \`magnus upgrade\`; see --help there)
   rollback      Switch a \`magnus init\` project back to the previous version
-  agents        Agent fleet commands: \`agents upgrade [--to X.Y.Z] [--nodes a,b] [--dry-run]\`, \`agents doctor [--nodes a,b]\`
+  agents        Agent fleet commands: \`agents upgrade [--to X.Y.Z] [--nodes a,b] [--allow-major] [--dry-run]\`, \`agents doctor [--nodes a,b]\`
   node-auth     Server signing key: \`node-auth server-key [status|stage|promote|retire] [--force] [--grace-hours N]\`
   env-schema    Print the documented environment variables
   help          Show this help

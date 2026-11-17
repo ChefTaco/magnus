@@ -102,3 +102,11 @@ test('the manifest carries the install scripts the release needs', () => {
   assert.equal(allowScripts.argon2, true);
   assert.equal(allowScripts.prisma, true);
 });
+
+test('the Compose file and its example env default to the current major version', () => {
+  const major = JSON.parse(readFileSync(join(repo, 'package.json'), 'utf8')).version.split('.')[0];
+  const defaults = [...readFileSync(join(repo, 'docker/compose.yml'), 'utf8').matchAll(/\/magnus-[a-z-]+:\$\{MAGNUS_VERSION:-([^}]*)\}/g)].map((match) => match[1]);
+  assert.ok(defaults.length >= 2, 'docker/compose.yml names the Magnus images by MAGNUS_VERSION');
+  assert.deepEqual(new Set(defaults), new Set([major]));
+  assert.match(readFileSync(join(repo, 'docker/.env.example'), 'utf8'), new RegExp(`^MAGNUS_VERSION=${major}$`, 'm'));
+});

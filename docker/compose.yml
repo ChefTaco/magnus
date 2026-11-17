@@ -53,7 +53,7 @@ services:
     security_opt: ["no-new-privileges:true"]
 
   magnus-server:
-    image: ${MAGNUS_REGISTRY:-ghcr.io/cheftaco}/magnus-server:${MAGNUS_VERSION:-1}
+    image: ${MAGNUS_REGISTRY:-ghcr.io/cheftaco}/magnus-server:${MAGNUS_VERSION:-3}
     restart: unless-stopped
     depends_on:
       postgres: { condition: service_healthy }
@@ -104,7 +104,7 @@ services:
     security_opt: ["no-new-privileges:true"]
 
   magnus-ui:
-    image: ${MAGNUS_REGISTRY:-ghcr.io/cheftaco}/magnus-ui:${MAGNUS_VERSION:-1}
+    image: ${MAGNUS_REGISTRY:-ghcr.io/cheftaco}/magnus-ui:${MAGNUS_VERSION:-3}
     restart: unless-stopped
     depends_on:
       magnus-server: { condition: service_healthy }
