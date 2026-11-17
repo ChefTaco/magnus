@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { featureFlags } from './features.js';
-import { loadEnv } from './env.js';
+import { loadEnv, RETIRED_ENV_VARIABLES } from './env.js';
 import { registryRolloutStages, isDeployHost, isSubmitOnlyHost } from '../services/hermes-registry-service.js';
 import { securityConsoleUrl, securityFusionMode } from '../services/security-export.js';
 import { magnusHome } from '../utils/magnus-home.js';
 import { resolveDatabaseUrl } from '../db/client.js';
+import { dashboardEnrollmentSecret } from '../services/resource-enrollment.js';
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -41,6 +42,19 @@ describe('environment validation of optional features', () => {
     expect(() => loadEnv({ ...secrets, SECURITY_FUSION_MODE: 'off' })).not.toThrow();
     expect(() => loadEnv({ ...secrets, SECURITY_FUSION_MODE: 'remote' })).not.toThrow();
     expect(() => loadEnv({ ...secrets, SECURITY_FUSION_MODE: 'local' })).toThrow(/retired/);
+  });
+
+  it('ignores leftover retired Security Fusion local-mode settings instead of rejecting them', () => {
+    const shared = 'shared-value-that-is-at-least-32-characters-long';
+    const leftovers = Object.fromEntries(RETIRED_ENV_VARIABLES.map(name => [name, 'short']));
+    // A short value, and a value equal to a live secret, used to fail validation for the receipt key.
+    for (const receiptKey of ['short', shared]) {
+      const env = loadEnv({ ...secrets, ...leftovers, SECURITY_FUSION_RECEIPT_SIGNING_KEY: receiptKey, METRICS_TOKEN: shared });
+      for (const name of RETIRED_ENV_VARIABLES) expect(env).not.toHaveProperty(name);
+    }
+    for (const name of RETIRED_ENV_VARIABLES) vi.stubEnv(name, shared);
+    vi.stubEnv('RESOURCE_ENROLLMENT_DASHBOARD_SECRET', shared);
+    expect(dashboardEnrollmentSecret()).toBe(shared);
   });
 
   it('requires plugin digests only when the plugin API is enabled', () => {

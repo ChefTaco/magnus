@@ -7,6 +7,23 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [3.1.3] - 2026-11-17
+
+### Changed
+
+- Pin `@hivemagnus/ardent` 3.1.4 (`@hono/node-server` 2.1.6 or later) for the server, the node
+  agent and its standalone lock. The Ardent management API is unchanged, so the generated client
+  and the node agent's route allowlists are unchanged.
+
+### Removed
+
+- The server no longer validates `SECURITY_FUSION_RECEIPT_SIGNING_KEY`, an optional setting of the
+  retired Security Fusion local mode that nothing read. It is also no longer part of the
+  distinct-secret checks. A leftover value in a server's `.env` is ignored, like the other retired
+  local-mode settings (`SECURITY_FUSION_EVIDENCE_DIR`, `SECURITY_FUSION_CONTAINMENT_COMMAND` and
+  `SECURITY_FUSION_MATTERMOST_URL`, `_BOT_TOKEN` and `_CHANNEL_ID`): startup and
+  `magnus-server check` accept it whatever its value, so it can be deleted at any time.
+
 ## [3.1.2] - 2026-11-17
 
 ### Fixed

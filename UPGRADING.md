@@ -19,6 +19,25 @@ The rules every upgrade path follows:
   `slow` or `one-way`). Upgrades print slow and one-way migrations and wait for confirmation
   (`--yes`). Startup auto-migrate refuses them unless `MAGNUS_AUTO_MIGRATE_ALLOW_SLOW=true` is set.
 
+## Version 3.1.3
+
+There are no database migrations, new settings or protocol changes, and the browser contract is
+unchanged. Magnus now pins `@hivemagnus/ardent` 3.1.4; upgrade the node agents to 3.1.3 to stage it
+for managed Ardent installations. The server no longer reads or validates
+`SECURITY_FUSION_RECEIPT_SIGNING_KEY`. A server whose `.env` still sets it, or any other retired
+Security Fusion local-mode setting, starts normally and ignores the value; you can delete these
+lines whenever convenient:
+
+- `SECURITY_FUSION_RECEIPT_SIGNING_KEY`
+- `SECURITY_FUSION_EVIDENCE_DIR`
+- `SECURITY_FUSION_CONTAINMENT_COMMAND`
+- `SECURITY_FUSION_MATTERMOST_URL`
+- `SECURITY_FUSION_MATTERMOST_BOT_TOKEN`
+- `SECURITY_FUSION_MATTERMOST_CHANNEL_ID`
+
+`SECURITY_FUSION_MODE=local` is still refused at startup (see
+[the Cindertrace migration](docs/CINDERTRACE_MIGRATION.md)).
+
 ## Version 3.1.2
 
 There are no database migrations, new settings or protocol changes, and the browser contract is

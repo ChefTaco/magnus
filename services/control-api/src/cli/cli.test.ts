@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { parseArgs, USAGE, UsageError } from './args.js';
 import { ENV_CATALOG, buildEnvSchemaDocument, renderEnvTable } from './env-catalog.js';
 import { redactUrl } from './preflight.js';
+import { RETIRED_ENV_VARIABLES } from '../config/env.js';
 
 describe('magnus-server argument parsing', () => {
   it('defaults to start and collects repeated env files', () => {
@@ -59,9 +60,7 @@ describe('documented environment', () => {
 
   it('no longer lists the retired Security Fusion local-mode settings', () => {
     const names = new Set(buildEnvSchemaDocument().variables.map(variable => variable.name));
-    for (const name of ['SECURITY_FUSION_RECEIPT_SIGNING_KEY', 'SECURITY_FUSION_EVIDENCE_DIR', 'SECURITY_FUSION_CONTAINMENT_COMMAND',
-      'SECURITY_FUSION_MATTERMOST_URL', 'SECURITY_FUSION_MATTERMOST_BOT_TOKEN', 'SECURITY_FUSION_MATTERMOST_CHANNEL_ID'])
-      expect(names.has(name)).toBe(false);
+    for (const name of RETIRED_ENV_VARIABLES) expect(names.has(name)).toBe(false);
     expect(ENV_CATALOG.some(variable => variable.requiredWhen?.includes('SECURITY_FUSION_MODE=local'))).toBe(false);
     const mode = ENV_CATALOG.find(variable => variable.name === 'SECURITY_FUSION_MODE')?.description ?? '';
     expect(mode).toMatch(/local mode is retired/);
