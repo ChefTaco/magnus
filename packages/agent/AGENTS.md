@@ -17,7 +17,7 @@ that the agent can inspect and manage when they are configured.
 | Framework | Hono v4 on `@hono/node-server` |
 | Runtime | Node.js `^24.22.3 \|\| ^26.13.1`, ESM |
 | Language | TypeScript strict, NodeNext imports with `.js` extensions |
-| Auth | Per-node Ed25519 request signatures (`src/security/node-request-auth.ts`), with the `x-node-token` shared secret still accepted and sent during the migration; signed command results |
+| Auth | Per-node Ed25519 request signatures (`src/security/node-request-auth.ts`), enforced by default; the `x-node-token` shared secret only under an explicit, deprecated `NODE_AUTH_MODE=compat` or `warn`; node-signed command results |
 | TLS | Verified outbound TLS through `verifiedFetch()` / `controlApiFetch()`; optional `CONTROL_API_CA_PATH` |
 
 ## Commands
@@ -35,7 +35,8 @@ The package has no database. The Control API stores fleet state.
 
 ```text
 src/
-  index.ts              CLI entry: start (default), check, env-schema, --env-file
+  index.ts              CLI entry: start (default), check, acceptance, env-schema, install-service,
+                        enroll, identity, historical-settlements, native-snapshot, --env-file
   cli-args.ts           side-effect-free argument parsing
   start.ts              listener, background loops, shutdown
   env.ts                environment validation (configurationErrors)
@@ -46,10 +47,15 @@ src/
   credential-renewal.ts optional HiveMem token / Tailscale cert renewal
   hermes-sync.ts        optional Hermes registry reconciliation job
   collectors/           health, logs, drift, Docker, GPU, OTel, Tailscale
-  executors/            commands, cron, files, skills, Hermes, Codex, Ardent
-  security/             native completion registry (mirrored by the server)
+  executors/            commands, cron, files, skills, Hermes, Codex, Ardent, Embermend, managed
+                        terminal, HiveSkills sync, mutation barrier and historical settlements
+  native-snapshot/      root-only stopped-profile snapshot CLI (docs/NATIVE_SNAPSHOTS.md)
+  security/             request and evidence wire contracts, node identity, completion registries
+  upgrade/              managed self-upgrade (shares state with the launcher)
   updater/              retired self-update routes (410)
+launcher/               upgrade launcher installed by `install-service`
 deploy/                 example systemd units
+MANAGED_SCHEDULER.md    finite managed schedules and the Hermes schedule-source cleanup
 ```
 
 ## Rules

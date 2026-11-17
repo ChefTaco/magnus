@@ -6,7 +6,7 @@ README is the reference for its installation, configuration and environment vari
 
 ## Architecture
 
-- [Architecture](APP_ARCHITECTURE.md): the consoles, the server, the agent, Ardent, and how requests
+- [Architecture](APP_ARCHITECTURE.md): the UIs, the server, the agent, Ardent, and how requests
   and credentials flow between them.
 - [Hermes Agent management](APP_ARCHITECTURE_HERMES.md): desired state, reconciliation through the
   node agent, managed configuration and the plugin API.
@@ -14,7 +14,6 @@ README is the reference for its installation, configuration and environment vari
   staged rollouts and host enrollment.
 - [Codex CLI management](APP_ARCHITECTURE_CODEX.md): version checks, updates and ChatGPT sign-in for
   the Codex CLI on managed hosts.
-
 - [Console API route inventory](console-api.md): browser-facing and machine-only routes, the ingress
   allowlist, Oathweave authentication and the browser contract export.
 
@@ -26,6 +25,8 @@ README is the reference for its installation, configuration and environment vari
   of existing nodes, enrollment tokens, revocation, rollback and the phase plan.
 - [Command resource leases](COMMAND_RESOURCE_LEASES.md): durable ownership of node commands, node
   enrollment, and shared repository, provider and GPU leases.
+- [Managed scheduler](../packages/agent/MANAGED_SCHEDULER.md): finite managed cron schedules on the
+  agent and the cleanup of Hermes schedule sources remembered before 1.1.6.
 
 ## Operations
 
@@ -33,6 +34,13 @@ README is the reference for its installation, configuration and environment vari
   streams and the Oathweave service identity for the Ardent bridge.
 - [Context-only Ardent adoption](ARDENT_CONTEXT_ADOPTION.md): pinned engine staging,
   per-profile continuity acceptance, managed activation and runtime rollback.
+- [Stopped native profile snapshots](NATIVE_SNAPSHOTS.md): the root-only `magnus-agent
+  native-snapshot` capture, verification and staged restore of Ardent profiles.
+- [Embermend bridge](embermend.md): the optional, grant-scoped Embermend product bridge and its
+  ownership settlement.
+- [Security Fusion moves to Cindertrace](CINDERTRACE_MIGRATION.md): migrating a retired local-mode
+  installation and the optional response adapter.
+- [Upgrading](../UPGRADING.md): every upgrade path, the automation switches and upgrade problem codes.
 - [Public-release privacy and security review](PUBLIC_RELEASE_REVIEW.md): fixes, validation and
   publication prerequisites from the pre-release review.
 - [Publishing packages](PUBLISHING.md): required review, npm authentication,
@@ -53,6 +61,9 @@ README is the reference for its installation, configuration and environment vari
 | `@hivemagnus/ardent` | [Ardent README](https://github.com/ChefTaco/Ardent#readme) (separate repository) |
 | `@hivemagnus/magnus-contracts` | [packages/contracts/README.md](../packages/contracts/README.md) |
 | `@hivemagnus/magnus-skills` | [packages/skills/README.md](../packages/skills/README.md) |
+| `@hivemagnus/magnus` | [packages/magnus/README.md](../packages/magnus/README.md) |
+| `@hivemagnus/magnus-oathweave` (private) | [packages/oathweave/README.md](../packages/oathweave/README.md) |
+| Native Hermes Agent and Codex builders | [tooling/native-hermes](../tooling/native-hermes/README.md), [tooling/native-codex](../tooling/native-codex/README.md) |
 
 ## Documentation checks
 

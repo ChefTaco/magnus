@@ -1,5 +1,11 @@
 # Agent Instructions
 
+Magnus is the fleet and agent manager of the Hive:Magnus suite: an API server, a node agent on each
+managed Linux host, shared contracts, and management of Ardent, Hermes Agent and Codex CLI agents.
+[HiveXUI](https://github.com/ChefTaco/HiveXUI) is the suite's UI; Magnus keeps its own API and also
+runs on its own. The current release line is 3.x: node authentication uses per-node Ed25519 keys and
+`NODE_AUTH_MODE` defaults to `enforce` ([per-node credentials](docs/NODE_CREDENTIALS.md)).
+
 These instructions apply to AI coding agents (Claude Code, Codex, Copilot and others) and to human
 contributors. This is a **public repository**: everything committed, including commit messages, is
 published.
@@ -61,7 +67,7 @@ change.
 
 | Path | Package | Contents |
 |---|---|---|
-| `apps/dashboard` | `@hivemagnus/magnus-ui` | Next.js web console for fleets, nodes, jobs, Hermes Agent and Ardent |
+| `apps/dashboard` | `@hivemagnus/magnus-ui` | Standalone Next.js web console for installs without HiveXUI; to be deprecated once HiveXUI's Magnus module passes acceptance |
 | `services/control-api` | `@hivemagnus/magnus-server` | Hono API server: fleet inventory, desired state, jobs, audit (PostgreSQL + Redis) |
 | `services/fleet-gateway` | `@hivemagnus/magnus-fleet-gateway` | Separate service that holds the restricted SSH key and carries the browser web terminal. Ships as a container image, not on npm |
 | `packages/oathweave` | `@hivemagnus/magnus-oathweave` | Oathweave token verifier and identity links shared by the server and fleet gateway. Private: bundled into their tarballs, not on npm |
@@ -69,8 +75,11 @@ change.
 | `packages/contracts` | `@hivemagnus/magnus-contracts` | Zod schemas shared by the server, UI and agent |
 | `packages/skills` | `@hivemagnus/magnus-skills` | Ubuntu operations skill catalogue (Hermes Agent compatible) |
 | `packages/magnus` | `@hivemagnus/magnus` | Installer and upgrade tool (`magnus init`, `magnus upgrade`, `magnus rollback`) |
-| `scripts/` | | Repository checks |
-| `docs/` | | Architecture and integration notes |
+| `scripts/` | | Repository checks and release tooling ([script guide](scripts/README.md)) |
+| `docs/` | | Architecture, credentials, Ardent and operations guides ([index](docs/README.md)) |
+| `release/` | | Per-release manifests (`release/X.Y.Z.json`) read by the installer |
+| `docker/` | | Compose file for the published server and console images |
+| `tooling/` | | Builders for native Hermes Agent and Codex artifacts |
 
 Each workspace has its own `AGENTS.md` with package-specific guidance. Read it before editing there.
 
@@ -97,7 +106,38 @@ Run these before every commit or pull request:
 npm run typecheck
 npm test
 npm run build
-npm run openapi:check
+npm run openapi:check      # needs the server build
+npm run docs:links         # package maps and local Markdown links; docs:check also needs a console build
 npm run scan:secrets
 npm run check:private
 ```
+
+`npm run verify` runs everything CI runs (scans, build, typecheck, tests, skills catalogue, OpenAPI,
+Ardent client, npm packs, release manifest and documentation checks). On a fresh clone, run
+`npm --workspace @hivemagnus/magnus-server run db:generate` before typechecking or building the
+server. `npm run lint` exists in `services/control-api` and `apps/dashboard`. The server's
+integration tests need a disposable PostgreSQL database named `magnus_ideas_*` and Redis; see the
+[server README](services/control-api/README.md#develop).
+
+## Releases
+
+Server, console, agent, contracts, skills and installer share one version. `npm run release:bump
+X.Y.Z` sets every version and pin; then write `release/X.Y.Z.json` and the CHANGELOG entry and run
+`npm run release:manifest`. Publication runs only from the `publish.yml` workflow on a `vX.Y.Z`
+tag, after review; never `npm publish` by hand. Maintenance releases of an older line are cut from
+a `release/<major>.<minor>.x` branch and published under the `maintenance-<major>.<minor>` dist-tag.
+See [publishing](docs/PUBLISHING.md) and [UPGRADING.md](UPGRADING.md#release-notes-for-maintainers).
+
+## Gotchas
+
+- Node authentication: `NODE_AUTH_MODE` defaults to `enforce`. `compat` and `warn` (and with them
+  `NODE_MANAGER_SECRET`, `RESULT_SIGNING_SECRET` and `COMMAND_RECONCILIATION_SECRET`) are deprecated,
+  honoured only when set explicitly, and go away in the next major. Never add a code path that needs
+  a shared node secret.
+- Wire contracts that must stay byte-identical between the server and the agent
+  (`security/node-request-auth.ts`, `security/node-evidence.ts`, the completion registries) are
+  pinned by tests in both packages. Change both sides together.
+- Upgrade problem codes live in `packages/contracts/src/upgrade-remedies.ts`;
+  `node scripts/check-upgrade-remedies.mjs --write` regenerates the table in `UPGRADING.md`.
+- The console's environment table in `apps/dashboard/README.md` is generated
+  (`npm run docs:generate`); do not edit it by hand.

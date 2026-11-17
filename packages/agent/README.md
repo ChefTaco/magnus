@@ -3,7 +3,7 @@
 The Magnus node agent. It is a small daemon that runs on each Linux host you
 manage. It enrolls with a [magnus-server](https://github.com/ChefTaco/magnus/tree/main/services/control-api)
 Control API, sends heartbeats, and serves authenticated management routes for
-the server and the Magnus console.
+the server (which HiveXUI, the suite's UI, and the standalone Magnus console call).
 
 The agent is infrastructure, not an LLM runtime. It can manage Hermes Agent,
 the Codex CLI and Ardent when they are installed on the host. Each of these
@@ -63,7 +63,7 @@ across upgrades.
 
 ## Enroll with a magnus-server
 
-1. In the Magnus console or through the Control API, register the node with
+1. In the UI or through the Control API, register the node with
    the host's FQDN, and issue a one-time enrollment token for it
    (`POST /api/v1/nodes/<nodeId>/enrollment-token`, ADMIN).
 2. Edit `/opt/magnus-agent/.env`:
@@ -188,10 +188,13 @@ local tarballs with `MAGNUS_AGENT_UPGRADE_SOURCE_DIR`. See
 ```text
 magnus-agent [start] [--env-file <path>]          Start the agent (default)
 magnus-agent check [--json] [--env-file <path>]   Validate configuration without starting
+magnus-agent acceptance [--json] [--wait-seconds 60]  Verify native health and recent accepted heartbeat
+magnus-agent env-schema                           Print the configuration schema as JSON
+magnus-agent install-service [--unprivileged]     (root, once) Versioned layout, upgrade launcher and systemd unit
 magnus-agent enroll --token <token>               Bind a new node key with a one-time enrollment token
-magnus-agent enroll --token-file <path|->         The same, reading the token from a file or standard input (-), off the process table
-magnus-agent identity show [--json]               Print the node id and key fingerprints (never the key)
-magnus-agent identity rotate                      Replace the node key
+magnus-agent enroll --token-file <path|->         The same, reading the token from a file or standard input (-)
+magnus-agent identity show [--json]               Print this node's id and key fingerprints (never the key)
+magnus-agent identity rotate                      Replace the node key (signed with the key it replaces)
 magnus-agent identity reset                       Remove the node key and return to the shared node secret
 magnus-agent historical-settlements list [--json] [--check]
                                                   How each stored historical-mutation settlement verifies
@@ -199,9 +202,14 @@ magnus-agent historical-settlements reseal [--apply]
                                                   (root) Re-MAC settlements signed with a shared key with the node-local keys
 magnus-agent historical-settlements prune --unverifiable [--with-records] [--apply]
                                                   (root) Archive settlements no key of this agent verifies
-magnus-agent env-schema                           Print the configuration schema as JSON
+magnus-agent native-snapshot inspect --json       (root) Discover managed native profile storage
+magnus-agent native-snapshot ACTION --request-file -
+                                                  (root) Quiesce, capture, verify, restore or resume a stopped snapshot
 magnus-agent --help | --version
 ```
+
+`identity reset` is only useful under an explicit (deprecated) `NODE_AUTH_MODE=compat` on both
+sides; see [rollback](https://github.com/ChefTaco/magnus/blob/main/docs/NODE_CREDENTIALS.md#rollback).
 
 Variables already set in the environment win over `--env-file`, which may be repeated (an earlier
 file wins). The agent also reads `$AGENT_INSTALL_DIR/.env` (default `./.env`). The
@@ -301,6 +309,35 @@ reversible Control API admission fence; normal daemon startup refuses a held sna
 See [stopped native profile snapshots](../../docs/NATIVE_SNAPSHOTS.md) for commands, protected storage,
 restore pins and failure recovery.
 
+## Native installation acceptance
+
+Set `MAGNUS_AGENT_SELF_URL` to the running agent's verified HTTPS origin and,
+when needed, `MAGNUS_AGENT_SELF_CA_PATH` to its private CA bundle.
+`magnus-agent --env-file /opt/magnus-agent/agent.env acceptance --json` waits up
+to 60 seconds for authenticated healthy status, the expected product version and
+a recently accepted heartbeat. Use `--wait-seconds 0` for one probe. It emits only
+bounded evidence, without raw health diagnostics, credential fingerprints or tokens.
+A reachable listener alone does not pass this check. Existing profiles and
+provider authorizations remain operator-owned.
+
+### Native artifacts
+
+Release maintainers can export a reviewed image into a native artifact with its
+exact Node runtime using `npm run build:native-agent -- --image PINNED_IMAGE
+--output NEW_DIRECTORY`. The source must be an immutable registry digest or
+local image ID, on matching Linux architecture. The image is never started.
+The archive contains public runtime files and licenses, a native launcher and
+SHA-256 metadata. Review privacy and sign the release matrix before publication;
+artifact construction does not authorize deployment.
+
+## Managed web terminals
+
+Managed web terminals require explicit `MAGNUS_AGENT_MANAGED_TERMINAL_USER` and
+`MAGNUS_EXECUTION_SUPERVISOR_ENABLED=true`. Use a dedicated non-root account without
+supplementary groups. Each PTY runs in a bounded systemd cgroup with a read-only host
+filesystem, private temporary files, no privilege escalation and no user-manager IPC.
+The signed receipt proves that group stopped; it does not undo external network effects.
+
 ## Development
 
 ```bash
@@ -319,28 +356,3 @@ production.
 ## License
 
 Apache-2.0
-
-### Native installation acceptance
-
-Set `MAGNUS_AGENT_SELF_URL` to the running agent's verified HTTPS origin and,
-when needed, `MAGNUS_AGENT_SELF_CA_PATH` to its private CA bundle.
-`magnus-agent --env-file /opt/magnus-agent/agent.env acceptance --json` waits up
-to 60 seconds for authenticated healthy status, the expected product version and
-a recently accepted heartbeat. Use `--wait-seconds 0` for one probe. It emits only
-bounded evidence, without raw health diagnostics, credential fingerprints or tokens.
-A reachable listener alone does not pass this check. Existing profiles and
-provider authorizations remain operator-owned.
-
-Release maintainers can export a reviewed image into a native artifact with its
-exact Node runtime using `npm run build:native-agent -- --image PINNED_IMAGE
---output NEW_DIRECTORY`. The source must be an immutable registry digest or
-local image ID, on matching Linux architecture. The image is never started.
-The archive contains public runtime files and licenses, a native launcher and
-SHA-256 metadata. Review privacy and sign the release matrix before publication;
-artifact construction does not authorize deployment.
-
-Managed web terminals require explicit `MAGNUS_AGENT_MANAGED_TERMINAL_USER` and
-`MAGNUS_EXECUTION_SUPERVISOR_ENABLED=true`. Use a dedicated non-root account without
-supplementary groups. Each PTY runs in a bounded systemd cgroup with a read-only host
-filesystem, private temporary files, no privilege escalation and no user-manager IPC.
-The signed receipt proves that group stopped; it does not undo external network effects.

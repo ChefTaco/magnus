@@ -8,7 +8,8 @@ Read the repository root `AGENTS.md` first. Its privacy and secret rules apply h
 fleet control plane. It stores inventory and desired state in PostgreSQL,
 queues work in Redis (BullMQ), ingests heartbeats, health and logs from
 `magnus-agent`, dispatches signed commands, cron, file and skill changes, and
-keeps an append-only audit log. The dashboard is its main client.
+keeps an append-only audit log. Its browser clients are HiveXUI (the suite's UI, with Oathweave
+tokens) and the standalone console in `apps/dashboard`.
 
 ## Stack
 
@@ -42,7 +43,7 @@ The workspace packages `@hivemagnus/magnus-contracts` and
 
 ```text
 src/
-  cli.ts                magnus-server CLI (start, check, migrate, env-schema)
+  cli.ts                magnus-server CLI (start, check, migrate, backup, restore, agents, node-auth, env-schema, ...)
   cli/                  argument parsing, documented env catalogue, preflight checks
   index.ts              listener, background services, graceful shutdown
   server.ts             Hono app and route mounting
@@ -63,7 +64,7 @@ scripts/                build helpers, the Compose check, legacy data migrations
 
 ## Optional integrations
 
-Hive IAM, Hive Router, HiveMem, Cindertrace (an external security console), the Hermes Agent plugin API, the Hermes registry sync and the AI
+Hive IAM, Emberpath (model routing, formerly Hive Router), HiveMem, Cindertrace (an external security console), the Hermes Agent plugin API, the Hermes registry sync and the AI
 assistant providers are optional. Each is off until its environment variables
 are set (`src/config/features.ts`), and the server must start and work without
 any of them. Never hard-code their URLs, hosts or tokens; add new settings to

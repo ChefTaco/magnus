@@ -197,12 +197,34 @@ them, and `magnus-server check` and `magnus-ui check` print which ones are on.
 | Codex CLI | Fleet view of Codex CLI versions and ChatGPT sign-in state, with update and device-code login actions | Agent: `CODEX_USER` (the CLI is detected automatically) |
 | Telegram and Mattermost (Ardent) | Chat with an Ardent profile | Ardent `config.yaml`: `channels.telegram` (`TELEGRAM_BOT_TOKEN`) or `channels.mattermost` (`MATTERMOST_URL`, `MATTERMOST_TOKEN`) |
 
+### HiveSkills deployments
+
+Optional HiveSkills deployments use a dedicated server-owned registry grant and an
+explicit already-enrolled node/profile map. Before enabling a registry, its
+operator may read `GET /api/v1/hiveskills/targets/{target}` with that registry's
+endpoint-scoped credential. This performs no dispatch: it checks current
+resource enrollment, heartbeat, retained ownership and the authenticated native
+client's configuration and file digests. An unavailable or changed target stays
+held for operator review. It does not enroll nodes or install software.
+
+The native target credential file must contain only `HIVE_SKILLS_URL`,
+`HIVE_SKILLS_TARGET_TOKEN`, `HIVE_SKILLS_HERMES_VERSION`, `HIVE_SKILLS_TARGET`,
+`HERMES_HOME`, `HERMES_BIN` and optionally `NODE_EXTRA_CA_CERTS` matching the
+explicit native `caFile`. Select a dedicated protected file, never the agent or
+server environment file; infrastructure credential variables are rejected before
+launch. The native client and Node executable, including their parent directories,
+must remain root-owned and unwritable by the managed profile owner.
+
+See the [server README](services/control-api/README.md#hiveskills-execution-bridge) for
+`MAGNUS_HIVESKILLS_DEPLOYMENTS_JSON` and the node's `MAGNUS_AGENT_HIVESKILLS_TARGETS_JSON`.
+
 ## Development
 
 ```bash
 git clone https://github.com/ChefTaco/magnus.git && cd magnus
 npm ci                   # install every workspace
 npm run hooks:install    # privacy and secret checks on commit and push
+npm --workspace @hivemagnus/magnus-server run db:generate   # Prisma client, once per clone and after schema changes
 npm run build            # contracts, skills, agent, server, console
 npm test
 npm run verify           # everything CI runs: scans, build, typecheck, tests, contract and doc checks
@@ -210,7 +232,7 @@ npm run verify           # everything CI runs: scans, build, typecheck, tests, c
 
 Each workspace has its own scripts, for example `npm run control-api:test` or
 `npm --workspace @hivemagnus/magnus-agent test`. The server's integration tests need a disposable
-PostgreSQL database; see the [server README](services/control-api).
+PostgreSQL database; see the [server README](services/control-api/README.md#develop).
 
 ## Documentation
 
@@ -235,20 +257,3 @@ Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) and the
 ## License
 
 [Apache License 2.0](LICENSE) © ChefTaco and contributors.
-
-
-Optional Skills deployments use a dedicated server-owned registry grant and an
-explicit already-enrolled node/profile map. Before enabling a registry, its
-operator may read `GET /api/v1/hiveskills/targets/{target}` with that registry's
-endpoint-scoped credential. This performs no dispatch: it checks current
-resource enrollment, heartbeat, retained ownership and the authenticated native
-client's configuration and file digests. An unavailable or changed target stays
-held for operator review. It does not enroll nodes or install software.
-
-The native target credential file must contain only `HIVE_SKILLS_URL`,
-`HIVE_SKILLS_TARGET_TOKEN`, `HIVE_SKILLS_HERMES_VERSION`, `HIVE_SKILLS_TARGET`,
-`HERMES_HOME`, `HERMES_BIN` and optionally `NODE_EXTRA_CA_CERTS` matching the
-explicit native `caFile`. Select a dedicated protected file, never the agent or
-server environment file; infrastructure credential variables are rejected before
-launch. The native client and Node executable, including their parent directories,
-must remain root-owned and unwritable by the managed profile owner.

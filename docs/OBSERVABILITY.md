@@ -51,7 +51,7 @@ Start with these objectives and tighten them once you have a baseline.
 | Server unhealthy | health degraded or unreachable for 5 minutes | Check the `database` and `migration-safety` health checks, then the service journal. |
 | Database backup failure | integrity check fails, checksum fails, or the newest backup is older than 24 hours | Stop deployments until a verified backup exists. |
 | Redis consumer stalled | pending entries grow and the consumer is idle for more than two heartbeat intervals | Inspect Redis and the heartbeat consumer. Keep the pending entries before restarting anything. |
-| Heartbeat acceptance falling | accepted nodes below 99.5% | Compare node credential fingerprints before changing agent secrets. |
+| Heartbeat acceptance falling | accepted nodes below 99.5% | Compare node key fingerprints (`magnus-agent identity show`, the node's credentials in the UI) before re-enrolling a node. |
 | Tailscale node key expiring | a heartbeat reports node-key expiry within 30 days | Renew the key before the host loses tailnet access. |
 | GPU fan saturation | a GPU fan stays at 100% for more than 8 hours with no telemetry gap over 5 minutes | Check workload, temperature, airflow and stale GPU processes before restarting jobs or the host. |
 | Stale fleet rising | the stale node count grows for 10 minutes | Open the incident workspace and group the stale nodes by network or site. |

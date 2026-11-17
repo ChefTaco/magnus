@@ -14,9 +14,10 @@ decided by the server's roles, approvals and remediation plans.
 - Keep `$AGENT_INSTALL_DIR/.magnus/command-receipts` across upgrades. The directory is `0700`, and
   receipts and locks are `0600`. Never delete it to clear a lock.
 - Completed receipts are verified before they are returned or recovered, so a retained receipt
-  needs the key it was signed with: the shared `RESULT_SIGNING_SECRET` (kept separate from
-  `NODE_MANAGER_SECRET`) or, from 3.0.0 on an agent without it, the node-local key in
-  `$AGENT_INSTALL_DIR/identity`. A retired shared key stays readable as `RESULT_SIGNING_PREVIOUS_SECRET`
+  needs the key it was signed with. From 3.0.0 an agent without a shared key MACs them with its
+  node-local key in `$AGENT_INSTALL_DIR/identity`. Receipts written with the deprecated shared
+  `RESULT_SIGNING_SECRET` (by 2.10.x, or by an upgraded agent that still has it) stay readable while
+  that value is set or moved to `RESULT_SIGNING_PREVIOUS_SECRET`
   ([the agent's own records](NODE_CREDENTIALS.md#the-agents-own-records)). Rotating a key is no
   reason to delete old receipts.
 - A reconciliation decision from the server is signed with its server key for this node, which an
@@ -26,7 +27,8 @@ decided by the server's roles, approvals and remediation plans.
   HMAC-only decision. Do not give it to model tools, clients or logs.
 
 The agent advertises `commandReceipts: 1` and `commandFencing: 1` when node management is enabled,
-and `commandReconciliation: 1` when a reconciliation key is configured. The server checks these
+and `commandReconciliation: 1` when the deprecated shared `COMMAND_RECONCILIATION_SECRET` is
+configured (server-signed decisions do not depend on it). The server checks the receipt and fencing
 capabilities before it sends a fenced request, so older agents never receive one.
 
 ## Receipt states

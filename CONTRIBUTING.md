@@ -18,25 +18,32 @@ The repository is an npm workspaces monorepo:
 |---|---|
 | `apps/dashboard` | `@hivemagnus/magnus-ui` |
 | `services/control-api` | `@hivemagnus/magnus-server` |
+| `services/fleet-gateway` | `@hivemagnus/magnus-fleet-gateway` (container image only) |
 | `packages/agent` | `@hivemagnus/magnus-agent` |
 | `packages/contracts` | `@hivemagnus/magnus-contracts` |
+| `packages/oathweave` | `@hivemagnus/magnus-oathweave` (private, bundled) |
 | `packages/skills` | `@hivemagnus/magnus-skills` |
+| `packages/magnus` | `@hivemagnus/magnus` (installer) |
 
-The server's integration tests need PostgreSQL and Redis. `services/control-api/docker/compose.yml`
-starts both.
+Generate the server's Prisma client once per clone, before typechecking or building it:
+`npm --workspace @hivemagnus/magnus-server run db:generate`. The server's integration tests need
+PostgreSQL and Redis; see the [server README](services/control-api/README.md#develop).
 
 ## Before opening a pull request
 
-Run the same gates that CI runs:
+Run the gates from [AGENTS.md](AGENTS.md#gates):
 
 ```bash
 npm run typecheck
 npm test
 npm run build
 npm run openapi:check
+npm run docs:links
 npm run scan:secrets
 npm run check:private
 ```
+
+`npm run verify` runs everything CI runs.
 
 - Keep TypeScript strict and follow the style of the surrounding code.
 - Add or update tests for behaviour changes.

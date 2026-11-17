@@ -1,4 +1,4 @@
-# Embermend bridge development preview
+# Embermend bridge
 
 The optional Embermend integration owns security recommendations and product
 permissions. Magnus owns inventory identity, one-way enrollment, supervised
@@ -30,11 +30,9 @@ Credentialed model calls and bounded GitHub reads are brokered outside that code
 Worker readiness, private repository access and hostile-repository acceptance
 still require complete release proof.
 
-The prospective 2.5.0 release notes own the additive operation migration.
-Published 2.4.x release metadata stays unchanged; its version alone does not
-establish this optional bridge. Hive requires an explicit protocol declaration
-in the signed release. This source change does not publish a compatible release.
-Bounded native reboot/cancellation and crash-adoption cases have actual disposable
+The bridge and its additive operation migration shipped in 2.5.0; releases
+before it do not have the bridge. Hive requires an explicit protocol declaration
+in the signed release before it enables the bridge. Bounded native reboot/cancellation and crash-adoption cases have actual disposable
 proof; the complete native fault matrix and combined product acceptance remain
 required before releasing the full remediation contract. See Embermend's
 acceptance ledger for the product completion boundary.

@@ -2,15 +2,16 @@
 
 The Magnus server is the control plane of a Magnus fleet. It is a Hono API
 server backed by PostgreSQL and Redis that Linux hosts running
-[`@hivemagnus/magnus-agent`](../../packages/agent) report to, and that the
-[Magnus dashboard](../../apps/dashboard) talks to.
+[`@hivemagnus/magnus-agent`](../../packages/agent) report to. Its browser clients are
+[HiveXUI](https://github.com/ChefTaco/HiveXUI), the suite's UI, and the standalone
+[Magnus console](../../apps/dashboard).
 
 It keeps the fleet inventory and desired state, ingests agent heartbeats,
 health snapshots and logs, dispatches signed commands, cron jobs, file syncs
 and skill installs through a durable queue, and records every change in an
 append-only audit log. Optional modules add anomaly detection and remediation
 plans, rollouts, webhooks, an AI fleet assistant, Hermes Agent and Ardent
-management, and Security Fusion.
+management, and security observation export to Cindertrace.
 
 ## Requirements
 
@@ -73,10 +74,14 @@ magnus-server start   --env-file ~/.magnus/server.env   # MAGNUS_AUTO_MIGRATE=tr
 | `start` (default) | Start the API server. With `MAGNUS_AUTO_MIGRATE=true` it first dumps the database and applies pending migrations under an advisory lock. `--migrate` applies them without a dump. |
 | `check` | Validate configuration, connect to PostgreSQL and Redis, report pending migrations, available updates and enabled integrations (`--format json` for tooling). Exits non-zero on a problem. |
 | `migrate` | Run `prisma migrate deploy` with the packaged schema and migrations, then create the base rows (system actor, sentinel nodes, starter library). Idempotent. |
+| `verify-migrations`, `verify-initialization` | Check the exact packaged migration checksums (and, for the second, the committed base data) with read-only queries. Nothing is applied or repaired. |
 | `migrations` | List applied and pending migrations with their impact (`fast`, `slow`, `one-way`). |
 | `backup` | Dump PostgreSQL (`pg_dump -Fc`) into `MAGNUS_BACKUP_DIR` and print the restore command. |
+| `restore FILE` | Replace the database with a dump (stop the server first; asks unless `--yes`). |
 | `upgrade`, `rollback` | Upgrade or roll back the `magnus init` project this server was installed into (runs `magnus upgrade`; see [UPGRADING.md](../../UPGRADING.md)). |
-| `agents upgrade` | Upgrade agents to the version this server ships (`--to`, `--nodes`, `--dry-run`). |
+| `agents upgrade` | Upgrade agents to the version this server ships (`--to`, `--nodes`, `--canary`, `--dry-run`, `--retry RUN_ID`). `--allow-major` also moves agents of another major with a server-signed authorization ([cross-major moves](../../docs/NODE_CREDENTIALS.md#moving-agents-across-a-major-version)). |
+| `agents doctor`, `agents fence`, `agents stop` | Read-only per-node upgrade diagnosis (`--heal` repairs what the server owns), move a node's fence generation up (`fence NODE VALUE`, audited), stop a run (`stop RUN_ID`). `magnus-server agents --help` explains each. |
+| `node-auth server-key status\|stage\|promote\|retire` | Rotate the server signing key ([rotating the server key](../../docs/NODE_CREDENTIALS.md#rotating-the-server-key)). The command line cannot see agent pins, so `promote` needs `--force`; the ADMIN route checks them. |
 | `env-schema` | Print the documented environment variables (`--format json` or `table`). |
 | `version`, `help` | Print the version or usage. |
 
@@ -117,12 +122,11 @@ without any of them. `magnus-server check` prints which are on.
 | --- | --- | --- |
 | Hive IAM | RS256 access tokens issued by Hive IAM replace locally issued JWTs | `IAM_CORE_URL`, `IAM_TOKEN_ISSUER`, `IAM_TOKEN_AUDIENCE` |
 | Fleet gateway | The browser web terminal, through a [separate service](../fleet-gateway/README.md) that holds the SSH key; also answers console drain challenges | `FLEET_GATEWAY_URL`, `FLEET_GATEWAY_TOKEN_SHA256`, `RESOURCE_ENROLLMENT_DASHBOARD_PARTICIPANT` |
-| Hive Router | OpenAI-compatible model routing for managed Hermes Agents | `MAGNUS_ROUTER_URL` (alias `HIVE_ROUTER_URL`), `MAGNUS_ROUTER_MODEL`, `MAGNUS_ROUTER_API_KEY`, `HIVE_ROUTER_HEALTH_URL` |
+| [Emberpath](https://github.com/ChefTaco/Emberpath) (formerly Hive Router) | OpenAI-compatible model routing for managed Hermes Agents | `MAGNUS_ROUTER_URL` (alias `HIVE_ROUTER_URL`), `MAGNUS_ROUTER_MODEL`, `MAGNUS_ROUTER_API_KEY`, `HIVE_ROUTER_HEALTH_URL` |
 | HiveMem | Shared agent memory for Hermes Agents and operational lessons | `HIVEMEM_URL`, `HIVEMEM_TOKEN`, `MAGNUS_LESSONS_HIVEMEM_URL`, `MAGNUS_LESSONS_HIVEMEM_TOKEN` |
 | Ardent skill install | Installs HiveSkills catalog releases onto Ardent profiles, checked against the catalog digest ([docs](../../docs/ARDENT.md#hiveskills-skill-install)) | `MAGNUS_ARDENT_HIVESKILLS_URL` |
 | Ardent New Agent | Per-agent HiveMem credentials for new and existing Ardent profiles, and Emberpath model aliases ([docs](../../docs/ARDENT.md)) | `MAGNUS_ARDENT_HIVEMEM_URL` with `MAGNUS_ARDENT_HIVEMEM_CLIENT_ID`, `_CLIENT_SECRET`, `_TOKEN_URL` (or `MAGNUS_ARDENT_HIVEMEM_ENROLLMENT_TOKEN` and `MAGNUS_ARDENT_HIVEMEM_WORKSPACE_ID`), optional `MAGNUS_ARDENT_HIVEMEM_SCOPE`, `MAGNUS_ARDENT_HIVEMEM_WORKSPACE_ID`, `MAGNUS_ARDENT_HIVEMEM_AGENT_URL`, `MAGNUS_ARDENT_HIVEMEM_CREDENTIAL_HOURS`, `MAGNUS_ARDENT_EMBERPATH_URL` |
-| Security Fusion (local) | Security cases, evidence and signed receipts in this server | `SECURITY_FUSION_MODE=local`, `SECURITY_FUSION_RECEIPT_SIGNING_KEY`, optional `SECURITY_FUSION_EVIDENCE_DIR`, `SECURITY_FUSION_CONTAINMENT_COMMAND`, `SECURITY_FUSION_MATTERMOST_*` |
-| External security console | Exports observations to an external console; local Security Fusion routes answer 410 with the console URL | `SECURITY_FUSION_MODE=remote`, `MAGNUS_SECURITY_CONSOLE_URL`, `SECURITY_FUSION_API_URL`, `SECURITY_EXPORT_ENABLED`, `SECURITY_EXPORT_SECRET`, `SECURITY_SUMMARY_TOKEN`, `SECURITY_INVENTORY_TOKEN_SHA256`, `SECURITY_BACKUP_TOKEN_SHA256` |
+| External security console ([Cindertrace](../../docs/CINDERTRACE_MIGRATION.md)) | Exports observations to the console; the retired Security Fusion routes answer 410 with the console URL. `SECURITY_FUSION_MODE=local` is retired and refused at startup | `SECURITY_FUSION_MODE=remote`, `MAGNUS_SECURITY_CONSOLE_URL`, `SECURITY_FUSION_API_URL`, `SECURITY_EXPORT_ENABLED`, `SECURITY_EXPORT_SECRET`, `SECURITY_SUMMARY_TOKEN`, `SECURITY_INVENTORY_TOKEN_SHA256`, `SECURITY_BACKUP_TOKEN_SHA256` |
 | Hermes Agent plugin API | Endpoint-scoped plugin credentials (read, operator) and the signed approval bridge | `MAGNUS_PLUGIN_API_ENABLED=true`, `MAGNUS_PLUGIN_READ_TOKEN_DIGESTS_JSON`, `MAGNUS_PLUGIN_OPERATOR_TOKEN_SHA256`, optional `MAGNUS_APPROVAL_BRIDGE_CONSUMER`, `APPROVAL_SIGNER_PUBLIC_KEY_*`, `APPROVAL_*_ACTOR_SHA256` |
 | Hermes registry sync | Imports the bundled skill catalogue and tracks plugin sources; staged deployments to named hosts | `MAGNUS_HERMES_REGISTRY_ENABLED=true`, `MAGNUS_REGISTRY_DEPLOY_HOSTS`, `MAGNUS_REGISTRY_SUBMIT_ONLY_HOSTS` |
 | Observability collector | Read-only credential for an external collector | `MAGNUS_COLLECTOR_TOKEN_SHA256` |
@@ -153,6 +157,31 @@ Replace the example with fingerprints verified through a trusted channel.
 Unknown destinations and changed keys fail before authentication. Multiple
 pins permit a reviewed host-key rotation; remove the old pin afterward.
 This setting does not enable the retired browser deployment routes.
+
+## Cindertrace
+
+Embedded Security Fusion is retired. See [migration and response configuration](../../docs/CINDERTRACE_MIGRATION.md).
+`CINDERTRACE_RESPONSE_SECRET`, `CINDERTRACE_RESTART_ALLOWLIST` and `CINDERTRACE_PROTECTED_TARGET_IDS`
+configure the optional managed response adapter.
+
+## HiveSkills execution bridge
+
+`MAGNUS_HIVESKILLS_DEPLOYMENTS_JSON` maps each registry to a dedicated token SHA-256
+and exact logical-target bindings (`nodeId`, `agentTarget`). This optional integration
+accepts only POST/GET `/api/v1/hiveskills/jobs/:id`, with exact publication digests
+and a durable registry-owned UUID. It cannot submit general commands. Nodes must
+already have completed managed resource enrollment. Repeated requests inspect the
+original signed receipt; they never dispatch an admitted job again. Unknown outcomes
+retain their node ownership for explicit reconciliation.
+
+Each node explicitly configures `MAGNUS_AGENT_HIVESKILLS_TARGETS_JSON`: registry ID,
+registry target, owner, home, Hermes profile directory, protected environment-file
+path, root-owned pinned sync script, Node executable and optional `caFile` trust bundle. The trust bundle is passed at Node startup; target bearer credentials remain in the protected environment file. The owner-scoped native
+handler runs that fixed product client as the configured owner, with sanitized
+environment and bounded output. No infrastructure or native target credential is
+sent by the browser or included in a job body. The client receives the frozen
+approved publication and independently checks archive origin, digest and local
+Hermes compatibility. A non-root agent may synchronize its own explicit profile. Changing owner or running as root requires privileged mode. No SSH or Docker socket is used by this path.
 
 ## Interoperating with older components
 
@@ -205,26 +234,3 @@ migrations are never edited.
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
-
-## Cindertrace
-
-Embedded Security Fusion is retired. See [migration and response configuration](../../docs/CINDERTRACE_MIGRATION.md). CINDERTRACE_RESPONSE_SECRET, CINDERTRACE_RESTART_ALLOWLIST, and CINDERTRACE_PROTECTED_TARGET_IDS configure the optional managed response adapter.
-
-### HiveSkills execution bridge
-
-`MAGNUS_HIVESKILLS_DEPLOYMENTS_JSON` maps each registry to a dedicated token SHA-256
-and exact logical-target bindings (`nodeId`, `agentTarget`). This optional integration
-accepts only POST/GET `/api/v1/hiveskills/jobs/:id`, with exact publication digests
-and a durable registry-owned UUID. It cannot submit general commands. Nodes must
-already have completed managed resource enrollment. Repeated requests inspect the
-original signed receipt; they never dispatch an admitted job again. Unknown outcomes
-retain their node ownership for explicit reconciliation.
-
-Each node explicitly configures `MAGNUS_AGENT_HIVESKILLS_TARGETS_JSON`: registry ID,
-registry target, owner, home, Hermes profile directory, protected environment-file
-path, root-owned pinned sync script, Node executable and optional `caFile` trust bundle. The trust bundle is passed at Node startup; target bearer credentials remain in the protected environment file. The owner-scoped native
-handler runs that fixed product client as the configured owner, with sanitized
-environment and bounded output. No infrastructure or native target credential is
-sent by the browser or included in a job body. The client receives the frozen
-approved publication and independently checks archive origin, digest and local
-Hermes compatibility. A non-root agent may synchronize its own explicit profile. Changing owner or running as root requires privileged mode. No SSH or Docker socket is used by this path.

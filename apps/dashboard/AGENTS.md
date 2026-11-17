@@ -8,7 +8,10 @@ Guidance for contributors and coding agents working on `@hivemagnus/magnus-ui`. 
 The Next.js web console for the Magnus control plane: fleet and node inventory, commands, files,
 logs, audit, rollouts, incidents, Ardent and Codex agent pages, and optional Hermes Agent pages. It
 talks only to the Magnus Control API (`@hivemagnus/magnus-server`) through server-side proxy routes,
-and ships to npm as a prebuilt standalone server with the `magnus-ui` CLI.
+and ships to npm as a prebuilt standalone server with the `magnus-ui` CLI. It is the console for
+standalone installs: in the suite the UI is HiveXUI, and this package will be deprecated once
+HiveXUI's Magnus module passes acceptance. Keep fixes here focused; new suite features belong in
+HiveXUI on top of the Magnus API.
 
 ## Stack
 

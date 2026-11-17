@@ -27,8 +27,8 @@ them.
   config/magnus-ui.env
   config/tls/                    self-signed certificate (unless --tls-cert/--tls-key)
   data/                          server data (MAGNUS_HOME: audit logs, rotation state)
-  versions/1.1.0/                one npm install per release
-  current -> versions/1.1.0      what the services run
+  versions/3.1.1/                one npm install per release
+  current -> versions/3.1.1      what the services run
   backups/                       pre-migration database dumps
   units/                         the generated systemd units
   deps.compose.yml               PostgreSQL and Redis, when no --database-url/--redis-url is given
