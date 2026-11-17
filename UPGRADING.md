@@ -19,6 +19,16 @@ The rules every upgrade path follows:
   `slow` or `one-way`). Upgrades print slow and one-way migrations and wait for confirmation
   (`--yes`). Startup auto-migrate refuses them unless `MAGNUS_AUTO_MIGRATE_ALLOW_SLOW=true` is set.
 
+## Version 3.1.2
+
+There are no database migrations, new settings or protocol changes, and the browser contract is
+unchanged. `magnus-server env-schema` no longer lists the retired Security Fusion local-mode
+settings (`SECURITY_FUSION_RECEIPT_SIGNING_KEY`, `SECURITY_FUSION_EVIDENCE_DIR`,
+`SECURITY_FUSION_CONTAINMENT_COMMAND` and `SECURITY_FUSION_MATTERMOST_*`); `SECURITY_FUSION_MODE=local`
+is still refused at startup (see [the Cindertrace migration](docs/CINDERTRACE_MIGRATION.md)).
+`docker/compose.yml` now defaults `MAGNUS_VERSION` to `3`; a Compose `.env` that sets it is
+unaffected.
+
 ## Version 3.1.1
 
 There are no database migrations or new settings. Upgrade both the server and node agent to 3.1.1

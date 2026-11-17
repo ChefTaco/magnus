@@ -1,15 +1,15 @@
 {
   "name": "@hivemagnus/magnus-agent",
-  "version": "3.1.1",
+  "version": "3.1.2",
   "lockfileVersion": 3,
   "requires": true,
   "packages": {
     "": {
       "name": "@hivemagnus/magnus-agent",
-      "version": "3.1.1",
+      "version": "3.1.2",
       "license": "Apache-2.0",
       "dependencies": {
-        "@hivemagnus/magnus-contracts": "3.1.1",
+        "@hivemagnus/magnus-contracts": "3.1.2",
         "@hono/node-server": "^2.1.8",
         "dotenv": "^18.0.10",
         "fast-xml-parser": "5.12.0",
@@ -628,9 +628,9 @@
       }
     },
     "node_modules/@hivemagnus/magnus-contracts": {
-      "version": "3.1.1",
-      "resolved": "https://registry.npmjs.org/@hivemagnus/magnus-contracts/-/magnus-contracts-3.1.1.tgz",
-      "integrity": "sha512-1vi0HjnaAuMMYwcpMc726LXbME/ThiEKQjI9XDbfaBieaW7w3KwMC5vI0aOvPbA+tsLN/oiQ3VuR6nBvZetiBA==",
+      "version": "3.1.2",
+      "resolved": "https://registry.npmjs.org/@hivemagnus/magnus-contracts/-/magnus-contracts-3.1.2.tgz",
+      "integrity": "sha512-BMhFbF/UJQOT0qRbTEOjFnZqGu7E+7HGkQ6AVTzyzllhudzzLVC3eq2fElxVnVwoipVZ9Wbfp+Pa+AcAKiDzLQ==",
       "license": "Apache-2.0",
       "dependencies": {
         "openapi-fetch": "^0.17.0",

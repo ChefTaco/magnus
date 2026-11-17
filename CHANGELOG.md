@@ -7,6 +7,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [3.1.2] - 2026-11-17
+
 ### Fixed
 
 - `docker/compose.yml` defaults `MAGNUS_VERSION` to `3`, the current major, instead of `1`. A
