@@ -1,0 +1,15 @@
+{
+  "summary": "Pins @hivemagnus/ardent 3.1.4 (@hono/node-server 2.1.6 or later); the Ardent management API, generated client and node-agent allowlists are unchanged. The server no longer validates the retired, unused SECURITY_FUSION_RECEIPT_SIGNING_KEY; a leftover value, like the other retired Security Fusion local-mode settings, is ignored at startup. No migrations, new settings, browser contract or protocol changes.",
+  "breaking": false,
+  "minUpgradeFrom": "2.10.2",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [
+    {
+      "name": "SECURITY_FUSION_RECEIPT_SIGNING_KEY",
+      "component": "server",
+      "note": "retired Security Fusion local-mode setting; a leftover value is ignored and can be deleted"
+    }
+  ],
+  "migrations": []
+}

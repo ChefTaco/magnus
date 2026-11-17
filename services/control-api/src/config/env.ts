@@ -22,6 +22,20 @@ function configuredDigestValues(raw: string | undefined): string[] {
   } catch { return []; }
 }
 
+/**
+ * Settings of the retired embedded Security Fusion local mode. Nothing reads them. The schema does
+ * not list them, so a leftover value in a server's environment is ignored (unknown keys are
+ * stripped), never validated or rejected. Operators can delete them from `.env` at any time.
+ */
+export const RETIRED_ENV_VARIABLES = [
+  'SECURITY_FUSION_RECEIPT_SIGNING_KEY',
+  'SECURITY_FUSION_EVIDENCE_DIR',
+  'SECURITY_FUSION_CONTAINMENT_COMMAND',
+  'SECURITY_FUSION_MATTERMOST_URL',
+  'SECURITY_FUSION_MATTERMOST_BOT_TOKEN',
+  'SECURITY_FUSION_MATTERMOST_CHANNEL_ID',
+] as const;
+
 /** Default skills directory — `<package root>/skills`. */
 const DEFAULT_SKILLS_DIR = path.resolve(import.meta.dirname, '../../skills');
 
@@ -133,7 +147,6 @@ export const envSchema = z.object({
   MAGNUS_HIVESKILLS_DEPLOYMENTS_JSON: z.string().optional(),
   MAGNUS_SHARED_RESOURCE_TOKEN_DIGESTS_JSON: z.string().optional(),
   MAGNUS_FLEET_CHECK_TOKEN_SHA256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
-  SECURITY_FUSION_RECEIPT_SIGNING_KEY: z.string().min(32).optional(),
   METRICS_TOKEN: z.string().min(32).optional(),
   WEBHOOK_ENCRYPTION_KEY: z.string().min(32).optional(),
   WEBHOOK_ALLOWED_ORIGINS: z.string().default(''),
@@ -446,7 +459,6 @@ export const envSchema = z.object({
     'RESULT_SIGNING_PREVIOUS_SECRET',
     'LOG_INGEST_SIGNING_SECRET',
     'LOG_INGEST_PREVIOUS_SIGNING_SECRET',
-    'SECURITY_FUSION_RECEIPT_SIGNING_KEY',
     'METRICS_TOKEN',
     'WEBHOOK_ENCRYPTION_KEY',
     'RESOURCE_ENROLLMENT_DASHBOARD_SECRET',
