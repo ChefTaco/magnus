@@ -7,6 +7,14 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Changed
+
+- `@hivemagnus/hive-common` is now `^0.5.1` in the server, the fleet gateway and the Oathweave
+  package. 0.5.1 makes the health-path trailing-slash trim and the error-code cleaning in
+  `parseHiveError()` linear (both regexes were quadratic on crafted input). Magnus serves its
+  health probes on fixed routes and does not parse peer errors with it, so neither was reachable
+  here; 0.5.0's other fixes (bounded log redaction, URL credential masking) apply as well.
+
 ## [3.1.3] - 2026-11-17
 
 ### Changed
