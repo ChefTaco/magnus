@@ -17,12 +17,16 @@ jobs:
   privacy:
     name: Secrets and private data
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Configure bounded authenticated package downloads
         run: bash scripts/ci-apt-setup.test.sh && sudo env GITHUB_ACTIONS=true bash scripts/ci-apt-setup.sh
       - name: Install ripgrep
-        run: sudo apt-get update -qq && sudo apt-get install -y ripgrep
+        timeout-minutes: 5
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
       - run: bash scripts/scan-secrets.sh
       - run: bash scripts/check-private-data.sh
       # Release-workflow tests need the YAML dependency and run in verify after npm ci.
@@ -76,7 +80,10 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: npm
       - name: Install test tools
-        run: sudo apt-get update -qq && sudo apt-get install -y ripgrep redis-server
+        timeout-minutes: 5
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep redis-server
       - name: Put node on the system PATH
         # Ardent starts Codex and its test fixtures with a minimal system PATH.
         run: sudo ln -sf "$(command -v node)" /usr/bin/node && /usr/bin/node --version
@@ -92,11 +99,13 @@ jobs:
       - name: Apply database migrations
         run: npm --workspace @hivemagnus/magnus-server run db:migrate:deploy
       - name: PostgreSQL 17 client tools (the restore integration test dumps the PostgreSQL 17 service)
+        timeout-minutes: 5
         run: |
           sudo install -d /usr/share/postgresql-common/pgdg
           sudo curl --retry 3 --retry-all-errors --connect-timeout 15 --max-time 45 -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
-          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
-          sudo apt-get update -qq && sudo apt-get install -y postgresql-client-17
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/hive-ci-sources/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-17
           /usr/lib/postgresql/17/bin/pg_dump --version
       - name: Fleet gateway against a real sshd
         run: npm --workspace @hivemagnus/magnus-fleet-gateway run test:ssh
@@ -104,10 +113,11 @@ jobs:
         env:
           MAGNUS_PG_DUMP: /usr/lib/postgresql/17/bin/pg_dump
         run: npm --workspace @hivemagnus/magnus-server run test:integration
+      - name: Install Chromium and system dependencies
+        timeout-minutes: 8
+        run: npm --workspace @hivemagnus/magnus-ui exec playwright install --with-deps chromium
       - name: Browser navigation tests
-        run: |
-          npm --workspace @hivemagnus/magnus-ui exec playwright install --with-deps chromium
-          npm run verify:ui:ci
+        run: npm run verify:ui:ci
       - name: Keep browser failure evidence
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -165,11 +175,13 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: npm
       - name: PostgreSQL 17 client tools (pg_dump and pg_restore for backups)
+        timeout-minutes: 5
         run: |
           sudo install -d /usr/share/postgresql-common/pgdg
           sudo curl --retry 3 --retry-all-errors --connect-timeout 15 --max-time 45 -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
-          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
-          sudo apt-get update -qq && sudo apt-get install -y postgresql-client-17
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/hive-ci-sources/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-17
           pg_dump --version
       - run: npm ci
       - name: Generate the Prisma client

@@ -15,9 +15,14 @@ http://azureXarchiveXubuntuXcom/ubuntu
 http://azure.archive.ubuntu.com/ubuntuextra
 EOF
 printf 'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n' > "$fixture/etc/apt/sources.list.d/ubuntu.sources"
+printf 'deb https://packages.example.com/tools noble main\n' > "$fixture/etc/apt/sources.list.d/third-party.list"
 before=$(sha256sum "$fixture/etc/apt/sources.list.d/ubuntu.sources")
 run() { HIVE_CI_APT_ROOT="$fixture" bash "$root/scripts/ci-apt-setup.sh"; }
 run
+ci_sources="$fixture/etc/apt/hive-ci-sources"
+cmp "$ci_sources/ubuntu.sources" "$fixture/etc/apt/sources.list.d/ubuntu.sources" || fail 'The runner Ubuntu source was not copied'
+[[ -f "$fixture/etc/apt/sources.list.d/third-party.list" && ! -e "$ci_sources/third-party.list" ]] ||
+  fail 'The unrelated source was removed or included in CI'
 mirrors="$fixture/etc/apt/apt-mirrors.txt"
 grep -qxF 'https://archive.ubuntu.com/ubuntu priority:1' "$mirrors" || fail 'Priority was lost'
 grep -qxF 'https://archive.ubuntu.com/ubuntu/' "$mirrors" || fail 'Trailing slash was lost'
@@ -32,9 +37,11 @@ apt-config -c "$config" dump > "$temporary/parsed-apt-config"
 grep -qxF 'Acquire::Retries "3";' "$temporary/parsed-apt-config" || fail 'Retry configuration was not accepted by APT'
 grep -qxF 'Acquire::https::Timeout "30";' "$temporary/parsed-apt-config" || fail 'HTTPS inactivity timeout was not accepted by APT'
 grep -qxF 'APT::Update::Error-Mode "any";' "$temporary/parsed-apt-config" || fail 'Partial-index failures were not made fatal'
-sha=$(sha256sum "$config" "$mirrors")
+grep -qxF 'Dir::Etc::sourcelist "/dev/null";' "$temporary/parsed-apt-config" || fail 'APT still reads the default source list'
+grep -qxF 'Dir::Etc::sourceparts "/etc/apt/hive-ci-sources";' "$temporary/parsed-apt-config" || fail 'APT does not use the CI source directory'
+sha=$(sha256sum "$config" "$mirrors" "$ci_sources/ubuntu.sources")
 run
-[[ $(sha256sum "$config" "$mirrors") == "$sha" ]] || fail 'Repeated setup changed the configuration'
+[[ $(sha256sum "$config" "$mirrors" "$ci_sources/ubuntu.sources") == "$sha" ]] || fail 'Repeated setup changed the configuration'
 printf 'https://mirror.example.com/ubuntu priority:1\n' > "$mirrors"
 custom=$(sha256sum "$mirrors")
 run
@@ -53,14 +60,16 @@ Architectures: arm64
 Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
 PORTS
 sed 's#http://ports.ubuntu.com/ubuntu-ports/#mirror+file:/etc/apt/hive-ci-ports-mirrors.txt#' "$sources" > "$temporary/expected-sources"
+original_ports_sha=$(sha256sum "$sources")
 run
-cmp "$sources" "$temporary/expected-sources" || fail 'Ports source metadata or signing key changed'
+[[ $(sha256sum "$sources") == "$original_ports_sha" ]] || fail 'Original ports source was modified'
+cmp "$ci_sources/ubuntu.sources" "$temporary/expected-sources" || fail 'Ports source metadata or signing key changed'
 grep -qxF $'https://mirrors.mit.edu/ubuntu-ports\tpriority:0' "$ports" || fail 'The ports HTTPS mirror is absent'
 grep -qxF $'https://ports.ubuntu.com/ubuntu-ports\tpriority:1' "$ports" || fail 'The original ports fallback is absent'
 [[ $(stat -c %a "$ports") == 644 ]] || fail 'APT cannot read the ports mirror list'
-ports_sha=$(sha256sum "$sources" "$ports")
+ports_sha=$(sha256sum "$ci_sources/ubuntu.sources" "$ports")
 run
-[[ $(sha256sum "$sources" "$ports") == "$ports_sha" ]] || fail 'Ports setup is not repeatable'
+[[ $(sha256sum "$ci_sources/ubuntu.sources" "$ports") == "$ports_sha" ]] || fail 'Ports setup is not repeatable'
 printf 'outside\n' > "$temporary/outside"
 rm "$ports"; ln -s "$temporary/outside" "$ports"
 if run >/dev/null 2>&1; then fail 'A ports mirror symlink was accepted'; fi
@@ -69,6 +78,10 @@ rm "$ports"; run
 mv "$sources" "$temporary/sources"; ln -s "$temporary/outside" "$sources"
 if run >/dev/null 2>&1; then fail 'An Ubuntu source symlink was accepted'; fi
 rm "$sources"; mv "$temporary/sources" "$sources"
+rm "$ci_sources/ubuntu.sources"; ln -s "$temporary/outside" "$ci_sources/ubuntu.sources"
+if run >/dev/null 2>&1; then fail 'A scoped Ubuntu source symlink was accepted'; fi
+[[ $(cat "$temporary/outside") == outside ]] || fail 'A scoped Ubuntu source symlink target changed'
+rm "$ci_sources/ubuntu.sources"
 printf 'outside\n' > "$temporary/outside"
 rm -f "$mirrors"; ln -s "$temporary/outside" "$mirrors"
 if run >/dev/null 2>&1; then fail 'A mirror symlink was accepted'; fi
@@ -76,4 +89,4 @@ if run >/dev/null 2>&1; then fail 'A mirror symlink was accepted'; fi
 rm "$mirrors" "$config"; ln -s "$temporary/outside" "$config"
 if run >/dev/null 2>&1; then fail 'A configuration symlink was accepted'; fi
 if HIVE_CI_APT_ROOT=/ GITHUB_ACTIONS=false bash "$root/scripts/ci-apt-setup.sh" >/dev/null 2>&1; then fail 'System configuration was changed outside CI'; fi
-printf 'Passed: bounded authenticated APT setup, independent Ubuntu mirror fallback, custom-source and signing-key preservation, repeatability and symlink refusal.\n'
+printf 'Passed: scoped authenticated APT setup, Ubuntu mirror fallbacks, source and signing-key preservation, repeatability and symlink refusal.\n'
