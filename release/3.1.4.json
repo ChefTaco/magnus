@@ -1,0 +1,9 @@
+{
+  "summary": "Security patch: ws 8.23.0 (GHSA-37g9-w4hg-h9qr, memory exhaustion) for the server and the console's Hermes Agent WebSocket bridge; @hivemagnus/hive-common 0.5.1; development-only Vite 8.3.8 and Rolldown 1.2.19. No migrations, new settings, browser contract or protocol changes.",
+  "breaking": false,
+  "minUpgradeFrom": "2.10.2",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}

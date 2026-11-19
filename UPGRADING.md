@@ -19,6 +19,15 @@ The rules every upgrade path follows:
   `slow` or `one-way`). Upgrades print slow and one-way migrations and wait for confirmation
   (`--yes`). Startup auto-migrate refuses them unless `MAGNUS_AUTO_MIGRATE_ALLOW_SLOW=true` is set.
 
+## Version 3.1.4
+
+A security patch. There are no database migrations, new settings or protocol changes, and the
+browser contract is unchanged. The server and the console move to `ws` 8.23.0
+(GHSA-37g9-w4hg-h9qr). Upgrade the server and console promptly if `MAGNUS_HERMES_ENABLED=true`,
+since the console's Hermes Agent WebSocket bridge is the reachable path; otherwise upgrade with the
+next routine window. Agents have no runtime change, but upgrade them to 3.1.4 to stay on the
+server's version.
+
 ## Version 3.1.3
 
 There are no database migrations, new settings or protocol changes, and the browser contract is
