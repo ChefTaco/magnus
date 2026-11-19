@@ -15,6 +15,13 @@ for directory in "${root%/}/etc" "$apt" "$apt/apt.conf.d"; do
 done
 config="$apt/apt.conf.d/99hive-ci-network"
 mirrors="$apt/apt-mirrors.txt"
+sources="$apt/sources.list.d/ubuntu.sources"
+ci_sources="$apt/hive-ci-sources"
+[[ -f "$sources" && ! -L "$sources" ]] || die 'Expected the runner Ubuntu source file'
+[[ ! -L "$ci_sources" && ( ! -e "$ci_sources" || -d "$ci_sources" ) ]] || die 'Expected a regular CI source directory'
+install -d -m 0755 "$ci_sources"
+[[ ! -L "$ci_sources/ubuntu.sources" && ( ! -e "$ci_sources/ubuntu.sources" || -f "$ci_sources/ubuntu.sources" ) ]] ||
+  die 'Refusing a non-regular CI Ubuntu source file'
 for file in "$config" "$mirrors"; do
   [[ ! -L "$file" && ( ! -e "$file" || -f "$file" ) ]] || die 'Refusing a non-regular configuration file'
 done
@@ -23,6 +30,9 @@ Acquire::Retries "3";
 Acquire::http::Timeout "30";
 Acquire::https::Timeout "30";
 APT::Update::Error-Mode "any";
+Dir::Etc::sourcelist "/dev/null";
+Dir::Etc::sourceparts "/etc/apt/hive-ci-sources";
+Dpkg::Use-Pty "false";
 EOF
 chmod 0644 "$config"
 if [[ -f "$mirrors" ]]; then
@@ -40,15 +50,13 @@ if [[ -f "$mirrors" ]] && grep -Eq '^https?://(azure\.archive|archive|security)\
 fi
 
 # ARM runners use Ubuntu's ports archive directly instead of the amd64 mirror list.
-sources="$apt/sources.list.d/ubuntu.sources"
+# Keep the runner's original sources in place. Only the scoped copy is used for CI.
+install -m 0644 "$sources" "$ci_sources/ubuntu.sources"
 ports="$apt/hive-ci-ports-mirrors.txt"
-if [[ -e "$sources" || -L "$sources" ]]; then
-  [[ -f "$sources" && ! -L "$sources" ]] || die 'Refusing a non-regular Ubuntu source file'
-  if grep -Eq 'https?://ports\.ubuntu\.com/ubuntu-ports/?([[:space:]]|$)|mirror\+file:/etc/apt/hive-ci-ports-mirrors\.txt([[:space:]]|$)' "$sources"; then
-    [[ ! -L "$ports" && ( ! -e "$ports" || -f "$ports" ) ]] || die 'Refusing a non-regular ports mirror list'
-    # MIT documents this HTTPS mirror at https://mirrors.mit.edu/ . Ubuntu's keyring remains authoritative.
-    printf 'https://mirrors.mit.edu/ubuntu-ports\tpriority:0\nhttps://ports.ubuntu.com/ubuntu-ports\tpriority:1\n' > "$ports"
-    chmod 0644 "$ports"
-    sed -E -i 's#https?://ports\.ubuntu\.com/ubuntu-ports/?([[:space:]]|$)#mirror+file:/etc/apt/hive-ci-ports-mirrors.txt\1#g' "$sources"
-  fi
+if grep -Eq 'https?://ports\.ubuntu\.com/ubuntu-ports/?([[:space:]]|$)' "$sources"; then
+  [[ ! -L "$ports" && ( ! -e "$ports" || -f "$ports" ) ]] || die 'Refusing a non-regular ports mirror list'
+  # MIT documents this HTTPS mirror at https://mirrors.mit.edu/ . Ubuntu's keyring remains authoritative.
+  printf 'https://mirrors.mit.edu/ubuntu-ports\tpriority:0\nhttps://ports.ubuntu.com/ubuntu-ports\tpriority:1\n' > "$ports"
+  chmod 0644 "$ports"
+  sed -E -i 's#https?://ports\.ubuntu\.com/ubuntu-ports/?([[:space:]]|$)#mirror+file:/etc/apt/hive-ci-ports-mirrors.txt\1#g' "$ci_sources/ubuntu.sources"
 fi
