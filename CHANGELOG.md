@@ -7,6 +7,19 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [3.1.4] - 2026-11-19
+
+### Security
+
+- `ws` is now 8.23.0 (`^8.23.0` in the server and the console), which fixes a high-severity
+  memory-exhaustion issue (GHSA-37g9-w4hg-h9qr) in 8.22.2 and earlier. The console's Hermes Agent
+  WebSocket bridge (`server-tls.mjs`) uses `ws`; it is off unless `MAGNUS_HERMES_ENABLED=true` and
+  only accepts an authenticated session to an approved target, but consoles with it on should
+  upgrade. The node agent's standalone lock moves to 8.23.0 too; there `ws` is a development-only
+  dependency (through `@hivemagnus/ardent`) and is not installed with the published agent.
+- Development tooling: Vite 8.3.8 and Rolldown 1.2.19 (GHSA-p4f5-76q4-ffq7 needs a reachable Vite
+  dev server; Magnus only uses Vite through Vitest). Neither ships in a published package.
+
 ### Changed
 
 - `@hivemagnus/hive-common` is now `^0.5.1` in the server, the fleet gateway and the Oathweave
