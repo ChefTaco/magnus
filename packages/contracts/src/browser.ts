@@ -1002,6 +1002,43 @@ export const selfUpdateStatusResponseSchema = ok(z.object({
   upgradeCommand: z.string(),
 }));
 
+// ── Installation report ──
+// services/control-api/src/services/installation-report-service.ts
+/** One locked runtime package whose installed version differs from the package's npm-shrinkwrap.json. */
+export const resolutionDifferenceSchema = z.object({
+  name: z.string().min(1).max(214),
+  /** Its path in the shrinkwrap, such as node_modules/@prisma/config/node_modules/effect. */
+  path: z.string().min(1).max(1024),
+  expected: z.string().min(1).max(256),
+  /** The version Node loads, or null when the package is not installed where Node looks. */
+  actual: z.string().min(1).max(256).nullable(),
+});
+
+export const installationResolutionSchema = z.object({
+  /** `none`: the installed package shipped no shrinkwrap, so nothing was compared. */
+  reference: z.enum(['npm-shrinkwrap', 'none']),
+  referenceSha256: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+  checkedAt: z.string(),
+  checked: z.number().int().nonnegative(),
+  differences: z.array(resolutionDifferenceSchema).max(200),
+  /** More differences were found than are listed. */
+  truncated: z.boolean(),
+});
+
+export const systemInstallationSchema = z.object({
+  schema: z.literal(1),
+  magnus: z.object({
+    version: z.string().min(1).max(64),
+    node: z.string().min(1).max(64),
+    /** `package`: installed from npm into a node_modules directory; `workspace`: an image or source build. */
+    layout: z.enum(['package', 'workspace']),
+  }),
+  resolution: installationResolutionSchema,
+});
+export type SystemInstallation = z.infer<typeof systemInstallationSchema>;
+
+export const systemInstallationResponseSchema = ok(systemInstallationSchema);
+
 // ── Agent upgrades ──
 // services/control-api/src/services/agent-upgrade-service.ts
 export const releaseVerificationSchema = z.object({
@@ -3202,6 +3239,7 @@ export const magnusBrowserRoutes: readonly MagnusBrowserRoute[] = [
   { method: 'GET', path: '/health', response: publicHealthResponseSchema, roles: [] },
   { method: 'GET', path: '/self-update/version', response: selfUpdateVersionResponseSchema, roles: ANY_ROLE },
   { method: 'GET', path: '/self-update/status', response: selfUpdateStatusResponseSchema, roles: ANY_ROLE },
+  { method: 'GET', path: '/system/installation', response: systemInstallationResponseSchema, roles: ADMIN_ONLY, note: 'Runtime dependencies whose installed version differs from the npm-shrinkwrap.json the server package shipped with. Recomputed at most once a minute. Cache-Control: no-store.' },
   { method: 'GET', path: '/agents/upgrade/eligibility', query: upgradeEligibilityQuerySchema, response: upgradeEligibilityResponseSchema, roles: ANY_ROLE, note: 'Candidates carry preflight for ADMIN only.' },
   { method: 'POST', path: '/agents/upgrade', request: startUpgradeRequestSchema, response: startUpgradeResponseSchema, roles: ADMIN_ONLY, note: '200 with the report when dryRun is true, otherwise 202 with the run.' },
   { method: 'GET', path: '/agents/upgrade/runs/{id}', response: upgradeRunResponseSchema, roles: ANY_ROLE },

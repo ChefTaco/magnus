@@ -19,6 +19,19 @@ The rules every upgrade path follows:
   `slow` or `one-way`). Upgrades print slow and one-way migrations and wait for confirmation
   (`--yes`). Startup auto-migrate refuses them unless `MAGNUS_AUTO_MIGRATE_ALLOW_SLOW=true` is set.
 
+## Unreleased: shrinkwrapped server and console
+
+The server and console packages carry an `npm-shrinkwrap.json`. An npm install of them now puts
+their dependencies under `node_modules/@hivemagnus/magnus-server/node_modules` and
+`node_modules/@hivemagnus/magnus-ui/node_modules` with the exact versions the release was tested
+with, rather than hoisting freshly resolved versions to the top of the install. Commands and bin
+paths are unchanged. An `overrides` entry an install added for 3.1.5 (`effect` under
+`@prisma/config`) is no longer needed; it does no harm. After upgrading, an ADMIN can confirm the
+result with `GET /api/v1/system/installation`: `resolution.differences` is empty when the install
+matches the shipped lock. npm honours the lock only for installs from a registry: an install from
+local tarballs (`magnus upgrade --source DIR`, `npm install ./x.tgz`) resolves the ranges again, and
+the report then lists what differs.
+
 ## Version 3.1.6
 
 A security patch. There are no database migrations, new settings or protocol changes, and the

@@ -10,7 +10,7 @@ moved without updating it.
 
 | Class | Meaning | Rows | At the ingress |
 |---|---|---|---|
-| `browser` | A person's console drives it with a user token | 156 | Allow the exact method and path |
+| `browser` | A person's console drives it with a user token | 157 | Allow the exact method and path |
 | `machine` | Agents, services and integrations, with their own credentials | 86 | Deny |
 | `exclude` | Reachable with a user token, but no console needs it, or it was written for a server-side caller | 149 | Deny until a feature needs it and it is reviewed |
 | `retired` | Always answers 404 or 410 | 64 | Deny |
@@ -279,6 +279,19 @@ or `null` when that time is unknown. It neither refreshes repositories nor insta
 Older agents report `SOFTWARE_STATUS_UNAVAILABLE` with update guidance; callers must never fall
 back to a shell probe. Explicit package upgrades retain their separate governed mutation flow.
 
+## Installation report
+
+`GET /api/v1/system/installation` is ADMIN only and answers with `Cache-Control: no-store`. It
+reports this server's version, the Node.js version and the install layout (`package` for an npm
+install into a `node_modules` directory, `workspace` for an image or source build), and compares
+the installed dependencies with the `npm-shrinkwrap.json` the server package ships. For each
+runtime entry of that lock it finds the copy Node would load, walking up the `node_modules`
+directories from the package that depends on it, and lists every entry whose installed version
+differs (`actual` is `null` when the package is missing). Development entries and absent optional
+entries are skipped; at most 200 differences are listed and `truncated` says when there were more.
+A package without a shrinkwrap reports `reference: "none"`. The report is computed in process,
+runs no command and is recomputed at most once a minute.
+
 ## Web terminal
 
 No route on this server offers a terminal, and `POST /api/v1/terminal/ticket` stays retired, so this
@@ -504,6 +517,7 @@ unless these rows change. `POST /api/v1/hermes/deploy` is retired and always ans
 | GET | `/api/v1/self-update/version` | browser | `user:any` | yes |
 | GET | `/api/v1/skills` | browser | `user:any` | yes |
 | GET | `/api/v1/stats/overview` | browser | `user:any` | yes |
+| GET | `/api/v1/system/installation` | browser | `user:ADMIN` | yes |
 | GET | `/api/v1/system/updates` | browser | `user:any` |  |
 | GET | `/api/v1/topology` | browser | `user:any` | yes |
 | POST | `/api/v1/topology/scan` | browser | `user:ADMIN\|OPERATOR` | yes |

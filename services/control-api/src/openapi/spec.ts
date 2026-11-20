@@ -2532,6 +2532,24 @@ const paths: Record<string, Record<string, unknown>> = {
       } }), 401: err401 },
     },
   },
+  '/system/installation': {
+    get: {
+      tags: ['Updates'],
+      summary: 'Installed version and dependency resolution',
+      description: 'ADMIN only, Cache-Control: no-store. The server version, Node.js version and install layout, and every runtime dependency whose installed version differs from the npm-shrinkwrap.json the server package ships (at most 200; `truncated` when there are more). `reference` is `none` when the installed package carries no shrinkwrap. Recomputed at most once a minute; runs no command.',
+      security: apiSecretAuth,
+      responses: { 200: success('Installation report', { type: 'object', properties: {
+        schema: { type: 'integer', enum: [1] },
+        magnus: { type: 'object', properties: { version: { type: 'string' }, node: { type: 'string' }, layout: { type: 'string', enum: ['package', 'workspace'] } } },
+        resolution: { type: 'object', properties: {
+          reference: { type: 'string', enum: ['npm-shrinkwrap', 'none'] }, referenceSha256: { type: ['string', 'null'] },
+          checkedAt: { type: 'string', format: 'date-time' }, checked: { type: 'integer' }, truncated: { type: 'boolean' },
+          differences: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, path: { type: 'string' },
+            expected: { type: 'string' }, actual: { type: ['string', 'null'] } } } },
+        } },
+      } }), 401: err401, 403: err403 },
+    },
+  },
   '/system/updates/check': {
     post: {
       tags: ['Updates'],
