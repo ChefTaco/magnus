@@ -7,6 +7,20 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Security
+
+- The server no longer registers an HTTP `upgrade` listener. The retired Control API terminal
+  kept one only to answer `/api/v1/terminal` upgrades with `410 Gone`. It returned early for every
+  other path, and Node does not time out a socket handed to an `upgrade` listener, so each upgrade
+  request to any other path stayed open until the client went away. A request with a malformed
+  `Host` header also threw inside the listener and stopped the server. Without the listener, Node
+  handles upgrade requests as ordinary HTTP: an upgrade to any path, `/api/v1/terminal` included,
+  gets the same response as a plain request to it (`401` without credentials), and the usual
+  request and keep-alive timeouts apply. The server no longer depends on `ws`.
+- `@hono/node-server` is now 2.1.11 (`^2.1.11` in the server, fleet gateway and agent). Both
+  advisories fixed since 2.1.8 (GHSA-8wcc-wqxr-28qp and GHSA-qhm2-7mpr-ghjp) need Hono's WebSocket
+  option, which no Magnus listener enables.
+
 ## [3.1.5] - 2026-11-20
 
 ### Security

@@ -40,7 +40,6 @@ const { startNotificationRetention, stopNotificationRetention } = await import('
 const { startCommandWorker, closeCommandQueue } = await import('./queue/workers.js');
 const { startUpdateCheck, stopUpdateCheck } = await import('./services/update-check-service.js');
 const { startWebhookWorker, closeWebhookQueue } = await import('./services/webhook-service.js');
-const { setupTerminalWebSocket } = await import('./routes/terminal.js');
 const { disconnectRedis } = await import('./queue/redis.js');
 const { eventBus } = await import('./services/event-bus.js');
 const { disconnectDb } = await import('./db/index.js');
@@ -165,7 +164,6 @@ const server = listener.useTls
     console.log(`🚀 Magnus server listening on http://${listener.hostname}:${info.port} (development opt-in)`);
     startBackgroundServices(info.port);
   });
-const terminalWss = rehearsalEnabled() ? undefined : setupTerminalWebSocket(server);
 
 // ── Graceful shutdown ──
 let shuttingDown = false;
@@ -194,18 +192,16 @@ async function shutdown(signal: string) {
       const renewalStopped = stopArdentHiveMemRenewal();
       stopUpdateCheck();
       stopExtensionSourceMonitor();
-      for (const client of terminalWss?.clients ?? []) client.terminate();
       const httpClosed = new Promise<void>((resolvePromise) => server.close(() => resolvePromise()));
       (server as typeof server & { closeAllConnections?: () => void }).closeAllConnections?.();
-      const webSocketsClosed = terminalWss ? new Promise<void>((resolvePromise) => terminalWss.close(() => resolvePromise())) : Promise.resolve();
-      await Promise.all([httpClosed, webSocketsClosed, renewalStopped]);
+      await Promise.all([httpClosed, renewalStopped]);
       await closeCommandQueue();
       await closeWebhookQueue();
       await eventBus.close();
       await disconnectRedis();
       await disconnectDb();
     })(), deadline]);
-    console.log('  ✓ HTTP, WebSockets, monitors, queues, Redis, and database closed');
+    console.log('  ✓ HTTP, monitors, queues, Redis, and database closed');
   } catch (err) {
     console.error('  ✗ Graceful shutdown failed:', err);
     exitCode = 1;
