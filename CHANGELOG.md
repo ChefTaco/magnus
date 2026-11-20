@@ -7,6 +7,21 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [3.1.5] - 2026-11-20
+
+### Security
+
+- The server image now carries `effect` 3.22.1, which fixes a high-severity ReDoS in
+  `Schema.TemplateLiteral` (CVE-2026-121707) found in 3.20.0. `effect` comes only through
+  Prisma's config loader (`prisma` 7.10.1 → `@prisma/config` 7.10.1 pins `effect` 3.20.0 exactly,
+  and no Prisma 7 release moves it), which the Prisma CLI uses to read the server's own
+  `prisma.config.ts`; Magnus passes it no untrusted input. The repository and the
+  `magnus-server` image force 3.22.1 with an npm override. Overrides do not reach installs of the
+  published package, so a native install (`npm install @hivemagnus/magnus-server` or
+  `magnus upgrade`) still resolves 3.20.0 unless its own `package.json` adds
+  `"overrides": { "@prisma/config": { "effect": "3.22.1" } }`. The agent, console and fleet
+  gateway do not depend on `effect`.
+
 ## [3.1.4] - 2026-11-19
 
 ### Security

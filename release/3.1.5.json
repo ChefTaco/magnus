@@ -1,0 +1,9 @@
+{
+  "summary": "Security patch: the server image forces effect 3.22.1 (CVE-2026-121707, ReDoS in Schema.TemplateLiteral), a dependency of Prisma's config loader. No migrations, new settings, browser contract or protocol changes.",
+  "breaking": false,
+  "minUpgradeFrom": "2.10.2",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}

@@ -19,6 +19,15 @@ The rules every upgrade path follows:
   `slow` or `one-way`). Upgrades print slow and one-way migrations and wait for confirmation
   (`--yes`). Startup auto-migrate refuses them unless `MAGNUS_AUTO_MIGRATE_ALLOW_SLOW=true` is set.
 
+## Version 3.1.5
+
+A security patch. There are no database migrations, new settings or protocol changes, and the
+browser contract is unchanged. The `magnus-server` image moves `effect` (a dependency of Prisma's
+config loader) to 3.22.1 (CVE-2026-121707); it is not reachable from network input, so upgrade
+with the next routine window. Native npm installs keep the `effect` version Prisma pins unless the
+install's `package.json` overrides it (see the [changelog](CHANGELOG.md)). Agents
+have no runtime change, but upgrade them to 3.1.5 to stay on the server's version.
+
 ## Version 3.1.4
 
 A security patch. There are no database migrations, new settings or protocol changes, and the
