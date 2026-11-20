@@ -191,6 +191,7 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('browser contract against rea
     '/health': '/health',
     '/self-update/version': '/self-update/version',
     '/self-update/status': '/self-update/status',
+    '/system/installation': '/system/installation',
     '/agents/upgrade/eligibility': '/agents/upgrade/eligibility',
     '/nodes/{nodeId}': `/nodes/${nodeId}`,
     '/nodes/{nodeId}/gpu': `/nodes/${nodeId}/gpu`,
