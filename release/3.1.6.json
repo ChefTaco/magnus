@@ -1,0 +1,9 @@
+{
+  "summary": "Security patch: the server and standalone console answer or close every HTTP upgrade request; the server drops the retired terminal's upgrade listener, which could hold sockets open and stopped on a malformed Host header. @hono/node-server 2.1.11. No migrations, new settings, browser contract or protocol changes.",
+  "breaking": false,
+  "minUpgradeFrom": "2.10.2",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}

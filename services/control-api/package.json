@@ -1,6 +1,6 @@
 {
   "name": "@hivemagnus/magnus-server",
-  "version": "3.1.5",
+  "version": "3.1.6",
   "description": "Magnus server: the fleet control plane API (Hono, PostgreSQL, Redis) for nodes running magnus-agent, with optional Hive IAM, Hive Router, HiveMem, Hermes Agent and external security console integrations.",
   "keywords": [
     "magnus",
@@ -56,7 +56,7 @@
       "effect": "3.22.1"
     },
     "@prisma/dev": {
-      "@hono/node-server": "2.1.0"
+      "@hono/node-server": "2.1.11"
     },
     "fast-uri": "3.1.9",
     "mysql2": "3.24.4"
@@ -86,9 +86,9 @@
   },
   "dependencies": {
     "@hivemagnus/hive-common": "^0.5.1",
-    "@hivemagnus/magnus-contracts": "3.1.5",
-    "@hivemagnus/magnus-oathweave": "3.1.5",
-    "@hono/node-server": "^2.1.8",
+    "@hivemagnus/magnus-contracts": "3.1.6",
+    "@hivemagnus/magnus-oathweave": "3.1.6",
+    "@hono/node-server": "^2.1.11",
     "@hono/swagger-ui": "^0.6.2",
     "@prisma/adapter-pg": "7.10.1",
     "@prisma/client": "^7.10.1",
@@ -102,10 +102,9 @@
     "nanoid": "^6.0.2",
     "pg": "^8.23.1",
     "ssh2": "^1.17.0",
-    "ws": "^8.23.0",
     "yaml": "2.9.1",
     "zod": "^4.6.7",
-    "@hivemagnus/magnus-skills": "3.1.5",
+    "@hivemagnus/magnus-skills": "3.1.6",
     "prisma": "^7.10.1"
   },
   "bundleDependencies": [
@@ -115,7 +114,6 @@
     "@types/node": "^24.19.2",
     "@types/pg": "^8.23.1",
     "@types/ssh2": "^1.15.6",
-    "@types/ws": "^8.18.2",
     "tsx": "^4.23.15",
     "typescript": "6.0.3",
     "vitest": "^5.1.0"

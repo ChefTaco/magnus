@@ -22,6 +22,7 @@ vi.mock('node:http', () => ({ request: (options: any, callback: Function) => {
   return Object.assign(new EventEmitter(), { end: () => { callback(response); queueMicrotask(() => { response.emit('data', Buffer.from('fixture')); response.emit('end'); }); }, write: vi.fn(), destroy: vi.fn() });
 } }));
 import { requestHermesDashboardOverSsh } from './hermes-ssh-proxy';
+import { parseRequestTarget, rejectUpgrade } from '../../runtime-upgrade.mjs';
 const installation = { id: 'installation-fixture', nodeId: 'node-fixture', hostname: 'node-1.example.com', sshPort: 22, dashboardHost: '192.0.2.69', dashboardPort: 9119 };
 const approved = { address: '192.0.2.69', authorization: { installationId: installation.id, nodeId: installation.nodeId, addresses: ['192.0.2.69'], hostKeySha256: ['SHA256:fixture'] } };
 beforeEach(() => { fixture.clients.length = 0; fixture.requests.length = 0; fixture.begin.mockReset().mockResolvedValue({ workId: 'fixture', finish: fixture.finish }); fixture.finish.mockReset().mockResolvedValue({ state: 'unknown' }); fixture.approved.mockReset().mockResolvedValue(approved); });
@@ -41,6 +42,7 @@ function websocketFixture(selected: typeof installation, enabled = true) {
   const ssh = Object.assign(new EventEmitter(), { forwardOut: vi.fn((_a, _b, _host, _port, cb) => cb(null, stream)), end: vi.fn() });
   const upgraded = vi.fn(); const connect = vi.fn(async () => ssh);
   const bindings = {
+    parseRequestTarget, rejectUpgrade,
     randomUUID: () => 'fixture', websocketPathFor: () => '/ws', isHermesUpgradeNamespace: () => true, isHermesWebSocketUpgrade: () => true,
     cookieHeaderAllowed: () => true, websocketOriginAllowed: () => true, websocketAllowedOrigins: 'https://fixture', verifyDashboardSession: async () => true,
     recordHermesSecurityEvent: vi.fn(), resolveHermesInstallation: async () => ({ installation: selected }),

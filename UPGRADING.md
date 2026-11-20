@@ -19,6 +19,17 @@ The rules every upgrade path follows:
   `slow` or `one-way`). Upgrades print slow and one-way migrations and wait for confirmation
   (`--yes`). Startup auto-migrate refuses them unless `MAGNUS_AUTO_MIGRATE_ALLOW_SLOW=true` is set.
 
+## Version 3.1.6
+
+A security patch. There are no database migrations, new settings or protocol changes, and the
+browser contract is unchanged. The server and the standalone console now answer or close every
+HTTP upgrade request. Before this release, an upgrade request could hold a socket open
+indefinitely, and on the server a malformed `Host` header on an upgrade request stopped the
+process. Upgrade the server and console promptly where untrusted clients can reach their ports.
+Old Control API terminal clients still fail closed. The server no longer depends on `ws`. Agents
+have no runtime change beyond `@hono/node-server` 2.1.11, but upgrade them to 3.1.6 to stay on the
+server's version.
+
 ## Version 3.1.5
 
 A security patch. There are no database migrations, new settings or protocol changes, and the
