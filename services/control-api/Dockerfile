@@ -60,6 +60,8 @@ COPY --from=builder /packages/ /tmp/packages/
 COPY services/control-api/docker/entrypoint.sh /usr/local/bin/magnus-server-entrypoint
 # Install the packed server with its sibling workspace packages pinned to the
 # local tarballs; third-party dependencies come from the npm registry.
+# Overrides of a dependency do not reach this install, so the security pin on
+# Prisma's config loader (effect, CVE-2026-121707) is repeated here.
 RUN node -e ' \
       const fs = require("node:fs"); \
       const files = fs.readdirSync("/tmp/packages"); \
@@ -71,7 +73,7 @@ RUN node -e ' \
       fs.writeFileSync("package.json", JSON.stringify({ \
         name: "magnus-server-runtime", private: true, \
         dependencies: { "@hivemagnus/magnus-server": find("hivemagnus-magnus-server-"), ...local }, \
-        overrides: local, \
+        overrides: { ...local, "@prisma/config": { effect: "3.22.1" } }, \
       }, null, 2)); ' \
   && npm install --omit=dev --no-audit --no-fund \
   && npm rebuild argon2 ssh2 \

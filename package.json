@@ -1,6 +1,6 @@
 {
   "name": "magnus",
-  "version": "3.1.4",
+  "version": "3.1.5",
   "private": true,
   "description": "Magnus: self-hosted fleet management for Linux hosts and AI agents (UI, server, node agent)",
   "license": "Apache-2.0",
@@ -17,7 +17,8 @@
   "overrides": {
     "@hono/node-server": "2.1.8",
     "@prisma/config": {
-      "deepmerge-ts": "8.0.1"
+      "deepmerge-ts": "8.0.1",
+      "effect": "3.22.1"
     },
     "fast-uri": "3.1.9",
     "postcss": {
