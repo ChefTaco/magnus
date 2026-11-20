@@ -7,6 +7,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [3.1.6] - 2026-11-20
+
 ### Security
 
 - The server no longer registers an HTTP `upgrade` listener. The retired Control API terminal
