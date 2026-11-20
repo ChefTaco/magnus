@@ -1,21 +1,21 @@
 {
   "name": "@hivemagnus/magnus-server",
-  "version": "3.1.5",
+  "version": "3.1.6",
   "lockfileVersion": 3,
   "requires": true,
   "packages": {
     "": {
       "name": "@hivemagnus/magnus-server",
-      "version": "3.1.5",
+      "version": "3.1.6",
       "bundleDependencies": [
         "@hivemagnus/magnus-oathweave"
       ],
       "license": "Apache-2.0",
       "dependencies": {
         "@hivemagnus/hive-common": "^0.5.1",
-        "@hivemagnus/magnus-contracts": "3.1.5",
-        "@hivemagnus/magnus-oathweave": "3.1.5",
-        "@hono/node-server": "^2.1.8",
+        "@hivemagnus/magnus-contracts": "3.1.6",
+        "@hivemagnus/magnus-oathweave": "3.1.6",
+        "@hono/node-server": "^2.1.11",
         "@hono/swagger-ui": "^0.6.2",
         "@prisma/adapter-pg": "7.10.1",
         "@prisma/client": "^7.10.1",
@@ -29,10 +29,9 @@
         "nanoid": "^6.0.2",
         "pg": "^8.23.1",
         "ssh2": "^1.17.0",
-        "ws": "^8.23.0",
         "yaml": "2.9.1",
         "zod": "^4.6.7",
-        "@hivemagnus/magnus-skills": "3.1.5",
+        "@hivemagnus/magnus-skills": "3.1.6",
         "prisma": "^7.10.1"
       },
       "bin": {
@@ -42,7 +41,6 @@
         "@types/node": "^24.19.2",
         "@types/pg": "^8.23.1",
         "@types/ssh2": "^1.15.6",
-        "@types/ws": "^8.18.2",
         "tsx": "^4.23.15",
         "typescript": "6.0.3",
         "vitest": "^5.1.0"
@@ -584,9 +582,9 @@
       }
     },
     "node_modules/@hivemagnus/magnus-contracts": {
-      "version": "3.1.5",
-      "resolved": "https://registry.npmjs.org/@hivemagnus/magnus-contracts/-/magnus-contracts-3.1.5.tgz",
-      "integrity": "sha512-eoAGRzkgEyDZ39Pw+zV1pisgRIkhNP7EMlGtGuptkcxTKI5bx9uE4+ADe+v6ZkZX7PDNmagtChrTshCF+ZNX7g==",
+      "version": "3.1.6",
+      "resolved": "https://registry.npmjs.org/@hivemagnus/magnus-contracts/-/magnus-contracts-3.1.6.tgz",
+      "integrity": "sha512-5X1MzIKRVIBDDyFnj1mxrAHv+paGUEPHDkhHQ0GcTL7smc6EV0VY8t+xUAW7ylq8IDbD4ZIhN8ZHDlE0cPOUVQ==",
       "license": "Apache-2.0",
       "dependencies": {
         "openapi-fetch": "^0.17.0",
@@ -597,7 +595,7 @@
       }
     },
     "node_modules/@hivemagnus/magnus-oathweave": {
-      "version": "3.1.5",
+      "version": "3.1.6",
       "inBundle": true,
       "license": "Apache-2.0",
       "engines": {
@@ -605,18 +603,18 @@
       }
     },
     "node_modules/@hivemagnus/magnus-skills": {
-      "version": "3.1.5",
-      "resolved": "https://registry.npmjs.org/@hivemagnus/magnus-skills/-/magnus-skills-3.1.5.tgz",
-      "integrity": "sha512-rTrOcwf1iQSHvbFYSd0LDZ04wsgdIRDhG5iPoeleNUXRnM0FDFJBXxB0j8L7+UvcHrOZQqPkCg9CVXDg0oj46g==",
+      "version": "3.1.6",
+      "resolved": "https://registry.npmjs.org/@hivemagnus/magnus-skills/-/magnus-skills-3.1.6.tgz",
+      "integrity": "sha512-9RdZ9MD7S2o5H08a4m/sgW1YlCS5FVoKPE+fwCk/3p3Sp0hl5nln24Jw9RoqV7GWZgx7Z7mqenWf6A5fKiRQQg==",
       "license": "Apache-2.0",
       "engines": {
         "node": "^24.22.3 || ^26.13.1"
       }
     },
     "node_modules/@hono/node-server": {
-      "version": "2.1.8",
-      "resolved": "https://registry.npmjs.org/@hono/node-server/-/node-server-2.1.8.tgz",
-      "integrity": "sha512-jdf7FHh6A1lzjpHHQUgxsg2GeER2vMetnAOfeActzcoli6jamlK+NAwL6Dsr5Fl3BS3tYUQzCdtZjU8Qxv7bEA==",
+      "version": "2.1.11",
+      "resolved": "https://registry.npmjs.org/@hono/node-server/-/node-server-2.1.11.tgz",
+      "integrity": "sha512-KzKz9vl4vvr1vgLHamj+g5uonbrj5NwAdO3yzOS6cd2HjALVeOgTgeZOyAzNxejbkfOOPIcvuf/Tg8l1pEFLog==",
       "license": "MIT",
       "engines": {
         "node": ">=20"
@@ -1671,16 +1669,6 @@
       "integrity": "sha512-JlCMO+ehdEIKqlFxk6IfVoAUVmgz7cU7zD/h9XZ0qzeosSHmUJVOzSQvvYSYWXkFXC+IfLKSIffhv0sVZup6pA==",
       "dev": true,
       "license": "MIT"
-    },
-    "node_modules/@types/ws": {
-      "version": "8.18.2",
-      "resolved": "https://registry.npmjs.org/@types/ws/-/ws-8.18.2.tgz",
-      "integrity": "sha512-67MQl+fpWKVTT1NYdnmo3U4sc/xPo/zQBncVnI74qmQa0z/b+1g6iYqNmGCPbxO+zz2aklb08a0oHfegiVd0/w==",
-      "dev": true,
-      "license": "MIT",
-      "dependencies": {
-        "@types/node": "*"
-      }
     },
     "node_modules/@visx/curve": {
       "version": "4.0.1-alpha.0",
@@ -4106,27 +4094,6 @@
       },
       "engines": {
         "node": ">=20.11"
-      }
-    },
-    "node_modules/ws": {
-      "version": "8.23.0",
-      "resolved": "https://registry.npmjs.org/ws/-/ws-8.23.0.tgz",
-      "integrity": "sha512-wCkmX8QMOrKjgO8HW2WyDbTSGeqkocxgDzS9iR79rEAexty6/2qzilx3Ag8Tqf9ykop3irLKle0MtVn5qjVnoQ==",
-      "license": "MIT",
-      "engines": {
-        "node": ">=10.0.0"
-      },
-      "peerDependencies": {
-        "bufferutil": "^4.0.1",
-        "utf-8-validate": ">=5.0.2"
-      },
-      "peerDependenciesMeta": {
-        "bufferutil": {
-          "optional": true
-        },
-        "utf-8-validate": {
-          "optional": true
-        }
       }
     },
     "node_modules/xtend": {
