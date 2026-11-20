@@ -7,6 +7,7 @@
 !apps/*/package.json
 !packages/*/package.json
 !services/*/package.json
+!scripts/shrinkwrap-install-lock.mjs
 !packages/contracts/**
 !packages/oathweave/**
 !packages/skills/**

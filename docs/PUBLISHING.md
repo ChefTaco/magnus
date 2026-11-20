@@ -47,7 +47,8 @@ An unauthenticated dry run cannot prove npm ownership or OIDC configuration.
    including **New environment variables** and **Migration impact**, and run
    `npm run release:manifest`. See [UPGRADING.md](../UPGRADING.md#release-notes-for-maintainers).
 2. Build the versioned contracts and agent with `npm run contracts:build && npm run agent:build`
-   to refresh the agent shrinkwrap's contracts tarball pin. Then run `npm run lockfile:check`,
+   to refresh the agent shrinkwrap's contracts tarball pin, then `npm run skills:build && npm run locks:refresh`
+   for the server and console shrinkwraps. Then run `npm run lockfile:check`,
    `npm run audit:production` and `npm run verify`.
    Commit and push, and wait for CI to pass on that exact commit.
 3. Run **Publish to npm** manually with `dry_run` enabled on that commit's ref.
@@ -74,8 +75,8 @@ own.
 
 The privileged agent ships a reviewed standalone `npm-shrinkwrap.json`, so Hive can install
 its complete dependency graph without lifecycle scripts or semver resolution. See
-[the agent lock procedure](#privileged-agent-dependency-lock). Other packages retain their
-existing runtime installation and dependency policy.
+[the agent lock procedure](#privileged-agent-dependency-lock). The server and console ship
+one too; see [server and console dependency locks](#server-and-console-dependency-locks).
 
 ## First publication
 
@@ -169,6 +170,30 @@ integrity; it preserves the package manifest and the rest of the locked graph. B
 CI jobs and the publication workflow run this gate through `npm run verify`.
 Hive's controller refuses older unlocked tarballs; publish a new agent version and pin its tarball
 integrity in a newly signed suite manifest. Existing published packages and images are immutable.
+
+### Server and console dependency locks
+
+`services/control-api/npm-shrinkwrap.json` and `apps/dashboard/npm-shrinkwrap.json` travel in
+their tarballs. A published package's overrides and the workspace lock never reach a consumer,
+so without them an npm install resolves every range again; in 3.1.5 that brought back the
+`effect` release the server's override exists to avoid. With them, a registry install gets the
+locked graph nested under the package, and the images build the same layout from the packed
+tarballs with `scripts/shrinkwrap-install-lock.mjs` and `npm ci` (npm honours a dependency's
+shrinkwrap only for registry installs, never for a local tarball).
+
+- `npm run locks:generate` (network) regenerates both from the workspace lock, so they hold the
+  versions CI tested, with each package's own overrides applied. Run it after any dependency or
+  override change and review the diff.
+- `npm run locks:refresh` (offline) is the release-bump step: it moves the package version and
+  the sibling contracts and skills entries to the local packs (public registry URL, SHA-512 of
+  the locally built tarball, as for the agent). Any other change makes it fail and ask for a
+  regeneration.
+- `npm run check:packs` runs `scripts/package-locks.mjs --check` (current, public URLs and
+  integrities, every exact override honoured) and `scripts/check-packed-server.mjs`, which
+  installs each packed tarball the way its image does and requires the server's installation
+  report to find no difference.
+- The bundled `@hivemagnus/magnus-oathweave` declares no dependencies or peers: inside a
+  shrinkwrapped install npm treats a bundled package's peers as bundled and never fetches them.
 
 ## Patched container runtime
 

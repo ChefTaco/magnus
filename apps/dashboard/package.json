@@ -39,7 +39,8 @@
     "deploy",
     ".env.example",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "npm-shrinkwrap.json"
   ],
   "scripts": {
     "build": "next build && node scripts/stage-package.mjs",

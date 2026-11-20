@@ -2,6 +2,7 @@
 // Checks that package-lock.json agrees with every workspace manifest and that each resolved
 // registry artifact carries an integrity hash. Usage: node scripts/validate-lockfile.mjs
 import { readFileSync } from 'node:fs';
+import { LOCKED, SHRINKWRAP, artifactProblems, overrideProblems } from './package-locks.mjs';
 
 const root = process.cwd();
 const lock = JSON.parse(readFileSync(`${root}/package-lock.json`, 'utf8'));
@@ -38,6 +39,13 @@ for (const [path, entry] of Object.entries(agentLock.packages ?? {})) {
   if (entry.link || !entry.version || !entry.resolved?.startsWith('https://registry.npmjs.org/') || !/^sha512-[A-Za-z0-9+/]{86}==$/.test(entry.integrity ?? '')) {
     failures.push(`agent shrinkwrap ${path}: registry artifact must have an exact version, public URL and sha512 integrity`);
   }
+}
+
+// The server and console tarballs carry their own standalone locks (scripts/package-locks.mjs).
+for (const { directory } of Object.values(LOCKED)) {
+  const manifest = JSON.parse(readFileSync(`${root}/${directory}/package.json`, 'utf8'));
+  const lock = JSON.parse(readFileSync(`${root}/${directory}/${SHRINKWRAP}`, 'utf8'));
+  failures.push(...artifactProblems(lock, manifest), ...overrideProblems(lock, manifest.overrides));
 }
 
 if (failures.length > 0) {
