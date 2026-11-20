@@ -17,7 +17,7 @@ cleanup() { compose down -v --remove-orphans >/dev/null 2>&1 || true; rm -rf "$W
 trap cleanup EXIT
 fail() { echo "FAIL: $*" >&2; compose logs --no-color --tail 80 >&2 || true; exit 1; }
 
-hash=$(docker run --rm --entrypoint node -e PASSWORD=ci-only-compose-password -w /opt/magnus-ui "$REGISTRY/magnus-ui:1" --input-type=module -e \
+hash=$(docker run --rm --entrypoint node -e PASSWORD=ci-only-compose-password -w /opt/magnus-ui/node_modules/@hivemagnus/magnus-ui "$REGISTRY/magnus-ui:1" --input-type=module -e \
   "import argon2 from 'argon2'; console.log(await argon2.hash(process.env.PASSWORD, { type: argon2.argon2id }))")
 (
   umask 077
