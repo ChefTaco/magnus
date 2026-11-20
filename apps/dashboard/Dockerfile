@@ -43,18 +43,16 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 WORKDIR /opt/magnus-ui
 COPY --from=builder /packages/ /tmp/packages/
+COPY --from=builder /opt/magnus-build/scripts/shrinkwrap-install-lock.mjs /tmp/shrinkwrap-install-lock.mjs
 COPY apps/dashboard/docker/entrypoint.sh /usr/local/bin/magnus-ui-entrypoint
-RUN node -e ' \
-      const fs = require("node:fs"); \
-      const files = fs.readdirSync("/tmp/packages"); \
-      const find = (prefix) => "file:/tmp/packages/" + files.find((file) => file.startsWith(prefix)); \
-      const local = { "@hivemagnus/magnus-contracts": find("hivemagnus-magnus-contracts-") }; \
-      fs.writeFileSync("package.json", JSON.stringify({ name: "magnus-ui-runtime", private: true, \
-        dependencies: { "@hivemagnus/magnus-ui": find("hivemagnus-magnus-ui-"), ...local }, overrides: local }, null, 2)); ' \
-  && npm install --omit=dev --no-audit --no-fund \
+# Install the packed console from its npm-shrinkwrap.json, laid out as `npm install` from the
+# registry lays it out, so the image runs the graph a native npm install of this release gets.
+RUN node /tmp/shrinkwrap-install-lock.mjs --out . --name magnus-ui-runtime \
+      --package /tmp/packages/hivemagnus-magnus-ui-*.tgz \
+  && npm ci --omit=dev --no-audit --no-fund \
   && npm rebuild argon2 ssh2 \
   && npm cache clean --force \
-  && rm -rf /tmp/packages \
+  && rm -rf /tmp/packages /tmp/shrinkwrap-install-lock.mjs \
   && apt-get purge -y --auto-remove python3 make g++ \
   && chmod 0755 /usr/local/bin/magnus-ui-entrypoint \
   && install -d -o node -g node -m 0700 /var/lib/magnus-ui

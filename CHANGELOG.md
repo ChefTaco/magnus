@@ -7,6 +7,29 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Added
+
+- `GET /api/v1/system/installation` (ADMIN only, `Cache-Control: no-store`) reports the server
+  version, the Node.js version and whether it runs from an npm install or an image or source
+  build, and lists every runtime dependency whose installed version differs from the
+  `npm-shrinkwrap.json` the server package ships, with the path in the lock, the expected and
+  the installed version. It finds the copy Node actually loads, so a native install that resolved
+  `effect` 3.20.0 under `@prisma/config` while the signed build has 3.22.1 (the 3.1.4 and 3.1.5
+  case) is listed. The browser contract publishes it as `systemInstallationResponseSchema`.
+
+### Changed
+
+- `@hivemagnus/magnus-server` and `@hivemagnus/magnus-ui` now ship a standalone
+  `npm-shrinkwrap.json`, generated from the workspace lock CI tests (`npm run locks:generate`)
+  with the packages' own overrides applied. A native `npm install` (and `magnus upgrade`) now
+  gets exactly that graph, nested under `node_modules/@hivemagnus/magnus-server` and
+  `node_modules/@hivemagnus/magnus-ui`, instead of resolving every range again; an install no
+  longer needs its own `effect` override. The server and console images install the packed
+  tarballs from the same lock (`scripts/shrinkwrap-install-lock.mjs`), so an image and a native
+  install of one release run the same dependency graph. `npm run check:packs` refuses a stale
+  lock, a lock that does not honour an exact override, and a packed install that differs from
+  its lock.
+
 ## [3.1.6] - 2026-11-20
 
 ### Security

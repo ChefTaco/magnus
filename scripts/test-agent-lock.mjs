@@ -10,7 +10,7 @@ const repo = resolve(import.meta.dirname, '..');
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'magnus-agent-lock-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  for (const path of ['package-lock.json', 'packages/agent/npm-shrinkwrap.json',
+  for (const path of ['package-lock.json', 'packages/agent/npm-shrinkwrap.json', 'services/control-api/npm-shrinkwrap.json', 'apps/dashboard/npm-shrinkwrap.json',
     ...['apps/dashboard', 'services/control-api', 'services/fleet-gateway', 'packages/agent', 'packages/contracts', 'packages/oathweave', 'packages/skills'].map(p => `${p}/package.json`)]) {
     mkdirSync(join(root, path, '..'), { recursive: true });
     cpSync(join(repo, path), join(root, path));

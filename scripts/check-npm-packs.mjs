@@ -26,7 +26,8 @@ export const PUBLISHABLE = [
 // The UI ships Next.js standalone output, whose traced dependencies live in dist/app/node_modules.
 // Runtime files a package needs beyond its bin, main, types and exports.
 const EXTRA_REQUIRED = {
-  'apps/dashboard': ['dist/app/apps/dashboard/server-tls.mjs', 'dist/app/apps/dashboard/server.js'],
+  'apps/dashboard': ['dist/app/apps/dashboard/server-tls.mjs', 'dist/app/apps/dashboard/server.js', 'npm-shrinkwrap.json'],
+  'services/control-api': ['npm-shrinkwrap.json'],
   'packages/agent': ['launcher/launcher.mjs', 'NOTICE', 'dist/ardent-context-bundle.json', 'npm-shrinkwrap.json'],
 };
 

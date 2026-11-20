@@ -9,9 +9,9 @@
 #
 # Stage 1 builds @hivemagnus/magnus-contracts, @hivemagnus/magnus-oathweave, @hivemagnus/magnus-skills and
 # @hivemagnus/magnus-server, and packs the published ones with `npm pack`; the
-# server's tarball carries the Oathweave package. Stage 2 installs those tarballs
-# exactly as `npm install @hivemagnus/magnus-server` would, so the image runs the
-# same artifact that is published to npm.
+# server's tarball carries the Oathweave package and its npm-shrinkwrap.json. Stage 2
+# installs those tarballs exactly as `npm install @hivemagnus/magnus-server` would, so the
+# image runs the same artifact and dependency graph that is published to npm.
 # Services/control-api/Dockerfile.dockerignore limits what the context sends.
 
 ARG RUNTIME_IMAGE=ghcr.io/cheftaco/hive-node-runtime:26.13.1-1@sha256:7671ab0a702c273c37a84d089ba6fe821c6d85cbeab888e7e43522a057da5e6d
@@ -57,28 +57,20 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 WORKDIR /opt/magnus-server
 COPY --from=builder /packages/ /tmp/packages/
+COPY --from=builder /opt/magnus-build/scripts/shrinkwrap-install-lock.mjs /tmp/shrinkwrap-install-lock.mjs
 COPY services/control-api/docker/entrypoint.sh /usr/local/bin/magnus-server-entrypoint
-# Install the packed server with its sibling workspace packages pinned to the
-# local tarballs; third-party dependencies come from the npm registry.
-# Overrides of a dependency do not reach this install, so the security pin on
-# Prisma's config loader (effect, CVE-2026-121707) is repeated here.
-RUN node -e ' \
-      const fs = require("node:fs"); \
-      const files = fs.readdirSync("/tmp/packages"); \
-      const find = (prefix) => "file:/tmp/packages/" + files.find((file) => file.startsWith(prefix)); \
-      const local = { \
-        "@hivemagnus/magnus-contracts": find("hivemagnus-magnus-contracts-"), \
-        "@hivemagnus/magnus-skills": find("hivemagnus-magnus-skills-"), \
-      }; \
-      fs.writeFileSync("package.json", JSON.stringify({ \
-        name: "magnus-server-runtime", private: true, \
-        dependencies: { "@hivemagnus/magnus-server": find("hivemagnus-magnus-server-"), ...local }, \
-        overrides: { ...local, "@prisma/config": { effect: "3.22.1" } }, \
-      }, null, 2)); ' \
-  && npm install --omit=dev --no-audit --no-fund \
+# Install the packed server from its npm-shrinkwrap.json, laid out as `npm install` from the
+# registry lays it out, with its sibling workspace packages taken from the local tarballs. The
+# image then runs exactly the dependency graph a native npm install of this release gets, and
+# GET /api/v1/system/installation reports no difference for it.
+RUN node /tmp/shrinkwrap-install-lock.mjs --out . --name magnus-server-runtime \
+      --package /tmp/packages/hivemagnus-magnus-server-*.tgz \
+      --local /tmp/packages/hivemagnus-magnus-contracts-*.tgz \
+      --local /tmp/packages/hivemagnus-magnus-skills-*.tgz \
+  && npm ci --omit=dev --no-audit --no-fund \
   && npm rebuild argon2 ssh2 \
   && npm cache clean --force \
-  && rm -rf /tmp/packages \
+  && rm -rf /tmp/packages /tmp/shrinkwrap-install-lock.mjs \
   && apt-get purge -y --auto-remove python3 make g++ \
   && chmod 0755 /usr/local/bin/magnus-server-entrypoint \
   && install -d -o node -g node -m 0700 /var/lib/magnus \

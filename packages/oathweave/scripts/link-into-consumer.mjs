@@ -5,8 +5,10 @@
 // there as the last step of its build. Node resolves the link to this same source, so nothing is
 // copied. The link goes when node_modules does; `npm run check:packs` fails if a tarball lacks it.
 //
-// @hivemagnus/hive-common, jose and zod are peer dependencies for the same reason: npm would pack a linked package's regular
-// dependencies at paths outside the tarball root. Consumers depend on them directly instead.
+// It declares no dependencies of any kind. npm would pack a linked package's regular dependencies at
+// paths outside the tarball root, and inside a consumer installed from its npm-shrinkwrap.json npm
+// counts a bundled package's peers as part of the bundle and never installs them. Consumers depend
+// on @hivemagnus/hive-common, jose and zod directly, and Node finds them from the bundled copy.
 import { existsSync, mkdirSync, rmSync, symlinkSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
