@@ -1,12 +1,12 @@
 {
   "name": "@hivemagnus/magnus-ui",
-  "version": "3.1.6",
+  "version": "3.2.0",
   "lockfileVersion": 3,
   "requires": true,
   "packages": {
     "": {
       "name": "@hivemagnus/magnus-ui",
-      "version": "3.1.6",
+      "version": "3.2.0",
       "license": "Apache-2.0",
       "dependencies": {
         "argon2": "^0.45.2",
@@ -19,7 +19,7 @@
         "magnus-ui": "bin/magnus-ui.mjs"
       },
       "devDependencies": {
-        "@hivemagnus/magnus-contracts": "3.1.6",
+        "@hivemagnus/magnus-contracts": "3.2.0",
         "@playwright/test": "^1.65.0",
         "@tailwindcss/postcss": "^4.3.5",
         "@types/node": "^24.19.2",
@@ -258,9 +258,9 @@
       }
     },
     "node_modules/@hivemagnus/magnus-contracts": {
-      "version": "3.1.6",
-      "resolved": "https://registry.npmjs.org/@hivemagnus/magnus-contracts/-/magnus-contracts-3.1.6.tgz",
-      "integrity": "sha512-5X1MzIKRVIBDDyFnj1mxrAHv+paGUEPHDkhHQ0GcTL7smc6EV0VY8t+xUAW7ylq8IDbD4ZIhN8ZHDlE0cPOUVQ==",
+      "version": "3.2.0",
+      "resolved": "https://registry.npmjs.org/@hivemagnus/magnus-contracts/-/magnus-contracts-3.2.0.tgz",
+      "integrity": "sha512-nvqyFGD/qsxjZKS4HHO/fvaaVPDeDsRy+77AYjf3H+QyCoaGwufwj5bgJ9qlhMOA1ZbIV1MpoPecvp13LF1UMg==",
       "dev": true,
       "license": "Apache-2.0",
       "dependencies": {

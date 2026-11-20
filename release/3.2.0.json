@@ -1,0 +1,9 @@
+{
+  "summary": "The server and console packages ship npm-shrinkwrap.json, so a native npm install gets the dependency graph the release was tested with (images install the same lock). New ADMIN route GET /api/v1/system/installation lists runtime dependencies whose installed version differs from that lock. No migrations, new settings or protocol changes; the browser contract adds the installation report.",
+  "breaking": false,
+  "minUpgradeFrom": "2.10.2",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}

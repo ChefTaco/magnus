@@ -19,7 +19,7 @@ The rules every upgrade path follows:
   `slow` or `one-way`). Upgrades print slow and one-way migrations and wait for confirmation
   (`--yes`). Startup auto-migrate refuses them unless `MAGNUS_AUTO_MIGRATE_ALLOW_SLOW=true` is set.
 
-## Unreleased: shrinkwrapped server and console
+## Version 3.2.0: shrinkwrapped server and console
 
 The server and console packages carry an `npm-shrinkwrap.json`. An npm install of them now puts
 their dependencies under `node_modules/@hivemagnus/magnus-server/node_modules` and
