@@ -17,6 +17,12 @@ All notable changes to this project are documented in this file. The format is b
   handles upgrade requests as ordinary HTTP: an upgrade to any path, `/api/v1/terminal` included,
   gets the same response as a plain request to it (`401` without credentials), and the usual
   request and keep-alive timeouts apply. The server no longer depends on `ws`.
+- The standalone console now answers every HTTP upgrade request. Next.js deliberately leaves an
+  upgrade that matches no route open, and Node applies no timeout to it, so an upgrade to any path
+  outside the Hermes bridge stayed open until the client went away; such upgrades now get `404`.
+  The console also routed upgrades through a URL built from the `Host` header, so a malformed
+  `Host` threw inside the listener and left that socket open too. Upgrade routing now parses only
+  the request target, and an unparsable target gets `400`.
 - `@hono/node-server` is now 2.1.11 (`^2.1.11` in the server, fleet gateway and agent). Both
   advisories fixed since 2.1.8 (GHSA-8wcc-wqxr-28qp and GHSA-qhm2-7mpr-ghjp) need Hono's WebSocket
   option, which no Magnus listener enables.

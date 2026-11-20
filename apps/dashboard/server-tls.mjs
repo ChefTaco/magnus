@@ -44,6 +44,7 @@ import { recordHermesSecurityEvent } from './runtime-hermes-security-events.mjs'
 import { resolveSessionSecret, sessionSecretDiagnostics } from './runtime-session-secret.mjs';
 import { dashboardCredentialDiagnostics, resolveDashboardSshCredentials } from './runtime-dashboard-credentials.mjs';
 import { hermesEnabled } from './runtime-integrations.mjs';
+import { guardFrameworkUpgradeListener, parseRequestTarget, rejectUpgrade } from './runtime-upgrade.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = dirname(__filename);
@@ -162,7 +163,7 @@ function firstQuery(url, name) {
 }
 
 async function resolveHermesInstallation(req) {
-  const url = new URL(req.url ?? '/', `https://${req.headers.host ?? 'localhost'}`);
+  const url = parseRequestTarget(req) ?? new URL('https://localhost/');
   const cookies = parseCookieHeader(req.headers.cookie ?? '');
   const installations = await fetchHermesInstallations();
   return chooseHermesInstallation(
@@ -231,7 +232,7 @@ function openHermesDashboardTunnel(conn, target) {
 }
 
 function websocketPathFor(req) {
-  const url = new URL(req.url ?? '/', `https://${req.headers.host ?? 'localhost'}`);
+  const url = parseRequestTarget(req) ?? new URL('https://localhost/');
   const upstreamPath = url.pathname.startsWith(HERMES_PROXY_BASE)
     ? url.pathname.slice(HERMES_PROXY_BASE.length) || '/'
     : url.pathname;
@@ -243,18 +244,27 @@ function websocketPathFor(req) {
 const hermesWss = new WebSocketServer({ noServer: true });
 
 function isHermesWebSocketUpgrade(req) {
-  const pathname = new URL(req.url ?? '/', `https://${req.headers.host ?? 'localhost'}`).pathname;
+  const pathname = parseRequestTarget(req)?.pathname ?? '';
   if (!pathname.startsWith(`${HERMES_PROXY_BASE}/`)) return false;
   return hermesWebsocketPathAllowed(pathname.slice(HERMES_PROXY_BASE.length));
 }
 
+function isHermesUpgradeTarget(target) {
+  return target.pathname.startsWith(`${HERMES_PROXY_BASE}/`);
+}
+
 function isHermesUpgradeNamespace(req) {
-  const pathname = new URL(req.url ?? '/', `https://${req.headers.host ?? 'localhost'}`).pathname;
-  return pathname.startsWith(`${HERMES_PROXY_BASE}/`);
+  const target = parseRequestTarget(req);
+  return target ? isHermesUpgradeTarget(target) : false;
 }
 
 function attachHermesWebSocketBridge(server) {
   server.on('upgrade', (req, socket, head) => {
+    // Registered before the framework listener, which skips unparsable targets: answer them here.
+    if (!parseRequestTarget(req)) {
+      rejectUpgrade(socket, 400);
+      return;
+    }
     if (!isHermesUpgradeNamespace(req)) return;
     if (!hermesEnabled()) {
       socket.write('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n');
@@ -460,14 +470,12 @@ http.createServer = (optOrHandler, maybeHandler) => {
   attachHermesWebSocketBridge(server);
   // Next registers its own upgrade listener after createServer() returns. Let
   // that listener handle framework WebSockets, but keep it away from Hermes
-  // paths so it cannot destroy the socket while the SSH bridge is connecting.
+  // paths so it cannot destroy the socket while the SSH bridge is connecting,
+  // and close any upgrade it leaves unclaimed.
   const originalOn = server.on;
   server.on = function on(event, listener) {
     if (event !== 'upgrade') return originalOn.call(this, event, listener);
-    return originalOn.call(this, event, function nextUpgradeListener(req, socket, head) {
-      if (isHermesUpgradeNamespace(req)) return;
-      return listener.call(this, req, socket, head);
-    });
+    return originalOn.call(this, event, guardFrameworkUpgradeListener(listener, isHermesUpgradeTarget));
   };
   return server;
 };
