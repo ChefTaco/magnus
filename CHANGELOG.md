@@ -7,6 +7,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-11-20
+
 ### Added
 
 - `GET /api/v1/system/installation` (ADMIN only, `Cache-Control: no-store`) reports the server
