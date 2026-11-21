@@ -1,7 +1,7 @@
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   collectHermesState,
   configureHermes,
@@ -446,6 +446,12 @@ exit 0
     await chmod(bin, 0o755);
   }
   const versionCalls = async () => (await readFile(join(home, 'calls'), 'utf8').catch(() => '')).split('\n').filter(call => call === '--version').length;
+  // A started probe records its call only once its shell runs, which a loaded runner can delay
+  // past the health check's answer: wait for that one call, then require that it stays the only one.
+  const expectOneVersionCall = async () => {
+    await vi.waitFor(async () => expect(await versionCalls()).toBeGreaterThan(0), { timeout: 5_000, interval: 25 });
+    expect(await versionCalls()).toBe(1);
+  };
 
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'hermes-cli-health-'));
@@ -469,7 +475,7 @@ exit 0
     const health = await hermesCliHealth(bin, 1_000);
     expect(Date.now() - started).toBeLessThan(1_000);
     expect(health).toEqual({ ok: true, message: 'runnable (answers profile list); version probe still running' });
-    expect(await versionCalls()).toBe(1);
+    await expectOneVersionCall();
   });
 
   it('reports the cached version once the probe has settled', async () => {
@@ -487,7 +493,7 @@ exit 0
     expect(Date.now() - started).toBeLessThan(2_500);
     expect(await hermesCliHealth(bin, 1_500)).toMatchObject({ ok: true });
     expect(hermesVersionProbeCountForTests()).toBe(1);
-    expect(await versionCalls()).toBe(1);
+    await expectOneVersionCall();
   });
 
   it('fails for a Hermes that answers neither command, and for a missing one', async () => {
