@@ -194,6 +194,12 @@ shrinkwrap only for registry installs, never for a local tarball).
   report to find no difference.
 - The bundled `@hivemagnus/magnus-oathweave` declares no dependencies or peers: inside a
   shrinkwrapped install npm treats a bundled package's peers as bundled and never fetches them.
+- Both locks hold only the production graph: what the dependencies, optional dependencies and
+  required peers reach. npm installs a dependency's whole shrinkwrap, so a development entry
+  would land in every consumer's lock as `extraneous` and in its `npm audit` (3.2.0 shipped the
+  console's eslint tooling that way). Generation drops them and `--check` refuses any. The agent
+  lock is different: Hive runs `npm ci` at the root of the agent tarball, which needs the
+  development entries too.
 
 ## Patched container runtime
 

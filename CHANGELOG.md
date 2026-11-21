@@ -7,6 +7,16 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Fixed
+
+- The `npm-shrinkwrap.json` in `@hivemagnus/magnus-server` and `@hivemagnus/magnus-ui` now
+  holds only the production graph. npm installs a dependency's whole shrinkwrap, so in 3.2.0 a
+  native install recorded the packages' development tooling in its lock as `extraneous`
+  (98 server and 383 console entries, never loaded), and `npm audit` reported moderate
+  `minimatch` findings in the console's eslint. The installed packages and versions are
+  unchanged. `npm run locks:generate` keeps only what the dependencies, optional dependencies and
+  required peers reach, and `npm run check:packs` refuses a lock with development entries.
+
 ## [3.2.0] - 2026-11-20
 
 ### Added
