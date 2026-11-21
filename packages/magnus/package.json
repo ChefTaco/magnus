@@ -1,6 +1,6 @@
 {
   "name": "@hivemagnus/magnus",
-  "version": "3.2.0",
+  "version": "3.2.1",
   "description": "Install, upgrade and roll back a Magnus server and console with one command: `npx @hivemagnus/magnus init`, then `magnus upgrade`. Pins exact, tested component versions, backs up PostgreSQL before every migration and reverts automatically when the new version fails its health check.",
   "keywords": [
     "magnus",
@@ -47,7 +47,7 @@
     "clean": "node -e \"const fs=require('node:fs');fs.rmSync('dist',{recursive:true,force:true});fs.rmSync('tsconfig.tsbuildinfo',{force:true})\""
   },
   "dependencies": {
-    "@hivemagnus/magnus-contracts": "3.2.0"
+    "@hivemagnus/magnus-contracts": "3.2.1"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
@@ -56,15 +56,15 @@
   },
   "magnusRelease": {
     "schema": 1,
-    "version": "3.2.0",
+    "version": "3.2.1",
     "engines": {
       "node": "^24.22.3 || ^26.13.1"
     },
     "components": {
-      "@hivemagnus/magnus-server": "3.2.0",
-      "@hivemagnus/magnus-ui": "3.2.0",
-      "@hivemagnus/magnus-contracts": "3.2.0",
-      "@hivemagnus/magnus-agent": "3.2.0"
+      "@hivemagnus/magnus-server": "3.2.1",
+      "@hivemagnus/magnus-ui": "3.2.1",
+      "@hivemagnus/magnus-contracts": "3.2.1",
+      "@hivemagnus/magnus-agent": "3.2.1"
     },
     "breaking": false,
     "minUpgradeFrom": "2.10.2",
@@ -77,8 +77,8 @@
       "selfUpgradeProtocol": 1,
       "minLauncher": 1
     },
-    "summary": "The server and console packages ship npm-shrinkwrap.json, so a native npm install gets the dependency graph the release was tested with (images install the same lock). New ADMIN route GET /api/v1/system/installation lists runtime dependencies whose installed version differs from that lock. No migrations, new settings or protocol changes; the browser contract adds the installation report.",
-    "notesUrl": "https://github.com/ChefTaco/magnus/releases/tag/v3.2.0",
+    "summary": "The npm-shrinkwrap.json in the server and console packages holds only the production graph, so a native npm install no longer records their development tooling as extraneous lock entries or reports npm audit findings in it. The installed packages and versions are unchanged. No migrations, new settings or protocol changes.",
+    "notesUrl": "https://github.com/ChefTaco/magnus/releases/tag/v3.2.1",
     "allowScripts": {
       "@prisma/engines": true,
       "argon2": true,

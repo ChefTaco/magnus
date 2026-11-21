@@ -1,0 +1,9 @@
+{
+  "summary": "The npm-shrinkwrap.json in the server and console packages holds only the production graph, so a native npm install no longer records their development tooling as extraneous lock entries or reports npm audit findings in it. The installed packages and versions are unchanged. No migrations, new settings or protocol changes.",
+  "breaking": false,
+  "minUpgradeFrom": "2.10.2",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}

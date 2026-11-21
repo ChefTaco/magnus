@@ -19,6 +19,15 @@ The rules every upgrade path follows:
   `slow` or `one-way`). Upgrades print slow and one-way migrations and wait for confirmation
   (`--yes`). Startup auto-migrate refuses them unless `MAGNUS_AUTO_MIGRATE_ALLOW_SLOW=true` is set.
 
+## Version 3.2.1: production-only shrinkwraps
+
+Nothing to do. The server and console shrinkwraps no longer list development tooling, so after
+a native `npm install` of 3.2.1 the install's own lock has no `extraneous` entries under
+`node_modules/@hivemagnus/magnus-server` or `node_modules/@hivemagnus/magnus-ui`, and
+`npm audit --omit=dev` no longer reports findings in them. An exception an upgrade script made
+for such findings with 3.2.0 can be dropped. The installed packages and versions are the same as
+3.2.0.
+
 ## Version 3.2.0: shrinkwrapped server and console
 
 The server and console packages carry an `npm-shrinkwrap.json`. An npm install of them now puts
