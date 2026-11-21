@@ -13,7 +13,10 @@
 // Generation seeds a disposable standalone project with the versions the workspace lock (and so CI)
 // resolved, lets npm prune and complete that graph for the package alone, and records the sibling
 // workspace packages by their public registry URL and the SHA-512 of their local pack, as the
-// agent's lock does. The server's bundled Oathweave package stays `inBundle`.
+// agent's lock does. The server's bundled Oathweave package stays `inBundle`. Only the production
+// graph is kept: these locks are only ever installed as a dependency, where npm would lay out a
+// development entry as extraneous. (The agent's lock keeps its development entries: Hive runs
+// `npm ci` at the root of the agent tarball, and npm ci needs the whole graph.)
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -25,7 +28,8 @@ import { pathToFileURL } from 'node:url';
 export const REGISTRY = 'https://registry.npmjs.org/';
 export const LOCKED = {
   server: { directory: 'services/control-api', siblings: ['packages/contracts', 'packages/skills'] },
-  // The console compiles the contracts into its build; it lists them as a development dependency.
+  // The console compiles the contracts into its build; it lists them as a development dependency,
+  // so they are not in its (production) shrinkwrap.
   ui: { directory: 'apps/dashboard', siblings: ['packages/contracts'] },
 };
 export const SHRINKWRAP = 'npm-shrinkwrap.json';
@@ -55,6 +59,57 @@ export function resolveInLock(packages, from, name) {
     if (packages[candidate]) return candidate;
     if (!base) return null;
   }
+}
+
+/**
+ * The lock paths a production install of the package loads: everything its dependencies and
+ * optional dependencies reach, following each package's dependencies, optional dependencies and
+ * required peers. Development tooling and optional peers that nothing requires are left out.
+ */
+export function productionPaths(lock) {
+  const packages = lock.packages ?? {};
+  const reached = new Set();
+  const missing = [];
+  const queue = [''];
+  while (queue.length) {
+    const from = queue.shift();
+    const entry = packages[from] ?? {};
+    const edges = [
+      ...Object.keys(entry.dependencies ?? {}).map((name) => [name, false]),
+      ...Object.keys(entry.optionalDependencies ?? {}).map((name) => [name, true]),
+      ...Object.keys(entry.peerDependencies ?? {}).filter((name) => !entry.peerDependenciesMeta?.[name]?.optional).map((name) => [name, false]),
+    ];
+    for (const [name, optional] of edges) {
+      const path = resolveInLock(packages, from, name);
+      if (!path) { if (!optional) missing.push(`${from || '(root)'} > ${name}`); continue; }
+      if (reached.has(path)) continue;
+      reached.add(path);
+      queue.push(path);
+    }
+  }
+  return { reached, missing };
+}
+
+/**
+ * A copy of `lock` with only what a production install uses. npm installs a dependency's whole
+ * shrinkwrap, so a development entry left in it lands in the consumer's lock as extraneous (and
+ * in its npm audit) although nothing loads it. A package that is optional in production and also
+ * development tooling (devOptional) is optional here.
+ */
+export function productionLock(lock) {
+  const { reached, missing } = productionPaths(lock);
+  assert.deepEqual(missing, [], 'The lock is missing required production dependencies');
+  const packages = { '': lock.packages[''] };
+  for (const [path, entry] of Object.entries(lock.packages)) {
+    if (!path) continue;
+    // npm's own flags must agree: a production entry is never dev, a dropped one never production.
+    if (reached.has(path)) {
+      assert(!entry.dev, `${path} is reachable in production but npm marked it dev`);
+      const { devOptional, ...rest } = entry;
+      packages[path] = devOptional ? { ...rest, optional: true } : rest;
+    } else assert(entry.dev || entry.devOptional, `${path} is a production entry nothing reaches`);
+  }
+  return { ...lock, packages };
 }
 
 const EXACT = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u;
@@ -109,6 +164,12 @@ export function artifactProblems(lock, manifest) {
     if (entry.link || !entry.version || !entry.resolved?.startsWith(REGISTRY) || !/^sha512-[A-Za-z0-9+/]{86}==$/u.test(entry.integrity ?? ''))
       problems.push(`${manifest.name} shrinkwrap ${path}: registry artifact must have an exact version, public URL and sha512 integrity`);
   }
+  const { reached, missing } = productionPaths(lock);
+  for (const edge of missing) problems.push(`${manifest.name} shrinkwrap is missing the production dependency ${edge}`);
+  const unused = Object.keys(lock.packages ?? {}).filter((path) => path && !reached.has(path));
+  if (unused.length) problems.push(`${manifest.name} shrinkwrap lists ${unused.length} entries no production install loads (${unused.slice(0, 3).join(', ')}${unused.length > 3 ? ', …' : ''}); a consumer's npm would install them as extraneous: regenerate it`);
+  for (const [path, entry] of Object.entries(lock.packages ?? {}))
+    if (path && (entry.dev || entry.devOptional)) problems.push(`${manifest.name} shrinkwrap ${path}: a production lock has no development flags`);
   return problems;
 }
 
@@ -170,7 +231,7 @@ export function generateLock(root, target) {
     execFileSync('npm', ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund', '--loglevel=error',
       `--registry=${REGISTRY}`, `--userconfig=${join(work, 'user.npmrc')}`, `--globalconfig=${join(work, 'global.npmrc')}`],
     { cwd: project, stdio: ['ignore', 'inherit', 'inherit'], timeout: 600_000 });
-    const lock = readJson(join(project, 'package-lock.json'));
+    const lock = productionLock(readJson(join(project, 'package-lock.json')));
     // npm marks the peers of a bundled package inBundle too, although the tarball carries only the
     // bundled package itself; a consumer install would then never fetch them. They are ordinary
     // registry dependencies of the server, pinned with the seed's URL and integrity.
@@ -185,6 +246,8 @@ export function generateLock(root, target) {
     }
     for (const sibling of siblings) {
       const entry = lock.packages[`node_modules/${sibling.manifest.name}`];
+      // A sibling the package only builds with (the console's contracts) is not in its production lock.
+      if (!entry && dependencyField(manifest, sibling.manifest.name) === 'devDependencies') continue;
       assert(entry, `The generated lock must include ${sibling.manifest.name}`);
       assert.equal(entry.integrity, sibling.integrity);
       entry.resolved = registryUrl(sibling.manifest.name, sibling.manifest.version);
@@ -223,6 +286,7 @@ export function refreshLock(root, target, { write = true, packs } = {}) {
     }
     for (const sibling of siblings) {
       const entry = lock.packages[`node_modules/${sibling.manifest.name}`];
+      if (!entry && dependencyField(manifest, sibling.manifest.name) === 'devDependencies') continue;
       assert(entry, `${manifest.name} shrinkwrap must include ${sibling.manifest.name}`);
       assert.deepEqual(entry.dependencies ?? {}, sibling.manifest.dependencies ?? {}, `${sibling.manifest.name} dependencies changed: regenerate and review the ${manifest.name} shrinkwrap`);
       Object.assign(entry, { version: sibling.manifest.version, resolved: registryUrl(sibling.manifest.name, sibling.manifest.version), integrity: sibling.integrity });

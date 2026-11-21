@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { LOCKED, SHRINKWRAP, artifactProblems, entryName, entryParent, lockProblems, overrideProblems, refreshLock, resolveInLock, seedLock } from './package-locks.mjs';
+import { LOCKED, SHRINKWRAP, artifactProblems, entryName, entryParent, lockProblems, overrideProblems, productionLock, productionPaths, refreshLock, resolveInLock, seedLock } from './package-locks.mjs';
 
 const repo = resolve(import.meta.dirname, '..');
 const read = (path) => JSON.parse(readFileSync(path, 'utf8'));
@@ -36,10 +36,11 @@ test('an override the lock does not honour is reported, as the 3.1.5 native inst
 });
 
 test('every shipped lock entry is a pinned public registry artifact, and only declared bundles are inBundle', () => {
-  const manifest = { name: '@hivemagnus/fixture', version: '1.0.0', dependencies: { a: '^1.0.0', b: '1.0.0' }, bundleDependencies: ['b'] };
+  const manifest = { name: '@hivemagnus/fixture', version: '1.0.0', dependencies: { a: '^1.0.0', b: '1.0.0', d: '1', e: '1', f: '1' }, bundleDependencies: ['b'] };
   const lock = { name: manifest.name, version: '1.0.0', lockfileVersion: 3, packages: {
     '': { name: manifest.name, version: '1.0.0', dependencies: manifest.dependencies },
-    'node_modules/a': artifact('a', '1.2.0'),
+    'node_modules/a': { ...artifact('a', '1.2.0'), dependencies: { c: '2' } },
+    'node_modules/d': artifact('d', '1.0.0'), 'node_modules/e': artifact('e', '1.0.0'), 'node_modules/f': artifact('f', '1.0.0'),
     'node_modules/b': { version: '1.0.0', inBundle: true },
     'node_modules/a/node_modules/c': { version: '2.0.0', inBundle: true },
   } };
@@ -49,6 +50,56 @@ test('every shipped lock entry is a pinned public registry artifact, and only de
   lock.packages['node_modules/f'] = { version: '1.0.0', link: true, resolved: 'packages/f' };
   assert.equal(artifactProblems(lock, manifest).length, 3);
   assert.match(artifactProblems({ ...lock, version: '2.0.0' }, manifest)[0], /differs from its manifest/);
+});
+
+test('a production lock keeps what dependencies, optional dependencies and required peers reach, and nothing else', () => {
+  const lock = { packages: {
+    '': { name: 'p', dependencies: { a: '1', bundled: '1' }, devDependencies: { lint: '1' } },
+    'node_modules/a': { version: '1.0.0', dependencies: { b: '1' }, optionalDependencies: { native: '1', absent: '1' },
+      peerDependencies: { peer: '1', ts: '*' }, peerDependenciesMeta: { ts: { optional: true } } },
+    'node_modules/a/node_modules/b': { version: '1.0.0' },
+    'node_modules/b': { version: '2.0.0', dev: true },
+    'node_modules/native': { version: '1.0.0', devOptional: true },
+    'node_modules/peer': { version: '1.0.0', peer: true },
+    'node_modules/ts': { version: '6.0.0', devOptional: true },
+    'node_modules/bundled': { version: '1.0.0', inBundle: true },
+    'node_modules/lint': { version: '1.0.0', dev: true, dependencies: { b: '2' } },
+  } };
+  const { reached, missing } = productionPaths(lock);
+  assert.deepEqual([...reached].sort(), ['node_modules/a', 'node_modules/a/node_modules/b', 'node_modules/bundled', 'node_modules/native', 'node_modules/peer']);
+  assert.deepEqual(missing, []);
+  const production = productionLock(lock);
+  assert.deepEqual(Object.keys(production.packages).sort(), ['', ...reached].sort());
+  // Optional in production and development tooling: optional once the tooling is gone.
+  assert.deepEqual(production.packages['node_modules/native'], { version: '1.0.0', optional: true });
+  assert.deepEqual(production.packages[''], lock.packages['']);
+  // npm's flags must agree with the walk: an unreachable entry npm calls production is an error.
+  assert.throws(() => productionLock({ packages: { ...lock.packages, 'node_modules/orphan': { version: '1.0.0' } } }), /nothing reaches/);
+  assert.throws(() => productionLock({ packages: { ...lock.packages, 'node_modules/peer': { version: '1.0.0', dev: true } } }), /marked it dev/);
+  assert.match(productionPaths({ packages: { '': { dependencies: { gone: '1' } } } }).missing[0], /\(root\) > gone/);
+});
+
+test('a shipped lock with development entries is refused: a consumer would install them as extraneous', () => {
+  const manifest = { name: '@hivemagnus/fixture', version: '1.0.0', dependencies: { a: '^1.0.0' }, devDependencies: { eslint: '^10.0.0' } };
+  const lock = { name: manifest.name, version: '1.0.0', lockfileVersion: 3, packages: {
+    '': { name: manifest.name, version: '1.0.0', dependencies: manifest.dependencies, devDependencies: manifest.devDependencies },
+    'node_modules/a': artifact('a', '1.2.0'),
+  } };
+  assert.deepEqual(artifactProblems(lock, manifest), []);
+  lock.packages['node_modules/eslint'] = { ...artifact('eslint', '10.14.0'), dev: true };
+  lock.packages['node_modules/minimatch'] = { ...artifact('minimatch', '10.0.0'), dev: true };
+  const problems = artifactProblems(lock, manifest);
+  assert.match(problems[0], /lists 2 entries no production install loads \(node_modules\/eslint, node_modules\/minimatch\)/);
+  assert.match(problems[1], /no development flags/);
+});
+
+test('the committed server and console locks carry only their production graph', () => {
+  for (const { directory } of Object.values(LOCKED)) {
+    const lock = read(join(repo, directory, SHRINKWRAP));
+    assert.deepEqual(Object.keys(productionLock(lock).packages).sort(), Object.keys(lock.packages).sort(), directory);
+    assert.deepEqual(Object.entries(lock.packages).filter(([, entry]) => entry.dev || entry.devOptional).map(([path]) => path), [], directory);
+  }
+  assert.equal(read(join(repo, LOCKED.ui.directory, SHRINKWRAP)).packages['node_modules/eslint'], undefined);
 });
 
 test('the seed takes the workspace versions, with the package\'s own node_modules first and workspace links dropped', () => {
@@ -86,7 +137,8 @@ function packsFor(root, target, version) {
   return LOCKED[target].siblings.map((directory) => {
     const manifest = read(join(repo, directory, 'package.json'));
     const entry = lock.packages[`node_modules/${manifest.name}`];
-    return { manifest: { ...manifest, version: version ?? manifest.version }, integrity: entry.integrity };
+    // The console builds with the contracts but does not ship them, so its lock has no entry for them.
+    return { manifest: { ...manifest, version: version ?? manifest.version }, integrity: entry?.integrity };
   });
 }
 
