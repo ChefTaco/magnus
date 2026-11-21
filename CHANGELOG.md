@@ -7,6 +7,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [3.2.1] - 2026-11-21
+
 ### Fixed
 
 - The `npm-shrinkwrap.json` in `@hivemagnus/magnus-server` and `@hivemagnus/magnus-ui` now
