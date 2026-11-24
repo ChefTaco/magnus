@@ -71,6 +71,10 @@ All notable changes to this project are documented in this file. The format is b
   upgrade reinstalls retained extensions with strict peers and holds the runtime when a peer differs.
 - `@hivemagnus/hive-common` 0.6.0.
 
+### Security
+
+- Agent definition export: the `omitted` list no longer echoes configuration text. A skill or plugin name is shown only when it is a plain identifier; anything else (a path, a URL, free text) becomes `plugin #n (sha256:<12 hex>)`, and the whole response, not only the definition, is checked for credential-like text before it is returned.
+
 ## [3.2.1] - 2026-11-21
 
 ### Fixed
