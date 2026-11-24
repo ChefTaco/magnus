@@ -24,16 +24,21 @@ function registry(connections: Record<string, RegistryConnection | undefined> = 
   return { asked, connection: async (id: string) => { asked.push(id); return connections[id]; } } as unknown as RegistryClient & { asked: string[] };
 }
 
-function setup(env: NodeJS.ProcessEnv, options: { registry?: RegistryClient | null; down?: string[]; versions?: Record<string, string>; now?: () => number } = {}) {
+function setup(env: NodeJS.ProcessEnv, options: { registry?: RegistryClient | null; down?: string[]; versions?: Record<string, string>; now?: () => number;
+  modelsDown?: string[]; services?: Record<string, string>; capabilities?: Record<string, string[]> } = {}) {
   const probed: string[] = [];
   setDiscoveryDeps({
     env: () => env,
     registry: () => options.registry ?? null,
-    probe: async url => {
+    probe: async (url, kind = 'health') => {
       probed.push(url);
       if (options.down?.some(host => url.includes(host))) return { ok: false, reason: 'does not answer (ECONNREFUSED)' };
-      const version = Object.entries(options.versions ?? {}).find(([host]) => url.includes(host))?.[1] ?? null;
-      return { ok: true, version, capabilities: null };
+      if (kind === 'models') {
+        if (options.modelsDown?.some(host => url.includes(host))) return { ok: false, reason: 'model API answered HTTP 502' };
+        return { ok: true, version: null, capabilities: null };
+      }
+      const pick = <T>(table?: Record<string, T>) => Object.entries(table ?? {}).find(([host]) => url.includes(host))?.[1] ?? null;
+      return { ok: true, version: pick(options.versions), capabilities: pick(options.capabilities), service: pick(options.services) };
     },
     ...(options.now ? { now: options.now } : {}),
   });
@@ -63,7 +68,7 @@ describe('dependency discovery', () => {
     // Found, but never used for enrollment: Magnus's HiveMem credential goes only to an explicit MAGNUS_ARDENT_HIVEMEM_URL.
     expect(report['hivemem']).toMatchObject({ status: 'awaiting_configuration', source: 'registry', endpoint: 'https://hivemem.example.com:18790/' });
     expect(report['hivemem']!.reason).toContain('MAGNUS_ARDENT_HIVEMEM_URL=https://hivemem.example.com:18790/');
-    expect(probed.sort()).toEqual(['https://hivemem.example.com:18790/health/live', 'https://models.example.com:4020/health/live', 'https://skills.example.com:4030/health/live']);
+    expect(probed.sort()).toEqual(['https://hivemem.example.com:18790/health/live', 'https://models.example.com:4020/health/live', 'https://models.example.com:4020/v1/models', 'https://skills.example.com:4030/health/live']);
     // New Agent, skill-install and HiveMem enrollment default to what the Registry resolved.
     vi.stubEnv('MAGNUS_ARDENT_HIVESKILLS_URL', '');
     vi.stubEnv('MAGNUS_ARDENT_EMBERPATH_URL', '');
@@ -162,5 +167,24 @@ describe('dependency discovery', () => {
     expect(versionAtLeast('2.5.9', '2.6.0')).toBe(false);
     expect(versionAtLeast('3.3.0-rc.1', '3.3.0')).toBe(false);
     expect(versionAtLeast(null, '1.0.0')).toBe(false);
+  });
+
+  it('checks a console-fronted Emberpath at its model API, not at the console root', async () => {
+    // A Hive console serves Emberpath only under /v1; its root health/live is the console's own page.
+    const env = { MAGNUS_ARDENT_EMBERPATH_URL: 'https://hive.example.com/v1' };
+    const probed = setup(env, { services: { 'hive.example.com/health': 'hivexui' }, versions: { 'hive.example.com/health': '0.12.0' },
+      capabilities: { 'hive.example.com/health': ['emberpath.execution-trace.v1', 'retry-signal.v1'] } });
+    const report = await byName();
+    expect(probed).toContain('https://hive.example.com/v1/models');
+    // usable, but the console's version and capabilities are not taken for Emberpath's
+    expect(report['emberpath']).toMatchObject({ status: 'usable', source: 'override', endpoint: 'https://hive.example.com/v1', capabilities: [] });
+    setup(env, { modelsDown: ['hive.example.com'] });
+    expect((await byName())['emberpath']).toMatchObject({ status: 'missing', reason: expect.stringContaining('model API answered HTTP 502') });
+  });
+
+  it('takes the version and capabilities from health that is Emberpath\'s own', async () => {
+    setup({ MAGNUS_ARDENT_EMBERPATH_URL: 'https://models.example.com:4020/v1' }, { services: { 'models.example.com': 'emberpath' },
+      versions: { 'models.example.com': '2.6.0' }, capabilities: { 'models.example.com': ['emberpath.execution-trace.v1', 'retry-signal.v1'] } });
+    expect((await byName())['emberpath']).toMatchObject({ status: 'usable', capabilities: ['emberpath.execution-trace.v1', 'retry-signal.v1'] });
   });
 });
