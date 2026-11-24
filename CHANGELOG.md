@@ -7,6 +7,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [3.3.5] - 2026-11-24
+
 ### Changed
 
 - **Ardent 3.2.1.** The node agent and New Agent stage `@hivemagnus/ardent` 3.2.1 (pins in the root and

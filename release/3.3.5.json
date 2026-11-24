@@ -1,0 +1,9 @@
+{
+  "summary": "Ardent 3.2.1: the node agent and New Agent stage @hivemagnus/ardent 3.2.1, whose only change is the ardent-client viaMagnus apiBase option for reaching Magnus through a Hive console; the runtime, its management API and dependencies are unchanged from 3.2.0. Includes 3.3.4. No migrations and no settings change.",
+  "breaking": false,
+  "minUpgradeFrom": "2.10.2",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}
