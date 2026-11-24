@@ -10,16 +10,20 @@ vi.mock('../utils/env.js', async (original) => ({
   IAM_CORE_URL: '',
 }));
 vi.mock('../middleware/user-status.js', () => ({ getCurrentUserStatus: vi.fn(async () => ({ active: true, role: 'ADMIN' })), invalidateUserStatus: vi.fn() }));
-const mocks = vi.hoisted(() => ({ deploy: vi.fn(), hivemem: vi.fn(), resume: vi.fn(), operation: vi.fn(), action: vi.fn(), read: vi.fn(), audit: vi.fn(), list: vi.fn(), release: vi.fn(), studio: vi.fn() }));
+const mocks = vi.hoisted(() => ({ definitionExport: vi.fn(), definitionValidate: vi.fn(), definitionInstall: vi.fn(), dependencies: vi.fn(), deploy: vi.fn(), hivemem: vi.fn(), resume: vi.fn(), operation: vi.fn(), action: vi.fn(), read: vi.fn(), audit: vi.fn(), list: vi.fn(), release: vi.fn(), studio: vi.fn() }));
 vi.mock('../services/ardent-agent-deploy.js', () => ({
   startArdentAgentDeploy: mocks.deploy, startArdentHiveMemEnable: mocks.hivemem, resumeArdentAgentOperation: mocks.resume, getArdentAgentOperation: mocks.operation,
 }));
+vi.mock('../services/ardent-agent-definition.js', () => ({
+  exportArdentAgentDefinition: mocks.definitionExport, validateArdentAgentDefinition: mocks.definitionValidate, installArdentAgentDefinition: mocks.definitionInstall,
+}));
+vi.mock('../services/discovery.js', () => ({ dependencyReport: mocks.dependencies, discoveredEndpoint: () => null }));
 vi.mock('../services/ardent-service.js', () => ({
   performArdentAction: mocks.action, getArdentProfileResource: mocks.read, listArdentInstallations: mocks.list, requireArdentStudioAgent: mocks.studio,
-  streamArdentProfileResource: vi.fn(), getArdentContextAdoption: vi.fn(), getArdentContextRelease: vi.fn(), getArdentInstallation: vi.fn(),
+  streamArdentProfileResource: vi.fn(), getArdentContextAdoption: vi.fn(), getArdentContextRelease: vi.fn(), getArdentInstallation: vi.fn(), getArdentSkillReceipts: vi.fn(),
 }));
 vi.mock('../services/audit-service.js', () => ({ logAuditEvent: mocks.audit }));
-vi.mock('../services/ardent-hiveskills.js', () => ({ fetchArdentSkillRelease: mocks.release }));
+vi.mock('../services/ardent-hiveskills.js', () => ({ fetchArdentSkillRelease: mocks.release, checkArdentSkillRelease: vi.fn(), ardentHiveSkillsUrl: vi.fn() }));
 
 const { authMiddleware } = await import('../middleware/auth.js');
 const { errorHandler } = await import('../middleware/error-handler.js');
@@ -378,6 +382,45 @@ describe('linked Ardent service identity', () => {
     expect(mocks.deploy).toHaveBeenCalledWith({}, { actorId: 'alice', details: { serviceActor: 'service:ardent:ardent-studio', serviceClientId: 'ardent-studio', actingSubject: 'admin-subject' } });
     expect(mocks.resume).toHaveBeenCalledOnce();
     expect(mocks.hivemem).toHaveBeenCalledWith('node-1', 'lead', expect.objectContaining({ actorId: 'alice' }));
+  });
+
+  it('reads the dependency report, and exports, validates and installs definitions only for an acting ADMIN', async () => {
+    const token = await serviceToken();
+    mocks.dependencies.mockResolvedValue([{ name: 'hiveskills', status: 'usable', source: 'registry', endpoint: 'https://skills.example.com/', capabilities: [] }]);
+    const report = await call(token, 'GET', '/api/v1/ardent/dependencies');
+    expect(report.status).toBe(200);
+    expect((await report.json()).data[0]).toMatchObject({ name: 'hiveskills', source: 'registry' });
+    expect((await call(token, 'GET', '/api/v1/ardent/dependencies?refresh=true')).status).toBe(200);
+    expect(mocks.dependencies).toHaveBeenLastCalledWith({ refresh: true });
+    mocks.definitionExport.mockResolvedValue({ definition: { sha256: 'f'.repeat(64), skills: [], extensions: [] }, omitted: [] });
+    mocks.definitionValidate.mockResolvedValue({ ok: true, problems: [] });
+    mocks.definitionInstall.mockResolvedValue('00000000-0000-4000-8000-0000000000ac');
+    const requests: Array<[string, string, number]> = [['GET', `${profile}/definition`, 200], ['POST', '/api/v1/ardent/agent-definitions/validate', 200],
+      ['POST', '/api/v1/ardent/agent-definitions/install', 202]];
+    for (const [method, path, status] of requests) {
+      const body = method === 'POST' ? { body: {} } : {};
+      const missing = await call(token, method, path, body);
+      expect(missing.status, path).toBe(403);
+      expect((await missing.json()).error.code).toBe('ACTING_ADMIN_REQUIRED');
+      expect((await call(token, method, path, { ...body, acting: 'operator-subject' })).status, path).toBe(403);
+      expect((await call(token, method, path, { ...body, acting: 'admin-subject' })).status, path).toBe(status);
+    }
+    expect(mocks.definitionExport).toHaveBeenCalledWith('node-1', 'lead');
+    expect(mocks.definitionInstall).toHaveBeenCalledWith({}, expect.objectContaining({ actorId: 'alice' }));
+    expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ action: 'ardent.agent.definition-export', actorId: 'alice' }));
+  });
+
+  it('passes a pinned skill installation to the fetch and never to the node', async () => {
+    const token = await serviceToken();
+    const request = { action: 'skill-install', body: { source: 'hiveskills', name: 'web-research', version: '1.1.0', pinned: true } };
+    mocks.action.mockResolvedValueOnce({ source: 'hiveskills', name: 'web-research', version: '1.1.0', sha256: 'd'.repeat(64), files: 2,
+      changed: true, enabled: false, revision: null, enable_error: null, activation_required: true });
+    const installed = await call(token, 'POST', `${profile}/action`, { acting: 'admin-subject', body: request });
+    expect(installed.status).toBe(200);
+    expect(mocks.release).toHaveBeenCalledWith(request.body);
+    expect(mocks.action).toHaveBeenCalledWith('node-1', 'lead', 'skill-install', undefined,
+      { source: 'hiveskills', name: 'web-research', version: '1.1.0', sha256: 'd'.repeat(64), archive_base64: 'H4sIAAAA' });
+    expect(mocks.audit).toHaveBeenLastCalledWith(expect.objectContaining({ details: expect.objectContaining({ pinned: true }) }));
   });
 
   it('refuses an unlinked client, a token without magnus:ardent, and a person using a service link', async () => {

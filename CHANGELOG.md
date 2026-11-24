@@ -7,6 +7,41 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Added
+
+- Portable agent definitions (`hive-agent-definition/1`). `@hivemagnus/magnus-contracts` exports the
+  schema (also as `@hivemagnus/magnus-contracts/agent-definition`) with canonical-JSON SHA-256 digests
+  of the definition and its persona, `verifyAgentDefinition()`, `sealAgentDefinition()` and the
+  credential-pattern guard `credentialLikePaths()`. `GET /api/v1/ardent/installations/:nodeId/profiles/:name/definition`
+  exports a profile: persona, runtime, the reviewed extensions its plugins load, its enabled HiveSkills
+  releases, the portable configuration and the bindings and secrets (names only) a target needs.
+  `POST /api/v1/ardent/agent-definitions/validate` answers a preflight (`MISSING_BINDING`,
+  `SKILL_VERSION_UNAVAILABLE`, `EXTENSION_NOT_REVIEWED`, `RUNTIME_INCOMPATIBLE`, `CAPABILITY_MISSING`,
+  `SECRET_UNBOUND`), and `POST /api/v1/ardent/agent-definitions/install` runs New Agent for the
+  definition (operation kind `definition`, with `extensions-install` and pinned `skill-install` steps)
+  only once the preflight passes, finishing when the running agent's persona digest and skill receipts
+  match. A credential-like value anywhere is refused with 422 `DEFINITION_CONTAINS_CREDENTIAL`.
+  ADMIN, or a service identity acting for an ADMIN.
+- `skill-install` takes `pinned: true` to install an exact HiveSkills release that is not promoted,
+  through the HiveSkills pinned-release routes as Magnus's enrolled target
+  (`MAGNUS_ARDENT_HIVESKILLS_TARGET`, `MAGNUS_ARDENT_HIVESKILLS_TARGET_TOKEN_FILE`). The archive must
+  match the digest HiveSkills states and its `X-Content-SHA256` header. Without a target such a release
+  answers 409 `SKILL_VERSION_UNAVAILABLE`.
+- Dependency discovery for Ardent agents. `GET /api/v1/ardent/dependencies` (ADMIN or a linked service
+  identity) reports HiveMem, HiveSkills and Emberpath as `usable`, `missing`, `unsupported` or
+  `awaiting_configuration`, with their source (`override`, `registry` or `none`), endpoint, service
+  capabilities and reason. An explicit `MAGNUS_ARDENT_*` URL wins; otherwise, with
+  `MAGNUS_HIVE_REGISTRY_URL` and `MAGNUS_HIVE_REGISTRY_TOKEN_FILE`, the Hive Registry's record of the
+  installed product. The report refreshes every five minutes and on `?refresh=true`. New Agent,
+  Enable HiveMem, `skill-install` and the definition installer use a resolved endpoint when the
+  setting is unset; discovery never enrolls, installs or enables anything.
+- The node agent reports the reviewed extensions retained beside the Ardent runtime (`extensions` in
+  its Ardent inventory) and serves a profile's HiveSkills receipts (`GET /ardent/profiles/:name/skill-receipts`).
+
+### Changed
+
+- `@hivemagnus/hive-common` 0.6.0.
+
 ## [3.2.1] - 2026-11-21
 
 ### Fixed

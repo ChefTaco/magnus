@@ -38,7 +38,8 @@ node; an older Ardent answers 404 for their routes.
 ```
 
 - `apiPort` is optional; Magnus picks the first port from 9910 that no profile on the node uses.
-- `model` is either `{ "emberpath_alias": "…" }`, served at the server's `MAGNUS_ARDENT_EMBERPATH_URL`,
+- `model` is either `{ "emberpath_alias": "…" }`, served at the server's `MAGNUS_ARDENT_EMBERPATH_URL`
+  (or, when it is unset, the Emberpath the Hive Registry lists; see [agent dependencies](#agent-dependencies)),
   or `{ "base_url": "http://192.0.2.10:8080/v1", "model": "…" }` for any OpenAI-compatible endpoint.
   The model API key, when the endpoint needs one, stays in the profile's `.env` as
   `ARDENT_LLAMA_API_KEY`.
@@ -340,10 +341,140 @@ CA), a node agent at `studio` level 3, and ADMIN (or a service acting for a link
    (a stale revision, or a profile that is not running), the skill stays installed and the answer says
    why in `enable_error`; enable it from the skill list.
 
+### Pinned releases
+
+HiveSkills releases are immutable, but only the one promoted on a channel is public. With
+`"pinned": true`, `skill-install` accepts that exact version even when it is not promoted. Magnus then
+reads it through the HiveSkills pinned-release routes (`skills.pinned-release.v1`): first
+`GET /v1/skills/:name/releases/:version` for the digest HiveSkills states, then the archive, both with
+`?target=<MAGNUS_ARDENT_HIVESKILLS_TARGET>` and that target's bearer token from
+`MAGNUS_ARDENT_HIVESKILLS_TARGET_TOKEN_FILE`. HiveSkills serves them only for skills it assigns to that
+target. The archive's SHA-256 must equal the stated digest and its `X-Content-SHA256` header, which the
+pinned route always sends. A promoted version is still fetched anonymously, and the token is never sent
+anywhere else. Without a target, a pinned version that is not promoted answers 409
+`SKILL_VERSION_UNAVAILABLE` and says which settings are missing; a target HiveSkills refuses (an
+unassigned skill or a wrong token) answers the same code with the HTTP status. `pinned` stays with the
+Control API: the node agent receives the same body as before. Without `MAGNUS_ARDENT_HIVESKILLS_URL`,
+Magnus uses the HiveSkills the Hive Registry lists ([agent dependencies](#agent-dependencies)).
+
 The answer is `{source, name, version, sha256, files, changed, enabled, revision, enable_error,
 activation_required}`; `revision` is the new configuration revision when the skill was enabled. Like
 any skill change, it applies once the profile restarts. The audit records the skill, version, channel,
 digest and file count, and a failed fetch is audited before anything reaches the node.
+
+## Agent dependencies
+
+Ardent agents use three optional products: HiveMem for memory, HiveSkills for skills and Emberpath for
+model aliases. `GET /api/v1/ardent/dependencies` (ADMIN, or a linked service identity; `hive.sh doctor`
+and `hive.sh ardent status` print it) says how Magnus resolved each one:
+
+```json
+{ "success": true, "data": [
+  { "name": "hiveskills", "status": "usable", "source": "registry", "endpoint": "https://hiveskills:4030/", "capabilities": ["skills.pinned-release.v1"] },
+  { "name": "emberpath", "status": "unsupported", "source": "override", "endpoint": "https://models.example.com/v1", "capabilities": [],
+    "reason": "emberpath 2.5.3 does not offer emberpath.execution-trace.v1; its endpoint is still used" },
+  { "name": "hivemem", "status": "awaiting_configuration", "source": "registry", "endpoint": "https://hivemem:18790/", "capabilities": ["memory.v1"],
+    "reason": "…set together with an Oathweave client (MAGNUS_ARDENT_HIVEMEM_CLIENT_ID, …)" }
+] }
+```
+
+Resolution, per dependency:
+
+1. **Override.** `MAGNUS_ARDENT_HIVEMEM_URL`, `MAGNUS_ARDENT_HIVESKILLS_URL` or `MAGNUS_ARDENT_EMBERPATH_URL`
+   always wins.
+2. **Registry.** Otherwise, with `MAGNUS_HIVE_REGISTRY_URL` and `MAGNUS_HIVE_REGISTRY_TOKEN_FILE` (the
+   registry's read credential; `MAGNUS_HIVE_REGISTRY_ALLOW_HTTP=true` for an `http://` registry on its
+   private network), the product's `GET /v1/products/{id}/connection`: the internal `api` endpoint for
+   HiveMem and HiveSkills, the internal `model` endpoint plus `/v1` for Emberpath, and its
+   `serviceCapabilities`. An entry with `confirmed: false` counts only when the version the product
+   reports at `health/live` is its `since` or newer. Registry capabilities apply to an override only at
+   the same address.
+3. **None.** Otherwise `missing` with `source: none`, naming the settings to set.
+
+Each resolved endpoint is probed at `health/live` (no credential is sent). `status` is `usable`;
+`missing` when nothing is configured or the endpoint does not answer (with the reason);
+`unsupported` when it answers but lacks a capability Magnus expects of it (Emberpath:
+`emberpath.execution-trace.v1`), whose endpoint is still used; or `awaiting_configuration` for an
+unusable setting, an HTTP HiveSkills, or a HiveMem for which Magnus has no enrollment credential of its
+own. The report is rebuilt every five minutes and on `?refresh=true`.
+
+New Agent, Enable HiveMem, `skill-install` and the definition installer use a Registry-resolved
+endpoint when the matching setting is unset (not one reported `missing`). HiveMem enrollment still
+needs Magnus's own client or enrollment token. Discovery never enrolls, installs or enables anything,
+and grants nothing: a resolved endpoint is only available. A managed node's agents must be able to
+reach the endpoint written into their configuration; when they reach a product at another address,
+set the override (or `MAGNUS_ARDENT_HIVEMEM_AGENT_URL`).
+
+Magnus does not write observations to the Registry, so it does not publish per-installation Ardent
+capabilities there; `GET /api/v1/ardent/installations` reports them.
+
+## Portable agent definitions
+
+A `hive-agent-definition/1` (`@hivemagnus/magnus-contracts/agent-definition`) describes a complete
+agent so another installation can recreate it: the persona, the runtime package and version, the
+reviewed extension packages it loads and the HiveSkills releases it uses (by reference and digest), the
+portable configuration (backend, `deadline_seconds`, `max_parallel_tasks`, `max_parallel_tool_calls`,
+the Emberpath model alias, `artifacts.max_bytes`) and what a target must bind. Channels are always
+`excluded`, and `excludes` is always `["history", "memory", "sessions", "artifacts"]`: a definition is
+not a state migration. `sha256` is the SHA-256 of the canonical JSON (sorted keys, no whitespace) of the
+definition without `sha256`; `persona.sha256` that of `{soul_md, identity_md}`. Each extension may list
+the plugin specifiers the profile loads from it (`plugins`, the package name when omitted), an
+addition to the planned shape. `verifyAgentDefinition()`, `sealAgentDefinition()` and
+`credentialLikePaths()` are exported with the schema.
+
+Credentials are never carried. A definition or a request that holds a credential-like string (API
+keys, npm or GitHub tokens, a JWT, a bearer header, a private key, a URL with a password; the guard
+ArdentStudio templates use) is refused with 422 `DEFINITION_CONTAINS_CREDENTIAL` and the JSON paths.
+Secrets appear only as `requirements.secrets[].env_name`. All three routes need ADMIN, or a service
+identity acting for an ADMIN, like New Agent.
+
+**Export.** `GET /api/v1/ardent/installations/:nodeId/profiles/:name/definition` answers
+`{definition, omitted}`. It reads the persona, the configuration, the profile's `.hiveskills.json`
+receipts and the node's reviewed extensions (`extension-bundle.json`, bound to the package receipt,
+which the node agent now reports as `extensions` in its inventory). Skills are the enabled HiveSkills
+releases; extensions are the retained packages the profile's `plugins` load. The model becomes an
+alias only when it points at Magnus's Emberpath. `requirements.bindings` are `hivemem`, `model`
+(`emberpath_alias`), `hiveskills` (when there are skills), and, not required, `channel:<name>` for each
+enabled channel and `peers`. The model provider's `api_key_env` becomes a secret requirement. Memory
+settings, provider URLs, channel settings and their tokens stay behind. `omitted` lists what could not
+be carried: local skills, plugins outside a reviewed extension, a model that is not an alias, channels
+and peers. A node agent that reports neither extensions nor skill receipts answers 409
+`AGENT_UPGRADE_REQUIRED`.
+
+**Validate.** `POST /api/v1/ardent/agent-definitions/validate` with `{definition, nodeId, bindings?}`
+checks the definition (422 `DEFINITION_INVALID` for a bad shape or digest) and answers the preflight
+`{ok, problems: [{code, detail}]}`:
+
+| Code | When |
+|---|---|
+| `MISSING_BINDING` | A required binding is absent, or its target is unusable: HiveMem enrollment not configured or another workspace, no Emberpath (or it does not answer), no HiveSkills |
+| `SKILL_VERSION_UNAVAILABLE` | HiveSkills will not serve that release to Magnus (not promoted and no target, refused, absent) or states another digest |
+| `EXTENSION_NOT_REVIEWED` | The node has no reviewed, retained extension with that name, version, integrity and package tree digest; add it to the node's extension bundle through the package review first |
+| `RUNTIME_INCOMPATIBLE` | Another runtime package, another major version or an older version on the node, or a backend New Agent does not provision (`codex`) |
+| `CAPABILITY_MISSING` | A `runtime.required_capabilities` entry the node's Ardent installation (`ardent.recovery.v1`, `ardent.lineage.v1`, `artifact-transfer.v2`, from its `capabilities`) or a resolved dependency (the others) does not report |
+| `SECRET_UNBOUND` | A named secret has no `secret:<ENV_NAME>` binding of `provided` (the target profile's environment supplies it) or `none` (run without it) |
+
+Without `bindings`, every required binding is reported missing. A binding the definition does not
+require answers 400.
+
+**Install.** `POST /api/v1/ardent/agent-definitions/install` with `{definition, nodeId, name, bindings,
+apiPort?}` runs the preflight first. Any problem answers 409 `PREFLIGHT_FAILED` with the report in
+`error.details.problems`, and nothing is created. Bindings: `hivemem` is `default` or Magnus's HiveMem
+workspace; `model` is the Emberpath alias; `hiveskills` is `default`; each `secret:<ENV_NAME>` is
+`provided` or `none`. Magnus never sets a secret value. The answer is `202 {operationId}` for an
+operation of kind `definition`, which New Agent's operation routes read, stream and resume:
+
+| Step | What it does |
+|---|---|
+| `profile-create` … `hivemem-enroll` | As New Agent, with the definition's persona |
+| `extensions-install` | Checks that every extension is still a reviewed archive retained on the node with the same integrity; extensions are installed per node through the package review, never from a definition |
+| `config-save` | As New Agent with the bound alias, plus the execution limits, the artifact limit and `plugins` from the reviewed extensions |
+| `skill-install` | Installs each skill as a pinned release (digest checked against the definition) and enables it |
+| `service-restart` | Activates the agent |
+| `ready-probe` | As New Agent, and the persona digest and skill receipts on the running agent must match the definition |
+
+The start is audited as `ardent.agent.definition-install` with the definition's name and digest, and
+an export as `ardent.agent.definition-export`.
 
 ## Service identity
 

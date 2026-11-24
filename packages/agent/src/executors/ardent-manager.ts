@@ -18,7 +18,7 @@ import {
   ardentSessionOpenSchema, ardentSkillInstallNodeSchema, ardentSkillReceiptSchema, checkArdentSkillArchive, type ArdentSkillInstallResult,
 } from '@hivemagnus/magnus-contracts';
 import { ARDENT_AGENT_CAPABILITIES } from '../ardent-capabilities.js';
-import { ARDENT_EXTENSION_MANIFEST, assertArdentPluginsRetained, readArdentExtensionBundle, validateArdentExtensionLock } from './ardent-extensions.js';
+import { ARDENT_EXTENSION_MANIFEST, assertArdentPluginsRetained, readArdentExtensionBundle, summarizeArdentExtensionBundle, validateArdentExtensionLock, type ArdentRetainedExtension } from './ardent-extensions.js';
 export { ardentPackageNames, DEFAULT_ARDENT_PACKAGE } from './ardent-packages.js';
 
 // What this agent's Ardent bridge supports; the ping route reports the same level.
@@ -259,8 +259,55 @@ export async function readArdentState(target?: ArdentRoot): Promise<object> {
   let stagedPackageError: string | null = null;
   try { staged = await stagedPackage(); }
   catch (error: unknown) { stagedPackageError = error instanceof Error ? error.message.slice(0, 200) : 'Staged package unavailable'; }
+  let extensions: ArdentRetainedExtension[] | null = [];
+  let extensionsError: string | null = null;
+  if (version !== null) {
+    try { extensions = await retainedExtensions(root); }
+    catch (error: unknown) { extensions = null; extensionsError = error instanceof Error ? error.message.slice(0, 200) : 'Retained extensions unavailable'; }
+  }
   return { installed: version !== null, version, packageName, owner: root.owner, profiles, stagedPackage: staged, stagedPackageError,
-    capabilities: ARDENT_AGENT_CAPABILITIES, checkedAt: new Date().toISOString() };
+    extensions, extensionsError, capabilities: ARDENT_AGENT_CAPABILITIES, checkedAt: new Date().toISOString() };
+}
+
+/** The reviewed extensions retained beside the installed runtime, bound to its package receipt. */
+async function retainedExtensions(root: ArdentRoot): Promise<ArdentRetainedExtension[]> {
+  const receiptPath = join(root.install, 'package-receipt.json');
+  const metadata = await optionalStat(receiptPath);
+  if (!metadata) return [];
+  if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > 4096) throw new Error('Installed Ardent package receipt is unsafe');
+  const receipt = installedPackageReceipt.safeParse(JSON.parse(await readFile(receiptPath, 'utf8')) as unknown);
+  if (!receipt.success) throw new Error('Installed Ardent package receipt is unreadable');
+  return summarizeArdentExtensionBundle(root.install, (await lstat(root.home)).uid, receipt.data.extensionBundleSha256);
+}
+
+/**
+ * The receipts of the HiveSkills releases Magnus installed on a profile (`.hiveskills.json` in each skill
+ * directory of the profile's first skills directory). A skill without a readable receipt is a local skill
+ * and is left out. Read only.
+ */
+export async function readSkillReceipts(root: ArdentRoot, profile: string): Promise<{ schema_version: 1; skills: Array<{ name: string; version: string; sha256: string }> }> {
+  const { config, dir } = await profileConfig(root.root, profile);
+  const directory = skillSettings.parse(config).skills?.directories?.[0] ?? 'skills';
+  if (directory.startsWith('/') || directory.split('/').includes('..')) throw new Error('Ardent skill directory escapes the profile');
+  const skillsRoot = join(dir, directory);
+  const real = await realpath(skillsRoot).catch((error: unknown) => {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return undefined;
+    throw error;
+  });
+  if (!real) return { schema_version: 1, skills: [] };
+  if (!within(await realpath(dir), real)) throw new Error('Ardent skill directory escapes the profile');
+  const skills: Array<{ name: string; version: string; sha256: string }> = [];
+  for (const entry of (await readdir(real, { withFileTypes: true })).slice(0, 500)) {
+    if (!entry.isDirectory() || entry.name.startsWith('.') || !/^[a-z0-9][a-z0-9-]{1,62}$/.test(entry.name)) continue;
+    const receipt = join(real, entry.name, ARDENT_SKILL_RECEIPT_FILE);
+    const info = await optionalStat(receipt);
+    if (!info?.isFile() || info.size > 4096) continue;
+    try {
+      const parsed = ardentSkillReceiptSchema.parse(JSON.parse(await readFile(receipt, 'utf8')) as unknown);
+      if (parsed.name === entry.name) skills.push({ name: parsed.name, version: parsed.version, sha256: parsed.sha256 });
+    } catch { /* no-reason-needed: an unreadable receipt marks a skill Magnus cannot vouch for, which is left out */ }
+  }
+  return { schema_version: 1, skills: skills.sort((left, right) => left.name.localeCompare(right.name)) };
 }
 
 async function managementToken(dir: string, envName: string): Promise<string> {
@@ -878,6 +925,12 @@ export function createArdentRoutes(resolveRoot: () => Promise<ArdentRoot> = arde
         single_profile: JSON.stringify(await safeProfiles(root.root)) === JSON.stringify([profile]), service_unit_matches: serviceUnitMatches });
     } catch (error: unknown) {
       return c.json({ error: error instanceof Error ? error.message.slice(0, 200) : 'Context adoption preflight unavailable' }, 503);
+    }
+  });
+  routes.get('/profiles/:name/skill-receipts', async c => {
+    try { return c.json(await readSkillReceipts(await resolveRoot(), profileName.parse(c.req.param('name')))); }
+    catch (error: unknown) {
+      return c.json({ error: error instanceof Error ? error.message.slice(0, 200) : 'Skill receipts unavailable' }, 503);
     }
   });
   routes.get('/profiles/:name/context/:releaseId', async c => {

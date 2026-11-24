@@ -59,6 +59,28 @@ export async function readArdentExtensionBundle(
   return { manifest, text, sha256 };
 }
 
+/** One retained extension as the inventory reports it: identity and digests, never the archive path. */
+export type ArdentRetainedExtension = { name: string; version: string; integrity: string; packageTreeSha256: string };
+
+/**
+ * The retained extensions for the inventory and agent definitions, cheaply: the manifest must be the one the
+ * package receipt pins (`expectedSha256`) and owned like the bundle; archives and package trees are checked
+ * in full by `readArdentExtensionBundle` before any runtime replacement. Empty without a bundle.
+ */
+export async function summarizeArdentExtensionBundle(install: string, uid: number, expectedSha256: string | undefined): Promise<ArdentRetainedExtension[]> {
+  const file = join(install, ARDENT_EXTENSION_MANIFEST);
+  const present = await lstat(file).then(() => true, (error: unknown) => {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return false;
+    throw error;
+  });
+  if (!present && expectedSha256 === undefined) return [];
+  if (!present || expectedSha256 === undefined) throw new Error('Ardent extension bundle and package receipt differ');
+  const bytes = await ownedFile(file, uid, 256 * 1024);
+  if (createHash('sha256').update(bytes).digest('hex') !== expectedSha256) throw new Error('Ardent extension bundle differs from its reviewed receipt');
+  const manifest = ardentExtensionManifestSchema.parse(JSON.parse(bytes.toString('utf8')) as unknown);
+  return manifest.packages.map(item => ({ name: item.name, version: item.version, integrity: item.integrity, packageTreeSha256: item.packageTreeSha256 }));
+}
+
 export function assertArdentPluginsRetained(plugins: readonly string[], bundle: ArdentExtensionBundle | null): void {
   if (plugins.some(specifier => !bundle?.manifest.packages.some(item => specifier === item.name || specifier.startsWith(`${item.name}/`))))
     throw new Error('Configured Ardent plugins require a reviewed extension bundle before replacing the runtime');

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { gzipSync } from 'node:zlib';
-import { ardentArtifactMaxBytes, ardentPackageNames, ardentUserUnit, createArdentInstallStage, createArdentRoutes, type OwnerRunner, hermesTrafficConsumersDisabled, installSkill, ownerCommand, packageTreeDigest, promoteArdentPackage, readArdentState, relayBody, SkillInstallRefused, verifiedInstalledArdentPackage, withArdentLifecycle, writeProfileCredential } from './ardent-manager.js';
+import { ardentArtifactMaxBytes, ardentPackageNames, ardentUserUnit, createArdentInstallStage, createArdentRoutes, type OwnerRunner, hermesTrafficConsumersDisabled, installSkill, ownerCommand, packageTreeDigest, promoteArdentPackage, readArdentState, readSkillReceipts, relayBody, SkillInstallRefused, verifiedInstalledArdentPackage, withArdentLifecycle, writeProfileCredential } from './ardent-manager.js';
 
 const dirs: string[] = [];
 const servers: Server[] = [];
@@ -387,7 +387,8 @@ describe('accepted Ardent package names', () => {
     expect(await verifiedInstalledArdentPackage(install, staged)).toBe(false);
     process.env['MAGNUS_AGENT_ARDENT_PACKAGES'] = '@hivemagnus/ardent,@legacy-scope/ardent';
     const state = await readArdentState(target) as { installed: boolean; version: string; packageName: string };
-    expect(state).toMatchObject({ installed: true, version: '0.1.9', packageName: '@legacy-scope/ardent' });
+    // No extension bundle beside the package: none retained, and no error.
+    expect(state).toMatchObject({ installed: true, version: '0.1.9', packageName: '@legacy-scope/ardent', extensions: [], extensionsError: null });
     expect(await verifiedInstalledArdentPackage(install, staged)).toBe(true);
     expect(await verifiedInstalledArdentPackage(install, { ...staged, name: '@legacy-scope/ardent' })).toBe(true);
     expect(await verifiedInstalledArdentPackage(install, { ...staged, name: '@hivemagnus/ardent' })).toBe(false);
@@ -773,6 +774,23 @@ describe('HiveSkills skill installation', () => {
       enable_error: 'The Ardent configuration changed since it was read; enable the skill from the list' });
     expect(await readFile(join(profile, 'skills/web-research/SKILL.md'), 'utf8')).toBe(skillMd('2'));
     await expect(access(join(profile, 'skills/web-research/old.md'))).rejects.toThrow();
+  });
+
+  it('reports the receipts of the HiveSkills releases it installed, and leaves local skills out', async () => {
+    const { target, profile, routes } = await fixture(() => [200, { revision: saved, activation_required: true }]);
+    expect(await readSkillReceipts(target, 'example')).toEqual({ schema_version: 1, skills: [] });
+    const bytes = archive([['SKILL.md', skillMd('1')]]);
+    const result = await installSkill(target, 'example', release(bytes), asTestUser);
+    await mkdir(join(profile, 'skills/local-notes'), { recursive: true });
+    await writeFile(join(profile, 'skills/local-notes/SKILL.md'), '---\nname: local-notes\ndescription: Mine.\n---\n');
+    await mkdir(join(profile, 'skills/forged'), { recursive: true });
+    await writeFile(join(profile, 'skills/forged/.hiveskills.json'), '{"not":"a receipt"}');
+    const expected = { schema_version: 1, skills: [{ name: 'web-research', version: '1.0.0', sha256: result.sha256 }] };
+    expect(await readSkillReceipts(target, 'example')).toEqual(expected);
+    const response = await routes.request('/profiles/example/skill-receipts');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(expected);
+    expect((await routes.request('/profiles/missing/skill-receipts')).status).toBe(503);
   });
 
   it('never replaces a local skill and checks the archive before anything is written', async () => {

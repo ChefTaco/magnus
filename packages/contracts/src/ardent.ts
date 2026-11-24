@@ -40,13 +40,34 @@ export const ArdentProfileSummarySchema = z.object({
 });
 export type ArdentProfileSummary = z.infer<typeof ArdentProfileSummarySchema>;
 
+/** One retained, reviewed extension package of an Ardent installation. */
+export const ArdentRetainedExtensionSchema = z.object({
+  name: z.string(), version: z.string(), integrity: z.string().regex(/^sha512-[A-Za-z0-9+/]{86}==$/), packageTreeSha256: z.string().regex(/^[a-f0-9]{64}$/),
+});
+export type ArdentRetainedExtension = z.infer<typeof ArdentRetainedExtensionSchema>;
+
+/** The `.hiveskills.json` receipts of the HiveSkills releases Magnus installed on a profile, from the node agent (older agents answer 404). */
+export const ArdentSkillReceiptsSchema = z.object({
+  schema_version: z.literal(1),
+  skills: z.array(z.object({ name: z.string(), version: z.string(), sha256: z.string().regex(/^[a-f0-9]{64}$/) })),
+});
+export type ArdentSkillReceipts = z.infer<typeof ArdentSkillReceiptsSchema>;
+
 export const ArdentNodeStateSchema = z.object({
   installed: z.boolean(), version: z.string().nullable(), owner: z.string(),
   profiles: z.array(ArdentProfileSummarySchema), checkedAt: z.string().datetime(),
   stagedPackage: z.object({ version: z.string(), sha256: z.string().regex(/^[a-f0-9]{64}$/) }).nullable().optional(),
   stagedPackageError: z.string().nullable().optional(),
   /** Bridge features of the node agent; studio is a level (see ARDENT_STUDIO_CAPABILITY). Absent on agents older than the Studio bridge. */
-  capabilities: z.object({ studio: z.number().int().min(0).optional() }).optional(),
+  capabilities: z.object({ studio: z.number().int().min(0).optional() }).catchall(z.number().int().min(0)).optional(),
+  /** The installed Ardent package name (one of the agent's accepted names). */
+  packageName: z.string().nullable().optional(),
+  /**
+   * The reviewed extension packages retained beside the runtime (extension-bundle.json, bound to the package
+   * receipt): empty without a bundle, null when the bundle cannot be read. Absent on older node agents.
+   */
+  extensions: z.array(ArdentRetainedExtensionSchema).nullable().optional(),
+  extensionsError: z.string().nullable().optional(),
 });
 export type ArdentNodeState = z.infer<typeof ArdentNodeStateSchema>;
 

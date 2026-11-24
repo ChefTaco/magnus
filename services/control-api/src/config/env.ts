@@ -208,6 +208,13 @@ export const envSchema = z.object({
   MAGNUS_EMBERPATH_MODEL: z.string().optional(),
   // Ardent skill-install: the HiveSkills registry Magnus fetches catalog releases from (services/ardent-hiveskills.ts)
   MAGNUS_ARDENT_HIVESKILLS_URL: z.string().url().optional(),
+  // Pinned HiveSkills releases that are not promoted: Magnus's enrolled HiveSkills target (services/ardent-hiveskills.ts)
+  MAGNUS_ARDENT_HIVESKILLS_TARGET: z.string().regex(/^[A-Za-z0-9._-]{1,128}$/).optional(),
+  MAGNUS_ARDENT_HIVESKILLS_TARGET_TOKEN_FILE: z.string().optional(),
+  // Hive Registry discovery of HiveMem, HiveSkills and Emberpath for Ardent agents (services/discovery.ts)
+  MAGNUS_HIVE_REGISTRY_URL: z.string().url().optional(),
+  MAGNUS_HIVE_REGISTRY_TOKEN_FILE: z.string().optional(),
+  MAGNUS_HIVE_REGISTRY_ALLOW_HTTP: booleanEnvSchema,
 
   // Managed Hermes Agent fleet configuration (all optional)
   MAGNUS_HERMES_REGISTRY_ENABLED: booleanEnvSchema,

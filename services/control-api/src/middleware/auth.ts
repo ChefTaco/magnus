@@ -121,11 +121,14 @@ const ARDENT_SERVICE_READS = [
   /^\/api\/v1\/ardent\/installations\/[A-Za-z0-9._-]{1,128}$/,
   new RegExp(`${ARDENT_PROFILE}/(?:status|profile|config|skills|memory/status|sessions|sessions/${ARDENT_UUID}/messages|tasks|tasks/${ARDENT_UUID}(?:/events|/stream|/artifacts)?|identity/(?:soul|identity)|artifacts/[a-f0-9]{64}(?:/manifest)?|development)$`),
   new RegExp(`^/api/v1/ardent/agents/operations/${ARDENT_UUID}(?:/stream)?$`),
+  /^\/api\/v1\/ardent\/dependencies$/,
+  new RegExp(`${ARDENT_PROFILE}/definition$`),
 ];
 const ARDENT_SERVICE_WRITES = [
   new RegExp(`${ARDENT_PROFILE}/(?:action|hivemem)$`),
   /^\/api\/v1\/ardent\/agents$/,
   new RegExp(`^/api/v1/ardent/agents/operations/${ARDENT_UUID}/resume$`),
+  /^\/api\/v1\/ardent\/agent-definitions\/(?:validate|install)$/,
 ];
 
 export function isScopedServiceRequestAllowed(
