@@ -7,6 +7,14 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Changed
+
+- **Ardent 3.2.1.** The node agent and New Agent stage `@hivemagnus/ardent` 3.2.1 (pins in the root and
+  agent `package.json` and the agent `npm-shrinkwrap.json`). The runtime, its management API and its
+  dependencies are unchanged from 3.2.0; the release fixes `@hivemagnus/ardent-client`, whose `viaMagnus`
+  now takes `apiBase` to reach Magnus through a Hive console (`https://<console>/api/magnus`, which the
+  suite ingress maps to `/api/v1`). No route, action or settings change.
+
 ## [3.3.4] - 2026-11-24
 
 ### Fixed
