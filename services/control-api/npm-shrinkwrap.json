@@ -12,7 +12,7 @@
       ],
       "license": "Apache-2.0",
       "dependencies": {
-        "@hivemagnus/hive-common": "^0.5.1",
+        "@hivemagnus/hive-common": "^0.6.0",
         "@hivemagnus/magnus-contracts": "3.2.1",
         "@hivemagnus/magnus-oathweave": "3.2.1",
         "@hono/node-server": "^2.1.11",
@@ -83,9 +83,9 @@
       "license": "MIT"
     },
     "node_modules/@hivemagnus/hive-common": {
-      "version": "0.5.1",
-      "resolved": "https://registry.npmjs.org/@hivemagnus/hive-common/-/hive-common-0.5.1.tgz",
-      "integrity": "sha512-FyPN12gzyv5y/o028A0MXb7Ic0mNYO7ed1QZ0y92TDiUXfInunGzqHJRC76P+CS4N2Fk079HfiWRbVEUXOiw1Q==",
+      "version": "0.6.0",
+      "resolved": "https://registry.npmjs.org/@hivemagnus/hive-common/-/hive-common-0.6.0.tgz",
+      "integrity": "sha512-aNMG+sx9EivFAa3HJmulh7RWglhy/y/JoVQ61gRtyF1HlEyNr0aUTa6sh6P0piHFb3y5ClZLBS79fSqtmBoEHA==",
       "license": "Apache-2.0",
       "dependencies": {
         "jose": "^6.2.15"
@@ -105,7 +105,7 @@
     "node_modules/@hivemagnus/magnus-contracts": {
       "version": "3.2.1",
       "resolved": "https://registry.npmjs.org/@hivemagnus/magnus-contracts/-/magnus-contracts-3.2.1.tgz",
-      "integrity": "sha512-BIS4P3ZDAhPxwTgk9+mNve6bZtWrL8Mr8pgYGM4wkcxzZKvgfke1el4dHCjABJqBRda33YErtUzxTV0Qe9ey7Q==",
+      "integrity": "sha512-+c3LnATp/Z8DvAFZl02QaVTaVyfcJbdBqBH5y6plH7c6cNQSTUEC9o0Kq9jO3/CXmLy2O/rK7g3Q3EdgzmAtyg==",
       "license": "Apache-2.0",
       "dependencies": {
         "openapi-fetch": "^0.17.0",

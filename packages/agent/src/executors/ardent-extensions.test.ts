@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ARDENT_EXTENSION_MANIFEST, ardentExtensionManifestSchema, assertArdentPluginsRetained, readArdentExtensionBundle, validateArdentExtensionLock } from './ardent-extensions.js';
+import { ARDENT_EXTENSION_MANIFEST, ardentExtensionManifestSchema, assertArdentPluginsRetained, readArdentExtensionBundle, summarizeArdentExtensionBundle, validateArdentExtensionLock } from './ardent-extensions.js';
 import { packageTreeDigest } from './ardent-manager.js';
 const dirs: string[] = [];
 afterEach(async () => { for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true }); });
@@ -64,4 +64,13 @@ it('pins local package integrities, rejects foreign registries and forbids a sec
   expect(() => validateArdentExtensionLock({ ...lock, packages: { ...packages, 'node_modules/dependency': { ...packages['node_modules/dependency'], resolved: 'https://untrusted.example.com/package.tgz' } } }, core, f.bundle)).toThrow('origin');
   expect(() => validateArdentExtensionLock({ ...lock, packages: { ...packages, [`node_modules/${f.name}/node_modules/${core.name}`]: { version: '3.0.0', integrity: sri('old'), resolved: 'https://registry.npmjs.org/ardent.tgz' } } }, core, f.bundle)).toThrow('runtime peer');
   expect(() => validateArdentExtensionLock({ ...lock, packages: { ...packages, [`node_modules/${f.name}`]: { ...packages[`node_modules/${f.name}`], integrity: sri('other') } } }, core, f.bundle)).toThrow('reviewed packages');
+});
+it('summarizes the receipt-bound bundle for the inventory without its archive paths', async () => {
+  const f = await fixture();
+  expect(await summarizeArdentExtensionBundle(f.install, process.getuid!(), f.digest)).toEqual([
+    { name: f.name, version: '1.0.0', integrity: f.manifest.packages[0]!.integrity, packageTreeSha256: f.manifest.packages[0]!.packageTreeSha256 }]);
+  await expect(summarizeArdentExtensionBundle(f.install, process.getuid!(), '0'.repeat(64))).rejects.toThrow('reviewed receipt');
+  await expect(summarizeArdentExtensionBundle(f.install, process.getuid!(), undefined)).rejects.toThrow('receipt differ');
+  const empty = await mkdtemp(join(tmpdir(), 'ardent-extension-')); dirs.push(empty);
+  expect(await summarizeArdentExtensionBundle(empty, process.getuid!(), undefined)).toEqual([]);
 });

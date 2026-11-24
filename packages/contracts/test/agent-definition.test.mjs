@@ -1,0 +1,67 @@
+// Runs on Node's built-in test runner against the TypeScript source (types are stripped).
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { test } from 'node:test';
+import {
+  agentDefinitionSha256, agentDefinitionSchema, agentPersonaSha256, canonicalJson, credentialLikePaths, sealAgentDefinition, verifyAgentDefinition,
+} from '../src/agent-definition.ts';
+
+const body = {
+  schema: 'hive-agent-definition/1',
+  name: 'Researcher',
+  created_at: '2026-11-24T00:00:00.000Z',
+  source_template: { template_id: 'tpl-research', version: 3 },
+  persona: { soul_md: '# Soul\n', identity_md: '# Identity\n', sha256: '' },
+  runtime: { package: '@hivemagnus/ardent', version: '3.2.0', required_capabilities: ['ardent.recovery.v1'] },
+  extensions: [{ name: '@example/ardent-media', version: '0.2.0', integrity: `sha512-${createHash('sha512').update('archive').digest('base64')}`, package_tree_sha256: 'a'.repeat(64) }],
+  skills: [{ slug: 'web-research', version: '1.2.0', sha256: 'b'.repeat(64) }],
+  config: { execution: { backend: 'llamacpp', deadline_seconds: 900 }, model: { emberpath_alias: 'research-large' }, artifacts: {}, channels: 'excluded' },
+  requirements: { bindings: [{ key: 'hivemem', kind: 'hivemem', required: true }], secrets: [{ env_name: 'LLAMACPP_API_KEY', purpose: 'model key' }] },
+  excludes: ['history', 'memory', 'sessions', 'artifacts'],
+};
+
+test('canonical JSON sorts keys, drops undefined members and has no whitespace', () => {
+  assert.equal(canonicalJson({ b: [1, { d: 'x', c: undefined }], a: null }), '{"a":null,"b":[1,{"d":"x"}]}');
+  assert.throws(() => canonicalJson({ a: Number.NaN }));
+});
+
+test('a sealed definition verifies, and both digests are over canonical JSON', async () => {
+  const definition = await sealAgentDefinition(body);
+  assert.equal(definition.persona.sha256, createHash('sha256').update('{"identity_md":"# Identity\\n","soul_md":"# Soul\\n"}').digest('hex'));
+  assert.equal(definition.persona.sha256, await agentPersonaSha256(definition.persona));
+  const { sha256, ...rest } = definition;
+  assert.equal(sha256, createHash('sha256').update(canonicalJson(rest)).digest('hex'));
+  assert.equal(await agentDefinitionSha256(definition), sha256);
+  // Key order does not matter.
+  const reordered = Object.fromEntries(Object.entries(definition).reverse());
+  assert.deepEqual(await verifyAgentDefinition(reordered), { ok: true, definition: agentDefinitionSchema.parse(definition) });
+});
+
+test('a changed definition or persona fails its digest', async () => {
+  const definition = await sealAgentDefinition(body);
+  const renamed = await verifyAgentDefinition({ ...definition, name: 'Other' });
+  assert.equal(renamed.ok, false);
+  assert.equal(renamed.code, 'DEFINITION_INVALID');
+  const persona = { ...definition, persona: { ...definition.persona, soul_md: '# Other\n' } };
+  const result = await verifyAgentDefinition({ ...persona, sha256: await agentDefinitionSha256(persona) });
+  assert.match(result.detail, /persona\.sha256/u);
+});
+
+test('the shape is fixed: exclusions, channels and unknown members', async () => {
+  const definition = await sealAgentDefinition(body);
+  assert.equal(agentDefinitionSchema.safeParse({ ...definition, excludes: ['history'] }).success, false);
+  assert.equal(agentDefinitionSchema.safeParse({ ...definition, config: { ...definition.config, channels: { telegram: {} } } }).success, false);
+  assert.equal(agentDefinitionSchema.safeParse({ ...definition, history: [] }).success, false);
+  assert.equal(agentDefinitionSchema.safeParse({ ...definition, skills: [definition.skills[0], definition.skills[0]] }).success, false);
+});
+
+test('credential-like strings are found anywhere, even in a malformed definition', async () => {
+  const github = ['gh', 'p_', 'x'.repeat(36)].join('');
+  const jwt = ['eyJ', 'a'.repeat(12), '.eyJ', 'b'.repeat(12), '.', 'c'.repeat(12)].join('');
+  assert.deepEqual(credentialLikePaths({ a: [`token ${github}`], b: { c: jwt }, d: 'https://user:pass@example.com/', e: 'plain text' }),
+    ['$.a[0]', '$.b.c', '$.d']);
+  const leaked = await verifyAgentDefinition({ ...body, persona: { ...body.persona, soul_md: `Bearer ${'z'.repeat(30)}` } });
+  assert.equal(leaked.code, 'DEFINITION_CONTAINS_CREDENTIAL');
+  assert.deepEqual(leaked.paths, ['$.persona.soul_md']);
+  assert.equal((await verifyAgentDefinition({ nonsense: true })).code, 'DEFINITION_INVALID');
+});

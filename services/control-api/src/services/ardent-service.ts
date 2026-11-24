@@ -1,5 +1,5 @@
 import { optional } from '../utils/optional.js';
-import { ARDENT_STUDIO_CAPABILITY, ArdentNodeStateSchema, ArdentContextReleaseSchema, ArdentContextAdoptionInputSchema, type ArdentFleetInstallation } from '@hivemagnus/magnus-contracts';
+import { ARDENT_STUDIO_CAPABILITY, ArdentNodeStateSchema, ArdentContextReleaseSchema, ArdentContextAdoptionInputSchema, ArdentSkillReceiptsSchema, type ArdentFleetInstallation, type ArdentSkillReceipts } from '@hivemagnus/magnus-contracts';
 import { getDb } from '../db/index.js';
 import { NodeApiClient } from '../sdk/index.js';
 import { getNodeBaseUrl } from '../utils/node-url.js';
@@ -155,4 +155,9 @@ export async function getArdentContextRelease(nodeId: string, profile: string): 
 
 export async function getArdentContextAdoption(nodeId: string, profile: string, releaseId: string): Promise<unknown> {
   return clientFor(await nodeTarget(nodeId)).getArdentContextAdoption(profile, releaseId);
+}
+
+/** A profile's HiveSkills receipts from its node agent. Throws an HTTPError 404 from agents that predate the route. */
+export async function getArdentSkillReceipts(nodeId: string, profile: string): Promise<ArdentSkillReceipts> {
+  return ArdentSkillReceiptsSchema.parse(await clientFor(await nodeTarget(nodeId)).getArdentSkillReceipts(profile));
 }

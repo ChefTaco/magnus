@@ -17,7 +17,8 @@ export function errorHandler(err: Error, c: Context): Response {
   // Database text quotes queries, arguments and addresses, so it stays in the log.
   const message = database?.message
     ?? (containsDatabaseText(err.message) ? 'An unexpected error occurred' : redactSecretText(err.message || 'An unexpected error occurred'));
-  const body: ApiError = { success: false, error: { code: String(code), message } };
+  const details = err instanceof HttpError ? err.details : undefined;
+  const body: ApiError = { success: false, error: { code: String(code), message, ...(details ? { details } : {}) } };
 
   return c.json(body, status as 400);
 }
@@ -26,10 +27,13 @@ export function errorHandler(err: Error, c: Context): Response {
 export class HttpError extends Error {
   status: number;
   code: string;
+  /** Structured, non-secret detail for the client (error.details), such as a preflight report. */
+  details: Record<string, unknown> | undefined;
 
-  constructor(status: number, code: string, message: string) {
+  constructor(status: number, code: string, message: string, details?: Record<string, unknown>) {
     super(message);
     this.status = status;
     this.code = code;
+    this.details = details;
   }
 }

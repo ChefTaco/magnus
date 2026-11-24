@@ -7,7 +7,7 @@ vi.mock('../services/ardent-command-owner.js', () => ({ ardentOwnerBlock: mocks.
 vi.mock('../services/ardent-service.js', () => ({
   streamArdentProfileResource: mocks.stream, requireArdentStudioAgent: mocks.studio, performArdentAction: mocks.action,
   getArdentContextAdoption: vi.fn(), getArdentContextRelease: vi.fn(), getArdentInstallation: vi.fn(),
-  getArdentProfileResource: mocks.read, listArdentInstallations: vi.fn(),
+  getArdentProfileResource: mocks.read, listArdentInstallations: vi.fn(), getArdentSkillReceipts: vi.fn(),
 }));
 vi.mock('../services/audit-service.js', () => ({ logAuditEvent: mocks.audit }));
 vi.mock('../middleware/auth.js', async (original) => ({

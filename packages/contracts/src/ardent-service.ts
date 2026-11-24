@@ -13,8 +13,11 @@ import {
   ardentSessionContextSchema, ardentSessionOpenSchema, ardentStudioEventKindSchema, ardentTaskAdmissionSchema,
   ardentTaskArtifactsSchema, ardentTaskDoneEventSchema, ardentTaskJournalEventSchema, ardentTaskPauseStateSchema,
   ardentSkillInstallNodeSchema, ardentSkillInstallResultSchema, ardentSkillInstallSchema,
-  ardentTaskStreamQuerySchema, ardentTaskTextEventSchema, ardentTeamMissionSchema,
+  ardentTaskStreamQuerySchema, ardentTaskTextEventSchema, ardentTeamMissionSchema, ardentDependenciesResponseSchema,
 } from './browser.js';
+import {
+  agentDefinitionExportSchema, agentDefinitionInstallRequestSchema, agentDefinitionPreflightSchema, agentDefinitionValidateRequestSchema,
+} from './agent-definition.js';
 
 /** Token permission a client-credentials token (audience magnus) needs, besides a link with role ARDENT_SERVICE. */
 export const ARDENT_SERVICE_PERMISSION = 'magnus:ardent';
@@ -144,6 +147,14 @@ export const ardentServiceRoutes: readonly ArdentServiceRoute[] = [
     events: { operation: ardentAgentOperationSchema, done: ardentAgentOperationSchema } },
   { method: 'POST', path: '/ardent/agents/operations/{id}/resume', response: ardentAgentOperationAcceptedResponseSchema, successStatus: 202, actingAdmin: true },
   { method: 'POST', path: '/ardent/installations/{nodeId}/profiles/{name}/hivemem', response: ardentAgentOperationAcceptedResponseSchema, successStatus: 202, actingAdmin: true },
+  { method: 'GET', path: '/ardent/dependencies', response: ardentDependenciesResponseSchema, actingAdmin: false,
+    note: 'HiveMem, HiveSkills and Emberpath as Magnus resolved them (explicit setting, then the Hive Registry). Read only; refresh=true resolves again now.' },
+  { method: 'GET', path: '/ardent/installations/{nodeId}/profiles/{name}/definition', response: ok(agentDefinitionExportSchema), actingAdmin: true,
+    note: 'Exports the profile as a hive-agent-definition/1. 409 AGENT_UPGRADE_REQUIRED when the node agent cannot report skill receipts or retained extensions; 422 DEFINITION_CONTAINS_CREDENTIAL when a carried text looks like a credential.' },
+  { method: 'POST', path: '/ardent/agent-definitions/validate', request: agentDefinitionValidateRequestSchema, response: ok(agentDefinitionPreflightSchema), actingAdmin: true,
+    note: 'The preflight for installing the definition on nodeId. 422 DEFINITION_INVALID or DEFINITION_CONTAINS_CREDENTIAL for a definition that is malformed, fails a digest or carries a credential-like value.' },
+  { method: 'POST', path: '/ardent/agent-definitions/install', request: agentDefinitionInstallRequestSchema, response: ardentAgentOperationAcceptedResponseSchema, successStatus: 202, actingAdmin: true,
+    note: 'Starts a definition operation (kind definition) once the preflight passes; 409 PREFLIGHT_FAILED carries the report in error.details and nothing is created.' },
 ];
 
 export type ArdentServiceActionRequest = z.infer<typeof ardentServiceActionRequestSchema>;

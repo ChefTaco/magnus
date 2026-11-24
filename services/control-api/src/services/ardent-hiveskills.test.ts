@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
-import { ardentHiveSkillsUrl, fetchArdentSkillRelease } from './ardent-hiveskills.js';
+import { ardentHiveSkillsUrl, ardentHiveSkillsTarget, checkArdentSkillRelease, fetchArdentSkillRelease } from './ardent-hiveskills.js';
+import { dependencyReport, setDiscoveryDeps } from './discovery.js';
 
 const REGISTRY = 'https://skills.example.com:4030';
 
@@ -92,5 +96,119 @@ describe('HiveSkills releases for Ardent', () => {
     await expect(fetchArdentSkillRelease(request, registry(renamed).fetchImpl)).rejects.toMatchObject({ message: expect.stringContaining('names the skill other') });
     const large = Buffer.concat([archive([['SKILL.md', SKILL]]), Buffer.alloc(1024 * 1024)]);
     await expect(fetchArdentSkillRelease(request, registry(large).fetchImpl)).rejects.toMatchObject({ status: 422, message: expect.stringContaining('exceeds the 1 MiB') });
+  });
+});
+
+/**
+ * A HiveSkills with 1.3.0 promoted and 1.2.0 kept as an immutable release: the pinned routes answer only the
+ * enrolled target `magnus` with its token, as HiveSkills' pinned-release reader does; anonymous archive
+ * requests for 1.2.0 answer 404.
+ */
+function pinnedRegistry(bytes: Buffer, options: { assigned?: boolean; header?: string | null; metadataDigest?: string } = {}) {
+  const calls: Array<{ url: string; authorization: string | null }> = [];
+  const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input));
+    const authorization = new Headers(init?.headers).get('authorization');
+    calls.push({ url: url.toString(), authorization });
+    expect(init?.redirect).toBe('error');
+    if (url.pathname === '/v1/skills/web-research') return Response.json({ slug: 'web-research', enabled: true, release: { version: '1.3.0', sha256: 'c'.repeat(64) } });
+    const reader = url.searchParams.get('target') === 'magnus' && authorization === `Bearer ${TARGET_TOKEN}`;
+    if (!reader) return Response.json({ error: 'Release archive not found' }, { status: url.searchParams.has('target') ? 401 : 404 });
+    if (options.assigned === false) return Response.json({ error: 'This target is not assigned the skill' }, { status: 403 });
+    if (url.pathname === '/v1/skills/web-research/releases/1.2.0') return Response.json({ slug: 'web-research', version: '1.2.0', sha256: options.metadataDigest ?? sha(bytes),
+      size: bytes.length, notes: null, compatibility: { minHermesVersion: null, maxHermesVersion: null }, channels: [], archiveUrl: 'https://skills.example.com/x', createdAt: '2026-01-01T00:00:00.000Z' });
+    if (url.pathname === '/v1/skills/web-research/releases/1.2.0/archive') {
+      const header = options.header === undefined ? sha(bytes) : options.header;
+      return new Response(new Uint8Array(bytes), { headers: { 'Content-Type': 'application/gzip', ...(header ? { 'X-Content-SHA256': header } : {}) } });
+    }
+    return Response.json({ error: 'Release not found' }, { status: 404 });
+  });
+  return { calls, fetchImpl: fetchImpl as unknown as typeof fetch };
+}
+const TARGET_TOKEN = 'fixture-target-token-value';
+let secrets: string | undefined;
+afterEach(() => { if (secrets) rmSync(secrets, { recursive: true, force: true }); secrets = undefined; });
+function targetCredential(token = TARGET_TOKEN): void {
+  secrets = mkdtempSync(join(tmpdir(), 'hiveskills-target-'));
+  const file = join(secrets, 'token');
+  writeFileSync(file, `${token}\n`, { mode: 0o600 });
+  vi.stubEnv('MAGNUS_ARDENT_HIVESKILLS_TARGET', 'magnus');
+  vi.stubEnv('MAGNUS_ARDENT_HIVESKILLS_TARGET_TOKEN_FILE', file);
+}
+
+describe('pinned HiveSkills releases', () => {
+  const pinned = { ...request, pinned: true };
+
+  it('installs a release that is not promoted as the enrolled target, checking the stated digest and header', async () => {
+    vi.stubEnv('MAGNUS_ARDENT_HIVESKILLS_URL', REGISTRY);
+    targetCredential();
+    const bytes = archive([['SKILL.md', SKILL]]);
+    const { calls, fetchImpl } = pinnedRegistry(bytes);
+    expect(await fetchArdentSkillRelease(pinned, fetchImpl, { expectedSha256: sha(bytes) })).toEqual({ sha256: sha(bytes), archiveBase64: bytes.toString('base64'), files: 1 });
+    expect(calls).toEqual([
+      { url: `${REGISTRY}/v1/skills/web-research`, authorization: null },
+      { url: `${REGISTRY}/v1/skills/web-research/releases/1.2.0?target=magnus`, authorization: `Bearer ${TARGET_TOKEN}` },
+      { url: `${REGISTRY}/v1/skills/web-research/releases/1.2.0/archive?target=magnus`, authorization: `Bearer ${TARGET_TOKEN}` },
+    ]);
+    expect(await checkArdentSkillRelease(pinned, pinnedRegistry(bytes).fetchImpl)).toEqual({ sha256: sha(bytes), promoted: false });
+  });
+
+  it('is refused without a target credential, and an unpinned request still needs the promoted version', async () => {
+    vi.stubEnv('MAGNUS_ARDENT_HIVESKILLS_URL', REGISTRY);
+    const bytes = archive([['SKILL.md', SKILL]]);
+    const without = pinnedRegistry(bytes);
+    await expect(fetchArdentSkillRelease(pinned, without.fetchImpl)).rejects.toMatchObject({ status: 409, code: 'SKILL_VERSION_UNAVAILABLE',
+      message: expect.stringContaining('set MAGNUS_ARDENT_HIVESKILLS_TARGET and MAGNUS_ARDENT_HIVESKILLS_TARGET_TOKEN_FILE') });
+    // Nothing but the public catalog was asked, and no credential was sent.
+    expect(without.calls.map(call => call.url)).toEqual([`${REGISTRY}/v1/skills/web-research`]);
+    targetCredential();
+    await expect(fetchArdentSkillRelease(request, pinnedRegistry(bytes).fetchImpl)).rejects.toMatchObject({ status: 409, code: 'SKILL_VERSION_UNAVAILABLE',
+      message: expect.stringContaining('1.3.0 is') });
+  });
+
+  it('reports a wrong token, an unassigned skill, another digest and a missing digest header', async () => {
+    vi.stubEnv('MAGNUS_ARDENT_HIVESKILLS_URL', REGISTRY);
+    const bytes = archive([['SKILL.md', SKILL]]);
+    targetCredential('fixture-wrong-token');
+    await expect(fetchArdentSkillRelease(pinned, pinnedRegistry(bytes).fetchImpl)).rejects.toMatchObject({ status: 409, message: expect.stringContaining('HTTP 401') });
+    targetCredential();
+    await expect(fetchArdentSkillRelease(pinned, pinnedRegistry(bytes, { assigned: false }).fetchImpl)).rejects.toMatchObject({ status: 409, message: expect.stringContaining('assign the skill') });
+    await expect(fetchArdentSkillRelease(pinned, pinnedRegistry(bytes).fetchImpl, { expectedSha256: 'e'.repeat(64) })).rejects.toMatchObject({ status: 409, code: 'SKILL_VERSION_UNAVAILABLE' });
+    await expect(fetchArdentSkillRelease(pinned, pinnedRegistry(bytes, { metadataDigest: 'a'.repeat(64) }).fetchImpl)).rejects.toMatchObject({ status: 422, code: 'SKILL_ARCHIVE_INVALID' });
+    await expect(fetchArdentSkillRelease(pinned, pinnedRegistry(bytes, { header: null }).fetchImpl)).rejects.toMatchObject({ status: 422, message: expect.stringContaining('X-Content-SHA256') });
+  });
+
+  it('never sends the target token to a HiveSkills the Hive Registry resolved', async () => {
+    // No MAGNUS_ARDENT_HIVESKILLS_URL: the registry comes from discovery.
+    vi.stubEnv('MAGNUS_ARDENT_HIVESKILLS_URL', '');
+    targetCredential();
+    const restore = setDiscoveryDeps({
+      env: () => ({}), probe: async () => ({ ok: true, version: '1.9.0', capabilities: null }),
+      registry: () => ({ connection: async (id: string) => (id === 'hiveskills'
+        ? { id, consolePath: null, browserPrefix: null, nativeApis: {}, documentation: null, internalEndpoints: { api: REGISTRY } } : undefined) }) as never,
+    });
+    try {
+      await dependencyReport({ refresh: true });
+      expect(ardentHiveSkillsUrl()).toBe(`${REGISTRY}/`);
+      const bytes = archive([['SKILL.md', SKILL]]);
+      const discovered = pinnedRegistry(bytes);
+      await expect(fetchArdentSkillRelease(pinned, discovered.fetchImpl)).rejects.toMatchObject({ status: 409, code: 'SKILL_VERSION_UNAVAILABLE',
+        message: expect.stringContaining('set MAGNUS_ARDENT_HIVESKILLS_URL') });
+      await expect(checkArdentSkillRelease(pinned, discovered.fetchImpl)).rejects.toMatchObject({ code: 'SKILL_VERSION_UNAVAILABLE' });
+      expect(discovered.calls.length).toBeGreaterThan(0);
+      expect(discovered.calls.every(call => call.authorization === null)).toBe(true);
+      expect(discovered.calls.every(call => !call.url.includes('target='))).toBe(true);
+      // The promoted release still installs from the discovered registry, anonymously as before.
+      const promoted = registry(bytes);
+      expect(await fetchArdentSkillRelease(request, promoted.fetchImpl)).toMatchObject({ sha256: sha(bytes) });
+      const headers = (promoted.fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls.map(call => new Headers((call[1] as RequestInit | undefined)?.headers).get('authorization'));
+      expect(headers).toEqual([null, null]);
+    } finally { restore(); }
+  });
+
+  it('needs the target name and token file together', () => {
+    expect(ardentHiveSkillsTarget({})).toBeNull();
+    expect(() => ardentHiveSkillsTarget({ MAGNUS_ARDENT_HIVESKILLS_TARGET: 'magnus' })).toThrow('set together');
+    expect(() => ardentHiveSkillsTarget({ MAGNUS_ARDENT_HIVESKILLS_TARGET: 'magnus', MAGNUS_ARDENT_HIVESKILLS_TARGET_TOKEN_FILE: '/nonexistent/token' })).toThrow('cannot be read');
   });
 });

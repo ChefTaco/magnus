@@ -45,6 +45,7 @@ const { eventBus } = await import('./services/event-bus.js');
 const { disconnectDb } = await import('./db/index.js');
 const { startCodexFleetMonitor, stopCodexFleetMonitor } = await import('./services/codex-service.js');
 const { startArdentHiveMemRenewal, stopArdentHiveMemRenewal } = await import('./services/ardent-hivemem-renewal.js');
+const { startDependencyDiscovery, stopDependencyDiscovery } = await import('./services/discovery.js');
 const { startExtensionSourceMonitor, stopExtensionSourceMonitor } = await import('./services/hermes-plugin-source.js');
 const { importPackageSkills } = await import('./services/hermes-catalog-import.js');
 
@@ -98,6 +99,7 @@ function startBackgroundServices(listenPort: number): void {
   startWebhookWorker();
   startCodexFleetMonitor();
   startArdentHiveMemRenewal();
+  startDependencyDiscovery();
   startUpdateCheck();
   if (features.hermesRegistry) {
     startExtensionSourceMonitor();
@@ -189,6 +191,7 @@ async function shutdown(signal: string) {
       stopNotificationRetention();
       stopSecurityExporter();
       stopCodexFleetMonitor();
+      stopDependencyDiscovery();
       const renewalStopped = stopArdentHiveMemRenewal();
       stopUpdateCheck();
       stopExtensionSourceMonitor();

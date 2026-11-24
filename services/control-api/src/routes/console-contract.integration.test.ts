@@ -237,6 +237,8 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('browser contract against rea
     '/webhooks/{id}/deliveries': `/webhooks/${webhookId}/deliveries`,
     '/topology': '/topology',
     '/ardent/agents/operations/{id}': `/ardent/agents/operations/${operationId}`,
+    // Nothing is configured here, so every dependency is missing with source none (and nothing is probed).
+    '/ardent/dependencies': '/ardent/dependencies',
     '/agents/{agentRef}/identity': `/agents/${nodeId}~default/identity`,
     '/node-credentials/downgrade-check': `/node-credentials/downgrade-check?nodeId=${nodeId}&to=2.9.1`,
     '/node-credentials/summary': '/node-credentials/summary',

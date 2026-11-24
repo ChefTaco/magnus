@@ -10,7 +10,7 @@ moved without updating it.
 
 | Class | Meaning | Rows | At the ingress |
 |---|---|---|---|
-| `browser` | A person's console drives it with a user token | 157 | Allow the exact method and path |
+| `browser` | A person's console drives it with a user token | 161 | Allow the exact method and path |
 | `machine` | Agents, services and integrations, with their own credentials | 86 | Deny |
 | `exclude` | Reachable with a user token, but no console needs it, or it was written for a server-side caller | 149 | Deny until a feature needs it and it is reviewed |
 | `retired` | Always answers 404 or 410 | 64 | Deny |
@@ -103,8 +103,10 @@ link, and a service token never matches a person's link. The audit actor is `ser
 A service may read `GET /api/v1/ardent/profiles`, `/installations`, `/installations/:nodeId`, the profile
 resources `status`, `profile`, `skills`, `memory/status`, `sessions`, `sessions/:id/messages`, `tasks`,
 `tasks/:id`, `tasks/:id/events`, `tasks/:id/artifacts`, `artifacts/:sha256/manifest`, `development`,
-`identity/soul` and `identity/identity`, task streams, artifacts and agent operations, and, for an acting
-ADMIN, `config`. Of the profile actions it may run `session-open`, `task-submit`, `task-cancel`,
+`identity/soul` and `identity/identity`, task streams, artifacts and agent operations, the dependency
+report `GET /api/v1/ardent/dependencies`, and, for an acting ADMIN, `config` and a profile's `definition`.
+For an acting ADMIN it may also validate and install agent definitions
+(`POST /api/v1/ardent/agent-definitions/validate` and `/install`). Of the profile actions it may run `session-open`, `task-submit`, `task-cancel`,
 `mission-submit`, `task-pause`, `task-resume`, `preview-submit` and `development-note`, and, for an
 acting ADMIN, `identity-save`, `skill-set`, `config-save` and `skill-install`. Everything else answers 403.
 `packages/contracts/src/ardent-service.ts` publishes these shapes.
@@ -383,12 +385,16 @@ unless these rows change. `POST /api/v1/hermes/deploy` is retired and always ans
 | GET | `/api/v1/anomalies` | browser | `user:any` | yes |
 | GET | `/api/v1/anomalies/event/:id/correlation` | browser | `user:any` | yes |
 | GET | `/api/v1/anomalies/summary` | browser | `user:any` | yes |
+| POST | `/api/v1/ardent/agent-definitions/install` | browser | `user:ADMIN` |  |
+| POST | `/api/v1/ardent/agent-definitions/validate` | browser | `user:ADMIN` |  |
 | POST | `/api/v1/ardent/agents` | browser | `user:ADMIN` | yes |
 | GET | `/api/v1/ardent/agents/operations/:id` | browser | `user:ADMIN` | yes |
 | POST | `/api/v1/ardent/agents/operations/:id/resume` | browser | `user:ADMIN` | yes |
 | GET | `/api/v1/ardent/agents/operations/:id/stream` | browser | `user:ADMIN` | yes Stream |
+| GET | `/api/v1/ardent/dependencies` | browser | `user:ADMIN` | yes |
 | GET | `/api/v1/ardent/installations` | browser | `user:ADMIN` |  |
 | GET | `/api/v1/ardent/installations/:nodeId` | browser | `user:ADMIN` |  |
+| GET | `/api/v1/ardent/installations/:nodeId/profiles/:name/definition` | browser | `user:ADMIN` |  |
 | GET | `/api/v1/ardent/installations/:nodeId/profiles/:name/*` | browser | `user:ADMIN` |  |
 | POST | `/api/v1/ardent/installations/:nodeId/profiles/:name/action` | browser | `user:ADMIN` |  |
 | GET | `/api/v1/ardent/installations/:nodeId/profiles/:name/artifacts/:artifactId` | browser | `user:ADMIN` |  |

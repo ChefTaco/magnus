@@ -923,6 +923,12 @@ export class NodeApiClient {
     return this.api.get(`ardent/profiles/${profile}/context`, { timeout: 15000, retry: 0 }).json();
   }
 
+  /** The HiveSkills receipts of a profile's Magnus-installed skills (agents that predate it answer 404). */
+  async getArdentSkillReceipts(profile: string): Promise<unknown> {
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(profile)) throw new Error('Invalid Ardent profile');
+    return this.api.get(`ardent/profiles/${profile}/skill-receipts`, { timeout: 15000, retry: 0 }).json();
+  }
+
   async getArdentContextAdoption(profile: string, releaseId: string): Promise<unknown> {
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(profile) || !/^[a-f0-9-]{36}$/i.test(releaseId)) throw new Error('Invalid context adoption journal target');
     return this.api.get(`ardent/profiles/${profile}/context/${releaseId}`, { timeout: 15000, retry: 0 }).json();

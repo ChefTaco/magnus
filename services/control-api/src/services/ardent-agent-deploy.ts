@@ -10,12 +10,15 @@
  */
 import { randomUUID } from 'node:crypto';
 import YAML from 'yaml';
-import { ardentAgentDeployRequestSchema, type ArdentCommandOwner, type ArdentFleetInstallation } from '@hivemagnus/magnus-contracts';
+import { agentPersonaSha256, ARDENT_STUDIO_CAPABILITY, ardentAgentDeployRequestSchema, type ArdentCommandOwner, type ArdentFleetInstallation,
+  type ArdentSkillInstall, type ArdentSkillInstallResult, type ArdentSkillReceipts } from '@hivemagnus/magnus-contracts';
 import { getDb } from '../db/index.js';
 import { HttpError } from '../middleware/error-handler.js';
 import { logAuditEvent } from './audit-service.js';
 import { ardentCommandOwners, ardentOwnerBlock, describeOwner } from './ardent-command-owner.js';
-import { getArdentInstallation, getArdentProfileResource, performArdentAction, requireArdentStudioAgent } from './ardent-service.js';
+import { getArdentInstallation, getArdentProfileResource, getArdentSkillReceipts, performArdentAction, requireArdentStudioAgent } from './ardent-service.js';
+import { fetchArdentSkillRelease, type ArdentSkillRelease } from './ardent-hiveskills.js';
+import { dependencyReport, discoveredEndpoint } from './discovery.js';
 import {
   ARDENT_HIVEMEM_TOKEN_ENV, ardentHiveMemAgentId, ardentHiveMemSupportsRenewal, HiveMemEnrollmentError, planArdentHiveMemCredential,
   prepareArdentHiveMem, requestArdentHiveMemCredential, requireArdentHiveMemSettings, type ArdentHiveMemAction, type ArdentHiveMemPlan,
@@ -26,16 +29,32 @@ import type { z } from 'zod';
 
 export type ArdentAgentDeployInput = z.infer<typeof ardentAgentDeployRequestSchema>;
 type StepName = 'profile-check' | 'profile-create' | 'service-start' | 'identity-soul' | 'identity-identity'
-  | 'hivemem-enroll' | 'config-save' | 'skill-set' | 'service-restart' | 'ready-probe';
+  | 'hivemem-enroll' | 'extensions-install' | 'config-save' | 'skill-set' | 'skill-install' | 'service-restart' | 'ready-probe';
 type StepStatus = 'pending' | 'running' | 'succeeded' | 'skipped' | 'failed';
 interface Step { name: StepName; status: StepStatus; startedAt: string | null; finishedAt: string | null; receipt: Record<string, unknown> | null; error: string | null }
-type Kind = 'deploy' | 'hivemem';
+type Kind = 'deploy' | 'hivemem' | 'definition';
+/**
+ * What a definition install adds to New Agent: the definition's identity and digests, the runtime settings
+ * New Agent does not set, the reviewed extensions and plugin specifiers, and the pinned skills. Persona texts
+ * travel in soul_md and identity_md as for New Agent.
+ */
+export interface ArdentStoredDefinition {
+  name: string; sha256: string; personaSha256: string;
+  execution: { deadline_seconds?: number; max_parallel_tasks?: number; max_parallel_tool_calls?: number };
+  extensions: Array<{ name: string; version: string; integrity: string; package_tree_sha256: string }>;
+  plugins: string[];
+  skills: Array<{ slug: string; version: string; sha256: string }>;
+}
+type DeployRequest = Omit<ArdentAgentDeployInput, 'apiPort'> & { apiPort: number; definition?: ArdentStoredDefinition };
 /** The stored request: the deploy input with its port resolved, or the profile for a backfill. */
-type StoredRequest = (Omit<ArdentAgentDeployInput, 'apiPort'> & { apiPort: number }) | { nodeId: string; profile: string; hivemem: true };
+type StoredRequest = DeployRequest | { nodeId: string; profile: string; hivemem: true };
 
 export const ARDENT_DEPLOY_STEPS: readonly StepName[] = ['profile-create', 'service-start', 'identity-soul', 'identity-identity',
   'hivemem-enroll', 'config-save', 'skill-set', 'service-restart', 'ready-probe'];
 export const ARDENT_HIVEMEM_STEPS: readonly StepName[] = ['profile-check', 'hivemem-enroll', 'config-save', 'service-restart', 'ready-probe'];
+/** New Agent for a definition: its reviewed extensions are checked before the configuration names them, and its skills install pinned. */
+export const ARDENT_DEFINITION_STEPS: readonly StepName[] = ['profile-create', 'service-start', 'identity-soul', 'identity-identity',
+  'hivemem-enroll', 'extensions-install', 'config-save', 'skill-install', 'service-restart', 'ready-probe'];
 const PORT_RANGE = { first: 9910, last: 9999 };
 /** A running operation no process has touched for this long was interrupted (for example by a restart). */
 const STALE_MS = 2 * 60_000;
@@ -47,7 +66,12 @@ export interface ArdentDeployDeps {
   installation(nodeId: string): Promise<ArdentFleetInstallation>;
   read<T>(nodeId: string, profile: string, resource: string): Promise<T>;
   action(nodeId: string, profile: string, action: string, target?: string, body?: unknown): Promise<unknown>;
-  studio(nodeId: string): Promise<void>;
+  studio(nodeId: string, level?: number): Promise<void>;
+  /** Refresh dependency discovery when its report is stale, so defaults reflect the Hive Registry. */
+  discover(): Promise<void>;
+  /** Fetch and check a pinned HiveSkills release whose digest must be `sha256`. */
+  skillRelease(request: ArdentSkillInstall, sha256: string): Promise<ArdentSkillRelease>;
+  skillReceipts(nodeId: string, profile: string): Promise<ArdentSkillReceipts>;
   hivemem(): ArdentHiveMemSettings;
   /** Before an operation starts: Magnus reaches HiveMem as itself and the agents' workspace exists. */
   prepare(settings: ArdentHiveMemSettings): Promise<void>;
@@ -68,6 +92,10 @@ const defaultDeps: ArdentDeployDeps = {
   read: (nodeId, profile, resource) => getArdentProfileResource(nodeId, profile, resource) as never,
   action: performArdentAction,
   studio: requireArdentStudioAgent,
+  // Only the Registry supplies defaults, so without it there is nothing to refresh (and nothing is probed).
+  discover: async () => { if (process.env['MAGNUS_HIVE_REGISTRY_URL']) await dependencyReport(); },
+  skillRelease: (request, sha256) => fetchArdentSkillRelease(request, fetch, { expectedSha256: sha256 }),
+  skillReceipts: getArdentSkillReceipts,
   hivemem: requireArdentHiveMemSettings,
   prepare: settings => prepareArdentHiveMem(settings),
   credential: (settings, plan) => requestArdentHiveMemCredential(settings, plan),
@@ -87,9 +115,10 @@ export function setArdentDeployDeps(overrides: Partial<ArdentDeployDeps>): () =>
 /** Operations this process is executing, so a resume never runs the same steps twice. */
 const active = new Map<string, Promise<void>>();
 
-function emberpathUrl(): string {
-  const raw = process.env['MAGNUS_ARDENT_EMBERPATH_URL'];
-  if (!raw) throw new HttpError(503, 'EMBERPATH_UNAVAILABLE', 'An Emberpath alias needs MAGNUS_ARDENT_EMBERPATH_URL on the server');
+/** MAGNUS_ARDENT_EMBERPATH_URL, or the Emberpath model endpoint the Hive Registry resolved when it is unset. */
+export function emberpathUrl(): string {
+  const raw = process.env['MAGNUS_ARDENT_EMBERPATH_URL'] || discoveredEndpoint('emberpath');
+  if (!raw) throw new HttpError(503, 'EMBERPATH_UNAVAILABLE', 'An Emberpath alias needs MAGNUS_ARDENT_EMBERPATH_URL on the server, or an Emberpath the Hive Registry lists');
   try {
     const url = new URL(raw);
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error('invalid');
@@ -117,13 +146,14 @@ interface Row { id: string; kind: string; nodeId: string; profile: string; statu
 
 /** The public view: steps and receipts, the request without its identity texts. */
 export function ardentOperationView(row: Row) {
-  const request = JSON.parse(row.requestJson) as Partial<StoredRequest & ArdentAgentDeployInput>;
+  const request = JSON.parse(row.requestJson) as Partial<DeployRequest>;
   return {
     id: row.id, kind: row.kind as Kind, nodeId: row.nodeId, profile: row.profile,
     status: row.status as 'running' | 'succeeded' | 'failed', steps: JSON.parse(row.stepsJson) as Step[],
     error: row.error, createdBy: row.createdBy, attempts: row.attempts,
     request: { apiPort: request.apiPort ?? null, model: request.model ?? null, skills: request.skills ?? [], hivemem: true,
-      artifacts_max_bytes: request.artifacts_max_bytes ?? null },
+      artifacts_max_bytes: request.artifacts_max_bytes ?? null,
+      definition: request.definition ? { name: request.definition.name, sha256: request.definition.sha256 } : null },
     createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(), completedAt: row.completedAt?.toISOString() ?? null,
   };
 }
@@ -137,7 +167,7 @@ export async function getArdentAgentOperation(id: string): Promise<ArdentOperati
 
 async function createOperation(kind: Kind, request: StoredRequest, actor: ArdentOperationActor): Promise<string> {
   const id = randomUUID();
-  const steps: Step[] = (kind === 'deploy' ? ARDENT_DEPLOY_STEPS : ARDENT_HIVEMEM_STEPS)
+  const steps: Step[] = (kind === 'deploy' ? ARDENT_DEPLOY_STEPS : kind === 'definition' ? ARDENT_DEFINITION_STEPS : ARDENT_HIVEMEM_STEPS)
     .map(name => ({ name, status: 'pending', startedAt: null, finishedAt: null, receipt: null, error: null }));
   try {
     await getDb().ardentAgentOperation.create({ data: { id, kind, nodeId: request.nodeId, profile: request.profile,
@@ -152,12 +182,26 @@ async function createOperation(kind: Kind, request: StoredRequest, actor: Ardent
 
 /** Validate, resolve the API port, record the operation and start it. Returns the operation ID. */
 export async function startArdentAgentDeploy(raw: unknown, actor: ArdentOperationActor): Promise<string> {
+  return startDeploy(raw, actor);
+}
+
+/**
+ * New Agent for a definition whose preflight passed (services/ardent-agent-definition.ts): the same checks
+ * and steps, plus the extension check, the definition's runtime settings and its pinned skills.
+ */
+export async function startArdentDefinitionDeploy(raw: unknown, definition: ArdentStoredDefinition, actor: ArdentOperationActor): Promise<string> {
+  return startDeploy(raw, actor, definition);
+}
+
+async function startDeploy(raw: unknown, actor: ArdentOperationActor, definition?: ArdentStoredDefinition): Promise<string> {
   const parsed = ardentAgentDeployRequestSchema.safeParse(raw);
   if (!parsed.success) throw new HttpError(400, 'VALIDATION_ERROR', parsed.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; ').slice(0, 500));
   const input = parsed.data;
+  await deps.discover().catch(() => undefined);
   const hivemem = deps.hivemem();
   if ('emberpath_alias' in input.model) emberpathUrl();
   await deps.studio(input.nodeId);
+  if (definition?.skills.length) await deps.studio(input.nodeId, ARDENT_STUDIO_CAPABILITY.skillInstall);
   await deps.prepare(hivemem);
   const installation = await deps.installation(input.nodeId);
   if (!installation.reachable) throw new HttpError(503, 'DEPENDENCY_UNAVAILABLE', installation.error ?? 'Ardent node unavailable');
@@ -170,16 +214,19 @@ export async function startArdentAgentDeploy(raw: unknown, actor: ArdentOperatio
     for (let port = PORT_RANGE.first; port <= PORT_RANGE.last && apiPort === undefined; port++) if (!used.has(port)) apiPort = port;
     if (apiPort === undefined) throw new HttpError(409, 'PORT_IN_USE', 'No free Ardent API port from 9910 to 9999; choose one');
   }
-  const id = await createOperation('deploy', { ...input, apiPort }, actor);
-  await logAuditEvent({ action: 'ardent.agent.deploy', actorId: actor.actorId, targetType: 'ardent-profile', targetId: `${input.nodeId}:${input.profile}`,
+  const id = await createOperation(definition ? 'definition' : 'deploy', { ...input, apiPort, ...(definition ? { definition } : {}) }, actor);
+  await logAuditEvent({ action: definition ? 'ardent.agent.definition-install' : 'ardent.agent.deploy', actorId: actor.actorId, targetType: 'ardent-profile', targetId: `${input.nodeId}:${input.profile}`,
     details: { operationId: id, apiPort, model: 'emberpath_alias' in input.model ? { emberpath_alias: input.model.emberpath_alias } : { base_url: input.model.base_url, model: input.model.model },
-      skills: input.skills, ...actor.details } });
+      skills: input.skills, ...(definition ? { definition: { name: definition.name, sha256: definition.sha256 },
+        pinnedSkills: definition.skills.map(skill => `${skill.slug}@${skill.version}`), extensions: definition.extensions.map(item => `${item.name}@${item.version}`) } : {}),
+      ...actor.details } });
   launch(id);
   return id;
 }
 
 /** Enable HiveMem on an existing, running profile (the backfill for agents created before New Agent). */
 export async function startArdentHiveMemEnable(nodeId: string, profile: string, actor: ArdentOperationActor): Promise<string> {
+  await deps.discover().catch(() => undefined);
   const hivemem = deps.hivemem();
   await deps.studio(nodeId);
   await deps.prepare(hivemem);
@@ -275,7 +322,8 @@ async function runOperation(id: string): Promise<void> {
     details: { operationId: id, kind: row.kind } });
 }
 
-const isDeploy = (request: StoredRequest): request is Extract<StoredRequest, { apiPort: number }> => 'apiPort' in request;
+const isDeploy = (request: StoredRequest): request is DeployRequest => 'apiPort' in request;
+const definitionOf = (request: StoredRequest): ArdentStoredDefinition | undefined => (isDeploy(request) ? request.definition : undefined);
 
 async function profileOf(context: Context) {
   const installation = await deps.installation(context.row.nodeId);
@@ -292,6 +340,24 @@ async function identityStep(context: Context, kind: 'soul' | 'identity'): Promis
   const saved = await deps.action(context.row.nodeId, context.row.profile, 'identity-save', kind, { text: desired, revision: current.revision }) as { revision?: unknown };
   return { receipt: { revision: typeof saved?.revision === 'string' ? saved.revision : null, bytes: Buffer.byteLength(desired) } };
 }
+
+/**
+ * For a definition install, the agent must now carry exactly the definition's persona and skills: the persona
+ * digest over what Ardent serves and the skill receipts the node agent reads. A mismatch fails the probe.
+ */
+async function definitionMatches(context: Context): Promise<Record<string, unknown>> {
+  const definition = definitionOf(context.request);
+  if (!definition) return {};
+  const [soul, identity] = await Promise.all((['soul', 'identity'] as const).map(kind =>
+    deps.read<{ text: string }>(context.row.nodeId, context.row.profile, `identity/${kind}`)));
+  const personaSha256 = await agentPersonaSha256({ soul_md: soul!.text, identity_md: identity!.text });
+  if (personaSha256 !== definition.personaSha256) throw new DefinitionMismatch('The persona on the agent differs from the definition');
+  const receipts = (await deps.skillReceipts(context.row.nodeId, context.row.profile)).skills;
+  const absent = definition.skills.filter(skill => !receipts.some(item => item.name === skill.slug && item.version === skill.version && item.sha256 === skill.sha256));
+  if (absent.length) throw new DefinitionMismatch(`Skills differ from the definition: ${absent.map(skill => `${skill.slug}@${skill.version}`).join(', ')}`);
+  return { definition: { sha256: definition.sha256, personaSha256, skills: definition.skills.map(skill => `${skill.slug}@${skill.version}`) } };
+}
+class DefinitionMismatch extends Error {}
 
 const STEPS: Record<StepName, (context: Context) => Promise<Result>> = {
   'profile-check': async context => {
@@ -380,6 +446,12 @@ const STEPS: Record<StepName, (context: Context) => Promise<Result>> = {
       const { installation } = await profileOf(context);
       if (newerOrEqual(installation.version, [2, 2, 0])) document.setIn(['artifacts', 'max_bytes'], request.artifacts_max_bytes ?? ARDENT_NEW_AGENT_ARTIFACT_MAX_BYTES);
       else if (request.artifacts_max_bytes !== undefined) notes.push(`artifacts.max_bytes needs Ardent 2.2.0 or later; this node runs ${installation.version ?? 'an unknown version'}`);
+      const definition = request.definition;
+      if (definition) {
+        for (const [key, value] of Object.entries(definition.execution)) if (value !== undefined) document.setIn(['execution', key], value);
+        // Only plugins of extensions the extensions-install step found reviewed on this node.
+        if (definition.plugins.length) document.setIn(['plugins'], document.createNode(definition.plugins));
+      }
     }
     document.setIn(['memory'], document.createNode({ provider: 'hivemem', base_url: settings.agentUrl, token_env: ARDENT_HIVEMEM_TOKEN_ENV,
       agent_id: agentId ?? ardentHiveMemAgentId(context.row.nodeId, context.row.profile), workspace_id: settings.workspaceId, default_scope: 'private' }));
@@ -405,6 +477,36 @@ const STEPS: Record<StepName, (context: Context) => Promise<Result>> = {
     return { skipped: enabled.length === 0, receipt: { enabled, alreadyEnabled: already } };
   },
 
+  'extensions-install': async context => {
+    const definition = definitionOf(context.request);
+    if (!definition?.extensions.length) return { skipped: true, receipt: { extensions: [] } };
+    // Extensions are installed once per node, reviewed, beside the runtime; a definition names them by digest.
+    const { installation } = await profileOf(context);
+    const retained = installation.extensions;
+    if (!Array.isArray(retained)) throw new Error(installation.extensionsError ?? 'The node agent does not report its reviewed extensions; upgrade it');
+    const missing = definition.extensions.filter(item => !retained.some(have => have.name === item.name && have.version === item.version
+      && have.integrity === item.integrity && have.packageTreeSha256 === item.package_tree_sha256));
+    if (missing.length) throw new Error(`Not reviewed on this node: ${missing.map(item => `${item.name}@${item.version}`).join(', ')}`);
+    return { receipt: { extensions: definition.extensions.map(item => ({ name: item.name, version: item.version, integrity: item.integrity })), plugins: definition.plugins } };
+  },
+
+  'skill-install': async context => {
+    const definition = definitionOf(context.request);
+    if (!definition?.skills.length) return { skipped: true, receipt: { installed: [] } };
+    const installed: Array<{ name: string; version: string; sha256: string; changed: boolean }> = [];
+    for (const skill of definition.skills) {
+      const config = await deps.read<{ revision: string; text: string }>(context.row.nodeId, context.row.profile, 'config');
+      const request: ArdentSkillInstall = { source: 'hiveskills', name: skill.slug, version: skill.version, pinned: true, enable: true, revision: config.revision };
+      const release = await deps.skillRelease(request, skill.sha256);
+      const { pinned: _pinned, ...forNode } = request;
+      const result = await deps.action(context.row.nodeId, context.row.profile, 'skill-install', undefined,
+        { ...forNode, sha256: release.sha256, archive_base64: release.archiveBase64 }) as ArdentSkillInstallResult;
+      if (!result?.enabled) throw new Error(`${skill.slug} ${skill.version} was installed but not enabled: ${result?.enable_error ?? 'no reason given'}`);
+      installed.push({ name: skill.slug, version: skill.version, sha256: release.sha256, changed: result.changed });
+    }
+    return { receipt: { installed } };
+  },
+
   'service-restart': async context => {
     const result = await deps.action(context.row.nodeId, context.row.profile, 'service-restart') as { running?: unknown };
     return { receipt: { running: result?.running === true } };
@@ -417,9 +519,12 @@ const STEPS: Record<StepName, (context: Context) => Promise<Result>> = {
         const status = await deps.read<{ version?: unknown; backend?: unknown }>(context.row.nodeId, context.row.profile, 'status');
         const memory = await deps.read<{ status?: unknown; agent_id?: unknown; reason?: unknown }>(context.row.nodeId, context.row.profile, 'memory/status');
         if (memory?.status === 'ready') return { receipt: { attempts: attempt, version: status?.version ?? null, backend: status?.backend ?? null,
-          memory: 'ready', agentId: memory.agent_id ?? null } };
+          memory: 'ready', agentId: memory.agent_id ?? null, ...await definitionMatches(context) } };
         last = `HiveMem is ${String(memory?.status ?? 'unknown')}${typeof memory?.reason === 'string' ? `: ${memory.reason}` : ''}`;
-      } catch (error: unknown) { last = message(error); }
+      } catch (error: unknown) {
+        if (error instanceof DefinitionMismatch) throw error;
+        last = message(error);
+      }
       if (attempt < 10) await deps.delay(3000);
     }
     throw new Error(`The agent did not become ready: ${last}`);

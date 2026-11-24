@@ -60,7 +60,11 @@ function oathweaveAuth(env: NodeJS.ProcessEnv): ArdentHiveMemAuth {
   return { kind: 'oathweave', tokenUrl: baseUrl(tokenUrl, 'MAGNUS_ARDENT_HIVEMEM_TOKEN_URL', true).replace(/\/$/, ''), clientId, clientSecret, scope: scope.join(' ') };
 }
 
-/** Configured enrollment, or null when Magnus has no HiveMem enrollment settings. Throws on a partial or invalid setup. */
+/**
+ * Configured enrollment, or null when Magnus has no HiveMem enrollment settings. Throws on a partial or invalid setup.
+ * The URL is always the explicit MAGNUS_ARDENT_HIVEMEM_URL, never one the Hive Registry suggested: Magnus sends its
+ * enrollment credential to that URL, and only to an endpoint it was configured with.
+ */
 export function ardentHiveMemSettings(env: NodeJS.ProcessEnv = process.env): ArdentHiveMemSettings | null {
   const url = env['MAGNUS_ARDENT_HIVEMEM_URL'];
   const token = env['MAGNUS_ARDENT_HIVEMEM_ENROLLMENT_TOKEN'];

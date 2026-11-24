@@ -39,6 +39,10 @@
       "types": "./dist/ardent-service.d.ts",
       "default": "./dist/ardent-service.js"
     },
+    "./agent-definition": {
+      "types": "./dist/agent-definition.d.ts",
+      "default": "./dist/agent-definition.js"
+    },
     "./embermend": {
       "types": "./dist/embermend.d.ts",
       "default": "./dist/embermend.js"

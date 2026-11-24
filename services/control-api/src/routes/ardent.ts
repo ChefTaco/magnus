@@ -14,6 +14,8 @@ import { z } from 'zod';
 import { ARDENT_STUDIO_CAPABILITY, ArdentCommandReconcileSchema, ArdentContextAdoptionInputSchema, ardentConfigEditSchema, ardentConfigFileSchema, ardentDevelopmentNoteSchema, ardentIdentityEditSchema, ardentMissionSubmitSchema, ardentPreviewSubmitSchema, ardentSessionOpenSchema, ardentSkillEditSchema, ardentSkillInstallSchema } from '@hivemagnus/magnus-contracts';
 import { classifyServiceConfigEdit } from '../services/ardent-config-allowlist.js';
 import { fetchArdentSkillRelease } from '../services/ardent-hiveskills.js';
+import { exportArdentAgentDefinition, installArdentAgentDefinition, validateArdentAgentDefinition } from '../services/ardent-agent-definition.js';
+import { dependencyReport } from '../services/discovery.js';
 
 export const ardentRouter = new Hono<AppVariables>();
 ardentRouter.use('*', authMiddleware);
@@ -215,6 +217,34 @@ ardentRouter.get('/installations/:nodeId/profiles/:name/artifacts/:artifactId', 
     ...(length && /^\d{1,15}$/.test(length) ? { 'Content-Length': length } : {}),
   } });
 });
+// ── Dependencies and portable agent definitions ──
+
+/** HiveMem, HiveSkills and Emberpath as Magnus resolved them. Read only; ADMIN people and linked services. */
+ardentRouter.get('/dependencies', async c => {
+  const refresh = c.req.query('refresh');
+  if (refresh !== undefined && !['true', 'false'].includes(refresh)) throw new HttpError(400, 'VALIDATION_ERROR', 'refresh is true or false');
+  return c.json({ success: true, data: await dependencyReport({ refresh: refresh === 'true' }) });
+});
+ardentRouter.get('/installations/:nodeId/profiles/:name/definition', async c => {
+  const nodeId = id(c.req.param('nodeId'));
+  const profile = id(c.req.param('name'));
+  // The export carries the persona and configuration, which a person reads only as an ADMIN.
+  const actor = ardentActor(c, true);
+  const exported = await exportArdentAgentDefinition(nodeId, profile);
+  await logAuditEvent({ action: 'ardent.agent.definition-export', actorId: actor.actorId, targetType: 'ardent-profile', targetId: `${nodeId}:${profile}`,
+    details: { ...actor.details, sha256: exported.definition.sha256, skills: exported.definition.skills.map(skill => `${skill.slug}@${skill.version}`),
+      extensions: exported.definition.extensions.map(item => `${item.name}@${item.version}`), omitted: exported.omitted.length } });
+  return c.json({ success: true, data: exported });
+});
+ardentRouter.post('/agent-definitions/validate', async c => {
+  ardentActor(c, true);
+  return c.json({ success: true, data: await validateArdentAgentDefinition(await c.req.json().catch(() => null)) });
+});
+ardentRouter.post('/agent-definitions/install', async c => {
+  const actor = ardentActor(c, true);
+  return c.json({ success: true, data: { operationId: await installArdentAgentDefinition(await c.req.json().catch(() => null), actor) } }, 202);
+});
+
 ardentRouter.get('/installations/:nodeId/profiles/:name/*', async c => {
   const nodeId = id(c.req.param('nodeId'));
   const name = id(c.req.param('name'));
@@ -344,7 +374,8 @@ ardentRouter.post('/installations/:nodeId/profiles/:name/action', async c => {
   if (action === 'skill-install') {
     const request = ardentSkillInstallSchema.parse(body);
     await requireArdentStudioAgent(nodeId, ARDENT_STUDIO_CAPABILITY.skillInstall);
-    installDetails = { source: request.source, name: request.name, version: request.version, channel: request.channel ?? 'stable', enable: request.enable ?? false };
+    installDetails = { source: request.source, name: request.name, version: request.version, channel: request.channel ?? 'stable', enable: request.enable ?? false,
+      pinned: request.pinned ?? false };
     let release: Awaited<ReturnType<typeof fetchArdentSkillRelease>>;
     try { release = await fetchArdentSkillRelease(request); }
     catch (error: unknown) {
@@ -354,7 +385,9 @@ ardentRouter.post('/installations/:nodeId/profiles/:name/action', async c => {
       throw failure;
     }
     installDetails = { ...installDetails, sha256: release.sha256, files: release.files };
-    nodeBody = { ...request, sha256: release.sha256, archive_base64: release.archiveBase64 };
+    // `pinned` is the Control API's concern; the node agent's body stays the one every agent accepts.
+    const { pinned: _pinned, ...forNode } = request;
+    nodeBody = { ...forNode, sha256: release.sha256, archive_base64: release.archiveBase64 };
   }
   try {
     const result = await performArdentAction(nodeId, profile, action, target, nodeBody);
