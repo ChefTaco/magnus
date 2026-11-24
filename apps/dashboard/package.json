@@ -1,6 +1,6 @@
 {
   "name": "@hivemagnus/magnus-ui",
-  "version": "3.3.2",
+  "version": "3.3.3",
   "description": "Magnus UI: web console for the Magnus fleet control plane, shipped as a prebuilt Next.js server with the magnus-ui CLI",
   "keywords": [
     "magnus",
@@ -65,7 +65,7 @@
     "ws": "^8.23.0"
   },
   "devDependencies": {
-    "@hivemagnus/magnus-contracts": "3.3.2",
+    "@hivemagnus/magnus-contracts": "3.3.3",
     "@playwright/test": "^1.65.0",
     "@tailwindcss/postcss": "^4.3.5",
     "@types/node": "^24.19.2",
