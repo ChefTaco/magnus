@@ -73,7 +73,7 @@ api:
 `;
 const template = (profile: string) => `schema_version: 1\nprofile: ${profile}\nname: ${profile}\nexecution:\n  backend: llamacpp\nproviders:\n  llamacpp:\n    base_url: \${ARDENT_LLAMA_BASE_URL}\n    model: \${ARDENT_LLAMA_MODEL}\n    api_key_env: LLAMACPP_API_KEY\nmemory:\n  provider: none\nskills:\n  directories: [skills]\n  enabled: []\n`;
 
-interface Profile { config: string; soul: string; identity: string; receipts: Map<string, { version: string; sha256: string }>; running: boolean; apiPort: number }
+interface Profile { config: string; soul: string; identity: string; receipts: Map<string, { version: string; sha256: string }>; running: boolean; apiPort: number; instanceRef?: string }
 interface Node { version: string; extensions: ArdentRetainedExtension[] | undefined; capabilities: Record<string, number>; profiles: Map<string, Profile>; actions: string[] }
 let nodes: Record<string, Node>;
 let targetConfigured: boolean;
@@ -125,6 +125,7 @@ async function action(nodeId: string, name: string, kind: string, target?: strin
   if (kind === 'identity-save') { profile[target as 'soul' | 'identity'] = value['text']; return { revision: sha(value['text']) }; }
   if (kind === 'config-save') { profile.config = value['text']; return { revision: sha(profile.config) }; }
   if (kind === 'hivemem-credential-set') return { configured: true };
+  if (kind === 'instance-ref-set') { profile.instanceRef = value['instance_ref']; return { changed: true }; }
   if (kind === 'skill-install') {
     expect(value).not.toHaveProperty('pinned');
     expect(value['revision']).toBe(sha(profile.config));
@@ -218,6 +219,10 @@ describe('portable agent definitions', () => {
     expect(operation.steps.map(step => step.name)).toEqual(['profile-create', 'service-start', 'identity-soul', 'identity-identity', 'hivemem-enroll',
       'extensions-install', 'config-save', 'skill-install', 'service-restart', 'ready-probe']);
     expect(operation.steps.at(-1)!.receipt).toMatchObject({ definition: { sha256: definition.sha256, personaSha256: definition.persona.sha256 } });
+    // The new profile names this node in its execution references before it first starts.
+    expect(operation.steps[0]!.receipt).toMatchObject({ instanceRef: 'node-b.researcher' });
+    expect(nodes['node-b']!.profiles.get('researcher')!.instanceRef).toBe('node-b.researcher');
+    expect(nodes['node-b']!.actions.slice(0, 3)).toEqual(['profile-create', 'instance-ref-set', 'service-start']);
     const config = YAML.parse(nodes['node-b']!.profiles.get('researcher')!.config) as Record<string, any>;
     expect(config['plugins']).toEqual(['@example/ardent-media', '@example/ardent-tools/search']);
     expect(config['execution']).toMatchObject({ backend: 'llamacpp', deadline_seconds: 900, max_parallel_tasks: 2 });
@@ -301,6 +306,12 @@ describe('portable agent definitions', () => {
       dependencies: async () => [{ name: 'emberpath', status: 'usable', source: 'registry', endpoint: GATEWAY, capabilities: ['emberpath.execution-trace.v1'] }],
     });
     expect(await definitions.validateArdentAgentDefinition({ definition: needs, nodeId: 'node-b', bindings: BINDINGS })).toEqual({ ok: true, problems: [] });
+    // An agent that relays recovery does not make an older installed Ardent serve it.
+    nodes['node-b'] = { ...nodes['node-b']!, version: '3.1.5', capabilities: { studio: 4, recovery: 1, lineage: 1, artifact_transfer: 2 } };
+    const older = needs.runtime.version === '3.2.0' ? await reseal(needs, body => { body.runtime.version = '3.1.0'; }) : needs;
+    expect((await definitions.validateArdentAgentDefinition({ definition: older, nodeId: 'node-b', bindings: BINDINGS })).problems.map(item => item.code))
+      .toEqual(['CAPABILITY_MISSING']);
+    nodes['node-b'] = { ...nodes['node-b']!, version: '3.2.0' };
     // An agent that does not report extensions cannot vouch for them.
     nodes['node-b']!.extensions = undefined;
     expect((await definitions.validateArdentAgentDefinition({ definition, nodeId: 'node-b', bindings: BINDINGS })).problems.map(item => item.code))

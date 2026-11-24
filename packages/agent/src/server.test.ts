@@ -87,10 +87,10 @@ describe('server', () => {
       sha256: '9a3c624e02974750c5f96821afdc8a5753413d643f91be3d0f197f39abe7ce47', enabled: 1 });
   });
 
-  it('GET /api/v1/ping reports the Studio level the Ardent bridge implements, which the server gates skill-install on', async () => {
+  it('GET /api/v1/ping reports the Studio level the Ardent bridge implements, which the server gates skill-install and the runtime contracts on', async () => {
     const body = (await (await app.request('/api/v1/ping')).json()) as Record<string, any>;
     expect(body.data.features.studio).toBe(ARDENT_AGENT_CAPABILITIES.studio);
-    expect(body.data.features.studio).toBe(ARDENT_STUDIO_CAPABILITY.skillInstall);
+    expect(body.data.features.studio).toBe(ARDENT_STUDIO_CAPABILITY.runtimeContracts);
   });
 
   it('advertises reconciliation only with a configured independent key', async () => {

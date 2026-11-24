@@ -105,7 +105,7 @@
     "node_modules/@hivemagnus/magnus-contracts": {
       "version": "3.2.1",
       "resolved": "https://registry.npmjs.org/@hivemagnus/magnus-contracts/-/magnus-contracts-3.2.1.tgz",
-      "integrity": "sha512-+c3LnATp/Z8DvAFZl02QaVTaVyfcJbdBqBH5y6plH7c6cNQSTUEC9o0Kq9jO3/CXmLy2O/rK7g3Q3EdgzmAtyg==",
+      "integrity": "sha512-i2h8sEfZ8sIdwTMt+uAD7KB0fkYQAng0kS/IH9tEjTIFS0c+gWik2WFPVu+c0THcc8PJoDm/eAwc0D7uJgEC8g==",
       "license": "Apache-2.0",
       "dependencies": {
         "openapi-fetch": "^0.17.0",

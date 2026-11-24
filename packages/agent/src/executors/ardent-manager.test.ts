@@ -327,7 +327,9 @@ describe('node-local Ardent inventory and management boundary', () => {
     const state = await readArdentState(target) as { installed: boolean; version: string; profiles: { id: string; running: boolean }[] };
     expect(state.installed).toBe(true);
     expect(state.version).toBe('0.1.0');
-    expect(state.profiles).toEqual([expect.objectContaining({ id: 'example', running: true })]);
+    // An older runtime without the 3.2.0 status fields offers none of the new capabilities.
+    expect(state.profiles).toEqual([expect.objectContaining({ id: 'example', running: true, version: '0.1.0',
+      capabilities: { recovery: 0, lineage: 0, artifact_transfer: 1 } })]);
     const routes = createArdentRoutes(async () => target);
     const status = await routes.request('/profiles/example/api/status');
     expect(status.status).toBe(200);
@@ -352,7 +354,7 @@ describe('node-local Ardent inventory and management boundary', () => {
       body: JSON.stringify({ profile: 'example', action: 'task-submit', body: { prompt: 'Test', idempotency_key: '00000000-0000-4000-8000-000000000002' } }) });
     expect(admission.status).toBe(200);
     expect(await admission.json()).toEqual({ task_id: '00000000-0000-4000-8000-000000000001', state: 'queued' });
-    expect(requests).toEqual(['/api/v1/profile', '/api/v1/profile', '/api/v1/status', '/api/v1/profile', `/api/v1/artifacts/${artifactId}`, '/api/v1/profile', '/api/v1/config/validate', '/api/v1/profile', '/api/v1/tasks']);
+    expect(requests).toEqual(['/api/v1/profile', '/api/v1/status', '/api/v1/profile', '/api/v1/status', '/api/v1/profile', `/api/v1/artifacts/${artifactId}`, '/api/v1/profile', '/api/v1/config/validate', '/api/v1/profile', '/api/v1/tasks']);
   });
 });
 
@@ -496,7 +498,7 @@ describe('Ardent Studio bridge', () => {
     const home = await mkdtemp(join(tmpdir(), 'magnus-ardent-capability-'));
     dirs.push(home);
     const state = await readArdentState({ owner: 'fixture', home, root: join(home, '.ardent'), install: join(home, 'install') }) as { capabilities?: { studio?: number } };
-    expect(state.capabilities).toEqual({ studio: 3 });
+    expect(state.capabilities).toEqual({ studio: 4, recovery: 1, lineage: 1, artifact_transfer: 2 });
   });
 
   it('opens sessions and submits session-bound tasks with bounded input', async () => {

@@ -1,5 +1,6 @@
 import { optional } from '../utils/optional.js';
-import { ARDENT_STUDIO_CAPABILITY, ArdentNodeStateSchema, ArdentContextReleaseSchema, ArdentContextAdoptionInputSchema, ArdentSkillReceiptsSchema, type ArdentFleetInstallation, type ArdentSkillReceipts } from '@hivemagnus/magnus-contracts';
+import { ARDENT_RUNTIME_CONTRACTS_VERSION, ARDENT_RUNTIME_GATES, ARDENT_STUDIO_CAPABILITY, ARDENT_UNSUPPORTED_CAPABILITY, ardentProfileCapabilities,
+  type ArdentProfileCapabilities, type ArdentRuntimeGate, ArdentNodeStateSchema, ArdentContextReleaseSchema, ArdentContextAdoptionInputSchema, ArdentSkillReceiptsSchema, type ArdentFleetInstallation, type ArdentSkillReceipts } from '@hivemagnus/magnus-contracts';
 import { getDb } from '../db/index.js';
 import { NodeApiClient } from '../sdk/index.js';
 import { getNodeBaseUrl } from '../utils/node-url.js';
@@ -94,13 +95,15 @@ async function withCommandOwners(installations: ArdentFleetInstallation[]): Prom
     profiles: item.profiles.map(profile => ({ ...profile, hivemem: credentials.get(`${item.nodeId}:${profile.id}`) ?? null })) }));
 }
 
-export async function getArdentProfileResource(nodeId: string, profile: string, resource: string, query?: Record<string, string>): Promise<unknown> {
-  return clientFor(await nodeTarget(nodeId)).getArdentProfileResource<unknown>(profile, resource, query);
+/** `headers` is request attribution only (x-request-id, traceparent, x-hive-execution), passed to the profile. */
+export async function getArdentProfileResource(nodeId: string, profile: string, resource: string, query?: Record<string, string>,
+  headers?: Record<string, string>): Promise<unknown> {
+  return clientFor(await nodeTarget(nodeId)).getArdentProfileResource<unknown>(profile, resource, query, headers);
 }
 
-/** An unbuffered task event stream or artifact byte stream, straight from the node agent. */
+/** An unbuffered task event stream or artifact byte stream (v1 octets or v2 ranged content), straight from the node agent. */
 export async function streamArdentProfileResource(nodeId: string, profile: string, resource: string,
-  options: { after?: string; lastEventId?: string; signal?: AbortSignal } = {}): Promise<Response> {
+  options: { after?: string; lastEventId?: string; signal?: AbortSignal; range?: string; ifRange?: string; headers?: Record<string, string> } = {}): Promise<Response> {
   return clientFor(await nodeTarget(nodeId)).streamArdentProfileResource(profile, resource, options);
 }
 
@@ -122,7 +125,9 @@ export async function requireArdentStudioAgent(nodeId: string, level: number = A
   catch (error: unknown) {
     throw new HttpError(503, 'DEPENDENCY_UNAVAILABLE', error instanceof Error ? error.message.slice(0, 300) : 'Node agent unavailable');
   }
-  if (reported < level) throw new HttpError(409, 'AGENT_UPGRADE_REQUIRED', level >= ARDENT_STUDIO_CAPABILITY.skillInstall
+  if (reported < level) throw new HttpError(409, 'AGENT_UPGRADE_REQUIRED', level >= ARDENT_STUDIO_CAPABILITY.runtimeContracts
+    ? `Upgrade the Magnus agent on ${node.name} to use Ardent recovery, lineage, execution context and artifact transfer v2`
+    : level >= ARDENT_STUDIO_CAPABILITY.skillInstall
     ? `Upgrade the Magnus agent on ${node.name} to install HiveSkills catalog skills on Ardent`
     : level > ARDENT_STUDIO_CAPABILITY.bridge
       ? `Upgrade the Magnus agent on ${node.name} to use Ardent missions, previews, pause and development history`
@@ -130,12 +135,68 @@ export async function requireArdentStudioAgent(nodeId: string, level: number = A
   studioCapability.set(nodeId, { level: reported, at: Date.now() });
 }
 
+/** Whether the node agent reports at least `level`, without refusing; false when it cannot be asked. */
+export async function ardentStudioAgentAt(nodeId: string, level: number): Promise<boolean> {
+  try { await requireArdentStudioAgent(nodeId, level); return true; }
+  catch { return false; } // no-reason-needed: an agent that cannot be asked offers nothing optional
+}
+
+const profileRuntime = new Map<string, { version: string | null; capabilities: ArdentProfileCapabilities; at: number }>();
+/** A profile that offers a capability is remembered for a minute, one that lacks it for 10 seconds, so an upgrade shows soon. */
+const PROFILE_RUNTIME_TTL_MS = { offered: 60_000, lacking: 10_000 };
+
+/**
+ * A profile's Ardent version and capabilities (ardentProfileCapabilities) from its GET /status through the node
+ * agent. Throws when the profile cannot be read.
+ */
+export async function ardentProfileRuntime(nodeId: string, profile: string, gate?: ArdentRuntimeGate): Promise<{ version: string | null; capabilities: ArdentProfileCapabilities }> {
+  const key = `${nodeId}:${profile}`;
+  const seen = profileRuntime.get(key);
+  if (seen) {
+    const offered = gate === undefined || seen.capabilities[gate] >= ARDENT_RUNTIME_GATES[gate].level;
+    if (Date.now() - seen.at < (offered ? PROFILE_RUNTIME_TTL_MS.offered : PROFILE_RUNTIME_TTL_MS.lacking)) return seen;
+  }
+  const status = await getArdentProfileResource(nodeId, profile, 'status');
+  const runtime = ardentProfileCapabilities(status, null);
+  profileRuntime.set(key, { ...runtime, at: Date.now() });
+  return runtime;
+}
+
+/**
+ * Refuse a route or action the profile lacks: 409 AGENT_UPGRADE_REQUIRED below node agent studio level 4, and
+ * 409 unsupported_capability, with the capability and the required and installed Ardent versions in error.details,
+ * on a profile older than Ardent 3.2.0. The operations it already had keep working.
+ */
+export async function requireArdentProfileCapability(nodeId: string, profile: string, gate: ArdentRuntimeGate): Promise<void> {
+  await requireArdentStudioAgent(nodeId, ARDENT_STUDIO_CAPABILITY.runtimeContracts);
+  let runtime: Awaited<ReturnType<typeof ardentProfileRuntime>>;
+  try { runtime = await ardentProfileRuntime(nodeId, profile, gate); }
+  catch (error: unknown) {
+    if (error instanceof Error && error.message === 'Managed node not found') throw new HttpError(404, 'NOT_FOUND', 'Managed node not found');
+    throw new HttpError(503, 'DEPENDENCY_UNAVAILABLE', `The Ardent profile's status could not be read: ${error instanceof Error ? error.message.slice(0, 200) : 'unavailable'}`);
+  }
+  const { level, capability } = ARDENT_RUNTIME_GATES[gate];
+  if (runtime.capabilities[gate] >= level) return;
+  throw new HttpError(409, ARDENT_UNSUPPORTED_CAPABILITY,
+    `Ardent profile ${profile} runs ${runtime.version ?? 'an unknown version'}; ${capability} needs Ardent ${ARDENT_RUNTIME_CONTRACTS_VERSION} or later`,
+    { capability, required_version: ARDENT_RUNTIME_CONTRACTS_VERSION, installed_version: runtime.version });
+}
+
+/** Whether an execution context and trace may travel with an action: a studio 4 agent and a profile with lineage. Never throws. */
+export async function ardentAcceptsExecution(nodeId: string, profile: string): Promise<boolean> {
+  if (!await ardentStudioAgentAt(nodeId, ARDENT_STUDIO_CAPABILITY.runtimeContracts)) return false;
+  try { return (await ardentProfileRuntime(nodeId, profile, 'lineage')).capabilities.lineage >= ARDENT_RUNTIME_GATES.lineage.level; }
+  catch { return false; } // no-reason-needed: a profile whose status cannot be read gets the action without attribution
+}
+
 /** Drop cached agent capabilities so a test can reconfigure a node. */
 export function resetArdentStudioCapabilities(): void {
   studioCapability.clear();
+  profileRuntime.clear();
 }
 
-export async function performArdentAction(nodeId: string, profile: string, action: string, target?: string, body?: unknown): Promise<unknown> {
+export async function performArdentAction(nodeId: string, profile: string, action: string, target?: string, body?: unknown,
+  extras?: { execution?: unknown; trace?: { request_id?: string; traceparent?: string } }): Promise<unknown> {
   if (['context-stage', 'context-adopt', 'context-rollback'].includes(action)) {
     if (target !== undefined) throw new Error('Context adoption does not accept an arbitrary target');
     const input = ArdentContextAdoptionInputSchema.parse(body);
@@ -146,7 +207,7 @@ export async function performArdentAction(nodeId: string, profile: string, actio
         resourceActorId: 'system:ardent-context-adoption', nodeToken: getNodeManagerSecret() }) : clientFor(node);
     return client.performArdentContextAction(profile, action, input);
   }
-  return clientFor(await nodeTarget(nodeId)).performArdentAction<unknown>(profile, action, target, body);
+  return clientFor(await nodeTarget(nodeId)).performArdentAction<unknown>(profile, action, target, body, extras);
 }
 
 export async function getArdentContextRelease(nodeId: string, profile: string): Promise<unknown> {

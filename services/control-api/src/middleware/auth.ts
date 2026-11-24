@@ -119,7 +119,7 @@ const ARDENT_UUID = '[0-9a-f-]{36}';
 const ARDENT_SERVICE_READS = [
   /^\/api\/v1\/ardent\/(?:profiles|installations)$/,
   /^\/api\/v1\/ardent\/installations\/[A-Za-z0-9._-]{1,128}$/,
-  new RegExp(`${ARDENT_PROFILE}/(?:status|profile|config|skills|memory/status|sessions|sessions/${ARDENT_UUID}/messages|tasks|tasks/${ARDENT_UUID}(?:/events|/stream|/artifacts)?|identity/(?:soul|identity)|artifacts/[a-f0-9]{64}(?:/manifest)?|development)$`),
+  new RegExp(`${ARDENT_PROFILE}/(?:status|profile|config|skills|memory/status|sessions|sessions/${ARDENT_UUID}/messages|tasks|tasks/${ARDENT_UUID}(?:/events|/stream|/artifacts|/recovery|/lineage)?|identity/(?:soul|identity)|artifacts/[a-f0-9]{64}(?:/manifest|/manifest/v2|/content|/renditions)?|artifacts/imports(?:/[a-f0-9]{32})?|development)$`),
   new RegExp(`^/api/v1/ardent/agents/operations/${ARDENT_UUID}(?:/stream)?$`),
   /^\/api\/v1\/ardent\/dependencies$/,
   new RegExp(`${ARDENT_PROFILE}/definition$`),

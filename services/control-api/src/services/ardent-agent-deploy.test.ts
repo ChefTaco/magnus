@@ -33,6 +33,7 @@ vi.mock('../db/index.js', () => ({ getDb: () => ({ ardentAgentOperation: {
 vi.mock('./audit-service.js', () => ({ logAuditEvent: async (event: { action: string; actorId: string; details?: Record<string, unknown> }) => { store.audit.push(event); } }));
 
 const deploy = await import('./ardent-agent-deploy.js');
+let fakeDeps: Partial<import('./ardent-agent-deploy.js').ArdentDeployDeps> = {};
 const { HiveMemEnrollmentError } = await import('./ardent-hivemem.js');
 
 const TOKEN = 'eyJhbGciOiJIUzI1NiJ9.eyJmaXh0dXJlIjp0cnVlfQ.fixture-signature-value';
@@ -65,7 +66,7 @@ beforeEach(() => {
   credential.mockImplementation(async (_settings: unknown, plan: { agentId: string; action: string }) => ({ token: TOKEN, agentId: plan.agentId, expiresAt: '2026-12-01T00:00:00.000Z', operationId: 'f'.repeat(64) }));
   node = { profiles: [{ id: 'existing', name: 'existing', backend: 'llamacpp', apiPort: 9910, running: true, a2aEnabled: false, channels: {}, error: null }],
     config: TEMPLATE, identity: { soul: 'template soul', identity: 'template identity' }, env: [], actions: [], failOnce: new Set() };
-  deploy.setArdentDeployDeps({
+  fakeDeps = {
     installation: async nodeId => ({ nodeId, nodeName: 'node-1', hostname: 'node-1.example.com', reachable: true, installed: true, version: ardentVersion,
       owner: 'operator', profiles: node.profiles, checkedAt: new Date().toISOString(), error: null }),
     read: async <T,>(_nodeId: string, profile: string, resource: string) => {
@@ -86,6 +87,7 @@ beforeEach(() => {
       if (action === 'config-save') { node.config = value!['text'] as string; return { revision: 'saved', activation_required: true }; }
       if (action === 'skill-set') { const doc = YAML.parse(node.config) as { skills: { enabled: string[] } }; doc.skills.enabled.push(target!); node.config = YAML.stringify(doc); return { revision: 'saved' }; }
       if (action === 'hivemem-credential-set') node.env.push(value!['token'] as string);
+      if (action === 'instance-ref-set') node.env.push(`ARDENT_INSTANCE_REF=${String(value!['instance_ref'])}`);
       return { running: true };
     },
     studio: async () => undefined,
@@ -97,7 +99,8 @@ beforeEach(() => {
     delay: async () => undefined,
     owners: async () => owners,
     explain: async (_nodeId, error) => (error instanceof Error && error.message === 'outcome unknown' ? new Error('The node could not confirm the outcome of service-start on lead (command native-1).') : undefined),
-  });
+  };
+  deploy.setArdentDeployDeps(fakeDeps);
 });
 afterEach(() => { deploy.setArdentDeployDeps({}); });
 
@@ -108,6 +111,17 @@ async function run(start: () => Promise<string>) {
 }
 
 describe('New Agent operation', () => {
+  it('leaves ARDENT_INSTANCE_REF to a later upgrade when the node agent cannot write it, and still creates the agent', async () => {
+    const { HttpError } = await import('../middleware/error-handler.js');
+    deploy.setArdentDeployDeps({ ...fakeDeps, studio: async (_nodeId, level) => {
+      if ((level ?? 1) >= 4) throw new HttpError(409, 'AGENT_UPGRADE_REQUIRED', 'Upgrade the Magnus agent on node-1');
+    } });
+    const operation = await run(() => deploy.startArdentAgentDeploy(input, actor));
+    expect(operation.status).toBe('succeeded');
+    expect(node.actions).not.toContain('instance-ref-set');
+    expect(operation.steps[0]!.receipt).toMatchObject({ instanceRef: null, instanceRefNote: expect.stringContaining('ARDENT_INSTANCE_REF') });
+  });
+
   it('creates, configures and starts an agent with HiveMem, step by step', async () => {
     const operation = await run(() => deploy.startArdentAgentDeploy(input, actor));
     expect(operation.status).toBe('succeeded');
@@ -117,14 +131,15 @@ describe('New Agent operation', () => {
     ]);
     // 9910 is taken by the existing profile, so the first free port is chosen.
     expect(operation.request.apiPort).toBe(9911);
-    expect(node.actions).toEqual(['profile-create', 'service-start', 'identity-save:soul', 'identity-save:identity', 'hivemem-credential-set',
+    expect(node.actions).toEqual(['profile-create', 'instance-ref-set', 'service-start', 'identity-save:soul', 'identity-save:identity', 'hivemem-credential-set',
       'config-save', 'skill-set:research', 'service-restart']);
+    expect(operation.steps[0]!.receipt).toMatchObject({ instanceRef: `node-1.${operation.profile}` });
     const config = YAML.parse(node.config) as Record<string, any>;
     expect(config['providers']['llamacpp']).toMatchObject({ base_url: 'http://192.0.2.10:8080/v1', model: 'fixture-model' });
     expect(config['memory']).toEqual({ provider: 'hivemem', base_url: 'https://memory.example.com/', token_env: 'ARDENT_HIVEMEM_TOKEN',
       agent_id: operation.steps[4]!.receipt!['agentId'], workspace_id: 'agents', default_scope: 'private' });
     expect(node.identity).toEqual({ soul: '# Soul\n', identity: '# Identity\n' });
-    expect(node.env).toEqual([TOKEN]);
+    expect(node.env).toEqual([`ARDENT_INSTANCE_REF=node-1.${operation.profile}`, TOKEN]);
     expect(operation.steps.find(step => step.name === 'skill-set')!.receipt).toMatchObject({ enabled: ['research'], alreadyEnabled: ['grounded-answers'] });
     // The token reached the node and nothing else: not the operation record, not the audit.
     expect(JSON.stringify([...store.rows.values()])).not.toContain(TOKEN);

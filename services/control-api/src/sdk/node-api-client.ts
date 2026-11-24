@@ -16,7 +16,7 @@ import { commandRequestDigest, type CommandRequest } from '../security/command-r
 import ky, { HTTPError, type AfterResponseState, type KyInstance } from 'ky';
 import { HttpError } from '../middleware/error-handler.js';
 import { z } from 'zod';
-import { agentUpgradePreflightSchema, ArdentContextAdoptionInputSchema, type AgentUpgradePreflight, type ArdentNodeState } from '@hivemagnus/magnus-contracts';
+import { agentUpgradePreflightSchema, ARDENT_IF_RANGE_PATTERN, ARDENT_RANGE_PATTERN, ArdentContextAdoptionInputSchema, ardentTraceHeaders, type AgentUpgradePreflight, type ArdentNodeState } from '@hivemagnus/magnus-contracts';
 import type {
   ApiResponse,
   HealthSnapshot,
@@ -876,24 +876,36 @@ export class NodeApiClient {
     return this.api.get('ardent/state', { timeout: timeoutMs, retry: 0 }).json();
   }
 
-  async getArdentProfileResource<T>(profile: string, resource: string, query?: Record<string, string>): Promise<T> {
+  /** `headers` carries only request attribution (x-request-id, traceparent, x-hive-execution), which the agent passes on. */
+  async getArdentProfileResource<T>(profile: string, resource: string, query?: Record<string, string>, headers?: Record<string, string>): Promise<T> {
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(profile) || !/^[A-Za-z0-9_/-]{1,120}$/.test(resource)) throw new Error('Invalid Ardent profile resource');
-    return this.api.get(`ardent/profiles/${profile}/api/${resource}`, { ...(query ? { searchParams: query } : {}), timeout: 15_000 }).json<T>();
+    return this.api.get(`ardent/profiles/${profile}/api/${resource}`, { ...(query ? { searchParams: query } : {}),
+      ...(headers && Object.keys(headers).length ? { headers: ardentTraceHeaders(name => headers[name]) } : {}), timeout: 15_000 }).json<T>();
   }
 
   /**
    * Open an unbuffered byte stream from the agent: a task's SSE events
-   * (`tasks/<id>/stream`) or an artifact's bytes (`artifacts/<sha256>`). There is
+   * (`tasks/<id>/stream`), an artifact's bytes (`artifacts/<sha256>`) or its transfer v2
+   * content (`artifacts/<sha256>/content`, with Range and If-Range). There is
    * no overall timeout; the agent ends idle streams and caps artifact size.
    * Error statuses are returned, not thrown, so the caller maps them.
    */
-  async streamArdentProfileResource(profile: string, resource: string, options: { after?: string; lastEventId?: string; signal?: AbortSignal } = {}): Promise<Response> {
-    if (!/^[A-Za-z0-9_-]{1,64}$/.test(profile) || !/^(?:tasks\/[0-9a-f-]{36}\/stream|artifacts\/[a-f0-9]{64})$/.test(resource)) throw new Error('Invalid Ardent stream target');
+  async streamArdentProfileResource(profile: string, resource: string, options: { after?: string; lastEventId?: string; signal?: AbortSignal;
+    range?: string; ifRange?: string; headers?: Record<string, string> } = {}): Promise<Response> {
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(profile) || !/^(?:tasks\/[0-9a-f-]{36}\/stream|artifacts\/[a-f0-9]{64}(?:\/content)?)$/.test(resource)) throw new Error('Invalid Ardent stream target');
     if ((options.after !== undefined && !/^\d{1,15}$/.test(options.after)) || (options.lastEventId !== undefined && !/^\d{1,15}$/.test(options.lastEventId)))
       throw new Error('Invalid Ardent stream cursor');
+    if ((options.range !== undefined && !ARDENT_RANGE_PATTERN.test(options.range)) || (options.ifRange !== undefined && !ARDENT_IF_RANGE_PATTERN.test(options.ifRange)))
+      throw new Error('Invalid Ardent content range');
+    const headers: Record<string, string> = {
+      ...(options.headers ? ardentTraceHeaders(name => options.headers?.[name]) : {}),
+      ...(options.lastEventId !== undefined ? { 'Last-Event-ID': options.lastEventId } : {}),
+      ...(options.range !== undefined ? { Range: options.range } : {}),
+      ...(options.ifRange !== undefined ? { 'If-Range': options.ifRange } : {}),
+    };
     return this.api.get(`ardent/profiles/${profile}/api/${resource}`, {
       ...(options.after !== undefined ? { searchParams: { after: options.after } } : {}),
-      ...(options.lastEventId !== undefined ? { headers: { 'Last-Event-ID': options.lastEventId } } : {}),
+      ...(Object.keys(headers).length ? { headers } : {}),
       ...(options.signal ? { signal: options.signal } : {}),
       timeout: false, retry: 0, throwHttpErrors: false,
     });
@@ -910,11 +922,18 @@ export class NodeApiClient {
     return typeof level === 'number' && Number.isSafeInteger(level) && level > 0 ? level : 0;
   }
 
-  async performArdentAction<T>(profile: string, action: string, target?: string, body?: unknown): Promise<T> {
+  /**
+   * `extras` are top-level fields only node agents at studio level 4 accept: an execution context for the
+   * submit actions and the caller's request ID and trace, which a managed dispatch cannot carry as headers.
+   */
+  async performArdentAction<T>(profile: string, action: string, target?: string, body?: unknown,
+    extras?: { execution?: unknown; trace?: { request_id?: string; traceparent?: string } }): Promise<T> {
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(profile) || !/^[a-z-]{1,32}$/.test(action)
       || (target !== undefined && !/^[A-Za-z0-9_-]{1,128}$/.test(target))) throw new Error('Invalid Ardent action target');
     const timeout = action === 'package-install' ? 600_000 : action.startsWith('service-') || action === 'skill-install' ? 115_000 : 45_000;
-    return (await this.mutateWithEvidence<T>('POST', 'ardent/action', { profile, action, ...(target ? { target } : {}), body: body ?? {} }, timeout,
+    const trace = extras?.trace && Object.keys(extras.trace).length ? extras.trace : undefined;
+    return (await this.mutateWithEvidence<T>('POST', 'ardent/action', { profile, action, ...(target ? { target } : {}), body: body ?? {},
+      ...(extras?.execution !== undefined ? { execution: extras.execution } : {}), ...(trace ? { trace } : {}) }, timeout,
       undefined, undefined, false, undefined, `ardent:${profile}:${action}`)).response;
   }
 

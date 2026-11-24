@@ -10,7 +10,7 @@ moved without updating it.
 
 | Class | Meaning | Rows | At the ingress |
 |---|---|---|---|
-| `browser` | A person's console drives it with a user token | 161 | Allow the exact method and path |
+| `browser` | A person's console drives it with a user token | 162 | Allow the exact method and path |
 | `machine` | Agents, services and integrations, with their own credentials | 86 | Deny |
 | `exclude` | Reachable with a user token, but no console needs it, or it was written for a server-side caller | 149 | Deny until a feature needs it and it is reviewed |
 | `retired` | Always answers 404 or 410 | 64 | Deny |
@@ -46,7 +46,8 @@ this exact mapping, with no prefix rule: `GET /api/magnus/docs/openapi.json` to
   browser reads them with `fetch`, because `EventSource` cannot send the header. Oathweave streams close
   on logout and at token expiry: reconnect with a fresh token.
 - **Do not buffer or cap Ardent artifacts.** `GET …/ardent/…/artifacts/:artifactId` streams bytes up to
-  the node agent's `MAGNUS_AGENT_ARDENT_ARTIFACT_MAX_BYTES` (64 MiB by default). An Ardent task stream
+  the node agent's `MAGNUS_AGENT_ARDENT_ARTIFACT_MAX_BYTES` (64 MiB by default), and `…/artifacts/:artifactId/content`
+  answers 206 for a `Range`: the ingress must forward `Range` and `If-Range` and pass 206 and 416 through. An Ardent task stream
   ends after 60 seconds: reconnect with `after` or `Last-Event-ID`, which the ingress must forward.
 
 Rate limits key on the verified Oathweave subject, so browsers behind one ingress do not share a
@@ -103,11 +104,13 @@ link, and a service token never matches a person's link. The audit actor is `ser
 A service may read `GET /api/v1/ardent/profiles`, `/installations`, `/installations/:nodeId`, the profile
 resources `status`, `profile`, `skills`, `memory/status`, `sessions`, `sessions/:id/messages`, `tasks`,
 `tasks/:id`, `tasks/:id/events`, `tasks/:id/artifacts`, `artifacts/:sha256/manifest`, `development`,
-`identity/soul` and `identity/identity`, task streams, artifacts and agent operations, the dependency
+`identity/soul` and `identity/identity`, with node agent studio level 4 also `tasks/:id/recovery`,
+`tasks/:id/lineage`, `artifacts/:sha256/renditions`, `artifacts/:sha256/manifest/v2`, `artifacts/imports`
+and `artifacts/imports/:id`, task streams, artifacts (also `artifacts/:sha256/content`) and agent operations, the dependency
 report `GET /api/v1/ardent/dependencies`, and, for an acting ADMIN, `config` and a profile's `definition`.
 For an acting ADMIN it may also validate and install agent definitions
 (`POST /api/v1/ardent/agent-definitions/validate` and `/install`). Of the profile actions it may run `session-open`, `task-submit`, `task-cancel`,
-`mission-submit`, `task-pause`, `task-resume`, `preview-submit` and `development-note`, and, for an
+`mission-submit`, `task-pause`, `task-resume`, `preview-submit`, `development-note`, `task-recovery` and `artifact-import`, and, for an
 acting ADMIN, `identity-save`, `skill-set`, `config-save` and `skill-install`. Everything else answers 403.
 `packages/contracts/src/ardent-service.ts` publishes these shapes.
 
@@ -398,6 +401,7 @@ unless these rows change. `POST /api/v1/hermes/deploy` is retired and always ans
 | GET | `/api/v1/ardent/installations/:nodeId/profiles/:name/*` | browser | `user:ADMIN` |  |
 | POST | `/api/v1/ardent/installations/:nodeId/profiles/:name/action` | browser | `user:ADMIN` |  |
 | GET | `/api/v1/ardent/installations/:nodeId/profiles/:name/artifacts/:artifactId` | browser | `user:ADMIN` |  |
+| GET | `/api/v1/ardent/installations/:nodeId/profiles/:name/artifacts/:artifactId/content` | browser | `user:ADMIN` |  |
 | POST | `/api/v1/ardent/installations/:nodeId/profiles/:name/hivemem` | browser | `user:ADMIN` | yes |
 | GET | `/api/v1/ardent/installations/:nodeId/profiles/:name/tasks/:taskId/stream` | browser | `user:ADMIN` | yes Stream |
 | GET | `/api/v1/ardent/profiles` | browser | `user:ADMIN` |  |

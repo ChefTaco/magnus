@@ -14,10 +14,12 @@ Every route below needs a node agent that reports a `studio` level in its ping f
 | 1 | Sessions, task streams, streamed artifacts, New Agent and Enable HiveMem |
 | 2 | Also missions, task pause and resume, previews, development history and notes, artifact manifests and session contexts (Ardent 2.2.0) |
 | 3 | Also `skill-install`, which installs a HiveSkills catalog release onto a profile |
+| 4 | Also the Ardent 3.2.0 runtime contracts: task recovery and lineage, execution context, artifact transfer v2 and imports, and `ARDENT_INSTANCE_REF` |
 
 A request that needs a higher level than the agent reports answers 409 `AGENT_UPGRADE_REQUIRED`:
 upgrade the agent from the console first. Level 2 features also need Ardent 2.2.0 or later on the
-node; an older Ardent answers 404 for their routes.
+node; an older Ardent answers 404 for their routes. Level 4 features are also gated per profile, see
+[Recovery, lineage and artifact transfer](#recovery-lineage-and-artifact-transfer-studio-4).
 
 ## New Agent
 
@@ -313,6 +315,56 @@ The audit keeps a mission's ID, revision, session and idempotency key, a preview
 names of its overrides, and a note's kind. It never records objectives, context items or identity
 texts.
 
+## Recovery, lineage and artifact transfer (studio 4)
+
+Ardent 3.2.0 adds execution recovery, execution ancestry (lineage) and artifact transfer v2. With a node
+agent at `studio` level 4, each profile in `GET /api/v1/ardent/installations[/:nodeId]` carries its
+Ardent `version` and `capabilities`, which the node agent derives from the profile's `GET /api/v1/status`
+(its `recovery` counts and `capabilities.artifact_transfer`), or from the installed package version when
+the profile is stopped (`ardentProfileCapabilities()` in the contracts):
+
+| Capability | Level | Name (Registry, C5) | Needs |
+|---|---|---|---|
+| `recovery` | 1 | `ardent.recovery.v1` | Ardent 3.2.0 |
+| `lineage` | 1 | `ardent.lineage.v1` | Ardent 3.2.0 |
+| `artifact_transfer` | 2 | `artifact-transfer.v2` | Ardent 3.2.0 |
+
+A profile below what a route needs answers 409 `unsupported_capability` with `error.details`
+`{capability, required_version: "3.2.0", installed_version}`. Its other routes and actions are
+unchanged, so cancel, pause, streams and the `.bin` artifact download keep working on an older profile.
+
+| Route or action | Capability | Ardent route |
+|---|---|---|
+| `GET …/tasks/:taskId/recovery` | `recovery` | `GET /api/v1/tasks/:id/recovery` (404 when the task was never interrupted) |
+| `task-recovery`, the task ID as `target`, `{action, call_id?, result?, note?, deadline_seconds?}` | `recovery` | `POST /api/v1/tasks/:id/recovery` |
+| `GET …/tasks/:taskId/lineage` | `lineage` | `GET /api/v1/tasks/:id/lineage` |
+| `GET …/artifacts/:sha256/content` (Range, If-Range) | `artifact_transfer` | `GET /api/v1/artifacts/:sha256/content` |
+| `GET …/artifacts/:sha256/renditions`, `…/manifest/v2` | `artifact_transfer` | the same paths |
+| `GET …/artifacts/imports?limit=`, `…/artifacts/imports/:id` | `artifact_transfer` | the same paths |
+| `artifact-import`, `{peer_id, a2a_task_id, artifact_id, task_id?}` | `artifact_transfer` | `POST /api/v1/artifacts/imports` (answered as an admission) |
+
+`task-recovery` and `artifact-import` have the access of `task-pause`: ADMIN people, and a linked
+service identity without an acting person. The audit keeps a decision's action, call and deadline, and
+an import's peer, task and artifact IDs, never a decision's result or note.
+
+The content route streams the artifact with its media type and `Content-Disposition` (its name),
+`Accept-Ranges`, `ETag: "<sha256>"`, `Repr-Digest` and `X-Content-SHA256`. One `Range` answers 206 with
+`Content-Range`, an unsatisfiable one 416 with `Content-Range: bytes */<size>`. The node agent refuses
+an artifact whose whole size is above `MAGNUS_AGENT_ARDENT_ARTIFACT_MAX_BYTES`, also when it is fetched
+in ranges.
+
+Execution context: `task-submit`, `mission-submit` and `preview-submit` take an optional top-level
+`execution` (hive-common execution context v1), or read it from the `x-hive-execution` header. Magnus
+passes it to a profile with `capabilities.lineage` 1, in Ardent's body and as `x-hive-execution`, and
+drops it otherwise; an invalid context is dropped, never refused. `x-request-id` and `traceparent` (with
+Magnus's span as parent) reach the profile on these actions and on profile reads.
+
+Instance reference: Ardent names its own instance in execution references with `ARDENT_INSTANCE_REF`
+(default `local.<profile>`). Magnus writes `ARDENT_INSTANCE_REF=<node id>.<profile>` into the profile's
+`.env` when New Agent or a definition install creates the profile, before its first start, and into
+every profile of the node after a `package-install`. It applies when the profile next starts. A
+reference longer than Ardent accepts (96 characters) is not written, and the profile keeps the default.
+
 ## HiveSkills skill install
 
 `{"action": "skill-install", "body": {"source": "hiveskills", "name": "web-research", "version": "1.2.0"}}`
@@ -502,7 +554,8 @@ what it may call. In short:
 - It may list profiles and installations, read profile status, skills, memory status, sessions,
   tasks, artifact manifests, development history and identity, open sessions, submit and cancel
   tasks, submit missions, pause and resume tasks, stream tasks, download artifacts and follow agent
-  operations.
+  operations. With studio 4 it may also read task recovery and lineage, artifact renditions, v2
+  manifests, imports and v2 content, and run `task-recovery` and `artifact-import`.
 - Previews and development notes need `x-acting-subject` naming a linked person of any role, or answer
   403 `ACTING_SUBJECT_REQUIRED`.
 - It names the person it acts for in `x-acting-subject` (their Oathweave subject). That subject must
@@ -553,3 +606,9 @@ Ardent package with dependency scripts disabled and strict runtime peers, checks
 full lock and audits production dependencies. A mismatch holds the existing runtime.
 Profile binding files and journals remain in place. Normal installations without
 plugins continue to use the regular package action.
+
+Release order: an extension package that pins an exact `@hivemagnus/ardent` peer must be released
+for the new Ardent **before** Magnus moves its Ardent pin. Otherwise the strict-peer reinstall fails
+and the upgrade holds the current runtime. For Ardent 3.2.0 that is
+`@hivemagnus/ardent-profile-extensions` 0.2.0, published right after Ardent 3.2.0 and before the Magnus
+release that pins it.

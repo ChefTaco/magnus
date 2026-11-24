@@ -14,8 +14,10 @@ import { childEnvironment } from '../utils/child-env.js';
 import { managedExecution } from '../security/managed-context.js';
 import { logger } from '../utils/logger.js';
 import {
-  ARDENT_SKILL_ARCHIVE_LIMITS, ARDENT_SKILL_RECEIPT_FILE, ardentDevelopmentNoteSchema, ardentMissionSubmitSchema, ardentPreviewSubmitSchema,
-  ardentSessionOpenSchema, ardentSkillInstallNodeSchema, ardentSkillReceiptSchema, checkArdentSkillArchive, type ArdentSkillInstallResult,
+  ARDENT_CONTENT_HEADER_PATTERNS, ARDENT_IF_RANGE_PATTERN, ARDENT_INSTANCE_REF_ENV, ARDENT_INSTANCE_REF_PATTERN, ARDENT_RANGE_PATTERN, ardentInstanceRef, ARDENT_SKILL_ARCHIVE_LIMITS, ARDENT_SKILL_RECEIPT_FILE,
+  ardentArtifactImportSchema, ardentMediaType, ardentTraceHeaders, ardentDevelopmentNoteSchema, ardentMissionSubmitSchema,
+  ardentPreviewSubmitSchema, ardentProfileCapabilities, ardentSessionOpenSchema, ardentSkillInstallNodeSchema, ardentSkillReceiptSchema,
+  ardentTaskRecoveryDecisionSchema, checkArdentSkillArchive, parseArdentExecutionContext, type ArdentSkillInstallResult,
 } from '@hivemagnus/magnus-contracts';
 import { ARDENT_AGENT_CAPABILITIES } from '../ardent-capabilities.js';
 import { ARDENT_EXTENSION_MANIFEST, assertArdentPluginsRetained, readArdentExtensionBundle, summarizeArdentExtensionBundle, validateArdentExtensionLock, type ArdentRetainedExtension } from './ardent-extensions.js';
@@ -122,6 +124,21 @@ async function probe(port: number, dir: string, tokenEnv: string, profile: strin
     const parsed = z.object({ profile: z.string(), product: z.enum(['Ardent', 'Magnus Ardent']) }).safeParse(identity);
     return parsed.success && parsed.data.profile === profile;
   } catch { return false; }
+}
+
+/**
+ * The profile's GET /api/v1/status, bounded, or undefined when it does not answer. Ardent 3.2.0 adds the
+ * `recovery` counts and `capabilities.artifact_transfer` the inventory derives profile capabilities from.
+ */
+async function profileStatus(port: number, dir: string, tokenEnv: string): Promise<unknown> {
+  try {
+    const token = await managementToken(dir, tokenEnv);
+    const response = await fetch(`http://127.0.0.1:${port}/api/v1/status`, { headers: { Authorization: `Bearer ${token}` }, redirect: 'error', signal: AbortSignal.timeout(1500) });
+    if (!response.ok) { await response.body?.cancel().catch(() => undefined); return undefined; }
+    const body = await response.arrayBuffer();
+    if (body.byteLength > 256 * 1024) return undefined;
+    return JSON.parse(Buffer.from(body).toString('utf8')) as unknown;
+  } catch { return undefined; } // no-reason-needed: an unreadable status leaves the profile at its package version's capabilities
 }
 
 async function stagedPackage(): Promise<{ name: string; version: string; sha256: string } | null> {
@@ -247,12 +264,16 @@ export async function readArdentState(target?: ArdentRoot): Promise<object> {
   const profiles = await Promise.all((await safeProfiles(root.root)).map(async name => {
     try {
       const { config, dir } = await profileConfig(root.root, name);
+      const running = await probe(config.api.port, dir, config.api.token_env, name);
+      // A running profile reports what it serves; a stopped one gets what its installed package offers.
+      const status = running ? await profileStatus(config.api.port, dir, config.api.token_env) : undefined;
       return { id: name, name: config.name, backend: config.execution.backend, apiPort: config.api.port,
-        running: await probe(config.api.port, dir, config.api.token_env, name), a2aEnabled: config.a2a.enabled,
-        channels: channelStates(config), error: null };
+        running, a2aEnabled: config.a2a.enabled, channels: channelStates(config), error: null,
+        ...ardentProfileCapabilities(status, version, ARDENT_AGENT_CAPABILITIES) };
     } catch (error: unknown) {
       return { id: name, name, backend: null, apiPort: null, running: false, a2aEnabled: false,
-        channels: {}, error: error instanceof Error ? error.message.slice(0, 200) : 'Profile inspection failed' };
+        channels: {}, error: error instanceof Error ? error.message.slice(0, 200) : 'Profile inspection failed',
+        ...ardentProfileCapabilities(undefined, version, ARDENT_AGENT_CAPABILITIES) };
     }
   }));
   let staged: Awaited<ReturnType<typeof stagedPackage>> = null;
@@ -321,9 +342,20 @@ async function managementToken(dir: string, envName: string): Promise<string> {
   return token;
 }
 
-const allowedRead = /^(?:openapi|status|profile|config|config\/schema|providers|channels|peers|peers\/config|memory\/status|skills|sessions|tasks|tasks\/[0-9a-f-]{36}(?:\/events)?|jobs\/definitions\/status|sessions\/[0-9a-f-]{36}\/messages|identity\/(?:soul|identity)(?:\/history)?|artifacts\/[a-f0-9]{64}(?:\/manifest)?|tasks\/[0-9a-f-]{36}\/(?:stream|artifacts)|development)$/;
-/** Streamed rather than buffered: a task's events and an artifact's bytes. */
-const streamedRead = /^(?:artifacts\/[a-f0-9]{64}|tasks\/[0-9a-f-]{36}\/stream)$/;
+const allowedRead = /^(?:openapi|status|profile|config|config\/schema|providers|channels|peers|peers\/config|memory\/status|skills|sessions|tasks|tasks\/[0-9a-f-]{36}(?:\/events|\/recovery|\/lineage)?|jobs\/definitions\/status|sessions\/[0-9a-f-]{36}\/messages|identity\/(?:soul|identity)(?:\/history)?|artifacts\/[a-f0-9]{64}(?:\/manifest|\/manifest\/v2|\/content|\/renditions)?|artifacts\/imports(?:\/[a-f0-9]{32})?|tasks\/[0-9a-f-]{36}\/(?:stream|artifacts)|development)$/;
+/** Streamed rather than buffered: a task's events and an artifact's bytes (v1 octet stream, v2 content). */
+const streamedRead = /^(?:artifacts\/[a-f0-9]{64}(?:\/content)?|tasks\/[0-9a-f-]{36}\/stream)$/;
+/** Artifact transfer v2 content, relayed with its range and representation headers. */
+const contentRead = /^artifacts\/[a-f0-9]{64}\/content$/;
+/** The x-hive-execution value for a validated context, or undefined when it would exceed 2 KiB. */
+function executionHeader(execution: unknown): string | undefined {
+  const value = Buffer.from(JSON.stringify(execution), 'utf8').toString('base64url');
+  return value.length <= 2048 ? value : undefined;
+}
+const RANGE = ARDENT_RANGE_PATTERN;
+const IF_RANGE = ARDENT_IF_RANGE_PATTERN;
+const CONTENT_HEADERS = ARDENT_CONTENT_HEADER_PATTERNS;
+export { ardentMediaType, ardentTraceHeaders };
 /** Query parameters passed to the profile API, each with the values it may hold. */
 const readQuery: Record<string, RegExp> = {
   after: /^[A-Za-z0-9_-]{1,400}$/, limit: /^\d{1,3}$/, kind: /^[a-z][a-z0-9_]{0,63}$/, context: /^(?:direct|mission|preview)$/,
@@ -408,6 +440,7 @@ async function boundedError(response: Response): Promise<Response> {
 /** Stream a task's SSE events or an artifact's bytes from the profile API without buffering them. */
 async function relayArdentStream(port: number, token: string, suffix: string, request: Request, clientSignal: AbortSignal): Promise<Response> {
   const artifact = suffix.startsWith('artifacts/');
+  const content = contentRead.test(suffix);
   const maxBytes = artifact ? ardentArtifactMaxBytes() : undefined;
   const url = new URL(`http://127.0.0.1:${port}/api/v1/${suffix}`);
   const after = new URL(request.url).searchParams.get('after');
@@ -416,8 +449,18 @@ async function relayArdentStream(port: number, token: string, suffix: string, re
     url.searchParams.set('after', after);
   }
   const lastEventId = request.headers.get('last-event-id');
-  const headers: Record<string, string> = { Authorization: `Bearer ${token}`, Accept: artifact ? 'application/octet-stream' : 'text/event-stream' };
+  const headers: Record<string, string> = { ...ardentTraceHeaders(name => request.headers.get(name)), Authorization: `Bearer ${token}`,
+    Accept: content ? '*/*' : artifact ? 'application/octet-stream' : 'text/event-stream' };
   if (!artifact && lastEventId !== null && /^\d{1,15}$/.test(lastEventId)) headers['Last-Event-ID'] = lastEventId;
+  if (content) {
+    const range = request.headers.get('range');
+    const ifRange = request.headers.get('if-range');
+    if ((range !== null && !RANGE.test(range)) || (ifRange !== null && !IF_RANGE.test(ifRange)))
+      return Response.json({ error: 'Invalid Range or If-Range' }, { status: 400 });
+    if (range !== null) headers['Range'] = range;
+    if (ifRange !== null) headers['If-Range'] = ifRange;
+    return relayArdentContent(url, headers, maxBytes ?? DEFAULT_ARTIFACT_MAX_BYTES, clientSignal);
+  }
   const abort = new AbortController();
   const onClientAbort = () => abort.abort(clientSignal.reason);
   if (clientSignal.aborted) abort.abort(clientSignal.reason);
@@ -444,12 +487,74 @@ async function relayArdentStream(port: number, token: string, suffix: string, re
     ? { 'Content-Type': 'application/octet-stream', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...(Number.isFinite(length) ? { 'Content-Length': String(length) } : {}) }
     : { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no', 'X-Content-Type-Options': 'nosniff' } });
 }
+/**
+ * Relay artifact transfer v2 content: 200 for the whole artifact, 206 for one range, 416 when the range
+ * is unsatisfiable. The real media type and the range, ETag, digest and disposition headers pass through;
+ * the whole artifact (Content-Range's size, or the length of a full answer) stays under the cap.
+ */
+async function relayArdentContent(url: URL, headers: Record<string, string>, maxBytes: number, clientSignal: AbortSignal): Promise<Response> {
+  const abort = new AbortController();
+  const onClientAbort = () => abort.abort(clientSignal.reason);
+  if (clientSignal.aborted) abort.abort(clientSignal.reason);
+  else clientSignal.addEventListener('abort', onClientAbort, { once: true });
+  const connect = setTimeout(() => abort.abort(new Error('Ardent stream did not answer')), 10_000);
+  let response: Response;
+  try { response = await fetch(url, { headers, redirect: 'error', signal: abort.signal }); }
+  finally { clearTimeout(connect); }
+  const passed = (names: string[]) => {
+    const out: Record<string, string> = {};
+    for (const name of names) {
+      const value = response.headers.get(name);
+      if (value !== null && CONTENT_HEADERS[name]!.test(value)) out[name] = value;
+    }
+    return out;
+  };
+  if (response.status === 416) {
+    clientSignal.removeEventListener('abort', onClientAbort);
+    const refused = await boundedError(response);
+    return new Response(refused.body, { status: 416, headers: { ...Object.fromEntries(refused.headers), ...passed(['content-range', 'accept-ranges', 'etag']) } });
+  }
+  if (!response.ok || !response.body || (response.status !== 200 && response.status !== 206)) {
+    clientSignal.removeEventListener('abort', onClientAbort);
+    if (response.ok) { abort.abort(); return Response.json({ error: 'Ardent content answer is not 200 or 206' }, { status: 502 }); }
+    return boundedError(response);
+  }
+  const length = Number(response.headers.get('content-length') ?? Number.NaN);
+  const range = /^bytes (\d{1,15})-(\d{1,15})\/(\d{1,15})$/.exec(response.headers.get('content-range') ?? '');
+  const total = response.status === 206 ? Number(range?.[3] ?? Number.NaN) : length;
+  if (response.status === 206 && !range) {
+    abort.abort();
+    clientSignal.removeEventListener('abort', onClientAbort);
+    return Response.json({ error: 'Ardent partial content has no valid Content-Range' }, { status: 502 });
+  }
+  if ((Number.isFinite(total) && total > maxBytes) || (Number.isFinite(length) && length > maxBytes)) {
+    abort.abort();
+    clientSignal.removeEventListener('abort', onClientAbort);
+    return Response.json({ error: 'Ardent artifact exceeds size limit' }, { status: 502 });
+  }
+  const body = relayBody(response.body, abort, { idleMs: ARDENT_STREAM_IDLE_MS, idle: 'error', maxBytes });
+  return new Response(body, { status: response.status, headers: {
+    'Content-Type': ardentMediaType(response.headers.get('content-type')), 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
+    ...(Number.isFinite(length) ? { 'Content-Length': String(length) } : {}),
+    ...passed(['content-range', 'accept-ranges', 'etag', 'repr-digest', 'x-content-sha256', 'content-disposition']),
+  } });
+}
 const actionInput = z.object({
   profile: profileName,
-  action: z.enum(['profile-create', 'session-open', 'hivemem-credential-set', 'hivemem-credential-reload', 'config-validate', 'config-save', 'peer-validate', 'peer-save', 'identity-save', 'identity-restore', 'provider-test', 'channel-test', 'peer-test', 'memory-search', 'task-submit', 'task-cancel', 'mission-submit', 'task-pause', 'task-resume', 'preview-submit', 'development-note', 'skill-set', 'service-start', 'service-stop', 'service-restart', 'package-install', 'context-stage', 'context-adopt', 'context-rollback', 'skill-install']),
+  action: z.enum(['profile-create', 'session-open', 'hivemem-credential-set', 'hivemem-credential-reload', 'config-validate', 'config-save', 'peer-validate', 'peer-save', 'identity-save', 'identity-restore', 'provider-test', 'channel-test', 'peer-test', 'memory-search', 'task-submit', 'task-cancel', 'mission-submit', 'task-pause', 'task-resume', 'preview-submit', 'development-note', 'skill-set', 'service-start', 'service-stop', 'service-restart', 'package-install', 'context-stage', 'context-adopt', 'context-rollback', 'skill-install', 'task-recovery', 'artifact-import', 'instance-ref-set']),
   target: z.string().max(128).optional(),
   body: z.unknown().optional(),
+  /** An execution context v1 for task-submit, mission-submit and preview-submit; an invalid one is dropped. */
+  execution: z.unknown().optional(),
+  /** The caller's request ID and W3C trace, which a managed dispatch cannot carry as headers; invalid values are dropped. */
+  trace: z.unknown().optional(),
 }).strict();
+/** Actions whose Ardent body takes an execution context. */
+const EXECUTION_ACTIONS = new Set(['task-submit', 'mission-submit', 'preview-submit']);
+/** Actions Ardent answers with 202 for a durable admission, which the agent settles as 200. */
+const ADMISSION_ACTIONS = new Set(['task-submit', 'mission-submit', 'preview-submit', 'artifact-import']);
+/** package-install's optional body: the node ID Magnus knows this node by, for ARDENT_INSTANCE_REF. */
+const packageInstallInput = z.object({ node_id: z.string().regex(/^[A-Za-z0-9._-]{1,128}$/).optional() }).strict();
 const actionRoutes: Record<z.infer<typeof actionInput>['action'], { method: 'POST' | 'PUT'; path: (target?: string) => string; target?: RegExp }> = {
   'profile-create': { method: 'POST', path: () => '' },
   'session-open': { method: 'POST', path: () => 'sessions' },
@@ -482,6 +587,9 @@ const actionRoutes: Record<z.infer<typeof actionInput>['action'], { method: 'POS
   'context-adopt': { method: 'POST', path: () => '' },
   'context-rollback': { method: 'POST', path: () => '' },
   'skill-install': { method: 'POST', path: () => '' },
+  'task-recovery': { method: 'POST', path: target => `tasks/${target}/recovery`, target: /^[0-9a-f-]{36}$/ },
+  'artifact-import': { method: 'POST', path: () => 'artifacts/imports' },
+  'instance-ref-set': { method: 'POST', path: () => '' },
 };
 
 /**
@@ -732,19 +840,26 @@ async function createProfile(root: ArdentRoot, profile: string, body: unknown): 
 
 /** The profile environment key that carries the agent's HiveMem token (also renewable by credential renewal). */
 export const ARDENT_HIVEMEM_TOKEN_ENV = 'ARDENT_HIVEMEM_TOKEN';
+export { ARDENT_INSTANCE_REF_ENV, ardentInstanceRef };
 const jwt = z.string().max(8192).regex(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+const instanceRef = z.string().regex(ARDENT_INSTANCE_REF_PATTERN);
+/** The keys Magnus writes into a profile's `.env`, each with the values it may hold. */
+const PROFILE_ENV_VALUES = { [ARDENT_HIVEMEM_TOKEN_ENV]: jwt, [ARDENT_INSTANCE_REF_ENV]: instanceRef } as const;
 
 /**
  * Set one key in a profile's private `.env`, keeping every other line, its
  * owner and mode 0600. The file is replaced atomically, never followed through
- * a symlink, and never left world- or group-readable.
+ * a symlink, and never left world- or group-readable. Answers whether it changed.
  */
-export async function writeProfileCredential(dir: string, key: typeof ARDENT_HIVEMEM_TOKEN_ENV, value: string): Promise<void> {
-  jwt.parse(value);
+export async function writeProfileEnv(dir: string, key: keyof typeof PROFILE_ENV_VALUES, value: string): Promise<boolean> {
+  PROFILE_ENV_VALUES[key].parse(value);
   const file = join(dir, '.env');
   const info = await lstat(file);
   if (info.isSymbolicLink() || !info.isFile() || info.size > 64_000 || (info.mode & 0o077) !== 0) throw new Error('Ardent credential file is invalid');
-  const kept = (await readFile(file, 'utf8')).split(/\r?\n/).filter(line => !line.startsWith(`${key}=`));
+  const lines = (await readFile(file, 'utf8')).split(/\r?\n/);
+  const current = lines.filter(line => line.startsWith(`${key}=`));
+  if (current.length === 1 && current[0] === `${key}=${value}`) return false;
+  const kept = lines.filter(line => !line.startsWith(`${key}=`));
   while (kept.length > 0 && kept[kept.length - 1] === '') kept.pop();
   const temporary = join(dir, `.${randomUUID()}.env`);
   try {
@@ -752,6 +867,44 @@ export async function writeProfileCredential(dir: string, key: typeof ARDENT_HIV
     await chown(temporary, info.uid, info.gid);
     await rename(temporary, file);
   } finally { await rm(temporary, { force: true }); }
+  return true;
+}
+
+export async function writeProfileCredential(dir: string, key: typeof ARDENT_HIVEMEM_TOKEN_ENV, value: string): Promise<void> {
+  await writeProfileEnv(dir, key, value);
+}
+
+/** Write ARDENT_INSTANCE_REF into one profile's `.env`. Root only, like the HiveMem credential. */
+async function setInstanceRef(root: ArdentRoot, profile: string, body: unknown): Promise<object> {
+  if (process.getuid?.() !== 0) throw new Error('Ardent profile environment management requires a root node manager');
+  const input = z.object({ instance_ref: instanceRef }).strict().parse(body);
+  if (!input.instance_ref.endsWith(`.${profile}`) || input.instance_ref.length === profile.length + 1)
+    throw new Error('The instance reference must be <node id>.<profile> for this profile');
+  const { dir } = await profileConfig(root.root, profile);
+  const changed = await writeProfileEnv(dir, ARDENT_INSTANCE_REF_ENV, input.instance_ref);
+  return { profile, key: ARDENT_INSTANCE_REF_ENV, instanceRef: input.instance_ref, changed, activationRequired: changed };
+}
+
+/**
+ * After a package install (changed or not): ARDENT_INSTANCE_REF=<node id>.<profile> in every profile, so an upgraded
+ * runtime qualifies its references. A profile whose reference would be invalid, or whose `.env` cannot be written,
+ * is reported and left as it was; the installed package stays.
+ */
+async function setInstanceRefs(root: ArdentRoot, nodeId: string): Promise<{ written: string[]; unchanged: string[]; skipped: Array<{ profile: string; reason: string }> }> {
+  const result = { written: [] as string[], unchanged: [] as string[], skipped: [] as Array<{ profile: string; reason: string }> };
+  for (const profile of await safeProfiles(root.root)) {
+    const value = ardentInstanceRef(nodeId, profile);
+    if (!value) { result.skipped.push({ profile, reason: 'The instance reference would exceed what Ardent accepts' }); continue; }
+    try {
+      const { dir } = await profileConfig(root.root, profile);
+      (await writeProfileEnv(dir, ARDENT_INSTANCE_REF_ENV, value) ? result.written : result.unchanged).push(profile);
+    } catch (error: unknown) {
+      const reason = error instanceof Error ? error.message.slice(0, 200) : 'Profile environment unavailable';
+      logger.warn(`Ardent instance reference for ${profile} was not written: ${reason}`);
+      result.skipped.push({ profile, reason });
+    }
+  }
+  return result;
 }
 
 async function setHiveMemCredential(root: ArdentRoot, profile: string, body: unknown): Promise<object> {
@@ -957,7 +1110,8 @@ export function createArdentRoutes(resolveRoot: () => Promise<ArdentRoot> = arde
         if (!pattern.test(value)) return c.json({ error: `Invalid ${key} query` }, 400);
         url.searchParams.set(key, value);
       }
-      const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, redirect: 'error', signal: AbortSignal.timeout(10_000) });
+      const response = await fetch(url, { headers: { ...ardentTraceHeaders(name => c.req.header(name)), Authorization: `Bearer ${token}` },
+        redirect: 'error', signal: AbortSignal.timeout(10_000) });
       const body = await response.arrayBuffer();
       if (body.byteLength > 2 * 1024 * 1024) return c.json({ error: 'Ardent management response exceeds size limit' }, 502);
       return new Response(new Uint8Array(body), { status: response.status, headers: { 'Content-Type': response.headers.get('content-type') ?? 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
@@ -987,10 +1141,28 @@ export function createArdentRoutes(resolveRoot: () => Promise<ArdentRoot> = arde
       return c.json({ error: 'Memory search requires a bounded query' }, 400);
     if (input.action === 'skill-install' && !ardentSkillInstallNodeSchema.safeParse(input.body).success)
       return c.json({ error: 'Skill installation requires a HiveSkills release, its digest and its archive within bounds' }, 400);
+    if (input.action === 'task-recovery' && !ardentTaskRecoveryDecisionSchema.safeParse(input.body).success)
+      return c.json({ error: 'Task recovery requires a known action and bounded call, result, note and deadline' }, 400);
+    if (input.action === 'artifact-import' && !ardentArtifactImportSchema.safeParse(input.body).success)
+      return c.json({ error: 'Artifact import requires a peer, its task and an artifact ID' }, 400);
+    if (input.action === 'package-install' && input.body !== undefined && !packageInstallInput.safeParse(input.body).success)
+      return c.json({ error: 'Package installation takes only the node ID for the profiles\' instance references' }, 400);
     const route = actionRoutes[input.action];
     if (route.target ? !input.target || !route.target.test(input.target) : input.target !== undefined)
       return c.json({ error: 'Invalid Ardent action target' }, 400);
-    const body = JSON.stringify(input.body ?? {});
+    // Attribution only: a context or trace of the wrong shape is dropped, never refused.
+    const execution = EXECUTION_ACTIONS.has(input.action) ? parseArdentExecutionContext(input.execution) : undefined;
+    const trace = z.object({ request_id: z.unknown().optional(), traceparent: z.unknown().optional() }).safeParse(input.trace);
+    const forwarded = ardentTraceHeaders(name => {
+      const value = name === 'x-request-id' ? (trace.success ? trace.data.request_id : undefined)
+        : name === 'traceparent' ? (trace.success ? trace.data.traceparent : undefined) : undefined;
+      return typeof value === 'string' ? value : c.req.header(name);
+    });
+    if (execution) {
+      const header = executionHeader(execution);
+      if (header) forwarded['x-hive-execution'] = header; else delete forwarded['x-hive-execution'];
+    }
+    const body = JSON.stringify(execution ? { ...(input.body as object), execution } : input.body ?? {});
     // A preview may carry a full soul and identity (128 KiB each) and a skill installation its archive (1 MiB, base64);
     // everything else, missions included, stays under 200 KB.
     const limit = input.action === 'preview-submit' ? 300_000 : input.action === 'skill-install' ? 1_500_000 : 200_000;
@@ -1016,7 +1188,14 @@ export function createArdentRoutes(resolveRoot: () => Promise<ArdentRoot> = arde
           }
         })));
       }
-      if (input.action === 'package-install') return c.json(await withArdentLifecycle(root.install, () => installPackage(root)));
+      if (input.action === 'package-install') {
+        const nodeId = input.body === undefined ? undefined : packageInstallInput.parse(input.body).node_id;
+        return c.json(await withArdentLifecycle(root.install, async () => {
+          const installed = await installPackage(root);
+          return nodeId === undefined ? installed : { ...installed, instanceRefs: await setInstanceRefs(root, nodeId) };
+        }));
+      }
+      if (input.action === 'instance-ref-set') return c.json(await setInstanceRef(root, input.profile, input.body));
       if (input.action === 'profile-create') return c.json(await withArdentLifecycle(root.install, () => createProfile(root, input.profile, input.body)));
       if (input.action === 'hivemem-credential-set') return c.json(await setHiveMemCredential(root, input.profile, input.body));
       if (input.action === 'skill-install') return c.json(await installSkill(root, input.profile, input.body));
@@ -1032,7 +1211,7 @@ export function createArdentRoutes(resolveRoot: () => Promise<ArdentRoot> = arde
       let result: ArrayBuffer;
       try {
         response = await fetch(`http://127.0.0.1:${config.api.port}/api/v1/${path}`, {
-          method: route.method, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          method: route.method, headers: { ...forwarded, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
           body, redirect: 'error', signal: AbortSignal.timeout(input.action === 'provider-test' ? 30_000 : 15_000),
         });
         result = await response.arrayBuffer();
@@ -1048,7 +1227,7 @@ export function createArdentRoutes(resolveRoot: () => Promise<ArdentRoot> = arde
       // The signed managed HTTP receipt proves durable task admission, never
       // completion of the asynchronous model run. Return 200 for that bounded
       // admission so the node ledger can settle the synchronous operation.
-      const status = ['task-submit', 'mission-submit', 'preview-submit'].includes(input.action) && response.status === 202 ? 200 : response.status;
+      const status = ADMISSION_ACTIONS.has(input.action) && response.status === 202 ? 200 : response.status;
       return new Response(new Uint8Array(result), { status, headers: { 'Content-Type': response.headers.get('content-type') ?? 'application/json', 'Cache-Control': 'no-store' } });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message.slice(0, 200) : 'Ardent action unavailable';
