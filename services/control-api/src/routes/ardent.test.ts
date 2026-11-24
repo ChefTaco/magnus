@@ -65,6 +65,17 @@ describe('Ardent task stream relay', () => {
     expect((await reader.read()).done).toBe(true);
   });
 
+  it('treats an empty Last-Event-ID as no cursor, and still refuses a malformed one', async () => {
+    // A console ingress forwards Last-Event-ID unconditionally, so a first connection arrives with an empty one.
+    mocks.stream.mockResolvedValue(new Response(new ReadableStream<Uint8Array>({ start(controller) { controller.close(); } }), { headers: { 'Content-Type': 'text/event-stream' } }));
+    const fresh = await app.request(streamPath, { headers: { 'x-test-role': 'ADMIN', 'Last-Event-ID': '' } });
+    expect(fresh.status).toBe(200);
+    expect(mocks.stream).toHaveBeenCalledWith('node-1', 'example', `tasks/${taskId}/stream`, expect.not.objectContaining({ lastEventId: expect.anything() }));
+    await fresh.body?.cancel();
+    const bad = await app.request(streamPath, { headers: { 'x-test-role': 'ADMIN', 'Last-Event-ID': 'abc' } });
+    expect(bad.status).toBe(400);
+  });
+
   it('cancels the node stream when the client goes away', async () => {
     const cancelled = vi.fn();
     mocks.stream.mockResolvedValue(new Response(new ReadableStream<Uint8Array>({ cancel: cancelled }), { headers: { 'Content-Type': 'text/event-stream' } }));
