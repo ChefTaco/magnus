@@ -5,6 +5,12 @@ All notable changes to this project are documented in this file. The format is b
 [Semantic Versioning](https://semver.org/).
 
 
+## [3.3.3] - 2026-11-24
+
+### Added
+
+- 
+
 ## [3.3.2] - 2026-11-24
 
 ### Added
@@ -18,6 +24,21 @@ All notable changes to this project are documented in this file. The format is b
 - 
 
 ## [Unreleased]
+
+## [3.3.3] - 2026-11-24
+
+### Fixed
+
+- **Native snapshots of Ardent 3.2.0 profiles resume.** The agent's offline journal check accepts only
+  tables it knows, and Ardent 3.2.0 added ten. Every 3.2.0 profile therefore counted as unsupported
+  work: a Hive native backup or upgrade captured the profile and then refused to start it again
+  ("pending, uncertain or unsupported work"), holding the suite. The check now knows them:
+  `tool_invocations` (`dispatched` is in flight, `failed_unknown` uncertain), `task_recovery` (`ready`
+  and `reconciling` active, `awaiting_decision` and `unsupported` uncertain) and `artifact_transfers`
+  (queued, transferring and verifying active) by state; execution checkpoints, ancestry, renditions,
+  hook failures and catch-up gaps as passive; catch-up runs and recovery publications as ledgers. A
+  channel post that catch-up recorded as `skipped_stale` is not pending. Unknown tables and states
+  still hold. No migrations and no settings change.
 
 ## [3.3.2] - 2026-11-24
 

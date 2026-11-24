@@ -49,6 +49,29 @@ describe('offline journal startup safety', () => {
       CREATE TABLE admission_fence(release_id TEXT); INSERT INTO admission_fence VALUES('fixture');`);
     expect(await inspectSqlite(path)).toEqual({ active: 1, unknown: 0, unsupported: 1 });
   });
+  it('knows the Ardent 3.2.0 recovery, transfer, ancestry and catch-up tables', async () => {
+    const schema = `CREATE TABLE tasks(state TEXT); INSERT INTO tasks VALUES('completed');
+      CREATE TABLE execution_state(task_id TEXT,messages_json TEXT); CREATE TABLE task_execution(task_id TEXT,root_ref TEXT);
+      CREATE TABLE artifact_renditions(original_sha256 TEXT); CREATE TABLE plugin_hook_failures(plugin TEXT);
+      CREATE TABLE channel_catchup_gaps(reason TEXT); CREATE TABLE channel_catchup_runs(state TEXT); INSERT INTO channel_catchup_runs VALUES('catching_up'),('interrupted');
+      CREATE TABLE a2a_recovery_publications(state TEXT,final INTEGER); INSERT INTO a2a_recovery_publications VALUES('unknown',0);
+      CREATE TABLE tool_invocations(state TEXT); INSERT INTO tool_invocations VALUES('succeeded'),('not_dispatched'),('operator_applied');
+      CREATE TABLE task_recovery(status TEXT); INSERT INTO task_recovery VALUES('resumed'),('resolved');
+      CREATE TABLE artifact_transfers(state TEXT); INSERT INTO artifact_transfers VALUES('completed'),('failed');
+      CREATE TABLE channel_inbound(platform TEXT,account TEXT,update_id TEXT,task_id TEXT,disposition TEXT);
+      CREATE TABLE channel_deliveries(id TEXT,platform TEXT,account TEXT,update_id TEXT,state TEXT);
+      INSERT INTO channel_inbound VALUES('fixture','fixture','old',NULL,'skipped_stale');`;
+    // Settled recovery and transfer history, ledgers and a stale post skipped by catch-up are not work.
+    expect(await inspectSqlite(await database(schema))).toEqual({ active: 0, unknown: 0, unsupported: 0 });
+    const busy = await database(`${schema}
+      INSERT INTO tool_invocations VALUES('dispatched'),('failed_unknown');
+      INSERT INTO task_recovery VALUES('reconciling'),('awaiting_decision'),('unsupported');
+      INSERT INTO artifact_transfers VALUES('transferring');
+      INSERT INTO channel_inbound VALUES('fixture','fixture','new',NULL,'admitted');`, 'busy.sqlite');
+    expect(await inspectSqlite(busy)).toEqual({ active: 4, unknown: 3, unsupported: 0 });
+    const odd = await database("CREATE TABLE tool_invocations(state TEXT); INSERT INTO tool_invocations VALUES('future_state');", 'odd.sqlite');
+    expect((await inspectSqlite(odd)).unsupported).toBe(1);
+  });
   it('detects sqlite3 and extensionless SQLite headers for private job databases', async () => {
     const sqlite3 = await database("CREATE TABLE job_windows(state TEXT); INSERT INTO job_windows VALUES('retry');", 'jobs.sqlite3');
     const extensionless = await database("CREATE TABLE private_queue(payload TEXT);", 'private-journal');

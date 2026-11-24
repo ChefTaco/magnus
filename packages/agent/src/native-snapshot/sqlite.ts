@@ -6,7 +6,8 @@ import { join } from 'node:path';
 import { z } from 'zod';
 import { fileHash, plainPath, statOptional } from './files.js';
 
-const currentStates: Record<string, { column: 'state' | 'status'; terminal: string[] }> = {
+// `active` and `uncertain` name a table's own non-terminal states beyond the shared `pending` set and `unknown`.
+const currentStates: Record<string, { column: 'state' | 'status'; terminal: string[]; active?: string[]; uncertain?: string[] }> = {
   tasks: { column: 'state', terminal: ['completed', 'partial', 'failed', 'cancelled'] },
   channel_deliveries: { column: 'state', terminal: ['sent', 'failed'] },
   job_windows: { column: 'state', terminal: ['completed', 'failed', 'superseded'] },
@@ -16,6 +17,11 @@ const currentStates: Record<string, { column: 'state' | 'status'; terminal: stri
   a2a_outbound_calls: { column: 'state', terminal: ['failed'] },
   a2a_team_artifacts: { column: 'status', terminal: ['available', 'revoked'] },
   a2a_team_artifact_transfers: { column: 'status', terminal: ['complete'] },
+  // Ardent 3.2.0 execution recovery: a dispatched call is in flight; an uncertain one needs reconciliation.
+  tool_invocations: { column: 'state', active: ['dispatched'], uncertain: ['failed_unknown'],
+    terminal: ['succeeded', 'failed_no_effect', 'reconciled_applied', 'reconciled_not_applied', 'operator_applied', 'operator_not_applied', 'not_dispatched'] },
+  task_recovery: { column: 'status', active: ['ready', 'reconciling'], uncertain: ['awaiting_decision', 'unsupported'], terminal: ['resumed', 'resolved'] },
+  artifact_transfers: { column: 'state', active: ['queued', 'transferring', 'verifying'], terminal: ['completed', 'failed'] },
 };
 const passiveTables = new Set([
   'sessions', 'session_messages', 'channel_cursors', 'channel_preferences', 'events',
@@ -23,7 +29,11 @@ const passiveTables = new Set([
   'task_admission', 'job_scan', 'artifact_manifests', 'artifact_sweeps', 'development_records',
   'a2a_operation_map', 'a2a_operation_links', 'a2a_team_missions', 'a2a_team_control_requests', 'a2a_team_controls',
   'a2a_team_admission', 'a2a_push_configs', 'a2a_inbound_push',
+  // Ardent 3.2.0: checkpoints, ancestry, renditions and diagnostics, none of them runnable work.
+  'execution_state', 'task_execution', 'artifact_renditions', 'plugin_hook_failures', 'channel_catchup_gaps',
 ]);
+// Ledgers with a state column that records what was walked or published, never work a start resumes.
+const ledgerTables = new Set(['channel_catchup_runs', 'a2a_recovery_publications']);
 const specialTables = new Set(['a2a_tasks', 'a2a_team_child_claims', 'a2a_request_receipts', 'channel_inbound', 'admission_fence']);
 const pending = new Set(['queued', 'running', 'input_required', 'retry', 'admitting', 'active', 'sending', 'started', 'pending', 'bound']);
 const a2aStates = ['UNSPECIFIED', 'SUBMITTED', 'WORKING', 'COMPLETED', 'FAILED', 'CANCELED', 'INPUT_REQUIRED', 'REJECTED', 'AUTH_REQUIRED'];
@@ -51,6 +61,7 @@ function inspectPrivateSqlite(path: string): { active: number; unknown: number; 
       const id = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).parse(table['name']);
       const columns = new Set(db.prepare(`PRAGMA table_info("${id}")`).all().map(c => String(c['name'])));
       if (typeof table['sql'] !== 'string' || /CREATE\s+VIRTUAL\s+TABLE/i.test(table['sql'])) { unsupported++; continue; }
+      if (ledgerTables.has(id)) continue;
       if (!currentStates[id] && !passiveTables.has(id) && !specialTables.has(id)) { unsupported++; continue; }
       const requireColumns = (...required: string[]) => {
         if (required.some(column => !columns.has(column))) { unsupported++; return false; }
@@ -62,8 +73,8 @@ function inspectPrivateSqlite(path: string): { active: number; unknown: number; 
         if ((policy.column !== 'state' && columns.has('state')) || (policy.column !== 'status' && columns.has('status'))) unsupported++;
         for (const row of db.prepare(`SELECT "${policy.column}" AS value,count(*) AS count FROM "${id}" GROUP BY "${policy.column}"`).all()) {
           const state = String(row['value']), amount = Number(row['count']);
-          if (state === 'unknown') unknown += amount;
-          else if (pending.has(state) && !policy.terminal.includes(state)) active += amount;
+          if (state === 'unknown' || policy.uncertain?.includes(state)) unknown += amount;
+          else if ((pending.has(state) || policy.active?.includes(state)) && !policy.terminal.includes(state)) active += amount;
           else if (!policy.terminal.includes(state)) unsupported += amount || 1;
         }
         continue;
@@ -108,7 +119,7 @@ function inspectPrivateSqlite(path: string): { active: number; unknown: number; 
         active += count(`SELECT count(*) AS count FROM channel_inbound AS inbound
           LEFT JOIN channel_deliveries AS delivery ON delivery.platform=inbound.platform
             AND delivery.account=inbound.account AND delivery.update_id=inbound.update_id
-          WHERE inbound.task_id IS NULL AND (delivery.id IS NULL OR delivery.state IN ('queued','unknown'))`);
+          WHERE inbound.task_id IS NULL${columns.has('disposition') ? " AND inbound.disposition='admitted'" : ''} AND (delivery.id IS NULL OR delivery.state IN ('queued','unknown'))`);
       }
     }
     return { active, unknown, unsupported };

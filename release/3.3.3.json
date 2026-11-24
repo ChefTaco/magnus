@@ -1,0 +1,9 @@
+{
+  "summary": "Native snapshot policy for Ardent 3.2.0: the offline journal check knows the tables Ardent 3.2.0 adds (tool_invocations, task_recovery and artifact_transfers by state; execution checkpoints, ancestry, renditions and hook diagnostics as passive; catch-up runs and recovery publications as ledgers) and skips a channel post that catch-up recorded as stale. Before, every Ardent 3.2.0 profile counted as unsupported work, so a Hive native backup or upgrade captured it and then refused to resume it. No migrations and no settings change.",
+  "breaking": false,
+  "minUpgradeFrom": "2.10.2",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}
