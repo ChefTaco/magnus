@@ -9,6 +9,10 @@
  * merely available. Discovery never enrolls, installs or enables anything, and never sends a credential
  * to a dependency; HiveMem enrollment, skill installation and channels keep their explicit steps.
  *
+ * Credentials go only to explicitly configured endpoints. A Registry-resolved HiveSkills serves promoted
+ * releases (which need none), never pinned ones under Magnus's target token; a Registry-resolved HiveMem is
+ * reported but never used for enrollment until MAGNUS_ARDENT_HIVEMEM_URL names it.
+ *
  * MAGNUS_HIVE_REGISTRY_URL (https, or http with MAGNUS_HIVE_REGISTRY_ALLOW_HTTP=true for the registry's
  * private network) and MAGNUS_HIVE_REGISTRY_TOKEN_FILE (the registry read credential) turn Registry
  * discovery on. Without them every dependency resolves from its setting or not at all (source none).
@@ -137,7 +141,7 @@ function healthUrl(name: DependencyName, endpoint: string): string {
 
 /** Whether Magnus has its own HiveMem enrollment credential (an Oathweave client or an enrollment token). */
 function hiveMemCredentialProblem(env: NodeJS.ProcessEnv, url: string): string | null {
-  try { ardentHiveMemSettings({ ...env, MAGNUS_ARDENT_HIVEMEM_URL: url }, null); return null; }
+  try { ardentHiveMemSettings({ ...env, MAGNUS_ARDENT_HIVEMEM_URL: url }); return null; }
   catch (error: unknown) { return error instanceof Error ? error.message : 'HiveMem enrollment is misconfigured'; }
 }
 
@@ -181,6 +185,9 @@ async function resolveOne(name: DependencyName, env: NodeJS.ProcessEnv, registry
   const known = fromRegistry ?? probe.capabilities;
   const capabilities = [...new Set(known ?? [])].sort();
   if (name === 'hivemem') {
+    // Magnus sends its enrollment credential only to the HiveMem it was configured with, never to a discovered one.
+    if (source === 'registry') return { name, status: 'awaiting_configuration', source, endpoint, capabilities,
+      reason: `Found in the Hive Registry. Magnus sends its HiveMem enrollment credential only to an explicitly configured HiveMem: set MAGNUS_ARDENT_HIVEMEM_URL=${endpoint} (with its client or enrollment token) to use it`.slice(0, 300) };
     const problem = hiveMemCredentialProblem(env, endpoint);
     if (problem) return { name, status: 'awaiting_configuration', source, endpoint, capabilities, reason: problem.slice(0, 300) };
   }
@@ -214,10 +221,12 @@ export function cachedDependency(name: DependencyName): ArdentDependency | undef
 
 /**
  * The endpoint the Registry resolved for a dependency whose setting is unset, for code that reads its setting
- * synchronously; null when the setting is set, nothing was resolved, or the endpoint did not answer.
+ * synchronously; null when the setting is set, nothing was resolved, the endpoint did not answer, or the
+ * dependency is HiveMem. Callers send no Magnus credential to it.
  */
 export function discoveredEndpoint(name: DependencyName, env: NodeJS.ProcessEnv = process.env): string | null {
-  if (env[OVERRIDES[name]]) return null;
+  // HiveMem enrollment carries Magnus's credential, so a discovered HiveMem is never a default.
+  if (name === 'hivemem' || env[OVERRIDES[name]]) return null;
   const entry = cachedDependency(name);
   return entry?.source === 'registry' && entry.endpoint && entry.status !== 'missing' ? entry.endpoint : null;
 }

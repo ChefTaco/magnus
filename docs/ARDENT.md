@@ -350,12 +350,16 @@ reads it through the HiveSkills pinned-release routes (`skills.pinned-release.v1
 `?target=<MAGNUS_ARDENT_HIVESKILLS_TARGET>` and that target's bearer token from
 `MAGNUS_ARDENT_HIVESKILLS_TARGET_TOKEN_FILE`. HiveSkills serves them only for skills it assigns to that
 target. The archive's SHA-256 must equal the stated digest and its `X-Content-SHA256` header, which the
-pinned route always sends. A promoted version is still fetched anonymously, and the token is never sent
-anywhere else. Without a target, a pinned version that is not promoted answers 409
+pinned route always sends. A promoted version is still fetched anonymously. The token is sent only to the
+explicitly configured `MAGNUS_ARDENT_HIVESKILLS_URL`: when Magnus uses a HiveSkills the Hive Registry
+resolved, a pinned version that is not promoted answers 409 `SKILL_VERSION_UNAVAILABLE` naming
+`MAGNUS_ARDENT_HIVESKILLS_URL`, and the discovered endpoint never receives an `Authorization` header.
+Without a target, a pinned version that is not promoted answers 409
 `SKILL_VERSION_UNAVAILABLE` and says which settings are missing; a target HiveSkills refuses (an
 unassigned skill or a wrong token) answers the same code with the HTTP status. `pinned` stays with the
 Control API: the node agent receives the same body as before. Without `MAGNUS_ARDENT_HIVESKILLS_URL`,
-Magnus uses the HiveSkills the Hive Registry lists ([agent dependencies](#agent-dependencies)).
+Magnus installs promoted releases from the HiveSkills the Hive Registry lists
+([agent dependencies](#agent-dependencies)).
 
 The answer is `{source, name, version, sha256, files, changed, enabled, revision, enable_error,
 activation_required}`; `revision` is the new configuration revision when the skill was enabled. Like
@@ -374,7 +378,7 @@ and `hive.sh ardent status` print it) says how Magnus resolved each one:
   { "name": "emberpath", "status": "unsupported", "source": "override", "endpoint": "https://models.example.com/v1", "capabilities": [],
     "reason": "emberpath 2.5.3 does not offer emberpath.execution-trace.v1; its endpoint is still used" },
   { "name": "hivemem", "status": "awaiting_configuration", "source": "registry", "endpoint": "https://hivemem:18790/", "capabilities": ["memory.v1"],
-    "reason": "…set together with an Oathweave client (MAGNUS_ARDENT_HIVEMEM_CLIENT_ID, …)" }
+    "reason": "Found in the Hive Registry. Magnus sends its HiveMem enrollment credential only to an explicitly configured HiveMem: set MAGNUS_ARDENT_HIVEMEM_URL=https://hivemem:18790/ …" }
 ] }
 ```
 
@@ -395,13 +399,25 @@ Each resolved endpoint is probed at `health/live` (no credential is sent). `stat
 `missing` when nothing is configured or the endpoint does not answer (with the reason);
 `unsupported` when it answers but lacks a capability Magnus expects of it (Emberpath:
 `emberpath.execution-trace.v1`), whose endpoint is still used; or `awaiting_configuration` for an
-unusable setting, an HTTP HiveSkills, or a HiveMem for which Magnus has no enrollment credential of its
-own. The report is rebuilt every five minutes and on `?refresh=true`.
+unusable setting, an HTTP HiveSkills, an explicit HiveMem for which Magnus has no enrollment credential
+of its own, or a HiveMem found only in the Registry. The report is rebuilt every five minutes and on `?refresh=true`.
 
-New Agent, Enable HiveMem, `skill-install` and the definition installer use a Registry-resolved
-endpoint when the matching setting is unset (not one reported `missing`). HiveMem enrollment still
-needs Magnus's own client or enrollment token. Discovery never enrolls, installs or enables anything,
-and grants nothing: a resolved endpoint is only available. A managed node's agents must be able to
+**Credentials go only to explicitly configured endpoints.** Magnus never sends a credential of its own
+to an endpoint only the Registry named:
+
+- HiveSkills: a Registry-resolved HiveSkills serves `skill-install` and definitions for promoted
+  releases, which need no credential. Pinned releases that are not promoted, which need the target
+  token, are read only from `MAGNUS_ARDENT_HIVESKILLS_URL`.
+- HiveMem: enrollment sends Magnus's Oathweave client token or enrollment token, so it uses only
+  `MAGNUS_ARDENT_HIVEMEM_URL`. A HiveMem found only in the Registry is reported
+  `awaiting_configuration`, with the setting to add.
+- Emberpath: New Agent and definitions use a Registry-resolved Emberpath for the model alias when
+  `MAGNUS_ARDENT_EMBERPATH_URL` is unset. Magnus itself sends Emberpath no credential. A definition
+  whose model key is bound `provided` would make the agent send that key there, so its preflight reports
+  `SECRET_UNBOUND` unless the Emberpath is explicitly configured, or the key is bound `none`.
+
+A Registry-resolved endpoint reported `missing` is never used. Discovery never enrolls, installs or
+enables anything, and grants nothing: a resolved endpoint is only available. A managed node's agents must be able to
 reach the endpoint written into their configuration; when they reach a product at another address,
 set the override (or `MAGNUS_ARDENT_HIVEMEM_AGENT_URL`).
 
@@ -452,7 +468,7 @@ checks the definition (422 `DEFINITION_INVALID` for a bad shape or digest) and a
 | `EXTENSION_NOT_REVIEWED` | The node has no reviewed, retained extension with that name, version, integrity and package tree digest; add it to the node's extension bundle through the package review first |
 | `RUNTIME_INCOMPATIBLE` | Another runtime package, another major version or an older version on the node, or a backend New Agent does not provision (`codex`) |
 | `CAPABILITY_MISSING` | A `runtime.required_capabilities` entry the node's Ardent installation (`ardent.recovery.v1`, `ardent.lineage.v1`, `artifact-transfer.v2`, from its `capabilities`) or a resolved dependency (the others) does not report |
-| `SECRET_UNBOUND` | A named secret has no `secret:<ENV_NAME>` binding of `provided` (the target profile's environment supplies it) or `none` (run without it) |
+| `SECRET_UNBOUND` | A named secret has no `secret:<ENV_NAME>` binding of `provided` (the target profile's environment supplies it) or `none` (run without it), or is bound `provided` while the Emberpath in use was only found through the Hive Registry |
 
 Without `bindings`, every required binding is reported missing. A binding the definition does not
 require answers 400.

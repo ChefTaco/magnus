@@ -38,6 +38,8 @@ export interface ArdentDefinitionDeps {
   hivemem(): ArdentHiveMemSettings;
   /** The Emberpath base URL New Agent writes for an alias; throws when there is none. */
   emberpath(): string;
+  /** Whether that URL is the explicit MAGNUS_ARDENT_EMBERPATH_URL rather than one the Hive Registry resolved. */
+  emberpathExplicit(): boolean;
   /** The HiveSkills registry, or null. Throws on an unusable setting. */
   hiveskills(): string | null;
   start(input: unknown, definition: ArdentStoredDefinition, actor: ArdentOperationActor): Promise<string>;
@@ -52,6 +54,7 @@ const defaultDeps: ArdentDefinitionDeps = {
   skillRelease: request => checkArdentSkillRelease(request),
   hivemem: requireArdentHiveMemSettings,
   emberpath: emberpathUrl,
+  emberpathExplicit: () => Boolean(process.env['MAGNUS_ARDENT_EMBERPATH_URL']),
   hiveskills: () => ardentHiveSkillsUrl(),
   start: startArdentDefinitionDeploy,
   now: () => new Date(),
@@ -318,6 +321,10 @@ async function preflight(definition: AgentDefinition, bindings: AgentDefinitionB
     const value = given[agentDefinitionSecretBindingKey(secret.env_name)];
     if (value !== 'provided' && value !== 'none')
       problem('SECRET_UNBOUND', `${secret.env_name} (${secret.purpose}): bind ${agentDefinitionSecretBindingKey(secret.env_name)} to provided, once the target profile's environment supplies it, or none`);
+    // The carried configuration's only endpoint is the model gateway: a supplied key would reach it, so it must be
+    // the Emberpath this server was configured with, never one the Hive Registry suggested.
+    else if (value === 'provided' && definition.config.execution.backend === 'llamacpp' && !deps.emberpathExplicit())
+      problem('SECRET_UNBOUND', `${secret.env_name}: a provided secret is used only with an explicitly configured Emberpath; set MAGNUS_ARDENT_EMBERPATH_URL, or bind ${agentDefinitionSecretBindingKey(secret.env_name)} to none`);
   }
   return { ok: problems.length === 0, problems };
 }

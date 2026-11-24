@@ -25,16 +25,20 @@ All notable changes to this project are documented in this file. The format is b
 - `skill-install` takes `pinned: true` to install an exact HiveSkills release that is not promoted,
   through the HiveSkills pinned-release routes as Magnus's enrolled target
   (`MAGNUS_ARDENT_HIVESKILLS_TARGET`, `MAGNUS_ARDENT_HIVESKILLS_TARGET_TOKEN_FILE`). The archive must
-  match the digest HiveSkills states and its `X-Content-SHA256` header. Without a target such a release
-  answers 409 `SKILL_VERSION_UNAVAILABLE`.
+  match the digest HiveSkills states and its `X-Content-SHA256` header. Without a target, or when the
+  HiveSkills in use came from the Hive Registry rather than `MAGNUS_ARDENT_HIVESKILLS_URL`, such a
+  release answers 409 `SKILL_VERSION_UNAVAILABLE`: the target token is sent only to the explicit setting.
 - Dependency discovery for Ardent agents. `GET /api/v1/ardent/dependencies` (ADMIN or a linked service
   identity) reports HiveMem, HiveSkills and Emberpath as `usable`, `missing`, `unsupported` or
   `awaiting_configuration`, with their source (`override`, `registry` or `none`), endpoint, service
   capabilities and reason. An explicit `MAGNUS_ARDENT_*` URL wins; otherwise, with
   `MAGNUS_HIVE_REGISTRY_URL` and `MAGNUS_HIVE_REGISTRY_TOKEN_FILE`, the Hive Registry's record of the
-  installed product. The report refreshes every five minutes and on `?refresh=true`. New Agent,
-  Enable HiveMem, `skill-install` and the definition installer use a resolved endpoint when the
-  setting is unset; discovery never enrolls, installs or enables anything.
+  installed product. The report refreshes every five minutes and on `?refresh=true`. When the setting
+  is unset, New Agent and the definition installer use a resolved Emberpath, and `skill-install` a
+  resolved HiveSkills for promoted releases. Magnus sends its own credentials only to explicitly
+  configured endpoints: a HiveMem found only in the Registry is reported `awaiting_configuration`
+  and never used for enrollment, and a definition's `provided` model key needs an explicit Emberpath.
+  Discovery never enrolls, installs or enables anything.
 - The node agent reports the reviewed extensions retained beside the Ardent runtime (`extensions` in
   its Ardent inventory) and serves a profile's HiveSkills receipts (`GET /ardent/profiles/:name/skill-receipts`).
 

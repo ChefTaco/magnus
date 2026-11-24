@@ -10,7 +10,9 @@
  * The release promoted on a channel is public: Magnus sends no credential for it. A pinned request
  * (`pinned: true`) for another release reads it through the pinned-release routes
  * (skills.pinned-release.v1) as Magnus's enrolled HiveSkills target, MAGNUS_ARDENT_HIVESKILLS_TARGET with
- * the target token in MAGNUS_ARDENT_HIVESKILLS_TARGET_TOKEN_FILE, limited to that target's skills.
+ * the target token in MAGNUS_ARDENT_HIVESKILLS_TARGET_TOKEN_FILE, limited to that target's skills, and only
+ * from the explicitly configured MAGNUS_ARDENT_HIVESKILLS_URL: a registry found through the Hive Registry
+ * never receives the token.
  */
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -23,13 +25,22 @@ import { discoveredEndpoint } from './discovery.js';
 
 /** The registry base URL (ending in `/`), or null when Magnus has none. Throws on an unusable value. */
 export function ardentHiveSkillsUrl(env: NodeJS.ProcessEnv = process.env, discovered: string | null = discoveredEndpoint('hiveskills', env)): string | null {
+  return ardentHiveSkillsEndpoint(env, discovered)?.url ?? null;
+}
+
+/**
+ * The registry Magnus uses and whether it is explicitly configured (MAGNUS_ARDENT_HIVESKILLS_URL) rather than
+ * found through the Hive Registry. Magnus sends a credential only to an explicitly configured registry.
+ */
+export function ardentHiveSkillsEndpoint(env: NodeJS.ProcessEnv = process.env, discovered: string | null = discoveredEndpoint('hiveskills', env)): { url: string; explicit: boolean } | null {
+  const explicit = Boolean(env['MAGNUS_ARDENT_HIVESKILLS_URL']);
   const value = env['MAGNUS_ARDENT_HIVESKILLS_URL'] || discovered;
   if (!value) return null;
   let url: URL;
   try { url = new URL(value); } catch { throw new Error('MAGNUS_ARDENT_HIVESKILLS_URL must be a URL'); }
   if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash)
     throw new Error('MAGNUS_ARDENT_HIVESKILLS_URL must be an HTTPS URL without credentials, query or fragment');
-  return url.toString().endsWith('/') ? url.toString() : `${url.toString()}/`;
+  return { url: url.toString().endsWith('/') ? url.toString() : `${url.toString()}/`, explicit };
 }
 
 /** Magnus's HiveSkills target for pinned releases, or null when none is configured. Throws on a partial or unreadable setup. */
@@ -85,9 +96,9 @@ async function bounded(response: Response, limit: number, tooLarge: () => HttpEr
 
 const pinnedReleaseSchema = z.object({ slug: z.string(), version: z.string(), sha256: z.string().regex(/^[a-f0-9]{64}$/u) }).passthrough();
 
-function registryBase(): string {
-  let base: string | null;
-  try { base = ardentHiveSkillsUrl(); }
+function registryBase(): { url: string; explicit: boolean } {
+  let base: ReturnType<typeof ardentHiveSkillsEndpoint>;
+  try { base = ardentHiveSkillsEndpoint(); }
   catch (error: unknown) { throw new HttpError(503, 'HIVESKILLS_UNCONFIGURED', error instanceof Error ? error.message : 'Invalid HiveSkills registry'); }
   if (!base) throw new HttpError(503, 'HIVESKILLS_UNCONFIGURED', 'Magnus has no HiveSkills registry; set MAGNUS_ARDENT_HIVESKILLS_URL or enrol Magnus with the Hive Registry');
   return base;
@@ -112,7 +123,8 @@ interface ReleaseSource { sha256: string; archiveUrl: URL; token?: string; promo
  * promoted on the channel (and not pinned), no target configured for a pinned one, or refused to that target.
  */
 async function locateRelease(request: ArdentSkillInstall, fetchImpl: typeof fetch): Promise<ReleaseSource> {
-  const base = registryBase();
+  const registry = registryBase();
+  const base = registry.url;
   const channel = request.channel ?? 'stable';
   const withChannel = (path: string) => {
     const url = new URL(path, base);
@@ -130,6 +142,9 @@ async function locateRelease(request: ArdentSkillInstall, fetchImpl: typeof fetc
     return { sha256: promoted.sha256, archiveUrl: withChannel(`v1/skills/${request.name}/releases/${version}/archive`), promoted: true };
   const notPromoted = `${request.name} ${request.version} is not the release promoted on the ${channel} channel${promoted ? `; ${promoted.version} is` : ''}`;
   if (!request.pinned) throw new HttpError(409, 'SKILL_VERSION_UNAVAILABLE', notPromoted);
+  // The target token goes only to a registry this server was told about, never to one the Hive Registry suggested.
+  if (!registry.explicit) throw new HttpError(409, 'SKILL_VERSION_UNAVAILABLE',
+    `${notPromoted}. Magnus reads pinned releases that are not promoted only from an explicitly configured HiveSkills, so its target token never reaches a discovered endpoint: set MAGNUS_ARDENT_HIVESKILLS_URL (the Hive Registry lists ${base})`.slice(0, 500));
   let target: ReturnType<typeof ardentHiveSkillsTarget>;
   try { target = ardentHiveSkillsTarget(); }
   catch (error: unknown) { throw new HttpError(409, 'SKILL_VERSION_UNAVAILABLE', `${notPromoted}, and the HiveSkills target is misconfigured: ${error instanceof Error ? error.message : 'invalid'}`.slice(0, 500)); }

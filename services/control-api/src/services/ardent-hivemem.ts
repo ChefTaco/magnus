@@ -13,7 +13,6 @@
 import { createHash } from 'node:crypto';
 import { HttpError } from '../middleware/error-handler.js';
 import { OathweaveClientToken, OathweaveClientTokenError } from './oathweave-client-credentials.js';
-import { discoveredEndpoint } from './discovery.js';
 
 /** HiveMem permissions an Ardent profile uses: private memories and conversation sessions. */
 export const ARDENT_HIVEMEM_SCOPES = ['memories:read', 'memories:write', 'sessions:read', 'sessions:write'] as const;
@@ -63,18 +62,17 @@ function oathweaveAuth(env: NodeJS.ProcessEnv): ArdentHiveMemAuth {
 
 /**
  * Configured enrollment, or null when Magnus has no HiveMem enrollment settings. Throws on a partial or invalid setup.
- * Without MAGNUS_ARDENT_HIVEMEM_URL, the HiveMem endpoint the Hive Registry resolved (services/discovery.ts) is used;
- * the credential is always Magnus's own setting.
+ * The URL is always the explicit MAGNUS_ARDENT_HIVEMEM_URL, never one the Hive Registry suggested: Magnus sends its
+ * enrollment credential to that URL, and only to an endpoint it was configured with.
  */
-export function ardentHiveMemSettings(env: NodeJS.ProcessEnv = process.env, discovered: string | null = discoveredEndpoint('hivemem', env)): ArdentHiveMemSettings | null {
+export function ardentHiveMemSettings(env: NodeJS.ProcessEnv = process.env): ArdentHiveMemSettings | null {
+  const url = env['MAGNUS_ARDENT_HIVEMEM_URL'];
   const token = env['MAGNUS_ARDENT_HIVEMEM_ENROLLMENT_TOKEN'];
   const client = CLIENT_KEYS.some(key => env[key]);
   let workspaceId = env['MAGNUS_ARDENT_HIVEMEM_WORKSPACE_ID'];
-  if (!env['MAGNUS_ARDENT_HIVEMEM_URL'] && !token && !client && !workspaceId) return null;
-  // A discovered endpoint never turns enrollment on by itself: Magnus's own credential must be configured.
-  const url = env['MAGNUS_ARDENT_HIVEMEM_URL'] || (discovered ?? undefined);
+  if (!url && !token && !client && !workspaceId) return null;
   if (token && client) throw new Error('Set either MAGNUS_ARDENT_HIVEMEM_ENROLLMENT_TOKEN or the Oathweave client (MAGNUS_ARDENT_HIVEMEM_CLIENT_ID), not both');
-  if (!url || (!token && !client)) throw new Error('MAGNUS_ARDENT_HIVEMEM_URL (or a HiveMem the Hive Registry lists) is set together with an Oathweave client (MAGNUS_ARDENT_HIVEMEM_CLIENT_ID, _CLIENT_SECRET, _TOKEN_URL) or MAGNUS_ARDENT_HIVEMEM_ENROLLMENT_TOKEN');
+  if (!url || (!token && !client)) throw new Error('MAGNUS_ARDENT_HIVEMEM_URL is set together with an Oathweave client (MAGNUS_ARDENT_HIVEMEM_CLIENT_ID, _CLIENT_SECRET, _TOKEN_URL) or MAGNUS_ARDENT_HIVEMEM_ENROLLMENT_TOKEN');
   const auth: ArdentHiveMemAuth = client ? oathweaveAuth(env) : { kind: 'token', token: token! };
   // A static token cannot be assumed to create workspaces, so it names an existing one.
   if (!workspaceId && auth.kind === 'token') throw new Error('MAGNUS_ARDENT_HIVEMEM_ENROLLMENT_TOKEN needs MAGNUS_ARDENT_HIVEMEM_WORKSPACE_ID, an existing workspace');

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { ardentHiveSkillsUrl, ardentHiveSkillsTarget, checkArdentSkillRelease, fetchArdentSkillRelease } from './ardent-hiveskills.js';
+import { dependencyReport, setDiscoveryDeps } from './discovery.js';
 
 const REGISTRY = 'https://skills.example.com:4030';
 
@@ -175,6 +176,34 @@ describe('pinned HiveSkills releases', () => {
     await expect(fetchArdentSkillRelease(pinned, pinnedRegistry(bytes).fetchImpl, { expectedSha256: 'e'.repeat(64) })).rejects.toMatchObject({ status: 409, code: 'SKILL_VERSION_UNAVAILABLE' });
     await expect(fetchArdentSkillRelease(pinned, pinnedRegistry(bytes, { metadataDigest: 'a'.repeat(64) }).fetchImpl)).rejects.toMatchObject({ status: 422, code: 'SKILL_ARCHIVE_INVALID' });
     await expect(fetchArdentSkillRelease(pinned, pinnedRegistry(bytes, { header: null }).fetchImpl)).rejects.toMatchObject({ status: 422, message: expect.stringContaining('X-Content-SHA256') });
+  });
+
+  it('never sends the target token to a HiveSkills the Hive Registry resolved', async () => {
+    // No MAGNUS_ARDENT_HIVESKILLS_URL: the registry comes from discovery.
+    vi.stubEnv('MAGNUS_ARDENT_HIVESKILLS_URL', '');
+    targetCredential();
+    const restore = setDiscoveryDeps({
+      env: () => ({}), probe: async () => ({ ok: true, version: '1.9.0', capabilities: null }),
+      registry: () => ({ connection: async (id: string) => (id === 'hiveskills'
+        ? { id, consolePath: null, browserPrefix: null, nativeApis: {}, documentation: null, internalEndpoints: { api: REGISTRY } } : undefined) }) as never,
+    });
+    try {
+      await dependencyReport({ refresh: true });
+      expect(ardentHiveSkillsUrl()).toBe(`${REGISTRY}/`);
+      const bytes = archive([['SKILL.md', SKILL]]);
+      const discovered = pinnedRegistry(bytes);
+      await expect(fetchArdentSkillRelease(pinned, discovered.fetchImpl)).rejects.toMatchObject({ status: 409, code: 'SKILL_VERSION_UNAVAILABLE',
+        message: expect.stringContaining('set MAGNUS_ARDENT_HIVESKILLS_URL') });
+      await expect(checkArdentSkillRelease(pinned, discovered.fetchImpl)).rejects.toMatchObject({ code: 'SKILL_VERSION_UNAVAILABLE' });
+      expect(discovered.calls.length).toBeGreaterThan(0);
+      expect(discovered.calls.every(call => call.authorization === null)).toBe(true);
+      expect(discovered.calls.every(call => !call.url.includes('target='))).toBe(true);
+      // The promoted release still installs from the discovered registry, anonymously as before.
+      const promoted = registry(bytes);
+      expect(await fetchArdentSkillRelease(request, promoted.fetchImpl)).toMatchObject({ sha256: sha(bytes) });
+      const headers = (promoted.fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls.map(call => new Headers((call[1] as RequestInit | undefined)?.headers).get('authorization'));
+      expect(headers).toEqual([null, null]);
+    } finally { restore(); }
   });
 
   it('needs the target name and token file together', () => {

@@ -307,6 +307,19 @@ describe('portable agent definitions', () => {
       .toEqual(['EXTENSION_NOT_REVIEWED', 'EXTENSION_NOT_REVIEWED']);
   });
 
+  it('uses a provided model key only with an explicitly configured Emberpath', async () => {
+    const { definition } = await definitions.exportArdentAgentDefinition('node-a', 'lead');
+    definitions.setArdentDefinitionDeps({
+      installation: async nodeId => installation(nodeId), read, skillReceipts, dependencies: async () => [], hivemem: () => HIVEMEM,
+      emberpath: () => GATEWAY, emberpathExplicit: () => false, hiveskills: () => 'https://skills.example.com/',
+      skillRelease: async request => { const known = release(request.name, request.version, request.pinned); return { sha256: known.sha256, promoted: known.promoted }; },
+    });
+    expect((await definitions.validateArdentAgentDefinition({ definition, nodeId: 'node-b', bindings: BINDINGS })).problems)
+      .toEqual([{ code: 'SECRET_UNBOUND', detail: expect.stringContaining('set MAGNUS_ARDENT_EMBERPATH_URL') }]);
+    expect(await definitions.validateArdentAgentDefinition({ definition, nodeId: 'node-b', bindings: { ...BINDINGS, 'secret:LLAMACPP_API_KEY': 'none' } }))
+      .toEqual({ ok: true, problems: [] });
+  });
+
   it('refuses a definition whose digest or persona digest does not match, and bindings it does not require', async () => {
     const { definition } = await definitions.exportArdentAgentDefinition('node-a', 'lead');
     await expect(definitions.validateArdentAgentDefinition({ definition: { ...definition, name: 'Renamed' }, nodeId: 'node-b' }))

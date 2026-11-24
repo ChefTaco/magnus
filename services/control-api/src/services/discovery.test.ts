@@ -60,7 +60,9 @@ describe('dependency discovery', () => {
     expect(report['hiveskills']).toEqual({ name: 'hiveskills', status: 'usable', source: 'registry', endpoint: 'https://skills.example.com:4030/', capabilities: ['skills.pinned-release.v1'] });
     expect(report['emberpath']).toMatchObject({ status: 'usable', source: 'registry', endpoint: 'https://models.example.com:4020/v1',
       capabilities: ['emberpath.execution-trace.v1', 'retry-signal.v1'] });
-    expect(report['hivemem']).toMatchObject({ status: 'usable', source: 'registry', endpoint: 'https://hivemem.example.com:18790/' });
+    // Found, but never used for enrollment: Magnus's HiveMem credential goes only to an explicit MAGNUS_ARDENT_HIVEMEM_URL.
+    expect(report['hivemem']).toMatchObject({ status: 'awaiting_configuration', source: 'registry', endpoint: 'https://hivemem.example.com:18790/' });
+    expect(report['hivemem']!.reason).toContain('MAGNUS_ARDENT_HIVEMEM_URL=https://hivemem.example.com:18790/');
     expect(probed.sort()).toEqual(['https://hivemem.example.com:18790/health/live', 'https://models.example.com:4020/health/live', 'https://skills.example.com:4030/health/live']);
     // New Agent, skill-install and HiveMem enrollment default to what the Registry resolved.
     vi.stubEnv('MAGNUS_ARDENT_HIVESKILLS_URL', '');
@@ -68,7 +70,9 @@ describe('dependency discovery', () => {
     expect(discoveredEndpoint('hiveskills', env)).toBe('https://skills.example.com:4030/');
     expect(ardentHiveSkillsUrl(env)).toBe('https://skills.example.com:4030/');
     expect(emberpathUrl()).toBe('https://models.example.com:4020/v1');
-    expect(ardentHiveMemSettings(env)?.apiUrl).toBe('https://hivemem.example.com:18790/');
+    expect(discoveredEndpoint('hivemem', env)).toBeNull();
+    expect(() => ardentHiveMemSettings(env)).toThrow('MAGNUS_ARDENT_HIVEMEM_URL is set together with');
+    expect(ardentHiveMemSettings({ ...env, MAGNUS_ARDENT_HIVEMEM_URL: 'https://memory.example.com' })?.apiUrl).toBe('https://memory.example.com/');
     vi.unstubAllEnvs();
   });
 
@@ -98,11 +102,18 @@ describe('dependency discovery', () => {
     expect(discoveredEndpoint('emberpath', {})).toBe('https://models.example.com:4020/v1');
   });
 
-  it('awaits Magnus\'s own HiveMem credential for a discovered HiveMem, and never enrols by itself', async () => {
+  it('checks Magnus\'s own HiveMem credential for an explicit HiveMem', async () => {
+    setup({ MAGNUS_ARDENT_HIVEMEM_URL: 'https://memory.example.com' }, { registry: registry() });
+    expect((await byName())['hivemem']).toMatchObject({ status: 'awaiting_configuration', source: 'override', reason: expect.stringContaining('MAGNUS_ARDENT_HIVEMEM_CLIENT_ID') });
+    setup({ MAGNUS_ARDENT_HIVEMEM_URL: 'https://memory.example.com', ...HIVEMEM_CLIENT }, { registry: registry() });
+    expect((await byName())['hivemem']).toMatchObject({ status: 'usable', source: 'override', endpoint: 'https://memory.example.com/' });
+  });
+
+  it('never makes a discovered HiveMem an enrollment endpoint', async () => {
     setup({}, { registry: registry() });
     const report = await byName();
     expect(report['hivemem']).toMatchObject({ status: 'awaiting_configuration', source: 'registry', endpoint: 'https://hivemem.example.com:18790/' });
-    expect(report['hivemem']!.reason).toContain('MAGNUS_ARDENT_HIVEMEM_CLIENT_ID');
+    expect(report['hivemem']!.reason).toContain('set MAGNUS_ARDENT_HIVEMEM_URL');
     // Without its own credential HiveMem enrollment stays off, whatever the Registry lists.
     expect(ardentHiveMemSettings({})).toBeNull();
   });
