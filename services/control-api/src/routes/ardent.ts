@@ -165,7 +165,10 @@ ardentRouter.get('/profiles', async c => {
     nodeId: installation.nodeId, nodeName: installation.nodeName, hostname: installation.hostname,
     installationVersion: installation.version, reachable: installation.reachable }))) });
 });
-const cursor = (value: string | undefined, label: string) => {
+const cursor = (raw: string | undefined, label: string) => {
+  // An empty value is no cursor: a proxy that forwards Last-Event-ID unconditionally sends one when the
+  // client had none, and that must start the stream from the beginning rather than be refused.
+  const value = raw?.trim() === '' ? undefined : raw;
   if (value !== undefined && !/^\d{1,15}$/.test(value)) throw new HttpError(400, 'VALIDATION_ERROR', `Invalid ${label}`);
   return value;
 };

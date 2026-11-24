@@ -5,6 +5,12 @@ All notable changes to this project are documented in this file. The format is b
 [Semantic Versioning](https://semver.org/).
 
 
+## [3.3.2] - 2026-11-24
+
+### Added
+
+- 
+
 ## [3.3.1] - 2026-11-24
 
 ### Added
@@ -12,6 +18,16 @@ All notable changes to this project are documented in this file. The format is b
 - 
 
 ## [Unreleased]
+
+## [3.3.2] - 2026-11-24
+
+### Fixed
+
+- **An Ardent task stream opened through a Hive console no longer fails with 400.** The console's
+  ingress forwards `Last-Event-ID` on every Magnus request, empty when the client sent none, and the
+  task stream relay refused the empty value as an invalid cursor. An empty or blank `Last-Event-ID`
+  (or `after`) now means no cursor, so the stream starts from the beginning; a malformed one is still
+  refused. No migrations and no settings change.
 
 ## [3.3.1] - 2026-11-24
 

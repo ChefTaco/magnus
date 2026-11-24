@@ -1,0 +1,9 @@
+{
+  "summary": "Ardent task stream relay: an empty Last-Event-ID is treated as no cursor instead of being refused with 400, so a stream opened through a proxy that forwards the header unconditionally (a Hive console) starts from the beginning. A malformed cursor is still refused. No migrations and no settings change.",
+  "breaking": false,
+  "minUpgradeFrom": "2.10.2",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}
