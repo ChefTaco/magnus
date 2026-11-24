@@ -37,8 +37,81 @@ export const ArdentProfileSummarySchema = z.object({
    * when Magnus manages none. Absent from servers older than credential renewal.
    */
   hivemem: ArdentHiveMemCredentialStatusSchema.nullable().optional(),
+  /**
+   * The Ardent version this profile runs: its own status when it is running, else the installed package.
+   * Null when neither is known. Absent from node agents older than studio level 4.
+   */
+  version: z.string().nullable().optional(),
+  /**
+   * What this profile offers through Magnus (ardentProfileCapabilities, capped by the node agent): recovery
+   * and lineage 1 on Ardent 3.2.0 or later, artifact_transfer 2 when the profile serves transfer v2.
+   * Absent from node agents older than studio level 4.
+   */
+  capabilities: z.object({ recovery: z.number().int().min(0), lineage: z.number().int().min(0), artifact_transfer: z.number().int().min(0) })
+    .catchall(z.number().int().min(0)).optional(),
 });
 export type ArdentProfileSummary = z.infer<typeof ArdentProfileSummarySchema>;
+
+/** The profile environment key naming the instance in a profile's execution references (Ardent 3.2.0). */
+export const ARDENT_INSTANCE_REF_ENV = 'ARDENT_INSTANCE_REF';
+/** What Ardent accepts in ARDENT_INSTANCE_REF; any other value stops the runtime, so Magnus never writes one. */
+export const ARDENT_INSTANCE_REF_PATTERN = /^[A-Za-z0-9._-]{1,96}$/u;
+/** `<node id>.<profile>`, the instance Magnus gives a managed profile, or null when Ardent would not accept it. */
+export function ardentInstanceRef(nodeId: string, profile: string): string | null {
+  const value = `${nodeId}.${profile}`;
+  return nodeId.length > 0 && profile.length > 0 && ARDENT_INSTANCE_REF_PATTERN.test(value) ? value : null;
+}
+
+/** The per-profile capabilities a route or action needs, and the capability name Ardent and the Registry use (C5). */
+export const ARDENT_RUNTIME_GATES = {
+  recovery: { level: 1, capability: 'ardent.recovery.v1' },
+  lineage: { level: 1, capability: 'ardent.lineage.v1' },
+  artifact_transfer: { level: 2, capability: 'artifact-transfer.v2' },
+} as const;
+export type ArdentRuntimeGate = keyof typeof ARDENT_RUNTIME_GATES;
+/** The Ardent release that added recovery, lineage, execution context and artifact transfer v2. */
+export const ARDENT_RUNTIME_CONTRACTS_VERSION = '3.2.0';
+export type ArdentProfileCapabilities = { recovery: number; lineage: number; artifact_transfer: number };
+
+const releaseVersion = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/u;
+/** Whether `version` is `minimum` or later. A version that is not X.Y.Z (or unknown) is not. */
+export function ardentVersionAtLeast(version: string | null | undefined, minimum: string): boolean {
+  const have = releaseVersion.exec(version ?? '');
+  const need = releaseVersion.exec(minimum);
+  if (!have || !need) return false;
+  for (let index = 1; index <= 3; index++) {
+    const difference = Number(have[index]) - Number(need[index]);
+    if (difference) return difference > 0;
+  }
+  // A prerelease of the minimum is older than the release.
+  return !/-/u.test(version ?? '');
+}
+
+/**
+ * The capabilities of one Ardent profile, from its GET /api/v1/status when it answered (version, the
+ * `recovery` counts and `capabilities.artifact_transfer`) or else from the installed package version.
+ * Recovery and lineage came together with the `recovery` counts in Ardent 3.2.0; artifact transfer
+ * version 1 is what every Ardent serves. `agent` caps each level at what the node agent relays.
+ */
+export function ardentProfileCapabilities(status: unknown, installedVersion: string | null | undefined,
+  agent: Partial<Record<string, number>> = {}): { version: string | null; capabilities: ArdentProfileCapabilities } {
+  const record = status && typeof status === 'object' && !Array.isArray(status) ? status as Record<string, unknown> : undefined;
+  const reported = typeof record?.['version'] === 'string' && record['version'].length <= 64 ? record['version'] : undefined;
+  const version = reported ?? installedVersion ?? null;
+  const current = ardentVersionAtLeast(version, ARDENT_RUNTIME_CONTRACTS_VERSION);
+  const counts = record ? record['recovery'] !== undefined && record['recovery'] !== null : true;
+  const declared = record?.['capabilities'] && typeof record['capabilities'] === 'object'
+    ? (record['capabilities'] as Record<string, unknown>)['artifact_transfer'] : undefined;
+  const transfer = record
+    ? typeof declared === 'number' && Number.isSafeInteger(declared) && declared > 0 ? declared : 1
+    : current ? 2 : 1;
+  const cap = (name: keyof ArdentProfileCapabilities, level: number) => {
+    const limit = agent[name];
+    return typeof limit === 'number' ? Math.max(0, Math.min(level, limit)) : level;
+  };
+  const runtime = current && counts ? 1 : 0;
+  return { version, capabilities: { recovery: cap('recovery', runtime), lineage: cap('lineage', runtime), artifact_transfer: cap('artifact_transfer', transfer) } };
+}
 
 /** One retained, reviewed extension package of an Ardent installation. */
 export const ArdentRetainedExtensionSchema = z.object({

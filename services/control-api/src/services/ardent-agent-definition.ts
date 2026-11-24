@@ -15,7 +15,7 @@ import YAML from 'yaml';
 import { HTTPError } from 'ky';
 import {
   AGENT_DEFINITION_EXCLUDES, AGENT_DEFINITION_SCHEMA, agentDefinitionConfigSchema, agentDefinitionInstallRequestSchema,
-  agentDefinitionSecretBindingKey, agentDefinitionValidateRequestSchema, credentialLikePaths, sealAgentDefinition, verifyAgentDefinition,
+  agentDefinitionSecretBindingKey, agentDefinitionValidateRequestSchema, ardentProfileCapabilities, credentialLikePaths, sealAgentDefinition, verifyAgentDefinition,
   type AgentDefinition, type AgentDefinitionBindings, type AgentDefinitionBody, type AgentDefinitionPreflight, type AgentDefinitionProblem,
   type ArdentFleetInstallation, type ArdentSkillInstall, type ArdentSkillReceipts,
 } from '@hivemagnus/magnus-contracts';
@@ -260,7 +260,10 @@ async function preflight(definition: AgentDefinition, bindings: AgentDefinitionB
   for (const capability of wanted.required_capabilities) {
     const runtime = ARDENT_RUNTIME_CAPABILITY_LEVELS[capability];
     if (runtime) {
-      const level = (installation.capabilities as Record<string, number | undefined> | undefined)?.[runtime[0]] ?? 0;
+      // The node agent must relay it and the installed Ardent must serve it: a new profile runs that package.
+      const relayed = (installation.capabilities as Record<string, number | undefined> | undefined)?.[runtime[0]] ?? 0;
+      const served = (ardentProfileCapabilities(undefined, installation.version).capabilities as Record<string, number>)[runtime[0]] ?? 0;
+      const level = Math.min(relayed, served);
       if (level < runtime[1]) problem('CAPABILITY_MISSING', `${installation.nodeName} does not report ${capability} (Ardent ${installation.version ?? 'unknown'})`);
       continue;
     }

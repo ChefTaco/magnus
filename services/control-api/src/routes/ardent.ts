@@ -6,11 +6,15 @@ import { HttpError } from '../middleware/error-handler.js';
 import { logAuditEvent } from '../services/audit-service.js';
 import { actingOathweaveLink, watchOathweaveStream } from '../middleware/oathweave.js';
 import { getArdentAgentOperation, resumeArdentAgentOperation, startArdentAgentDeploy, startArdentHiveMemEnable, type ArdentOperationActor } from '../services/ardent-agent-deploy.js';
-import { getArdentContextAdoption, getArdentContextRelease, getArdentInstallation, getArdentProfileResource, listArdentInstallations, performArdentAction, requireArdentStudioAgent, streamArdentProfileResource } from '../services/ardent-service.js';
+import { ardentAcceptsExecution, ardentStudioAgentAt, getArdentContextAdoption, getArdentContextRelease, getArdentInstallation, getArdentProfileResource, listArdentInstallations, performArdentAction, requireArdentProfileCapability, requireArdentStudioAgent, streamArdentProfileResource } from '../services/ardent-service.js';
 import { AgentResponseError, managedCommandOf } from '../sdk/node-api-client.js';
 import { ardentOwnerBlock, reconcileArdentCommandOwner } from '../services/ardent-command-owner.js';
 import { HTTPError } from 'ky';
 import { z } from 'zod';
+import { executionHeaders, parseExecutionContext, readExecutionHeader, type ExecutionContext } from '@hivemagnus/hive-common/execution';
+import { traceHeaders } from '../middleware/tracing.js';
+import { ARDENT_CONTENT_HEADER_PATTERNS, ARDENT_IF_RANGE_PATTERN, ARDENT_RANGE_PATTERN, ardentArtifactImportSchema, ardentMediaType, ardentTaskRecoveryDecisionSchema,
+  ardentTraceHeaders, type ArdentRuntimeGate } from '@hivemagnus/magnus-contracts';
 import { ARDENT_STUDIO_CAPABILITY, ArdentCommandReconcileSchema, ArdentContextAdoptionInputSchema, ardentConfigEditSchema, ardentConfigFileSchema, ardentDevelopmentNoteSchema, ardentIdentityEditSchema, ardentMissionSubmitSchema, ardentPreviewSubmitSchema, ardentSessionOpenSchema, ardentSkillEditSchema, ardentSkillInstallSchema } from '@hivemagnus/magnus-contracts';
 import { classifyServiceConfigEdit } from '../services/ardent-config-allowlist.js';
 import { fetchArdentSkillRelease } from '../services/ardent-hiveskills.js';
@@ -66,8 +70,8 @@ export function ardentActor(c: Context<AppVariables>, requireAdmin: boolean, req
  * Profile reads a service identity may make. Configuration needs an acting ADMIN, as it does for a
  * person; providers, channels, peers and histories stay with ADMIN people.
  */
-const SERVICE_READ = /^(?:status|profile|config|skills|memory\/status|sessions|sessions\/[0-9a-f-]{36}\/messages|tasks|tasks\/[0-9a-f-]{36}(?:\/events|\/artifacts)?|artifacts\/[a-f0-9]{64}\/manifest|development|identity\/(?:soul|identity))$/;
-const SERVICE_ACTIONS = new Set(['session-open', 'task-submit', 'task-cancel', 'mission-submit', 'task-pause', 'task-resume', 'preview-submit', 'development-note', 'identity-save', 'skill-set', 'config-save', 'skill-install']);
+const SERVICE_READ = /^(?:status|profile|config|skills|memory\/status|sessions|sessions\/[0-9a-f-]{36}\/messages|tasks|tasks\/[0-9a-f-]{36}(?:\/events|\/artifacts|\/recovery|\/lineage)?|artifacts\/[a-f0-9]{64}\/(?:manifest|manifest\/v2|renditions)|artifacts\/imports(?:\/[a-f0-9]{32})?|development|identity\/(?:soul|identity))$/;
+const SERVICE_ACTIONS = new Set(['session-open', 'task-submit', 'task-cancel', 'mission-submit', 'task-pause', 'task-resume', 'preview-submit', 'development-note', 'identity-save', 'skill-set', 'config-save', 'skill-install', 'task-recovery', 'artifact-import']);
 /** Service actions that must name the person they are for. */
 const SERVICE_SUBJECT_ACTIONS = new Set(['preview-submit', 'development-note']);
 /** Service actions that change an agent, which need an acting ADMIN like New Agent does. */
@@ -77,6 +81,30 @@ const REVISION_ACTIONS = new Set(['identity-save', 'skill-set', 'config-save']);
 /** Actions and reads that Ardent 2.2.0 added, which need a node agent at studio level 2. */
 const MISSION_ACTIONS = new Set(['mission-submit', 'task-pause', 'task-resume', 'preview-submit', 'development-note']);
 const MISSION_READ = /^(?:tasks\/[0-9a-f-]{36}\/artifacts|artifacts\/[a-f0-9]{64}\/manifest|development)$/;
+/** Reads and actions that Ardent 3.2.0 added, each with the profile capability it needs (ARDENT_RUNTIME_GATES). */
+const RUNTIME_READS: ReadonlyArray<[RegExp, ArdentRuntimeGate]> = [
+  [/^tasks\/[0-9a-f-]{36}\/recovery$/, 'recovery'],
+  [/^tasks\/[0-9a-f-]{36}\/lineage$/, 'lineage'],
+  [/^(?:artifacts\/[a-f0-9]{64}\/(?:manifest\/v2|renditions)|artifacts\/imports(?:\/[a-f0-9]{32})?)$/, 'artifact_transfer'],
+];
+const RUNTIME_ACTIONS: Readonly<Record<string, ArdentRuntimeGate>> = { 'task-recovery': 'recovery', 'artifact-import': 'artifact_transfer' };
+/** Actions whose Ardent body takes an execution context. */
+const EXECUTION_ACTIONS = new Set(['task-submit', 'mission-submit', 'preview-submit']);
+
+/**
+ * The request attribution Magnus passes on to the profile: this request's ID, the W3C trace with Magnus's span
+ * as parent, and the caller's execution context (re-encoded when valid, dropped when not).
+ */
+function attribution(c: Context<AppVariables>, execution?: ExecutionContext): Record<string, string> {
+  const requestId = (c as unknown as { get(key: string): unknown }).get('requestId');
+  const traceparent = traceHeaders(c as unknown as Context)['traceparent'];
+  const context = execution ?? readExecutionHeader(name => c.req.header(name));
+  return ardentTraceHeaders(name => name === 'x-request-id' ? (typeof requestId === 'string' ? requestId : c.req.header(name))
+    : name === 'traceparent' ? traceparent ?? c.req.header(name) : executionHeaders(context)['x-hive-execution']);
+}
+/** Headers when there are any, so a read without attribution calls the node exactly as before. */
+const withHeaders = (headers: Record<string, string>) => Object.keys(headers).length ? headers : undefined;
+
 /** Query parameters a profile read passes on, each with the values it may hold. */
 const READ_QUERY: Record<string, RegExp> = {
   after: /^[A-Za-z0-9_-]{1,400}$/, limit: /^\d{1,3}$/, kind: /^[a-z][a-z0-9_]{0,63}$/, context: /^(?:direct|mission|preview)$/,
@@ -204,7 +232,9 @@ ardentRouter.get('/installations/:nodeId/profiles/:name/tasks/:taskId/stream', a
     'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no',
   } });
 });
-ardentRouter.get('/installations/:nodeId/profiles/:name/artifacts/:artifactId', async c => {
+ardentRouter.get('/installations/:nodeId/profiles/:name/artifacts/:artifactId', async (c, next) => {
+  // The import list is a profile resource (below), not an artifact.
+  if (c.req.param('artifactId') === 'imports') { await next(); return; }
   const nodeId = id(c.req.param('nodeId'));
   const profile = id(c.req.param('name'));
   const artifactId = c.req.param('artifactId');
@@ -214,6 +244,58 @@ ardentRouter.get('/installations/:nodeId/profiles/:name/artifacts/:artifactId', 
   return new Response(relay(upstream.body!, c.req.header('Authorization')), { status: 200, headers: {
     'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="ardent-${artifactId}.bin"`,
     'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'X-Accel-Buffering': 'no',
+    ...(length && /^\d{1,15}$/.test(length) ? { 'Content-Length': length } : {}),
+  } });
+});
+/**
+ * Artifact transfer v2 content: the real media type and name, and Range, If-Range, 206, 416, ETag and digest
+ * headers passed through, streamed. The .bin route above stays as it was for older clients.
+ */
+ardentRouter.get('/installations/:nodeId/profiles/:name/artifacts/:artifactId/content', async c => {
+  const nodeId = id(c.req.param('nodeId'));
+  const profile = id(c.req.param('name'));
+  const artifactId = c.req.param('artifactId');
+  if (!/^[a-f0-9]{64}$/.test(artifactId)) throw new HttpError(400, 'VALIDATION_ERROR', 'Invalid Ardent artifact ID');
+  const range = c.req.header('Range');
+  const ifRange = c.req.header('If-Range');
+  if ((range !== undefined && !ARDENT_RANGE_PATTERN.test(range)) || (ifRange !== undefined && !ARDENT_IF_RANGE_PATTERN.test(ifRange)))
+    throw new HttpError(400, 'VALIDATION_ERROR', 'Range must be one byte range and If-Range the artifact ETag or an HTTP date');
+  await requireArdentProfileCapability(nodeId, profile, 'artifact_transfer');
+  let upstream: Response;
+  try {
+    upstream = await streamArdentProfileResource(nodeId, profile, `artifacts/${artifactId}/content`, { signal: c.req.raw.signal,
+      ...(range !== undefined ? { range } : {}), ...(ifRange !== undefined ? { ifRange } : {}), headers: attribution(c) });
+  } catch (error: unknown) {
+    if (error instanceof Error && error.message === 'Managed node not found') throw new HttpError(404, 'NOT_FOUND', 'Managed node not found');
+    throw new HttpError(503, 'DEPENDENCY_UNAVAILABLE', error instanceof Error ? error.message.slice(0, 300) : 'Ardent node unavailable');
+  }
+  const passed = (names: string[]) => {
+    const out: Record<string, string> = {};
+    for (const name of names) {
+      const value = upstream.headers.get(name);
+      if (value !== null && ARDENT_CONTENT_HEADER_PATTERNS[name]!.test(value)) out[name] = value;
+    }
+    return out;
+  };
+  if (upstream.status === 416) {
+    await upstream.body?.cancel().catch(() => undefined);
+    return c.json({ success: false, error: { code: 'RANGE_NOT_SATISFIABLE', message: 'The requested range is outside the artifact' } }, 416,
+      passed(['content-range', 'accept-ranges', 'etag']));
+  }
+  if ((upstream.status !== 200 && upstream.status !== 206) || !upstream.body) {
+    await upstream.body?.cancel().catch(() => undefined);
+    if (upstream.status === 404) throw new HttpError(404, 'NOT_FOUND', 'Ardent artifact not found');
+    if (upstream.status === 400) throw new HttpError(400, 'VALIDATION_ERROR', 'Ardent rejected the content request');
+    throw new HttpError(503, 'DEPENDENCY_UNAVAILABLE', `Ardent content unavailable (agent HTTP ${upstream.status})`);
+  }
+  const length = upstream.headers.get('content-length');
+  return new Response(relay(upstream.body, c.req.header('Authorization')), { status: upstream.status, headers: {
+    'Content-Type': ardentMediaType(upstream.headers.get('content-type')),
+    'content-disposition': `attachment; filename="ardent-${artifactId}"`,
+    ...passed(['content-range', 'accept-ranges', 'etag', 'repr-digest', 'x-content-sha256', 'content-disposition']),
+    'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'X-Accel-Buffering': 'no',
+    // The bytes are the agent's output: never let a browser run them as a page of this origin.
+    'Content-Security-Policy': "default-src 'none'; sandbox",
     ...(length && /^\d{1,15}$/.test(length) ? { 'Content-Length': length } : {}),
   } });
 });
@@ -250,7 +332,7 @@ ardentRouter.get('/installations/:nodeId/profiles/:name/*', async c => {
   const name = id(c.req.param('name'));
   const marker = `/installations/${nodeId}/profiles/${name}/`;
   const resource = c.req.path.split(marker)[1] ?? '';
-  if (!/^(?:openapi|status|profile|config|config\/schema|providers|channels|peers|peers\/config|memory\/status|skills|sessions|tasks|tasks\/[0-9a-f-]{36}(?:\/events|\/artifacts)?|artifacts\/[a-f0-9]{64}\/manifest|development|sessions\/[0-9a-f-]{36}\/messages|identity\/(?:soul|identity)(?:\/history)?)$/.test(resource))
+  if (!/^(?:openapi|status|profile|config|config\/schema|providers|channels|peers|peers\/config|memory\/status|skills|sessions|tasks|tasks\/[0-9a-f-]{36}(?:\/events|\/artifacts|\/recovery|\/lineage)?|artifacts\/[a-f0-9]{64}\/(?:manifest|manifest\/v2|renditions)|artifacts\/imports(?:\/[a-f0-9]{32})?|development|sessions\/[0-9a-f-]{36}\/messages|identity\/(?:soul|identity)(?:\/history)?)$/.test(resource))
     throw new HttpError(404, 'NOT_FOUND', 'Ardent resource unavailable');
   const service = getUser(c).service !== undefined;
   if (service && !SERVICE_READ.test(resource)) throw new HttpError(403, 'FORBIDDEN', 'This Ardent resource is not available to a service identity');
@@ -265,9 +347,12 @@ ardentRouter.get('/installations/:nodeId/profiles/:name/*', async c => {
   }
   // An older agent would drop the session context and list direct sessions instead.
   if (MISSION_READ.test(resource) || query['context'] !== undefined) await requireArdentStudioAgent(nodeId, ARDENT_STUDIO_CAPABILITY.missions);
+  const gate = RUNTIME_READS.find(([pattern]) => pattern.test(resource))?.[1];
+  if (gate) await requireArdentProfileCapability(nodeId, name, gate);
+  const headers = withHeaders(attribution(c));
   let data: unknown;
   try {
-    data = await getArdentProfileResource(nodeId, name, resource, query);
+    data = headers ? await getArdentProfileResource(nodeId, name, resource, query, headers) : await getArdentProfileResource(nodeId, name, resource, query);
   } catch (error: unknown) {
     const status = refusedStatus(error);
     if (status === 404) throw new HttpError(404, 'NOT_FOUND', 'Ardent resource not found');
@@ -296,6 +381,15 @@ function actionAuditDetails(action: string, body: unknown): Record<string, unkno
   }
   if (action === 'development-note' && body && typeof body === 'object' && 'kind' in body && typeof body.kind === 'string')
     return { kind: body.kind.slice(0, 64) };
+  // A recovery decision is audited by its action and call, never by the result or note it carries.
+  if (action === 'task-recovery') {
+    const decision = ardentTaskRecoveryDecisionSchema.safeParse(body);
+    return decision.success ? { decision: decision.data.action, callId: decision.data.call_id ?? null, deadlineSeconds: decision.data.deadline_seconds ?? null } : {};
+  }
+  if (action === 'artifact-import') {
+    const request = ardentArtifactImportSchema.safeParse(body);
+    return request.success ? { peerId: request.data.peer_id, a2aTaskId: request.data.a2a_task_id, artifactId: request.data.artifact_id, taskId: request.data.task_id ?? null } : {};
+  }
   return {};
 }
 
@@ -304,10 +398,10 @@ const ACTION_BODIES: Partial<Record<string, z.ZodType>> = {
   'session-open': ardentSessionOpenSchema, 'mission-submit': ardentMissionSubmitSchema,
   'preview-submit': ardentPreviewSubmitSchema, 'development-note': ardentDevelopmentNoteSchema,
   'identity-save': ardentIdentityEditSchema, 'skill-set': ardentSkillEditSchema, 'config-save': ardentConfigEditSchema,
-  'skill-install': ardentSkillInstallSchema,
+  'skill-install': ardentSkillInstallSchema, 'task-recovery': ardentTaskRecoveryDecisionSchema, 'artifact-import': ardentArtifactImportSchema,
 };
 /** Targets checked here; the node agent checks them again. */
-const ACTION_TARGETS: Partial<Record<string, RegExp>> = { 'identity-save': /^(?:soul|identity)$/, 'skill-set': /^[A-Za-z0-9_-]{1,100}$/ };
+const ACTION_TARGETS: Partial<Record<string, RegExp>> = { 'identity-save': /^(?:soul|identity)$/, 'skill-set': /^[A-Za-z0-9_-]{1,100}$/, 'task-recovery': /^[0-9a-f-]{36}$/ };
 
 /**
  * A service's config-save may change only ARDENT_SERVICE_CONFIG_PATHS. Compare the edit with the
@@ -332,15 +426,17 @@ async function checkServiceConfigEdit(nodeId: string, profile: string, body: unk
 }
 
 const Action = z.object({
-  action: z.enum(['command-reconcile', 'profile-create', 'session-open', 'config-validate', 'config-save', 'peer-validate', 'peer-save', 'identity-save', 'identity-restore', 'provider-test', 'channel-test', 'peer-test', 'memory-search', 'task-submit', 'task-cancel', 'mission-submit', 'task-pause', 'task-resume', 'preview-submit', 'development-note', 'skill-set', 'service-start', 'service-stop', 'service-restart', 'package-install', 'context-stage', 'context-adopt', 'context-rollback', 'skill-install']),
+  action: z.enum(['command-reconcile', 'profile-create', 'session-open', 'config-validate', 'config-save', 'peer-validate', 'peer-save', 'identity-save', 'identity-restore', 'provider-test', 'channel-test', 'peer-test', 'memory-search', 'task-submit', 'task-cancel', 'mission-submit', 'task-pause', 'task-resume', 'preview-submit', 'development-note', 'skill-set', 'service-start', 'service-stop', 'service-restart', 'package-install', 'context-stage', 'context-adopt', 'context-rollback', 'skill-install', 'task-recovery', 'artifact-import']),
   target: z.string().min(1).max(128).optional(), body: z.unknown().optional(),
+  /** An execution context v1 for task-submit, mission-submit and preview-submit. An invalid one is dropped, never refused. */
+  execution: z.unknown().optional(),
 }).strict();
 ardentRouter.post('/installations/:nodeId/profiles/:name/action', async c => {
   const nodeId = id(c.req.param('nodeId'));
   const profile = id(c.req.param('name'));
   const parsed = Action.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) throw new HttpError(400, 'VALIDATION_ERROR', 'Invalid Ardent action');
-  const { action, target, body } = parsed.data;
+  const { action, target, body, execution: suppliedExecution } = parsed.data;
   const service = getUser(c).service !== undefined;
   if (service && !SERVICE_ACTIONS.has(action)) throw new HttpError(403, 'FORBIDDEN', 'A service identity may only open sessions, run tasks, missions and previews, record development notes, and change identity, skills and model settings');
   if (action === 'command-reconcile') {
@@ -368,6 +464,20 @@ ardentRouter.post('/installations/:nodeId/profiles/:name/action', async c => {
   else if (action === 'session-open' || (action === 'task-submit' && body && typeof body === 'object' && 'session_id' in body))
     await requireArdentStudioAgent(nodeId);
   if (action === 'skill-install' && target !== undefined) throw new HttpError(400, 'VALIDATION_ERROR', 'skill-install names the skill in its body, not as a target');
+  if (action === 'artifact-import' && target !== undefined) throw new HttpError(400, 'VALIDATION_ERROR', 'artifact-import names the artifact in its body, not as a target');
+  const runtimeGate = RUNTIME_ACTIONS[action];
+  if (runtimeGate) await requireArdentProfileCapability(nodeId, profile, runtimeGate);
+  // Attribution for the submit and runtime actions, from a studio 4 agent on: the execution context only to a
+  // profile with lineage (older ones refuse an unknown body field), the request ID and trace to any.
+  let extras: { execution?: ExecutionContext; trace?: { request_id?: string; traceparent?: string } } | undefined;
+  if (EXECUTION_ACTIONS.has(action) || runtimeGate) {
+    const context = EXECUTION_ACTIONS.has(action) ? parseExecutionContext(suppliedExecution) ?? readExecutionHeader(name => c.req.header(name)) : undefined;
+    const forwarded = attribution(c, context);
+    const trace = { ...(forwarded['x-request-id'] ? { request_id: forwarded['x-request-id'] } : {}), ...(forwarded['traceparent'] ? { traceparent: forwarded['traceparent'] } : {}) };
+    const execution = context && await ardentAcceptsExecution(nodeId, profile) ? context : undefined;
+    if ((execution || Object.keys(trace).length) && (runtimeGate || await ardentStudioAgentAt(nodeId, ARDENT_STUDIO_CAPABILITY.runtimeContracts)))
+      extras = { ...(execution ? { execution } : {}), ...(Object.keys(trace).length ? { trace } : {}) };
+  }
   // A skill installation sends the node the release Magnus fetched and checked, never anything the caller sent.
   let nodeBody = body;
   let installDetails: Record<string, unknown> = {};
@@ -389,18 +499,21 @@ ardentRouter.post('/installations/:nodeId/profiles/:name/action', async c => {
     const { pinned: _pinned, ...forNode } = request;
     nodeBody = { ...forNode, sha256: release.sha256, archive_base64: release.archiveBase64 };
   }
+  // The node writes ARDENT_INSTANCE_REF=<node>.<profile> into each profile after the install; agents before studio 4 ignore it.
+  if (action === 'package-install') nodeBody = { node_id: nodeId };
   try {
-    const result = await performArdentAction(nodeId, profile, action, target, nodeBody);
+    const result = extras ? await performArdentAction(nodeId, profile, action, target, nodeBody, extras) : await performArdentAction(nodeId, profile, action, target, nodeBody);
     await logAuditEvent({ action: `ardent.${action}`, actorId: actor.actorId,
       targetType: 'ardent-profile', targetId: `${nodeId}:${profile}`, details: {
         target: target ?? null, ...actor.details, ...actionAuditDetails(action, body), ...installDetails, ...(configPaths ? { configPaths } : {}),
+        ...(extras?.execution ? { executionRoot: extras.execution.root } : {}),
         ...(['context-stage', 'context-adopt', 'context-rollback'].includes(action) ? ArdentContextAdoptionInputSchema.parse(body) : {})
       } });
     return c.json({ success: true, data: result });
   } catch (error: unknown) {
     // A held command owner, or this action's own unknown outcome, blocks the node: say which and what to do.
     const blocked = await ardentOwnerBlock(nodeId, error).catch(() => undefined);
-    const refusal = blocked ?? (MISSION_ACTIONS.has(action) ? ardentRefusal(error) : REVISION_ACTIONS.has(action) ? revisionRefusal(error)
+    const refusal = blocked ?? (MISSION_ACTIONS.has(action) || runtimeGate ? ardentRefusal(error) : REVISION_ACTIONS.has(action) ? revisionRefusal(error)
       : action === 'skill-install' ? skillInstallRefusal(error) : undefined);
     const failure = refusal ?? new HttpError(503, 'DEPENDENCY_UNAVAILABLE', actionFailure(error));
     try {

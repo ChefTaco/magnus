@@ -10,7 +10,8 @@ vi.mock('../utils/env.js', async (original) => ({
   IAM_CORE_URL: '',
 }));
 vi.mock('../middleware/user-status.js', () => ({ getCurrentUserStatus: vi.fn(async () => ({ active: true, role: 'ADMIN' })), invalidateUserStatus: vi.fn() }));
-const mocks = vi.hoisted(() => ({ definitionExport: vi.fn(), definitionValidate: vi.fn(), definitionInstall: vi.fn(), dependencies: vi.fn(), deploy: vi.fn(), hivemem: vi.fn(), resume: vi.fn(), operation: vi.fn(), action: vi.fn(), read: vi.fn(), audit: vi.fn(), list: vi.fn(), release: vi.fn(), studio: vi.fn() }));
+const mocks = vi.hoisted(() => ({ definitionExport: vi.fn(), definitionValidate: vi.fn(), definitionInstall: vi.fn(), dependencies: vi.fn(), deploy: vi.fn(), hivemem: vi.fn(), resume: vi.fn(), operation: vi.fn(), action: vi.fn(), read: vi.fn(), audit: vi.fn(), list: vi.fn(), release: vi.fn(), studio: vi.fn(),
+  capability: vi.fn(), studioAt: vi.fn(), execution: vi.fn(), stream: vi.fn() }));
 vi.mock('../services/ardent-agent-deploy.js', () => ({
   startArdentAgentDeploy: mocks.deploy, startArdentHiveMemEnable: mocks.hivemem, resumeArdentAgentOperation: mocks.resume, getArdentAgentOperation: mocks.operation,
 }));
@@ -20,7 +21,8 @@ vi.mock('../services/ardent-agent-definition.js', () => ({
 vi.mock('../services/discovery.js', () => ({ dependencyReport: mocks.dependencies, discoveredEndpoint: () => null }));
 vi.mock('../services/ardent-service.js', () => ({
   performArdentAction: mocks.action, getArdentProfileResource: mocks.read, listArdentInstallations: mocks.list, requireArdentStudioAgent: mocks.studio,
-  streamArdentProfileResource: vi.fn(), getArdentContextAdoption: vi.fn(), getArdentContextRelease: vi.fn(), getArdentInstallation: vi.fn(), getArdentSkillReceipts: vi.fn(),
+  requireArdentProfileCapability: mocks.capability, ardentStudioAgentAt: mocks.studioAt, ardentAcceptsExecution: mocks.execution,
+  streamArdentProfileResource: mocks.stream, getArdentContextAdoption: vi.fn(), getArdentContextRelease: vi.fn(), getArdentInstallation: vi.fn(), getArdentSkillReceipts: vi.fn(),
 }));
 vi.mock('../services/audit-service.js', () => ({ logAuditEvent: mocks.audit }));
 vi.mock('../services/ardent-hiveskills.js', () => ({ fetchArdentSkillRelease: mocks.release, checkArdentSkillRelease: vi.fn(), ardentHiveSkillsUrl: vi.fn() }));
@@ -348,6 +350,29 @@ describe('linked Ardent service identity', () => {
       expect((await call(token, 'GET', `${profile}/${resource}`)).status, resource).toBe(200);
     expect(mocks.read).toHaveBeenCalledWith('node-1', 'lead', 'development', { kind: 'skill_change' });
     expect(mocks.read).toHaveBeenCalledWith('node-1', 'lead', 'sessions', { context: 'mission' });
+  });
+
+  it('reads recovery, lineage and transfer v2 resources, downloads content and decides recoveries without an acting person', async () => {
+    const token = await serviceToken();
+    const task = '00000000-0000-4000-8000-000000000001';
+    const sha = 'a'.repeat(64);
+    for (const resource of [`tasks/${task}/recovery`, `tasks/${task}/lineage`, `artifacts/${sha}/renditions`, `artifacts/${sha}/manifest/v2`,
+      'artifacts/imports?limit=10', `artifacts/imports/${'b'.repeat(32)}`])
+      expect((await call(token, 'GET', `${profile}/${resource}`)).status, resource).toBe(200);
+    mocks.stream.mockResolvedValue(new Response(new Uint8Array([1, 2, 3]), { headers: { 'Content-Type': 'image/png', 'Content-Length': '3' } }));
+    const content = await call(token, 'GET', `${profile}/artifacts/${sha}/content`);
+    expect(content.status).toBe(200);
+    expect(content.headers.get('content-type')).toBe('image/png');
+    mocks.action.mockResolvedValue({ status: 'resolved' });
+    const decided = await call(token, 'POST', `${profile}/action`, { body: { action: 'task-recovery', target: task, body: { action: 'abandon', note: 'operator check' } } });
+    expect(decided.status).toBe(200);
+    expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ action: 'ardent.task-recovery', actorId: 'service:ardent:ardent-studio',
+      details: expect.objectContaining({ decision: 'abandon', serviceClientId: 'ardent-studio' }) }));
+    mocks.action.mockResolvedValue({ import_id: 'c'.repeat(32) });
+    expect((await call(token, 'POST', `${profile}/action`, { body: { action: 'artifact-import',
+      body: { peer_id: 'peer-1', a2a_task_id: 'remote', artifact_id: 'd'.repeat(32) } } })).status).toBe(200);
+    // History and peers stay with ADMIN people.
+    expect((await call(token, 'GET', `${profile}/identity/soul/history`)).status).toBe(403);
   });
 
   it('runs previews and development notes only for a named, linked person', async () => {

@@ -41,9 +41,34 @@ All notable changes to this project are documented in this file. The format is b
   Discovery never enrolls, installs or enables anything.
 - The node agent reports the reviewed extensions retained beside the Ardent runtime (`extensions` in
   its Ardent inventory) and serves a profile's HiveSkills receipts (`GET /ardent/profiles/:name/skill-receipts`).
+- Ardent 3.2.0 runtime contracts through Magnus (node agent `studio` level 4). New profile reads
+  `tasks/:id/recovery`, `tasks/:id/lineage`, `artifacts/:sha256/renditions`, `artifacts/:sha256/manifest/v2`,
+  `artifacts/imports` and `artifacts/imports/:id`; new actions `task-recovery` (resolve a task held for a
+  decision) and `artifact-import` (pull an artifact from an A2A peer), with the same access as
+  `task-pause`. `GET …/profiles/:name/artifacts/:sha256/content` relays artifact transfer v2 unbuffered with
+  the artifact's media type and name, `Range`/`If-Range`, 206, 416, `ETag`, `Repr-Digest` and
+  `X-Content-SHA256`; the whole artifact stays under `MAGNUS_AGENT_ARDENT_ARTIFACT_MAX_BYTES`. The `.bin`
+  route is unchanged.
+- Each profile in the Ardent inventory reports its Ardent `version` and `capabilities`
+  (`recovery`, `lineage`, `artifact_transfer`), from its own status or else the installed package, and
+  the installation's `capabilities` are `{studio: 4, recovery: 1, lineage: 1, artifact_transfer: 2}`.
+  A profile older than Ardent 3.2.0 answers the new reads and actions with 409 `unsupported_capability`
+  and `error.details` `{capability, required_version, installed_version}`; its other operations are
+  unchanged. `@hivemagnus/magnus-contracts` exports `ardentProfileCapabilities()`,
+  `ARDENT_RUNTIME_GATES` and the new request schemas.
+- `task-submit`, `mission-submit` and `preview-submit` take an optional top-level `execution` (an
+  execution context v1, or the `x-hive-execution` header). Magnus passes it to a profile with
+  `capabilities.lineage` 1, in the body and as `x-hive-execution`, and drops it when it is invalid or the
+  profile is older; it never refuses a request for it. `x-request-id` and `traceparent` reach the profile.
+- New Agent and definition installs write `ARDENT_INSTANCE_REF=<node id>.<profile>` into the new profile's
+  `.env` before it first starts (node agent action `instance-ref-set`), and `package-install` writes it into
+  every profile after an install.
 
 ### Changed
 
+- `@hivemagnus/ardent` 3.2.0 (root and agent pins, agent shrinkwrap) and the regenerated Ardent client
+  types. Release `@hivemagnus/ardent-profile-extensions` 0.2.0 before this Magnus release: a managed
+  upgrade reinstalls retained extensions with strict peers and holds the runtime when a peer differs.
 - `@hivemagnus/hive-common` 0.6.0.
 
 ## [3.2.1] - 2026-11-21

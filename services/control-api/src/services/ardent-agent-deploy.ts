@@ -10,7 +10,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import YAML from 'yaml';
-import { agentPersonaSha256, ARDENT_STUDIO_CAPABILITY, ardentAgentDeployRequestSchema, type ArdentCommandOwner, type ArdentFleetInstallation,
+import { agentPersonaSha256, ARDENT_INSTANCE_REF_ENV, ARDENT_STUDIO_CAPABILITY, ardentInstanceRef, ardentAgentDeployRequestSchema, type ArdentCommandOwner, type ArdentFleetInstallation,
   type ArdentSkillInstall, type ArdentSkillInstallResult, type ArdentSkillReceipts } from '@hivemagnus/magnus-contracts';
 import { getDb } from '../db/index.js';
 import { HttpError } from '../middleware/error-handler.js';
@@ -359,6 +359,23 @@ async function definitionMatches(context: Context): Promise<Record<string, unkno
 }
 class DefinitionMismatch extends Error {}
 
+/**
+ * Write ARDENT_INSTANCE_REF=<node id>.<profile> into the new profile's environment, so its execution references
+ * name this Magnus node. Before the first service start; an agent below studio level 4 cannot, which the receipt notes.
+ */
+async function instanceRefStep(context: Context): Promise<Record<string, unknown>> {
+  const value = ardentInstanceRef(context.row.nodeId, context.row.profile);
+  if (!value) return { instanceRef: null, instanceRefNote: `The node ID and profile name are longer than ${ARDENT_INSTANCE_REF_ENV} allows; the profile keeps local.<profile>` };
+  try { await deps.studio(context.row.nodeId, ARDENT_STUDIO_CAPABILITY.runtimeContracts); }
+  catch (error: unknown) {
+    if (error instanceof HttpError && error.code === 'AGENT_UPGRADE_REQUIRED')
+      return { instanceRef: null, instanceRefNote: `The node agent cannot set ${ARDENT_INSTANCE_REF_ENV}; an Ardent upgrade after an agent upgrade sets it` };
+    throw error;
+  }
+  await deps.action(context.row.nodeId, context.row.profile, 'instance-ref-set', undefined, { instance_ref: value });
+  return { instanceRef: value };
+}
+
 const STEPS: Record<StepName, (context: Context) => Promise<Result>> = {
   'profile-check': async context => {
     const { installation, profile } = await profileOf(context);
@@ -373,11 +390,12 @@ const STEPS: Record<StepName, (context: Context) => Promise<Result>> = {
     const { installation, profile } = await profileOf(context);
     if (profile) {
       // A retried creation whose earlier attempt reached the node: adopt exactly that profile.
-      if (context.row.attempts > 1 && profile.apiPort === request.apiPort) return { skipped: true, receipt: { apiPort: profile.apiPort, adopted: true } };
+      if (context.row.attempts > 1 && profile.apiPort === request.apiPort)
+        return { skipped: true, receipt: { apiPort: profile.apiPort, adopted: true, ...await instanceRefStep(context) } };
       throw new Error('An Ardent profile with this ID already exists on the node');
     }
     await deps.action(context.row.nodeId, context.row.profile, 'profile-create', undefined, { api_port: request.apiPort });
-    return { receipt: { apiPort: request.apiPort, version: installation.version } };
+    return { receipt: { apiPort: request.apiPort, version: installation.version, ...await instanceRefStep(context) } };
   },
 
   'service-start': async context => {
