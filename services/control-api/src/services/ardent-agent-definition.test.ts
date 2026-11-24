@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import YAML from 'yaml';
-import { agentDefinitionSha256, sealAgentDefinition, type AgentDefinition, type ArdentFleetInstallation, type ArdentRetainedExtension } from '@hivemagnus/magnus-contracts';
+import { agentDefinitionSha256, credentialLikePaths, sealAgentDefinition, type AgentDefinition, type ArdentFleetInstallation, type ArdentRetainedExtension } from '@hivemagnus/magnus-contracts';
 
 type Row = { id: string; kind: string; nodeId: string; profile: string; status: string; requestJson: string; stepsJson: string;
   error: string | null; createdBy: string; actingJson: string | null; attempts: number; createdAt: Date; updatedAt: Date; completedAt: Date | null };
@@ -209,6 +209,23 @@ describe('portable agent definitions', () => {
     expect(omitted).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'skill', name: 'local-notes' }), expect.objectContaining({ kind: 'channel', name: 'telegram' })]));
     // Memory, the HiveMem agent and the channel's token name are never carried.
     expect(JSON.stringify(definition)).not.toMatch(/ardent-lead-0a1b2c3d|TELEGRAM_BOT_TOKEN|ARDENT_HIVEMEM_TOKEN|ARDENT_API_TOKEN|memory\.example\.com/u);
+  });
+
+  it('never echoes configuration text in the omitted list, so the whole export response is safe to share', async () => {
+    const lead = nodes['node-a']!.profiles.get('lead')!;
+    const secretish = 'ghp_' + 'A'.repeat(36);
+    lead.config = SOURCE_CONFIG
+      .replace("plugins: ['@example/ardent-media', '@example/ardent-tools/search']",
+        `plugins: ['@example/ardent-media', '@example/ardent-tools/search', 'file:/opt/private/plugin.js?key=hunter2', 'https://plugins.example.com/p.js#${secretish}', 'local-helper']`)
+      .replace('enabled: [web-research, citations, summaries, local-notes]', 'enabled: [web-research, citations, summaries, local-notes, "Notes for db.internal.example host"]');
+    const response = await definitions.exportArdentAgentDefinition('node-a', 'lead');
+    const text = JSON.stringify(response);
+    for (const leaked of ['/opt/private', 'hunter2', 'plugins.example.com', secretish, 'db.internal.example']) expect(text).not.toContain(leaked);
+    expect(credentialLikePaths(response)).toEqual([]);
+    const plugins = response.omitted.filter(item => item.kind === 'plugin').map(item => item.name);
+    expect(plugins).toEqual([expect.stringMatching(/^plugin #3 \(sha256:[0-9a-f]{12}\)$/u), expect.stringMatching(/^plugin #4 \(sha256:[0-9a-f]{12}\)$/u), 'local-helper']);
+    const skills = response.omitted.filter(item => item.kind === 'skill').map(item => item.name);
+    expect(skills).toEqual(['local-notes', expect.stringMatching(/^skill #5 \(sha256:[0-9a-f]{12}\)$/u)]);
   });
 
   it('validates and installs the export on a second node with the same persona, skills and extensions', async () => {

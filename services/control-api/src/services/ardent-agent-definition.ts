@@ -11,6 +11,7 @@
  * passes, and the operation succeeds only once the ready probe finds the definition's persona and
  * skills on the running agent.
  */
+import { createHash } from 'node:crypto';
 import YAML from 'yaml';
 import { HTTPError } from 'ky';
 import {
@@ -108,6 +109,17 @@ const sameUrl = (left: unknown, right: string | null) => typeof left === 'string
  * profile, 409 AGENT_UPGRADE_REQUIRED when the node agent cannot report reviewed extensions or skill
  * receipts, and 422 DEFINITION_CONTAINS_CREDENTIAL when a carried text looks like a credential.
  */
+// Names the export echoes in `omitted`. They come from the profile's configuration, so only a value
+// that is plainly an identifier is shown; anything else (a path, a URL, free text) is replaced by a
+// generic label with a short digest, so a shared export never carries configuration text.
+const SAFE_SKILL_NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/u;
+const SAFE_PLUGIN_SPECIFIER = /^(?:@[a-z0-9][a-z0-9._~-]{0,63}\/)?[a-z0-9][a-z0-9._~-]{0,127}(?:\/[A-Za-z0-9._-]{1,64}){0,4}$/u;
+function omittedName(kind: 'skill' | 'plugin', value: string, index: number): string {
+  const safe = kind === 'skill' ? SAFE_SKILL_NAME : SAFE_PLUGIN_SPECIFIER;
+  if (safe.test(value) && !credentialLikePaths(value).length) return value;
+  return `${kind} #${index + 1} (sha256:${createHash('sha256').update(value).digest('hex').slice(0, 12)})`;
+}
+
 export async function exportArdentAgentDefinition(nodeId: string, profile: string): Promise<{ definition: AgentDefinition; omitted: Omitted[] }> {
   const installation = await reachableInstallation(nodeId);
   if (!installation.installed || !installation.version) throw new HttpError(409, 'ARDENT_NOT_INSTALLED', 'Ardent is not installed on this node');
@@ -139,7 +151,9 @@ export async function exportArdentAgentDefinition(nodeId: string, profile: strin
   // Skills: the enabled HiveSkills releases, by their receipts. A local skill has no portable source.
   const enabled = strings(record(config['skills'])['enabled']);
   const skills = receipts.skills.filter(item => enabled.includes(item.name)).map(item => ({ slug: item.name, version: item.version, sha256: item.sha256 }));
-  for (const name of enabled) if (!skills.some(item => item.slug === name)) omitted.push({ kind: 'skill', name, reason: 'Not installed from HiveSkills by Magnus; a definition carries only HiveSkills releases' });
+  enabled.forEach((name, index) => {
+    if (!skills.some(item => item.slug === name)) omitted.push({ kind: 'skill', name: omittedName('skill', name, index), reason: 'Not installed from HiveSkills by Magnus; a definition carries only HiveSkills releases' });
+  });
 
   // Extensions: the reviewed packages the profile's plugins load, by integrity.
   const plugins = strings(config['plugins']);
@@ -150,8 +164,10 @@ export async function exportArdentAgentDefinition(nodeId: string, profile: strin
     extensions.push({ name: item.name, version: item.version, integrity: item.integrity, package_tree_sha256: item.packageTreeSha256,
       ...(used.length === 1 && used[0] === item.name ? {} : { plugins: used }) });
   }
-  for (const specifier of plugins) if (!extensions.some(item => specifier === item.name || specifier.startsWith(`${item.name}/`)))
-    omitted.push({ kind: 'plugin', name: specifier.slice(0, 200), reason: 'Not part of a reviewed extension retained on this node' });
+  plugins.forEach((specifier, index) => {
+    if (!extensions.some(item => specifier === item.name || specifier.startsWith(`${item.name}/`)))
+      omitted.push({ kind: 'plugin', name: omittedName('plugin', specifier, index), reason: 'Not part of a reviewed extension retained on this node' });
+  });
 
   // Configuration: the portable runtime settings. Provider URLs, channels, peers and memory stay behind.
   const execution = record(config['execution']);
@@ -212,6 +228,10 @@ export async function exportArdentAgentDefinition(nodeId: string, profile: strin
   const definition = await sealAgentDefinition(body);
   const checked = await verifyAgentDefinition(definition);
   if (!checked.ok) throw new HttpError(422, checked.code, `The profile cannot be exported: ${checked.detail}`.slice(0, 500));
+  // The whole response is what gets shared, not only the definition.
+  const leaked = credentialLikePaths({ definition: checked.definition, omitted });
+  if (leaked.length) throw new HttpError(422, 'DEFINITION_CONTAINS_CREDENTIAL',
+    `The export would carry credential-like text at ${leaked.slice(0, 10).join(', ')}; remove it before exporting`, { paths: leaked.slice(0, 50) });
   return { definition: checked.definition, omitted };
 }
 
