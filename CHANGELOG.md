@@ -7,6 +7,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [3.3.0] - 2026-11-24
+
 ### Added
 
 - Portable agent definitions (`hive-agent-definition/1`). `@hivemagnus/magnus-contracts` exports the
@@ -67,13 +69,23 @@ All notable changes to this project are documented in this file. The format is b
 ### Changed
 
 - `@hivemagnus/ardent` 3.2.0 (root and agent pins, agent shrinkwrap) and the regenerated Ardent client
-  types. Release `@hivemagnus/ardent-profile-extensions` 0.2.0 before this Magnus release: a managed
+  types. Release any extension package that pins an exact Ardent peer for 3.2.0 before this Magnus release: a managed
   upgrade reinstalls retained extensions with strict peers and holds the runtime when a peer differs.
 - `@hivemagnus/hive-common` 0.6.0.
 
 ### Security
 
 - Agent definition export: the `omitted` list no longer echoes configuration text. A skill or plugin name is shown only when it is a plain identifier; anything else (a path, a URL, free text) becomes `plugin #n (sha256:<12 hex>)`, and the whole response, not only the definition, is checked for credential-like text before it is returned.
+
+### New environment variables
+
+All optional (server):
+
+- `MAGNUS_HIVE_REGISTRY_URL` and `MAGNUS_HIVE_REGISTRY_TOKEN_FILE`: Hive Registry discovery of Ardent
+  dependencies; unset turns discovery off.
+- `MAGNUS_HIVE_REGISTRY_ALLOW_HTTP`: allow a plain-http Registry on its private network.
+- `MAGNUS_ARDENT_HIVESKILLS_TARGET` and `MAGNUS_ARDENT_HIVESKILLS_TARGET_TOKEN_FILE`: the HiveSkills
+  target used for pinned, non-promoted skill releases (sent only to `MAGNUS_ARDENT_HIVESKILLS_URL`).
 
 ## [3.2.1] - 2026-11-21
 

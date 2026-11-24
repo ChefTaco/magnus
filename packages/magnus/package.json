@@ -1,6 +1,6 @@
 {
   "name": "@hivemagnus/magnus",
-  "version": "3.2.1",
+  "version": "3.3.0",
   "description": "Install, upgrade and roll back a Magnus server and console with one command: `npx @hivemagnus/magnus init`, then `magnus upgrade`. Pins exact, tested component versions, backs up PostgreSQL before every migration and reverts automatically when the new version fails its health check.",
   "keywords": [
     "magnus",
@@ -47,7 +47,7 @@
     "clean": "node -e \"const fs=require('node:fs');fs.rmSync('dist',{recursive:true,force:true});fs.rmSync('tsconfig.tsbuildinfo',{force:true})\""
   },
   "dependencies": {
-    "@hivemagnus/magnus-contracts": "3.2.1"
+    "@hivemagnus/magnus-contracts": "3.3.0"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
@@ -56,29 +56,60 @@
   },
   "magnusRelease": {
     "schema": 1,
-    "version": "3.2.1",
+    "version": "3.3.0",
     "engines": {
       "node": "^24.22.3 || ^26.13.1"
     },
     "components": {
-      "@hivemagnus/magnus-server": "3.2.1",
-      "@hivemagnus/magnus-ui": "3.2.1",
-      "@hivemagnus/magnus-contracts": "3.2.1",
-      "@hivemagnus/magnus-agent": "3.2.1"
+      "@hivemagnus/magnus-server": "3.3.0",
+      "@hivemagnus/magnus-ui": "3.3.0",
+      "@hivemagnus/magnus-contracts": "3.3.0",
+      "@hivemagnus/magnus-agent": "3.3.0"
     },
     "breaking": false,
     "minUpgradeFrom": "2.10.2",
     "engineProtocol": 2,
     "newRequiredEnv": [],
-    "newOptionalEnv": [],
+    "newOptionalEnv": [
+      {
+        "name": "MAGNUS_HIVE_REGISTRY_URL",
+        "component": "server",
+        "secret": false,
+        "description": "Hive Registry base URL used to discover Ardent dependencies (HiveMem, HiveSkills, Emberpath) when their explicit settings are unset. Unset turns discovery off."
+      },
+      {
+        "name": "MAGNUS_HIVE_REGISTRY_TOKEN_FILE",
+        "component": "server",
+        "secret": true,
+        "description": "File holding the Hive Registry read token for discovery. Sent only to MAGNUS_HIVE_REGISTRY_URL."
+      },
+      {
+        "name": "MAGNUS_HIVE_REGISTRY_ALLOW_HTTP",
+        "component": "server",
+        "secret": false,
+        "description": "Allow a plain-http Hive Registry on its private network. Default false."
+      },
+      {
+        "name": "MAGNUS_ARDENT_HIVESKILLS_TARGET",
+        "component": "server",
+        "secret": false,
+        "description": "HiveSkills target name Magnus uses to install pinned, non-promoted skill releases. Used only with MAGNUS_ARDENT_HIVESKILLS_URL."
+      },
+      {
+        "name": "MAGNUS_ARDENT_HIVESKILLS_TARGET_TOKEN_FILE",
+        "component": "server",
+        "secret": true,
+        "description": "File holding that HiveSkills target's enrollment token. Sent only to MAGNUS_ARDENT_HIVESKILLS_URL."
+      }
+    ],
     "removedEnv": [],
     "migrations": [],
     "agent": {
       "selfUpgradeProtocol": 1,
       "minLauncher": 1
     },
-    "summary": "The npm-shrinkwrap.json in the server and console packages holds only the production graph, so a native npm install no longer records their development tooling as extraneous lock entries or reports npm audit findings in it. The installed packages and versions are unchanged. No migrations, new settings or protocol changes.",
-    "notesUrl": "https://github.com/ChefTaco/magnus/releases/tag/v3.2.1",
+    "summary": "Pins Ardent 3.2.0 and carries its runtime contracts through management (node agent studio level 4): execution recovery reads and the task-recovery action, execution lineage, artifact transfer v2 content relay with Range, renditions and peer imports, and execution context passthrough. Adds portable agent definitions (hive-agent-definition/1: export, preflight, install), pinned HiveSkills releases, and Ardent dependency discovery through the Hive Registry. No migrations. Release extension packages that pin an exact Ardent peer for 3.2.0 before upgrading managed agents.",
+    "notesUrl": "https://github.com/ChefTaco/magnus/releases/tag/v3.3.0",
     "allowScripts": {
       "@prisma/engines": true,
       "argon2": true,
