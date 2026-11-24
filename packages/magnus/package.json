@@ -1,6 +1,6 @@
 {
   "name": "@hivemagnus/magnus",
-  "version": "3.3.3",
+  "version": "3.3.4",
   "description": "Install, upgrade and roll back a Magnus server and console with one command: `npx @hivemagnus/magnus init`, then `magnus upgrade`. Pins exact, tested component versions, backs up PostgreSQL before every migration and reverts automatically when the new version fails its health check.",
   "keywords": [
     "magnus",
@@ -47,7 +47,7 @@
     "clean": "node -e \"const fs=require('node:fs');fs.rmSync('dist',{recursive:true,force:true});fs.rmSync('tsconfig.tsbuildinfo',{force:true})\""
   },
   "dependencies": {
-    "@hivemagnus/magnus-contracts": "3.3.3"
+    "@hivemagnus/magnus-contracts": "3.3.4"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
@@ -56,15 +56,15 @@
   },
   "magnusRelease": {
     "schema": 1,
-    "version": "3.3.3",
+    "version": "3.3.4",
     "engines": {
       "node": "^24.22.3 || ^26.13.1"
     },
     "components": {
-      "@hivemagnus/magnus-server": "3.3.3",
-      "@hivemagnus/magnus-ui": "3.3.3",
-      "@hivemagnus/magnus-contracts": "3.3.3",
-      "@hivemagnus/magnus-agent": "3.3.3"
+      "@hivemagnus/magnus-server": "3.3.4",
+      "@hivemagnus/magnus-ui": "3.3.4",
+      "@hivemagnus/magnus-contracts": "3.3.4",
+      "@hivemagnus/magnus-agent": "3.3.4"
     },
     "breaking": false,
     "minUpgradeFrom": "2.10.2",
@@ -72,13 +72,19 @@
     "newRequiredEnv": [],
     "newOptionalEnv": [],
     "removedEnv": [],
-    "migrations": [],
+    "migrations": [
+      {
+        "name": "20261124190000_ardent_agent_operation_definition_kind",
+        "impact": "fast",
+        "note": "Widen the Ardent operation kind check to the definition installs Magnus 3.3.0 records; existing rows already satisfy it and are unchanged."
+      }
+    ],
     "agent": {
       "selfUpgradeProtocol": 1,
       "minLauncher": 1
     },
-    "summary": "Native snapshot policy for Ardent 3.2.0: the offline journal check knows the tables Ardent 3.2.0 adds (tool_invocations, task_recovery and artifact_transfers by state; execution checkpoints, ancestry, renditions and hook diagnostics as passive; catch-up runs and recovery publications as ledgers) and skips a channel post that catch-up recorded as stale. Before, every Ardent 3.2.0 profile counted as unsupported work, so a Hive native backup or upgrade captured it and then refused to resume it. No migrations and no settings change.",
-    "notesUrl": "https://github.com/ChefTaco/magnus/releases/tag/v3.3.3",
+    "summary": "Portable agent-definition installs work: the Ardent operations check constraint now allows the definition kind that Magnus 3.3.0 records, so POST /api/v1/ardent/agent-definitions/install no longer fails with 500 after its preflight. One fast additive migration widens the constraint; existing rows already satisfy it. No settings change.",
+    "notesUrl": "https://github.com/ChefTaco/magnus/releases/tag/v3.3.4",
     "allowScripts": {
       "@prisma/engines": true,
       "argon2": true,

@@ -1,0 +1,1 @@
+{"schema":1,"migration":"20261124190000_ardent_agent_operation_definition_kind","impact":"fast","note":"Widen the Ardent operation kind check to the definition installs Magnus 3.3.0 records; existing rows already satisfy it and are unchanged."}
