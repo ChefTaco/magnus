@@ -22,6 +22,13 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('Ardent agent operations in P
     await db.ardentAgentOperation.create({ data: { ...base(), profile: 'other' } });
   });
 
+  it('accepts every operation kind the service records', async () => {
+    // Kind is the service's own union (ardent-agent-deploy.ts); a kind the database refuses fails every operation of it.
+    for (const kind of ['deploy', 'hivemem', 'definition']) {
+      await db.ardentAgentOperation.create({ data: { ...base(), profile: `kind-${kind}`, kind, status: 'succeeded' } });
+    }
+  });
+
   it('refuses an unknown kind or status', async () => {
     await expect(db.ardentAgentOperation.create({ data: { ...base(), profile: 'kinds', kind: 'import' } })).rejects.toThrow();
     await expect(db.ardentAgentOperation.create({ data: { ...base(), profile: 'kinds', status: 'paused' } })).rejects.toThrow();

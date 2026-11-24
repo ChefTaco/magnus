@@ -5,25 +5,18 @@ All notable changes to this project are documented in this file. The format is b
 [Semantic Versioning](https://semver.org/).
 
 
-## [3.3.3] - 2026-11-24
-
-### Added
-
-- 
-
-## [3.3.2] - 2026-11-24
-
-### Added
-
-- 
-
-## [3.3.1] - 2026-11-24
-
-### Added
-
-- 
-
 ## [Unreleased]
+
+## [3.3.4] - 2026-11-24
+
+### Fixed
+
+- **Portable agent-definition installs work.** Magnus 3.3.0 records a definition install as an Ardent
+  operation of kind `definition`, but the operations table's check constraint allowed only `deploy` and
+  `hivemem`, so every `POST /api/v1/ardent/agent-definitions/install` failed with 500 after its preflight
+  passed, before anything was created on the node. The migration
+  `20261124190000_ardent_agent_operation_definition_kind` widens the constraint; existing rows already
+  satisfy it. No settings change.
 
 ## [3.3.3] - 2026-11-24
 
