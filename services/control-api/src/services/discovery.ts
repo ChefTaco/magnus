@@ -35,14 +35,16 @@ const OVERRIDES: Record<DependencyName, string> = {
   hivemem: 'MAGNUS_ARDENT_HIVEMEM_URL', hiveskills: 'MAGNUS_ARDENT_HIVESKILLS_URL', emberpath: 'MAGNUS_ARDENT_EMBERPATH_URL',
 };
 
-type Probe = { ok: true; version: string | null; capabilities: string[] | null } | { ok: false; reason: string };
+type Probe = { ok: true; version: string | null; capabilities: string[] | null; service?: string | null } | { ok: false; reason: string };
+/** `health`: GET health/live. `models`: GET the OpenAI-compatible model list, where a refusal without a key still proves the model API answers. */
+export type ProbeKind = 'health' | 'models';
 
 export interface DiscoveryDeps {
   env(): NodeJS.ProcessEnv;
   /** The Registry client, or null when Registry discovery is off. Throws on an unusable configuration. */
   registry(env: NodeJS.ProcessEnv): RegistryClient | null;
-  /** GET `url` (health/live); never sends a credential. */
-  probe(url: string): Promise<Probe>;
+  /** GET `url` (health/live, or the model list for `models`); never sends a credential. */
+  probe(url: string, kind?: ProbeKind): Promise<Probe>;
   now(): number;
 }
 
@@ -58,15 +60,24 @@ function registryClient(env: NodeJS.ProcessEnv): RegistryClient | null {
   return createRegistryClient({ baseUrl, token, allowHttp: (env['MAGNUS_HIVE_REGISTRY_ALLOW_HTTP'] ?? '').toLowerCase() === 'true', timeoutMs: 5_000 });
 }
 
-async function probeHealth(url: string): Promise<Probe> {
+async function probeHealth(url: string, kind: ProbeKind = 'health'): Promise<Probe> {
   try {
     const response = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(5_000), headers: { accept: 'application/json' } });
     const text = await response.text().catch(() => '');
+    if (kind === 'models') {
+      // Without a key an OpenAI-compatible model API refuses with a JSON 401 or 403; a console page or a
+      // proxy error is not the model API.
+      let json = true;
+      try { JSON.parse(text.slice(0, 65_536)); } catch { json = false; }
+      if ((response.ok || response.status === 401 || response.status === 403) && json) return { ok: true, version: null, capabilities: null };
+      return { ok: false, reason: `model API answered HTTP ${response.status}${json ? '' : ' without JSON'}` };
+    }
     if (!response.ok) return { ok: false, reason: `health/live answered HTTP ${response.status}` };
     let body: Record<string, unknown> = {};
     try { body = JSON.parse(text.slice(0, 65_536)) as Record<string, unknown>; } catch { body = {}; } // no-reason-needed: a non-JSON health body still means the service answers
     const capabilities = Array.isArray(body['capabilities']) ? body['capabilities'].filter((item): item is string => typeof item === 'string' && /^[a-z0-9.-]{1,64}$/u.test(item)) : null;
-    return { ok: true, version: typeof body['version'] === 'string' ? body['version'] : null, capabilities };
+    return { ok: true, version: typeof body['version'] === 'string' ? body['version'] : null, capabilities,
+      service: typeof body['service'] === 'string' ? body['service'] : null };
   } catch (error: unknown) {
     const cause = (error as { cause?: { code?: string } }).cause?.code;
     return { ok: false, reason: `does not answer${cause ? ` (${cause})` : error instanceof Error && error.name === 'TimeoutError' ? ' (timeout)' : ''}` };
@@ -178,7 +189,16 @@ async function resolveOne(name: DependencyName, env: NodeJS.ProcessEnv, registry
   }
   if (name === 'hiveskills' && !plainUrl(endpoint, true))
     return { name, status: 'awaiting_configuration', source, endpoint, capabilities: [], reason: 'HiveSkills must be reached over HTTPS; set MAGNUS_ARDENT_HIVESKILLS_URL' };
-  const probe = await deps.probe(healthUrl(name, endpoint));
+  let probe: Probe;
+  if (name === 'emberpath') {
+    // The model endpoint Magnus hands to agents can sit behind a console whose root health is another
+    // service's (a Hive console serves Emberpath only under /v1). The model API itself must answer;
+    // root health adds the version and capabilities only when it does not name another service.
+    const models = await deps.probe(new URL('models', withSlash(endpoint)).toString(), 'models');
+    if (!models.ok) return { name, status: 'missing', source, endpoint, capabilities: [], reason: `${name} at ${endpoint} ${models.reason}`.slice(0, 300) };
+    const health = await deps.probe(healthUrl(name, endpoint), 'health');
+    probe = health.ok && (!health.service || health.service === 'emberpath') ? health : { ok: true, version: null, capabilities: null };
+  } else probe = await deps.probe(healthUrl(name, endpoint), 'health');
   if (!probe.ok) return { name, status: 'missing', source, endpoint, capabilities: [], reason: `${name} at ${endpoint} ${probe.reason}`.slice(0, 300) };
   // Confirmed entries hold; an unconfirmed one only when the version the product reports is its since or newer.
   const fromRegistry = offered?.filter(item => item.confirmed || versionAtLeast(probe.version, item.since)).map(item => item.name) ?? null;

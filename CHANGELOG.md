@@ -5,7 +5,24 @@ All notable changes to this project are documented in this file. The format is b
 [Semantic Versioning](https://semver.org/).
 
 
+## [3.3.1] - 2026-11-24
+
+### Added
+
+- 
+
 ## [Unreleased]
+
+## [3.3.1] - 2026-11-24
+
+### Fixed
+
+- **The agent dependency report checks Emberpath at its model API.** Magnus probed Emberpath at the
+  root `health/live` of its endpoint. Behind a console that serves Emberpath only under `/v1` (a Hive
+  console), that root belongs to another service, so Emberpath was reported usable without being reached.
+  It now requires `GET <endpoint>/models` to answer (200, or a JSON 401 or 403 without a key) and takes
+  the version and capabilities from root health only when that health does not name another service. A
+  model API that does not answer reports `missing` with its reason. No migrations and no settings change.
 
 ## [3.3.0] - 2026-11-24
 

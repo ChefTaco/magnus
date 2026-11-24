@@ -1,0 +1,9 @@
+{
+  "summary": "Agent dependency report fix: an Emberpath set as MAGNUS_ARDENT_EMBERPATH_URL is checked at its model API (GET <url>/models, where a JSON 401 without a key counts as answering), so a console-fronted Emberpath whose root health belongs to another service is no longer reported usable without being reached. Root health still supplies the version and capabilities when it is Emberpath's own. No migrations and no settings change.",
+  "breaking": false,
+  "minUpgradeFrom": "2.10.2",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}
