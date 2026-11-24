@@ -19,6 +19,18 @@ The rules every upgrade path follows:
   `slow` or `one-way`). Upgrades print slow and one-way migrations and wait for confirmation
   (`--yes`). Startup auto-migrate refuses them unless `MAGNUS_AUTO_MIGRATE_ALLOW_SLOW=true` is set.
 
+## Version 3.3.0: Ardent 3.2.0 runtime contracts
+
+Release every extension package that pins an exact `@hivemagnus/ardent` peer for 3.2.0 first; a
+managed upgrade reinstalls retained extensions with strict peers and holds the runtime when a peer
+differs. Then upgrade the server and the node agents. Profiles keep running their installed Ardent
+until a managed upgrade moves them to 3.2.0; until then the new recovery, lineage and artifact
+transfer reads and actions answer 409 `unsupported_capability` for them, and everything else works
+as before. Interrupted Ardent 3.2.0 tasks now resume after a restart by default (see the Ardent
+changelog). Discovery and pinned skill releases are optional: set `MAGNUS_HIVE_REGISTRY_URL` and
+`MAGNUS_HIVE_REGISTRY_TOKEN_FILE`, and `MAGNUS_ARDENT_HIVESKILLS_TARGET` with its token file, only if
+you want them. No migrations.
+
 ## Version 3.2.1: production-only shrinkwraps
 
 Nothing to do. The server and console shrinkwraps no longer list development tooling, so after

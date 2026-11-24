@@ -1,0 +1,40 @@
+{
+  "summary": "Pins Ardent 3.2.0 and carries its runtime contracts through management (node agent studio level 4): execution recovery reads and the task-recovery action, execution lineage, artifact transfer v2 content relay with Range, renditions and peer imports, and execution context passthrough. Adds portable agent definitions (hive-agent-definition/1: export, preflight, install), pinned HiveSkills releases, and Ardent dependency discovery through the Hive Registry. No migrations. Release extension packages that pin an exact Ardent peer for 3.2.0 before upgrading managed agents.",
+  "breaking": false,
+  "minUpgradeFrom": "2.10.2",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [
+    {
+      "name": "MAGNUS_HIVE_REGISTRY_URL",
+      "component": "server",
+      "secret": false,
+      "description": "Hive Registry base URL used to discover Ardent dependencies (HiveMem, HiveSkills, Emberpath) when their explicit settings are unset. Unset turns discovery off."
+    },
+    {
+      "name": "MAGNUS_HIVE_REGISTRY_TOKEN_FILE",
+      "component": "server",
+      "secret": true,
+      "description": "File holding the Hive Registry read token for discovery. Sent only to MAGNUS_HIVE_REGISTRY_URL."
+    },
+    {
+      "name": "MAGNUS_HIVE_REGISTRY_ALLOW_HTTP",
+      "component": "server",
+      "secret": false,
+      "description": "Allow a plain-http Hive Registry on its private network. Default false."
+    },
+    {
+      "name": "MAGNUS_ARDENT_HIVESKILLS_TARGET",
+      "component": "server",
+      "secret": false,
+      "description": "HiveSkills target name Magnus uses to install pinned, non-promoted skill releases. Used only with MAGNUS_ARDENT_HIVESKILLS_URL."
+    },
+    {
+      "name": "MAGNUS_ARDENT_HIVESKILLS_TARGET_TOKEN_FILE",
+      "component": "server",
+      "secret": true,
+      "description": "File holding that HiveSkills target's enrollment token. Sent only to MAGNUS_ARDENT_HIVESKILLS_URL."
+    }
+  ],
+  "removedEnv": [],
+  "migrations": []
+}
