@@ -60,13 +60,13 @@
   "dependencies": {
     "argon2": "^0.45.2",
     "ioredis": "^6.0.0",
-    "jose": "^6.2.17",
+    "jose": "^6.2.18",
     "ssh2": "^1.17.0",
     "ws": "^8.23.0"
   },
   "devDependencies": {
     "@hivemagnus/magnus-contracts": "3.3.5",
-    "@playwright/test": "^1.65.0",
+    "@playwright/test": "^1.65.1",
     "@tailwindcss/postcss": "^4.3.5",
     "@types/node": "^24.19.2",
     "@types/react": "^19.3.0",
@@ -77,29 +77,29 @@
     "@xterm/xterm": "^6.0.0",
     "clsx": "^2.1.0",
     "dotenv": "^18.0.10",
-    "eslint": "^10.14.0",
+    "eslint": "^10.15.0",
     "ky": "^2.2.0",
-    "lucide-react": "^1.72.0",
-    "motion": "^14.13.0",
+    "lucide-react": "^1.77.0",
+    "motion": "^14.14.0",
     "nanoid": "^6.0.2",
     "next": "16.4.6",
-    "postcss": "8.5.32",
+    "postcss": "8.5.33",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-markdown": "^10.1.0",
-    "recharts": "^3.10.1",
+    "recharts": "^3.11.0",
     "rehype-highlight": "^7.0.2",
     "remark-gfm": "^4.0.1",
-    "tailwind-merge": "^3.7.0",
+    "tailwind-merge": "^3.7.1",
     "tailwindcss": "^4.0.0",
     "typescript": "^6.0.3",
-    "undici": "^8.12.3",
-    "vitest": "^5.1.0",
+    "undici": "^8.13.1",
+    "vitest": "^5.1.1",
     "yaml": "^2.9.1"
   },
   "overrides": {
     "postcss": {
-      ".": "8.5.32",
+      ".": "8.5.33",
       "nanoid": "3.3.18"
     }
   }
