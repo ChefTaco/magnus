@@ -7,6 +7,19 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [3.3.6] - 2026-11-25
+
+### Security
+
+- The node agent ships `fast-xml-parser` 5.12.1 and `fast-xml-builder` 1.3.2 in its
+  standalone dependency lock. These versions include upstream fixes for
+  [GHSA-7cfw-w2rf-f3jc](https://github.com/NaturalIntelligence/fast-xml-parser/security/advisories/GHSA-7cfw-w2rf-f3jc)
+  and [GHSA-g62r-xqpr-7fwx](https://github.com/NaturalIntelligence/fast-xml-parser/security/advisories/GHSA-g62r-xqpr-7fwx).
+
+**New environment variables:** None.
+
+**Migration impact:** None.
+
 ## [3.3.5] - 2026-11-24
 
 ### Changed
