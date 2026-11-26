@@ -72,13 +72,17 @@ test('every entry point refuses an unknown flag with status 2 and usage on stder
   }
 });
 
-test('report skills finish when find meets a directory they cannot read', { skip: process.getuid?.() === 0 && 'root reads every directory' }, t => {
-  // Under `set -euo pipefail`, `X=$(find … | wc -l)` used to abort the script when find hit EACCES.
-  const locked = join(mkdtempSync('/tmp/magnus-skills-locked-'), 'locked');
-  mkdirSync(locked, { mode: 0o000 });
-  t.after(() => { spawnSync('chmod', ['700', locked]); rmSync(join(locked, '..'), { recursive: true, force: true }); });
-  for (const script of ['disk-cleaner/cleaner.sh', 'cron-manager/crontabs.sh', 'mount-inspector/mounts.sh', 'package-manager/packages.sh']) {
-    const result = spawnSync('bash', [join(skillsDir, script)], { encoding: 'utf8', timeout: 120_000 });
+test('report skills finish when find, du or findmnt fail part-way', t => {
+  // Under `set -euo pipefail`, `X=$(find … | wc -l)` used to abort the whole script when find hit a
+  // directory it could not read. Stand-ins that print nothing and exit 1, as find and du do after
+  // EACCES, reproduce that quickly and without root.
+  const bin = workspace(t);
+  for (const tool of ['find', 'du', 'findmnt']) {
+    writeFileSync(join(bin, tool), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  }
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}` };
+  for (const script of ['disk-cleaner/cleaner.sh', 'security-auditor/audit.sh', 'cron-manager/crontabs.sh', 'mount-inspector/mounts.sh', 'package-manager/packages.sh']) {
+    const result = spawnSync('bash', [join(skillsDir, script)], { encoding: 'utf8', env, timeout: 60_000 });
     assert.equal(result.status, 0, `${script}: ${result.stderr.slice(-500)}`);
   }
 });
