@@ -192,6 +192,9 @@ jobs:
             docker pull --platform "linux/$arch" "$IMAGE_REF"
             docker run --rm --platform "linux/$arch" --read-only --user 1000:1000 --cap-drop ALL \
               --security-opt no-new-privileges:true --entrypoint node "$IMAGE_REF" -e 'if(process.getuid()!==1000)throw Error("Unexpected user")'
+            # The classic image store binds a pulled digest to one platform and refuses to pull the
+            # same index digest for the next ("cannot overwrite digest"), so drop the local copy.
+            docker image rm "$IMAGE_REF"
             docker run --rm -e TRIVY_USERNAME -e TRIVY_PASSWORD \
               -v "$TRIVY_CACHE_DIR:/root/.cache/trivy" -v "$IMAGE_REPORT_DIR:/reports" \
               aquasec/trivy@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e image \

@@ -1,0 +1,9 @@
+{
+  "summary": "The code of 3.4.0 with its container images: the release workflow's published-digest check failed on the classic Docker image store, so 3.4.0's images were never tagged. No migrations beyond 3.4.0; from an earlier release follow the 3.4.0 upgrade notes.",
+  "breaking": false,
+  "minUpgradeFrom": "2.10.2",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}
