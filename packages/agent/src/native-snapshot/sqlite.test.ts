@@ -1,102 +1,109 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { randomUUID } from 'node:crypto';
 import { chmod, lstat, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { TaskStore } from '@hivemagnus/ardent';
 import { inspectSqlite } from './sqlite.js';
-import { sqliteFile } from './files.js';
-import { sha256 } from './files.js';
+import { inspectJournalFile } from './journal.js';
+import Database from './journal-sqlite.js';
+import { sha256, sqliteFile } from './files.js';
+
+vi.mock('./journal.js', async original => {
+  const actual = await original<typeof import('./journal.js')>();
+  return { ...actual, inspectJournalFile: vi.fn(actual.inspectJournalFile) };
+});
 let directory: string;
 beforeEach(async () => { directory = await mkdtemp(join(tmpdir(), 'magnus-journal-')); });
 afterEach(async () => { await rm(directory, { recursive: true, force: true }); });
-async function database(sql: string, name = 'ardent.sqlite') {
-  const path = join(directory, name), db = new DatabaseSync(path); db.exec(sql); db.close(); await chmod(path, 0o600); return path;
+
+/** A journal written by Ardent's own task store, so fixtures carry the real schema. */
+async function journal(build: (store: TaskStore) => void = () => {}, name = 'ardent.sqlite') {
+  const path = join(directory, name), store = new TaskStore(path);
+  try { build(store); } finally { store.close(); }
+  await chmod(path, 0o600); return path;
 }
+const task = (store: TaskStore) => store.accept({ caller: 'fixture', context: 'direct', prompt: 'fixture', backend: 'llamacpp', deadlineMs: Date.now() + 60_000 });
+
 describe('offline journal startup safety', () => {
-  it('recognizes terminal partial tasks and superseded windows without mistaking historical retry receipts for runnable work', async () => {
-    const path = await database("CREATE TABLE tasks(state TEXT); INSERT INTO tasks VALUES('partial'); CREATE TABLE job_windows(state TEXT); INSERT INTO job_windows VALUES('superseded'); CREATE TABLE job_attempts(state TEXT); INSERT INTO job_attempts VALUES('retry');");
-    expect(await inspectSqlite(path)).toEqual({ active: 0, unknown: 0, unsupported: 0 });
+  it('reports a fresh Ardent journal and settled tasks as idle', async () => {
+    expect(await inspectSqlite(await journal())).toEqual({ active: 0, unknown: 0, unsupported: 0 });
+    const settled = await journal(store => { store.finishWithAssistant(task(store).id, 'completed', 'done'); store.setState(task(store).id, 'failed'); }, 'settled.sqlite');
+    expect(await inspectSqlite(settled)).toEqual({ active: 0, unknown: 0, unsupported: 0 });
   });
-  it.each([['1.0', 'TASK_STATE_SUBMITTED', 'active'], ['2', 'TASK_STATE_WORKING', 'active'], ['6.0', 'TASK_STATE_INPUT_REQUIRED', 'active'], ['8', 'TASK_STATE_AUTH_REQUIRED', 'active'], ['0', 'TASK_STATE_UNSPECIFIED', 'unknown']])('holds A2A status %s/%s instead of skipping a status-only table', async (status, recorded, kind) => {
-    const path = await database('CREATE TABLE a2a_tasks(status TEXT,task_json TEXT)'); const db = new DatabaseSync(path);
-    db.prepare('INSERT INTO a2a_tasks VALUES(?,?)').run(status, JSON.stringify({ id: 'fixture', contextId: 'fixture', status: { state: recorded } })); db.close();
-    expect((await inspectSqlite(path))[kind as 'active' | 'unknown']).toBeGreaterThan(0);
+  it('counts queued and running tasks as work and an unknown outcome as uncertain', async () => {
+    const path = await journal(store => {
+      task(store); store.startQueued(task(store).id); store.setState(task(store).id, 'unknown');
+      store.finishWithAssistant(task(store).id, 'partial', 'part');
+    });
+    expect(await inspectSqlite(path)).toEqual({ active: 2, unknown: 1, unsupported: 0 });
   });
-  it('accepts terminal A2A status only when indexed and serialized states agree; malformed/mismatched schemas hold', async () => {
-    const path = await database('CREATE TABLE a2a_tasks(status TEXT,task_json TEXT)'); const db = new DatabaseSync(path);
-    db.prepare('INSERT INTO a2a_tasks VALUES(?,?)').run('3.0', JSON.stringify({ id: 'fixture', contextId: 'fixture', status: { state: 'TASK_STATE_COMPLETED' } })); db.close();
-    expect(await inspectSqlite(path)).toEqual({ active: 0, unknown: 0, unsupported: 0 });
-    const changed = new DatabaseSync(path); changed.prepare('UPDATE a2a_tasks SET task_json=?').run(JSON.stringify({ id: 'fixture', contextId: 'fixture', status: { state: 'TASK_STATE_WORKING' } })); changed.close();
+  it('holds an admitted chat update with no task and the closed one-way rollback fence', async () => {
+    const path = await journal(store => { store.claimInbound('telegram', 'fixture', '1'); store.closeAdmission(randomUUID()); });
     expect(await inspectSqlite(path)).toEqual({ active: 1, unknown: 0, unsupported: 1 });
   });
-  it('holds startup settlement flushes even when their table has neither state nor status', async () => {
-    const path = await database(`CREATE TABLE a2a_team_child_claims(acknowledged INTEGER,settlement_json TEXT);
-      INSERT INTO a2a_team_child_claims VALUES(0,'{"outcome":"completed"}'),(1,'{"outcome":"unknown"}');`);
-    expect(await inspectSqlite(path)).toEqual({ active: 1, unknown: 1, unsupported: 0 });
+  it('holds tables and state values Ardent does not classify', async () => {
+    const path = await journal(store => {
+      const id = task(store).id;
+      store.db.exec(`CREATE TABLE private_queue(payload TEXT); UPDATE tasks SET state='future_state' WHERE id='${id}'`);
+    });
+    expect(await inspectSqlite(path)).toEqual({ active: 0, unknown: 0, unsupported: 2 });
   });
-  it('holds pending admission receipts and unknown/private schemas including tables with no state field', async () => {
-    const path = await database('CREATE TABLE a2a_request_receipts(task_id TEXT); INSERT INTO a2a_request_receipts VALUES(NULL); CREATE TABLE private_queue(payload TEXT); CREATE TABLE future_status(status TEXT);');
-    expect(await inspectSqlite(path)).toEqual({ active: 1, unknown: 0, unsupported: 2 });
+  it('refuses a journal policy version this agent does not read', async () => {
+    const path = await journal();
+    vi.mocked(inspectJournalFile).mockReturnValueOnce({ policy_version: 2, idle: true, active: 0, unknown: 0, unsupported: 0, tables: [] });
+    await expect(inspectSqlite(path)).rejects.toThrow(/Unsupported Ardent journal policy version 2/);
   });
-  it('does not treat a malformed known status-only schema as safe', async () => {
-    const path = await database("CREATE TABLE a2a_tasks(status TEXT); INSERT INTO a2a_tasks VALUES('2');");
-    expect((await inspectSqlite(path)).unsupported).toBeGreaterThan(0);
-  });
-  it('holds unbound inbound updates and the one-way rollback fence without changing either', async () => {
-    const path = await database(`CREATE TABLE channel_inbound(platform TEXT,account TEXT,update_id TEXT,task_id TEXT);
-      CREATE TABLE channel_deliveries(id TEXT,platform TEXT,account TEXT,update_id TEXT,state TEXT);
-      INSERT INTO channel_inbound VALUES('fixture','fixture','1',NULL);
-      CREATE TABLE admission_fence(release_id TEXT); INSERT INTO admission_fence VALUES('fixture');`);
-    expect(await inspectSqlite(path)).toEqual({ active: 1, unknown: 0, unsupported: 1 });
-  });
-  it('knows the Ardent 3.2.0 recovery, transfer, ancestry and catch-up tables', async () => {
-    const schema = `CREATE TABLE tasks(state TEXT); INSERT INTO tasks VALUES('completed');
-      CREATE TABLE execution_state(task_id TEXT,messages_json TEXT); CREATE TABLE task_execution(task_id TEXT,root_ref TEXT);
-      CREATE TABLE artifact_renditions(original_sha256 TEXT); CREATE TABLE plugin_hook_failures(plugin TEXT);
-      CREATE TABLE channel_catchup_gaps(reason TEXT); CREATE TABLE channel_catchup_runs(state TEXT); INSERT INTO channel_catchup_runs VALUES('catching_up'),('interrupted');
-      CREATE TABLE a2a_recovery_publications(state TEXT,final INTEGER); INSERT INTO a2a_recovery_publications VALUES('unknown',0);
-      CREATE TABLE tool_invocations(state TEXT); INSERT INTO tool_invocations VALUES('succeeded'),('not_dispatched'),('operator_applied');
-      CREATE TABLE task_recovery(status TEXT); INSERT INTO task_recovery VALUES('resumed'),('resolved');
-      CREATE TABLE artifact_transfers(state TEXT); INSERT INTO artifact_transfers VALUES('completed'),('failed');
-      CREATE TABLE channel_inbound(platform TEXT,account TEXT,update_id TEXT,task_id TEXT,disposition TEXT);
-      CREATE TABLE channel_deliveries(id TEXT,platform TEXT,account TEXT,update_id TEXT,state TEXT);
-      INSERT INTO channel_inbound VALUES('fixture','fixture','old',NULL,'skipped_stale');`;
-    // Settled recovery and transfer history, ledgers and a stale post skipped by catch-up are not work.
-    expect(await inspectSqlite(await database(schema))).toEqual({ active: 0, unknown: 0, unsupported: 0 });
-    const busy = await database(`${schema}
-      INSERT INTO tool_invocations VALUES('dispatched'),('failed_unknown');
-      INSERT INTO task_recovery VALUES('reconciling'),('awaiting_decision'),('unsupported');
-      INSERT INTO artifact_transfers VALUES('transferring');
-      INSERT INTO channel_inbound VALUES('fixture','fixture','new',NULL,'admitted');`, 'busy.sqlite');
-    expect(await inspectSqlite(busy)).toEqual({ active: 4, unknown: 3, unsupported: 0 });
-    const odd = await database("CREATE TABLE tool_invocations(state TEXT); INSERT INTO tool_invocations VALUES('future_state');", 'odd.sqlite');
-    expect((await inspectSqlite(odd)).unsupported).toBe(1);
+  it('refuses a journal that fails its integrity check', async () => {
+    const path = join(directory, 'broken.sqlite'), db = new DatabaseSync(path);
+    db.exec(`PRAGMA foreign_keys=OFF; CREATE TABLE tasks(id TEXT PRIMARY KEY, state TEXT NOT NULL);
+      CREATE TABLE events(id INTEGER PRIMARY KEY, task_id TEXT REFERENCES tasks(id)); INSERT INTO events VALUES (1,'missing');`); db.close();
+    await expect(inspectSqlite(path)).rejects.toThrow(/foreign-key/);
   });
   it('detects sqlite3 and extensionless SQLite headers for private job databases', async () => {
-    const sqlite3 = await database("CREATE TABLE job_windows(state TEXT); INSERT INTO job_windows VALUES('retry');", 'jobs.sqlite3');
-    const extensionless = await database("CREATE TABLE private_queue(payload TEXT);", 'private-journal');
+    const sqlite3 = await journal(store => { task(store); }, 'jobs.sqlite3');
+    const extensionless = join(directory, 'private-journal'), db = new DatabaseSync(extensionless);
+    db.exec('CREATE TABLE private_queue(payload TEXT);'); db.close();
     expect(await sqliteFile(sqlite3)).toBe(true); expect((await inspectSqlite(sqlite3)).active).toBe(1);
     expect(await sqliteFile(extensionless)).toBe(true); expect((await inspectSqlite(extensionless)).unsupported).toBe(1);
   });
   it('never creates source WAL/SHM for a closed WAL-mode database', async () => {
-    const path = join(directory, 'closed.sqlite'), db = new DatabaseSync(path);
-    db.exec("PRAGMA journal_mode=WAL; CREATE TABLE tasks(state TEXT); INSERT INTO tasks VALUES('completed');"); db.close();
+    const path = await journal(store => { store.finishWithAssistant(task(store).id, 'completed', 'done'); });
     const names = await readdir(directory), before = await lstat(path);
     expect(await inspectSqlite(path)).toEqual({ active: 0, unknown: 0, unsupported: 0 });
     expect(await readdir(directory)).toEqual(names);
     const after = await lstat(path); expect([after.mtimeMs, after.ctimeMs, after.size]).toEqual([before.mtimeMs, before.ctimeMs, before.size]);
   });
   it('includes committed uncheckpointed WAL work while leaving the live source and SHM byte-for-byte untouched', async () => {
-    const path = join(directory, 'live.sqlite'), db = new DatabaseSync(path);
+    const path = join(directory, 'live.sqlite'), store = new TaskStore(path);
     try {
-      db.exec("PRAGMA journal_mode=WAL; CREATE TABLE tasks(state TEXT); INSERT INTO tasks VALUES('queued');");
+      task(store);
       const snapshot = async () => Promise.all((await readdir(directory)).sort().map(async name => {
         const file = join(directory, name), info = await lstat(file);
         return { name, bytes: sha256(await readFile(file)), mtime: info.mtimeMs, ctime: info.ctimeMs, mode: info.mode, uid: info.uid, gid: info.gid };
       }));
       const before = await snapshot();
+      expect(before.map(file => file.name)).toContain('live.sqlite-wal');
       expect(await inspectSqlite(path)).toEqual({ active: 1, unknown: 0, unsupported: 0 });
       expect(await snapshot()).toEqual(before);
+    } finally { store.close(); }
+  });
+});
+
+describe('published journal driver', () => {
+  it('opens only existing databases, read-only, and reads them', async () => {
+    const path = await journal(store => { task(store); });
+    expect(() => new Database(path)).toThrow(/read-only/);
+    expect(() => new Database(path, { readonly: true })).toThrow(/read-only/);
+    const missing = join(directory, 'missing.sqlite');
+    expect(() => new Database(missing, { readonly: true, fileMustExist: true })).toThrow();
+    expect(await readdir(directory)).not.toContain('missing.sqlite');
+    const db = new Database(path, { readonly: true, fileMustExist: true });
+    try {
+      expect(db.prepare("SELECT count(*) AS count FROM tasks WHERE state='queued'").get()).toEqual({ count: 1 });
+      expect([...db.prepare('SELECT state FROM tasks').iterate()]).toEqual([{ state: 'queued' }]);
+      expect(() => db.prepare("UPDATE tasks SET state='completed'").all()).toThrow(/readonly/);
     } finally { db.close(); }
   });
 });

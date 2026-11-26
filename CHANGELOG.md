@@ -7,6 +7,19 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Changed
+
+- **Ardent 3.3.0.** The node agent and New Agent stage `@hivemagnus/ardent` 3.3.0 (pins in the root and
+  agent `package.json` and the agent `npm-shrinkwrap.json`). The generated Ardent client types gain the
+  optional `task_states` and `jobs.last_tick_error` fields of `GET /api/v1/status`; no route or action
+  changes.
+- **Native snapshots use Ardent's journal policy.** The stopped-profile snapshot check no longer keeps
+  its own list of Ardent tables and states. It runs Ardent's read-only journal inspector
+  (`@hivemagnus/ardent/journal`, policy version 1) on the private copy of each SQLite file, so a new
+  Ardent table is classified by the Ardent release that creates it. The agent build copies that module
+  from the pinned Ardent into `dist/native-snapshot/journal.js` and reads it with Node's built-in SQLite;
+  Ardent stays a development dependency of the agent.
+
 ### Security
 
 - **Console proxy keeps the upstream content isolation headers.** `/api/proxy/*` now relays

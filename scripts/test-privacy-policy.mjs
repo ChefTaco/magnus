@@ -155,7 +155,7 @@ test('package builds remove outputs for deleted source files', { timeout: 60_000
       mkdirSync(join(cwd, 'src'), { recursive: true });
       mkdirSync(join(cwd, 'scripts'));
       for (const file of ['build-index.mjs', 'copy-assets.mjs']) writeFileSync(join(cwd, 'scripts', file), '');
-      writeFileSync(join(cwd, 'build-context-bundle.mjs'), '');
+      for (const file of ['build-context-bundle.mjs', 'build-journal-module.mjs']) writeFileSync(join(cwd, file), '');
       writeFileSync(join(cwd, 'package.json'), JSON.stringify({ private: true, type: 'module', scripts: manifest.scripts }));
       writeFileSync(join(cwd, 'tsconfig.json'), JSON.stringify({ compilerOptions: {
         target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext', types: [],

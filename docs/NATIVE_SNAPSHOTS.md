@@ -121,9 +121,13 @@ Configured plugin modules and reviewed extension packages are retained, but this
 contract does not declare an extension startup capability. A nonempty `plugins` array therefore
 blocks automatic activation, as do unknown/private SQLite tables or unsupported status schemas.
 Core HiveMem memory configuration is part of Ardent itself and does not require a plugin module.
-The inspector recognizes `.sqlite`, `.sqlite3`, `.db` and extensionless SQLite headers; it checks
-A2A serialized/indexed status, child settlement flushes and unbound admission/delivery records as
-well as ordinary task/job states. It never imports archived modules to obtain a stronger claim.
+The inspector recognizes `.sqlite`, `.sqlite3`, `.db` and extensionless SQLite headers. Which tables
+and states count as work is Ardent's journal policy (`@hivemagnus/ardent/journal`, the same rules as
+`ardent journal status`), from the Ardent release Magnus pins: task and job states, A2A
+serialized/indexed status, child settlement flushes, unbound admission/delivery records and the
+admission fence. A table, column or state value that policy does not classify counts as unsupported,
+and the agent refuses a policy version other than 1. It never imports archived modules to obtain a
+stronger claim.
 
 ## Explicit recovery of a refused initial quiescence
 
