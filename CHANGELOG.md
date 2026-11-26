@@ -7,6 +7,24 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [3.4.1] - 2026-11-26
+
+The code of 3.4.0, published with container images. The 3.4.0 npm packages are on npm, but its
+container images were pushed by digest and never tagged, so there are no `3.4.0` image tags; use
+`3.4.1`. Upgrading from 3.4.0 needs nothing; from an earlier release, follow the 3.4.0 upgrade notes.
+
+### Fixed
+
+- **The release images job tags the scanned digest again.** Its published-digest check pulled the
+  pushed index for `amd64` and then for `arm64` under the same digest reference, which the classic
+  Docker image store refuses ("cannot overwrite digest"), so every image failed before its tags moved.
+  The job now removes each architecture's local copy before pulling the next, and a workflow test
+  pins that.
+
+### Migration impact
+
+None beyond 3.4.0's two migrations.
+
 ## [3.4.0] - 2026-11-26
 
 ### Upgrade notes

@@ -19,6 +19,11 @@ The rules every upgrade path follows:
   `slow` or `one-way`). Upgrades print slow and one-way migrations and wait for confirmation
   (`--yes`). Startup auto-migrate refuses them unless `MAGNUS_AUTO_MIGRATE_ALLOW_SLOW=true` is set.
 
+## Version 3.4.1: 3.4.0 with container images
+
+Same code as 3.4.0; 3.4.0 has no image tags, so container deployments use 3.4.1. From 3.4.0 there
+is nothing to do; from an earlier release, follow the 3.4.0 notes below.
+
 ## Version 3.4.0: hardening, Ardent 3.5.1 and two fast migrations
 
 Upgrade in this order: node agents, then the server and console, then managed Ardent profiles. A

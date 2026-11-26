@@ -192,6 +192,9 @@ test('the images job scans the digest it pushed and asks for no OIDC token', () 
   assert.equal(scan.if, "env.DRY_RUN != 'true'");
   assert.match(scan.env.IMAGE_REF, /@\$\{\{ steps\.push\.outputs\.digest \}\}$/);
   assert.match(scan.run, /--image-src remote --platform "linux\/\$arch"[\s\S]*--exit-code 1 "\$IMAGE_REF"/);
+  // The classic image store refuses a second platform under the same pulled digest: each
+  // architecture's local copy is removed before the next one is pulled.
+  assert.match(scan.run, /for arch in amd64 arm64; do\s+docker pull --platform "linux\/\$arch" "\$IMAGE_REF"[\s\S]*docker image rm "\$IMAGE_REF"[\s\S]*done/);
   assert.equal(names.at(-1), 'Retain unfiltered security reports');
   // No tag exists until the scan passed: push by digest, then move the tags to that digest.
   assert.equal(push.with.tags, undefined);
