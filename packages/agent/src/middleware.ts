@@ -28,6 +28,57 @@ export function markLocalDispatch(request: Request): Request {
   return request;
 }
 
+/** Largest request body the agent accepts (`MAGNUS_AGENT_BODY_LIMIT_BYTES`, default 16 MiB). */
+export const DEFAULT_AGENT_BODY_LIMIT_BYTES = 16 * 1024 * 1024;
+
+export function agentBodyLimitBytes(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env['MAGNUS_AGENT_BODY_LIMIT_BYTES']?.trim();
+  if (!raw) return DEFAULT_AGENT_BODY_LIMIT_BYTES;
+  const value = Number(raw);
+  return /^\d+$/.test(raw) && Number.isSafeInteger(value) && value >= 1024 && value <= 256 * 1024 * 1024 ? value : DEFAULT_AGENT_BODY_LIMIT_BYTES;
+}
+
+/**
+ * Read the request body once, stopping at the size limit, and cache it so handlers read the same
+ * bytes (`c.req.json()` and friends use Hono's body cache). Returns null when the body is larger
+ * than the limit: either the declared Content-Length or the bytes actually sent.
+ */
+async function boundedBody(c: Context, limit = agentBodyLimitBytes()): Promise<Uint8Array | null> {
+  if (c.req.method === 'GET' || c.req.method === 'HEAD') return new Uint8Array();
+  const cached = (c.req.bodyCache as unknown as { arrayBuffer?: Promise<ArrayBuffer> }).arrayBuffer;
+  if (cached) return new Uint8Array(await cached);
+  const declared = c.req.header('content-length');
+  if (declared !== undefined && (!/^\d+$/.test(declared) || Number(declared) > limit)) {
+    await c.req.raw.body?.cancel().catch(() => undefined);
+    return null;
+  }
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  const reader = c.req.raw.body?.getReader();
+  if (reader) {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > limit) {
+        await reader.cancel().catch(() => undefined);
+        return null;
+      }
+      chunks.push(value);
+    }
+  }
+  const body = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength; }
+  // Hono caches body promises here at runtime (its type says ArrayBuffer).
+  (c.req.bodyCache as unknown as { arrayBuffer?: Promise<ArrayBuffer> }).arrayBuffer = Promise.resolve(body.buffer);
+  return body;
+}
+
+function tooLarge(c: Context): Response {
+  return c.json({ success: false, error: { code: 'PAYLOAD_TOO_LARGE', message: `Request body exceeds ${agentBodyLimitBytes()} bytes` } }, 413);
+}
+
 function refused(c: Context, code: string, message: string): Response {
   return c.json({ success: false, error: { code, message } }, 401);
 }
@@ -80,10 +131,12 @@ export async function nodeAuthMiddleware(c: Context, next: Next): Promise<Respon
     }
     const pinned = identity?.binding.serverKeys.find(key => key.keyId === signature.keyId);
     if (identity && pinned) {
-      const hasBody = c.req.method !== 'GET' && c.req.method !== 'HEAD';
+      // The key IDs are public (/api/v1/ping): bound what an unverified request can make the agent buffer.
+      const body = await boundedBody(c);
+      if (!body) return tooLarge(c);
       const verified = verifyNodeRequest({ headers: signature, publicKey: pinned.publicKey, expectedNodeId: identity.binding.nodeId,
         audiences: [nodeAudience(identity.binding.nodeId)], method: c.req.method, pathWithQuery: pathWithQueryOf(c.req.url),
-        body: hasBody ? new Uint8Array(await c.req.arrayBuffer()) : new Uint8Array(), now: nodeAuthNow() });
+        body, now: nodeAuthNow() });
       if (!verified.ok) return refused(c, verified.reason === 'SKEW' ? 'NODE_AUTH_SKEW' : 'NODE_SIGNATURE_INVALID',
         verified.reason === 'SKEW' ? 'The request timestamp is outside the accepted clock window' : 'The server signature does not verify for this node');
       if (!serverNonces.claim(signature.keyId, signature.nonce)) return refused(c, 'NODE_AUTH_REPLAY', 'This signed request was already received');
@@ -116,6 +169,7 @@ export async function nodeAuthMiddleware(c: Context, next: Next): Promise<Respon
     sharedSecretWarnedAt = Date.now();
     logger.warn(`Shared node secret accepted on ${c.req.method} ${c.req.path}; set NODE_AUTH_MODE=enforce once this node has a key (docs/NODE_CREDENTIALS.md)`);
   }
+  if (!(await boundedBody(c))) return tooLarge(c);
 
   await pass();
 }
