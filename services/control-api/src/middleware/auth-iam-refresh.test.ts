@@ -11,7 +11,7 @@ vi.mock('../utils/env.js', () => ({
 }));
 vi.mock('../services/credential-rotation-service.js', () => ({ verifyWithRotation: () => false }));
 
-const { authMiddleware } = await import('./auth.js');
+const { authMiddleware, mapIamRoles } = await import('./auth.js');
 
 function context(token: string): Context {
   const store = new Map<string, unknown>();
@@ -36,6 +36,19 @@ describe('IAM public-key refresh', () => {
     }
     // One initial fetch plus at most one rate-limited rotation refresh.
     expect(fetchSpy.mock.calls.length).toBeLessThanOrEqual(2);
+    // The trust anchor is fetched with a timeout and never through a redirect.
+    expect(fetchSpy.mock.calls[0]?.[0]).toBe('https://iam.example.test/api/v1/auth/public-key');
+    expect(fetchSpy.mock.calls[0]?.[1]).toMatchObject({ redirect: 'error', signal: expect.any(AbortSignal) });
     fetchSpy.mockRestore();
+  });
+});
+
+describe('mapIamRoles', () => {
+  it('takes the highest mapped role regardless of order', () => {
+    expect(mapIamRoles(['VIEWER', 'OPERATOR', 'IAM_ADMIN'])).toBe('ADMIN');
+    expect(mapIamRoles(['SERVICE', 'SUPER_ADMIN'])).toBe('ADMIN');
+    expect(mapIamRoles(['VIEWER', 'DEPLOY_AGENT'])).toBe('OPERATOR');
+    expect(mapIamRoles(['UNKNOWN'])).toBe('VIEWER');
+    expect(mapIamRoles([])).toBe('VIEWER');
   });
 });

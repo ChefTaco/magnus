@@ -8,6 +8,7 @@ import { webhookTypeAliases } from '../services/webhook-types.js';
 const portSchema = z.coerce.number().int().min(1).max(65535);
 import { isConsoleBasePath } from './console-path.js';
 import { oathweaveConfigurationIssues } from './oathweave.js';
+import { iamCoreUrlProblem } from './iam.js';
 import { emberpathConfigurationIssues } from '../services/llm-providers/emberpath.js';
 
 const booleanEnvSchema = z.enum(['true', 'false']).default('false').transform((value) => value === 'true');
@@ -289,6 +290,8 @@ export const envSchema = z.object({
   }
 
   if (env.IAM_CORE_URL) {
+    const iamUrlProblem = iamCoreUrlProblem(env.IAM_CORE_URL, env.ALLOW_INSECURE_HTTP);
+    if (iamUrlProblem) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['IAM_CORE_URL'], message: iamUrlProblem });
     for (const field of ['IAM_TOKEN_ISSUER', 'IAM_TOKEN_AUDIENCE'] as const) {
       if (env[field]) continue;
       ctx.addIssue({

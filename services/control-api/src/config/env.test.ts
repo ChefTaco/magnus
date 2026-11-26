@@ -127,6 +127,12 @@ describe('Hive IAM environment contract', () => {
     },
   );
 
+  it('refuses a cleartext IAM_CORE_URL outside loopback', () => {
+    const values = { AUDIT_HMAC_SECRET: 'a'.repeat(32), IAM_TOKEN_ISSUER: 'hive-iam', IAM_TOKEN_AUDIENCE: 'magnus' };
+    expect(() => loadEnv({ ...values, IAM_CORE_URL: 'http://iam.example.test' })).toThrow(/IAM_CORE_URL must use HTTPS/);
+    expect(loadEnv({ ...values, IAM_CORE_URL: 'http://127.0.0.1:4001' }).IAM_CORE_URL).toBe('http://127.0.0.1:4001');
+  });
+
   it('accepts an explicit issuer and audience contract', () => {
     const env = loadEnv({
       AUDIT_HMAC_SECRET: 'a'.repeat(32),

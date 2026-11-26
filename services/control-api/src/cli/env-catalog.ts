@@ -85,7 +85,7 @@ export const ENV_CATALOG: readonly EnvVariable[] = [
   { name: 'MAGNUS_RESOURCE_LEASES_ENABLED', group: 'agents', default: 'false', description: 'Enable durable node and shared-resource lease coordination.' },
 
   // ── Hive IAM ──
-  { name: 'IAM_CORE_URL', group: 'iam', description: 'Hive IAM base URL. When set, RS256 tokens from Hive IAM replace local JWTs.' },
+  { name: 'IAM_CORE_URL', group: 'iam', description: 'Hive IAM base URL. When set, RS256 tokens from Hive IAM replace local JWTs. Must be HTTPS; HTTP is accepted only for a loopback host (or with ALLOW_INSECURE_HTTP in development).' },
   { name: 'IAM_TOKEN_ISSUER', group: 'iam', requiredWhen: 'IAM_CORE_URL set', description: 'Exact `iss` claim required on IAM access tokens.' },
   { name: 'IAM_TOKEN_AUDIENCE', group: 'iam', requiredWhen: 'IAM_CORE_URL set', description: 'Exact `aud` claim required on IAM access tokens.' },
 
