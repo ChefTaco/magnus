@@ -42,6 +42,16 @@ export interface SupervisorStatus {
   result?:{exitCode:number;stdout:string;stderr:string;durationMs:number;truncated:boolean};
 }
 export class SupervisorUnavailableError extends Error { constructor(){super('Systemd execution supervisor unavailable; no new execution admitted');} }
+/**
+ * The Node binary for the worker: the one running this agent, which is the
+ * binary `install-service` writes into the unit (nvm and /usr/local installs
+ * included). systemd expands `%` and `$` in command lines, so such a path is
+ * refused rather than rewritten.
+ */
+export function supervisorNodeBinary(execPath:string=process.execPath):string{
+  if(!execPath.startsWith('/')||/[\x00-\x1f\x7f%$\\]/.test(execPath))throw new SupervisorUnavailableError();
+  return execPath;
+}
 export class SystemdSupervisorBackend implements SupervisorBackend {
   // User manager is for explicit isolated local fixtures; production uses system manager.
   constructor(readonly userFixture=false){}
@@ -70,7 +80,7 @@ export class SystemdSupervisorBackend implements SupervisorBackend {
       '--property=StandardInput=null','--property=StandardOutput=null','--property=StandardError=null',
       '--property=NoNewPrivileges=yes','--property=UMask=0077',
       '--property=UnsetEnvironment=NODE_OPTIONS NODE_PATH NODE_MANAGER_SECRET API_SECRET RESULT_SIGNING_SECRET RESULT_SIGNING_PREVIOUS_SECRET COMMAND_RECONCILIATION_SECRET COMMAND_RECONCILIATION_PREVIOUS_SECRET',
-      '--','/usr/bin/node',join(directory,'execution-supervisor-worker.js'),directory,
+      '--',supervisorNodeBinary(),join(directory,'execution-supervisor-worker.js'),directory,
     ]);
   }
   async listUnits():Promise<string[]>{

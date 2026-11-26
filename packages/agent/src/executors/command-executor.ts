@@ -15,6 +15,7 @@ import { ExecutionSupervisor } from './execution-supervisor.js';
 import { mutationBarrier } from './mutation-barrier.js';
 import { COMMAND_COMPLETION_REGISTRY_SHA256, commandCompletionDescriptor, knownCommandCompletionIdentity } from '../security/command-completion-registry.js';
 import { childEnvironment } from '../utils/child-env.js';
+import { shellCommandLine } from './execution-supervisor-state.js';
 import { logger } from '../utils/logger.js';
 
 export const commandRoutes = new Hono();
@@ -99,7 +100,7 @@ export const executeBodySchema = z.object({
     .max(128)
     .regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/, 'commandId must be a bounded identifier'),
   command: z.string().min(1),
-  args: z.array(z.string()).default([]),
+  args: z.array(z.string().refine((value) => !value.includes('\0'), 'args cannot contain NUL bytes')).default([]),
   workingDirectory: z.string().optional(),
   environment: z.record(z.string(), z.string()).optional(),
   coordination: commandFenceSchema.optional(),
@@ -111,7 +112,7 @@ type ExecuteBody = z.infer<typeof executeBodySchema>;
 
 // ── Execute a command locally ──
 commandRoutes.post('/execute', async (c) => {
-  const raw = await c.req.json();
+  const raw = await c.req.json().catch(() => null);
   const parsed = executeBodySchema.safeParse(raw);
   if (!parsed.success) {
     return c.json({
@@ -256,9 +257,11 @@ function executeProcess(opts: ExecuteBody, digest: string): Promise<CommandRecei
     if (remaining <= 0) {
       stderr.append('Command lease expired before process start; command not executed'); finish(125); return;
     }
-    child = spawn(opts.command, opts.args, {
+    // `command` is a shell string; each of `args` is quoted as one literal
+    // argument. stdin is closed so a command that reads it ends at once.
+    child = spawn(shellCommandLine(opts.command, opts.args), {
       cwd: opts.workingDirectory ?? process.cwd(), env: childEnvironment(opts.environment),
-      shell: true, detached: process.platform !== 'win32',
+      shell: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'],
     });
     const processChild = child;
     runningProcesses.add(child);

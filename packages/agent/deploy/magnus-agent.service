@@ -31,8 +31,17 @@ RestartSec=5
 StandardOutput=journal
 StandardError=journal
 NoNewPrivileges=true
+# Commands the agent runs get this private /tmp too, not the host /tmp.
 PrivateTmp=true
 UMask=0077
+LockPersonality=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+TasksMax=4096
+# Not set in privileged mode on purpose: ProtectKernelModules hides
+# /usr/lib/modules from package upgrades the agent runs, and ProtectClock
+# limits device access (GPU collection needs /dev/nvidia*). MemoryMax would
+# also cap the commands the agent runs; add one in a drop-in if you want it.
 
 [Install]
 WantedBy=multi-user.target

@@ -56,6 +56,18 @@ All notable changes to this project are documented in this file. The format is b
   request is refused before it is signed, reads included (profiling, storage evidence), not only those
   sent through the node SDK.
 
+- **Agent command arguments are passed literally.** `POST /api/v1/commands/execute` without the
+  execution supervisor, and the supervisor's shell path for unregistered commands, joined `args` onto
+  the command with spaces and no quoting, so an argument containing a space, quote or `;` changed
+  meaning. `command` stays a shell string; each entry of `args` is now quoted as one argument, the same
+  as the supervisor's `shell: false` path for registered commands. Arguments with NUL bytes get 400.
+  **Upgrade note:** a caller that put shell syntax (pipes, redirects, `&&`) in `args` must move it into
+  `command`.
+- **Hermes discovery uses only the configured owner.** The agent no longer looks for a Hermes home
+  under `SUDO_USER`, `USER` or every directory in `/home`; it looks under `HERMES_USER` (or the older
+  `HERMES_OWNER`), the agent's own home and the fixed `/opt` paths. **Upgrade note:** set `HERMES_USER`
+  on a node whose Hermes lives in another account's home.
+
 ### Fixed
 
 - **Installer backup pruning deletes old dumps.** `magnus upgrade` kept the newest dump of every label,
@@ -69,6 +81,17 @@ All notable changes to this project are documented in this file. The format is b
 - The AI `getHealthHistory` tool caps its window at 168 hours, the dashboard-stats tool reads only the
   last hour of snapshots, and AI share links (`ttlHours`) and tool-round budgets (`maxToolRounds`) are
   clamped. Conversation summary failures are logged instead of being swallowed.
+- **Agent commands no longer wait on stdin.** The in-process command path closes stdin, as the
+  supervisor already did, so a command that reads it ends at once instead of at its timeout.
+- **Supervised commands use the agent's Node.js.** The execution supervisor, the supervised Codex
+  update and the Embermend worker ran `/usr/bin/node`; they now run the binary the agent itself runs on
+  (the one `install-service` writes into the unit), so nvm and `/usr/local/bin` installs work.
+- **Malformed JSON gets 400 from the agent.** About 20 agent routes (commands, Hermes, Embermend,
+  workspaces, security response) answered a body that is not JSON with 500.
+- **Tighter generated agent unit.** `install-service` and the example unit add `LockPersonality`,
+  `RestrictRealtime`, `SystemCallArchitectures=native` and `TasksMax=4096` in privileged mode too. The
+  agent README explains which options privileged mode leaves out and that `PrivateTmp` gives commands a
+  private `/tmp`. Re-run `sudo magnus-agent install-service` to apply it to an existing node.
 - `docs/PUBLISHING.md` now describes how images are built, scanned and tagged (prereleases get their
   `X.Y.Z-<pre>` tag).
 

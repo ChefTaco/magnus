@@ -2,7 +2,7 @@
 import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { constants as osConstants } from 'node:os';
-import { ExecutionIntent, SupervisorInput, WorkerResult, hash, MAX_OUTPUT, readJson, requestDigest, writeJson } from './execution-supervisor-state.js';
+import { ExecutionIntent, SupervisorInput, WorkerResult, hash, MAX_OUTPUT, readJson, requestDigest, shellCommandLine, writeJson } from './execution-supervisor-state.js';
 
 const root=process.argv[2];
 if(!root)throw new Error('Missing private execution directory');
@@ -28,8 +28,10 @@ if(intent.deadline<=Date.now()||intent.stopRequestedAt){
   // Registry-bound commands use their exact executable and argv. Legacy or
   // unregistered work retains historical shell behavior but cannot acquire a
   // terminal command-completion receipt from the API boundary.
-  const child=spawn(payload.command,payload.args,{cwd:payload.workingDirectory??intent.defaultWorkingDirectory,
-    env:environment,shell:intent.completionOwner?false:true,stdio:['ignore','pipe','pipe']});
+  // The shell path quotes each argument, so args mean the same on both paths.
+  const child=intent.completionOwner
+    ?spawn(payload.command,payload.args,{cwd:payload.workingDirectory??intent.defaultWorkingDirectory,env:environment,shell:false,stdio:['ignore','pipe','pipe']})
+    :spawn(shellCommandLine(payload.command,payload.args),{cwd:payload.workingDirectory??intent.defaultWorkingDirectory,env:environment,shell:true,stdio:['ignore','pipe','pipe']});
   child.stdout.on('data',(value:Buffer)=>append('stdout',value));child.stderr.on('data',(value:Buffer)=>append('stderr',value));
   let spawnError=false;child.on('error',()=>{spawnError=true;append('stderr',Buffer.from('Command process could not start'));});
   const outcome=await new Promise<{code:number|null;signal:NodeJS.Signals|null}>(resolve=>child.once('close',(code,signal)=>resolve({code,signal})));

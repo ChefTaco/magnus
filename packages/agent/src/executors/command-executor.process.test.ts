@@ -70,6 +70,26 @@ describe('real command execution and durable results', () => {
     await expect(executor.executeCommand({ commandId: 'after-drain', command: 'true', args: [], timeoutSeconds: 1 })).rejects.toMatchObject({ code: 'LEDGER_UNAVAILABLE' });
   });
 
+  it('passes each argument literally under the shell and closes stdin', async () => {
+    const marker = join(root, 'injected');
+    const args = ['two words', `; touch ${marker}`, '$(id)', "it's"];
+    const result = await executor.executeCommand({ commandId: 'literal-args', command: `printf '%s\\n'`, args, timeoutSeconds: 5 });
+    expect(result).toMatchObject({ exitCode: 0, stdout: args.join('\n') + '\n' });
+    await expect(readFile(marker, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    // A command that reads stdin sees end-of-file instead of waiting for the timeout.
+    const started = Date.now();
+    const read = await executor.executeCommand({ commandId: 'stdin-closed', command: 'cat', args: [], timeoutSeconds: 30 });
+    expect(read).toMatchObject({ exitCode: 0, stdout: '' });
+    expect(Date.now() - started).toBeLessThan(10_000);
+    // The command itself stays a shell string.
+    expect(await executor.executeCommand({ commandId: 'shell-string', command: 'echo a | tr a b', args: [], timeoutSeconds: 5 }))
+      .toMatchObject({ exitCode: 0, stdout: 'b\n' });
+  });
+
+  it('rejects NUL bytes in arguments before any effect', () => {
+    expect(executor.executeBodySchema.safeParse({ commandId: 'nul', command: 'true', args: ['a\0b'] }).success).toBe(false);
+  });
+
   it('produces a signed terminal spawn-error receipt without repeating the failed start', async () => {
     const input = { commandId: 'spawn-error', command: 'true', args: [], workingDirectory: join(root, 'missing'), timeoutSeconds: 1 };
     const result = await executor.executeCommand(input);

@@ -415,7 +415,13 @@ describe('install-service', () => {
     expect(unit).toMatch(/^Restart=always$/m);
     expect(unit).toMatch(/^User=magnus-agent$/m);
     expect(unit).toMatch(/^ReadWritePaths=\/opt\/magnus-agent$/m);
-    expect(renderUnit({ dir: '/opt/magnus-agent', unprivileged: false, user: 'x', nodePath: '/usr/bin/node' })).not.toMatch(/^User=/m);
+    const privileged = renderUnit({ dir: '/opt/magnus-agent', unprivileged: false, user: 'x', nodePath: '/usr/bin/node' });
+    expect(privileged).not.toMatch(/^User=/m);
+    for (const unitText of [unit, privileged]) {
+      for (const line of ['NoNewPrivileges=true', 'PrivateTmp=true', 'LockPersonality=true', 'RestrictRealtime=true', 'SystemCallArchitectures=native', 'TasksMax=4096'])
+        expect(unitText.split('\n').filter(entry => entry === line)).toHaveLength(1);
+    }
+    expect(privileged).not.toMatch(/^(ProtectKernelModules|ProtectClock|MemoryMax)=/m);
     expect(() => parseInstallServiceArgs(['--bogus'], {})).toThrow(/unknown option/);
   });
   it('links last-good and hands root-owned upgrade leftovers to the service account', async () => {

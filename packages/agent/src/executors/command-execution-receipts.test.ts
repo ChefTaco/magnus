@@ -16,6 +16,11 @@ afterAll(async () => { vi.unstubAllEnvs(); await rm(root, { recursive: true, for
 const submit = (body: object) => routes.request('/execute', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 
 describe('real process execution and HTTP receipts', () => {
+  it('answers malformed JSON with 400, not 500', async () => {
+    const response = await routes.request('/execute', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"commandId":' });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ success: false, error: { code: 'VALIDATION_ERROR' } });
+  });
   it('executes once and returns the original signed result on repeat and receipt lookup', async () => {
     const body = { commandId: 'actual-once', command: 'printf x >> marker; printf done', workingDirectory: root };
     const first = await (await submit(body)).json();

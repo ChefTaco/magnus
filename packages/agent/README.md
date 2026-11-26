@@ -146,6 +146,14 @@ per node. It does four things:
 
 `--dry-run` prints the steps first.
 
+The unit sets `NoNewPrivileges`, `PrivateTmp`, `LockPersonality`, `RestrictRealtime`,
+`SystemCallArchitectures=native`, `TasksMax=4096` and `UMask=0077` in both modes; `--unprivileged`
+adds the full `Protect*` set. `PrivateTmp` means the commands the agent runs see a private `/tmp`,
+not the host's. Privileged mode leaves out `ProtectKernelModules` (package upgrades the agent runs
+install kernel modules), `ProtectClock` (it limits device access, and GPU collection needs the GPU
+devices) and `MemoryMax` (it would cap every command); add them in a drop-in if a host does not need
+those. Re-run `install-service` to apply a newer unit to an existing node.
+
 After that, the server can upgrade the agent from the console's **Upgrade agents** action or with
 `magnus-server agents upgrade`, in four steps:
 

@@ -1,8 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { ExecutionSupervisor, parseSupervisorUnits, type SupervisorBackend, type UnitObservation } from './execution-supervisor.js';
+import { ExecutionSupervisor, parseSupervisorUnits, supervisorNodeBinary, SupervisorUnavailableError, SystemdSupervisorBackend, type SupervisorBackend, type UnitObservation } from './execution-supervisor.js';
 import { ExecutionIntent, hash, requestDigest, SupervisorInput, writeJson } from './execution-supervisor-state.js';
 import { COMMAND_COMPLETION_REGISTRY_SHA256 } from '../security/command-completion-registry.js';
 class FixtureBackend implements SupervisorBackend {
@@ -117,5 +117,18 @@ describe('durable execution supervisor',()=>{
     backend.probe=async()=>{throw new Error('unsupported');};await expect(supervisor.run(input())).rejects.toThrow('unsupported');expect(backend.starts).toBe(0);
     await expect(supervisor.run({...input(),environment:{API_SECRET:'private'}})).rejects.toThrow('Unsafe');
     await expect(supervisor.run({...input(),coordination:{version:1,resourceKey:'node:fixture',fence:'1',expiresAt:Date.now()-1}})).rejects.toThrow('expired');
+  });
+});
+describe('supervisor worker Node binary',()=>{
+  it('runs the worker with the Node binary running the agent',async()=>{
+    const backend=new SystemdSupervisorBackend();const calls:string[][]=[];
+    vi.spyOn(backend as unknown as {command:(binary:string,args:string[])=>Promise<string>},'command').mockImplementation(async(_binary,args)=>{calls.push(args);return'';});
+    await backend.launch({unit:'magnus-exec-x.service',deadline:Date.now()+60_000,nonce:'n',requestSha256:'r'} as ExecutionIntent,'/var/lib/magnus/exec/x');
+    const argv=calls[0]!;expect(argv.slice(argv.indexOf('--')+1)).toEqual([process.execPath,'/var/lib/magnus/exec/x/execution-supervisor-worker.js','/var/lib/magnus/exec/x']);
+  });
+  it('accepts nvm and /usr/local paths and refuses systemd expansion syntax',()=>{
+    expect(supervisorNodeBinary('/home/operator/.nvm/versions/node/v24.22.3/bin/node')).toBe('/home/operator/.nvm/versions/node/v24.22.3/bin/node');
+    expect(supervisorNodeBinary('/usr/local/bin/node')).toBe('/usr/local/bin/node');
+    for(const bad of ['node','/opt/$HOME/node','/opt/%h/node','/opt/a\\b/node','/opt/a\nb'])expect(()=>supervisorNodeBinary(bad)).toThrow(SupervisorUnavailableError);
   });
 });
