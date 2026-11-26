@@ -193,4 +193,12 @@ test('the images job scans the digest it pushed and asks for no OIDC token', () 
   assert.match(scan.env.IMAGE_REF, /@\$\{\{ steps\.push\.outputs\.digest \}\}$/);
   assert.match(scan.run, /--image-src remote --platform "linux\/\$arch"[\s\S]*--exit-code 1 "\$IMAGE_REF"/);
   assert.equal(names.at(-1), 'Retain unfiltered security reports');
+  // No tag exists until the scan passed: push by digest, then move the tags to that digest.
+  assert.equal(push.with.tags, undefined);
+  assert.match(push.with.outputs, /push-by-digest=true/);
+  const promote = job.steps.find(step => step.name === 'Tag the scanned digest');
+  assert.ok(names.indexOf(promote.name) > names.indexOf(scan.name));
+  assert.equal(promote.if, "env.DRY_RUN != 'true'");
+  assert.equal(promote.env.IMAGE_REF, scan.env.IMAGE_REF);
+  assert.match(promote.run, /imagetools create "\$\{args\[@\]\}" "\$IMAGE_REF"/);
 });

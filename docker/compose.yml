@@ -43,14 +43,16 @@ services:
     image: redis:7-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe
     restart: unless-stopped
     # The password goes into a private config file inside the container, not onto the redis-server
-    # command line (where `ps` and `docker inspect` would show it). The image's entrypoint then
-    # drops to the redis user as usual.
+    # command line (where `ps` and `docker inspect` would show it), as a double-quoted Redis config
+    # string with each backslash and double quote escaped, so a password with spaces or quotes
+    # works. The image's entrypoint then drops to the redis user as usual.
     entrypoint:
       - /bin/sh
       - -c
       - >-
         umask 077 &&
-        printf 'requirepass %s\nappendonly yes\n' "$$REDIS_PASSWORD" > /tmp/redis.conf &&
+        quoted=$$(printf '%s' "$$REDIS_PASSWORD" | sed -e 's/[\\"]/\\&/g') &&
+        printf 'requirepass "%s"\nappendonly yes\n' "$$quoted" > /tmp/redis.conf &&
         chown redis:redis /tmp/redis.conf &&
         exec docker-entrypoint.sh redis-server /tmp/redis.conf
     environment:
