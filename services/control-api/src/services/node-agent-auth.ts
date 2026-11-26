@@ -12,6 +12,7 @@ import { nodeAuthMode } from './node-auth-config.js';
 import { serverSigningKey } from './node-server-key.js';
 import { nodeCredentialStore } from './node-credential-store.js';
 import { recordLegacyUse } from './node-legacy-use.js';
+import { assertLiveExecution } from '../config/rehearsal.js';
 
 const PIN_TTL_MS = 10 * 60_000;
 const pins = new Map<string, { keyIds: readonly string[]; at: number }>();
@@ -68,6 +69,9 @@ export interface AgentRequestTarget {
  * Never log the result: it may carry the shared node secret.
  */
 export function agentAuthHeaders(target: AgentRequestTarget, method: string, url: string | URL, body: string | Uint8Array = ''): Record<string, string> {
+  // An isolated rehearsal holds a restored database that names the production agents: no
+  // request to an agent may be authenticated from it, reads included.
+  assertLiveExecution();
   const mode = nodeAuthMode();
   const legacy = (): Record<string, string> => ({ 'x-node-token': target.legacyToken ?? getNodeManagerSecret() });
   if (!target.nodeId) {
@@ -113,6 +117,7 @@ export function agentRefusesSignedManagedHttp(version: unknown, nodeAuth: unknow
  * server over its signed channel, and its once-only ledger receipt) is unchanged.
  */
 export function unsignedAgentAuthHeaders(target: AgentRequestTarget, method: string, url: string | URL, reason: string): Record<string, string> {
+  assertLiveExecution();
   if (nodeAuthMode() === 'enforce') throw new Error('An unsigned request to an agent is refused (NODE_AUTH_MODE=enforce)');
   if (target.nodeId) recordLegacyUse(target.nodeId, 'outbound', `${method.toUpperCase()} ${pathWithQueryOf(url).split('?')[0]} (${reason})`);
   return { 'x-node-token': target.legacyToken ?? getNodeManagerSecret() };
