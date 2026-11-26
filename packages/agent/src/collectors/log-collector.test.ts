@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   BoundedLogQueue,
   batchRejected,
+  batchUnauthorized,
+  reportUnauthorizedBatch,
   logIngestHeaders,
   parseJournalLine,
   singleFlight,
@@ -102,5 +104,17 @@ describe('log ingest authentication', () => {
     expect(logIngestHeaders(url, body, '', sign)).toEqual({ 'content-type': 'application/json', 'x-magnus-signature': `sig:${body}` });
     expect(sign).toHaveBeenCalledWith('POST', url, body);
     expect(logIngestHeaders(url, body, 'fixture-node-bound-token', sign)).toMatchObject({ 'x-log-token': 'fixture-node-bound-token' });
+  });
+});
+
+describe('refused log credentials', () => {
+  it('treats 401 and 403 as unauthorized and reports the loss at most every 10 minutes', () => {
+    expect(batchUnauthorized({ response: { status: 401 } })).toBe(true);
+    expect(batchUnauthorized({ response: { status: 403 } })).toBe(true);
+    expect(batchUnauthorized({ response: { status: 503 } })).toBe(false);
+    const start = 1_000_000;
+    expect(reportUnauthorizedBatch(50, start)).toMatch(/50 entries dropped so far/);
+    expect(reportUnauthorizedBatch(50, start + 60_000)).toBeNull();
+    expect(reportUnauthorizedBatch(10, start + 11 * 60_000)).toMatch(/110 entries dropped so far/);
   });
 });

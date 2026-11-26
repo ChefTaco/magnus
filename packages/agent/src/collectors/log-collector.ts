@@ -13,7 +13,7 @@ import { logger } from '../utils/logger.js';
 import { CONTROL_API_URL, LOG_INGEST_TOKEN } from '../env.js';
 import { getFqdn } from '../fqdn.js';
 import { controlApiFetch } from '../tls.js';
-import { controlApiAuthHeaders, noteControlApiResponse } from '../node-auth.js';
+import { controlApiAuthHeaders } from '../node-auth.js';
 
 export const ENABLE_LOG_FORWARDING =
   (process.env['ENABLE_LOG_FORWARDING'] ?? 'false').toLowerCase() === 'true';
@@ -153,6 +153,28 @@ export function parseJournalLine(line: string): LogEntry | null {
 }
 
 /** The server refused the batch itself: sending the same entries again cannot succeed. */
+/** The Control API refused the log credential (401/403): resending cannot succeed until it is fixed. */
+export function batchUnauthorized(error: unknown): boolean {
+  const status = (error as { response?: { status?: number } } | null)?.response?.status;
+  return status === 401 || status === 403;
+}
+
+const UNAUTHORIZED_REPORT_INTERVAL_MS = 10 * 60_000;
+let unauthorizedDropped = 0;
+let unauthorizedReportedAt = 0;
+
+/** Count a refused batch and say so at most every 10 minutes, so the loss is never silent. */
+export function reportUnauthorizedBatch(size: number, now = Date.now()): string | null {
+  unauthorizedDropped += size;
+  if (unauthorizedReportedAt && now - unauthorizedReportedAt < UNAUTHORIZED_REPORT_INTERVAL_MS) return null;
+  unauthorizedReportedAt = now;
+  const message = `LogCollector: the Control API refused the log credential; ${unauthorizedDropped} entries dropped so far. `
+    + 'Set LOG_INGEST_TOKEN to this node\'s value (base64url HMAC-SHA256 of LOG_INGEST_SIGNING_SECRET over '
+    + '"magnus:log-ingest:v1:<node id>") or upgrade the Control API to one that verifies node-signed batches.';
+  logger.error(message);
+  return message;
+}
+
 export function batchRejected(error: unknown): boolean {
   const status = (error as { response?: { status?: number } } | null)?.response?.status;
   return status === 400 || status === 413 || status === 422;
@@ -186,10 +208,15 @@ async function flushOnce(): Promise<void> {
       timeout: 10_000,
       retry: 0,
       fetch: controlApiFetch,
-      hooks: { afterResponse: [({ response }) => { noteControlApiResponse(response); }] },
+      // No noteControlApiResponse: until the Control API verifies node signatures on /logs/ingest, a
+      // 401 here is about the log token, not the node key, and must not trigger key refreshes.
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    if (batchUnauthorized(err)) {
+      reportUnauthorizedBatch(batch.length);
+      return;
+    }
     if (batchRejected(err)) {
       // Re-queuing a rejected batch at the head would block every later entry for good.
       logger.error('LogCollector: Batch rejected by the control API, dropping it', { error: msg, batchSize: batch.length });
