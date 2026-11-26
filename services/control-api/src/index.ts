@@ -36,6 +36,7 @@ const { stopLogRetention } = await import('./services/log-retention.js');
 const { startHealthRetention } = await import('./services/health-retention.js');
 const { stopHealthRetention } = await import('./services/health-retention.js');
 const { startNotificationRetention, stopNotificationRetention } = await import('./services/notification-retention.js');
+const { startAiScheduler, stopAiScheduler } = await import('./services/ai-schedule-service.js');
 
 const { startCommandWorker, closeCommandQueue } = await import('./queue/workers.js');
 const { startUpdateCheck, stopUpdateCheck } = await import('./services/update-check-service.js');
@@ -96,6 +97,7 @@ function startBackgroundServices(listenPort: number): void {
   startCommandWorker();
   startEmbermendDispatcher();
   startRolloutReconciler();
+  if (startAiScheduler()) console.log('[ai-schedule] server-side scheduler started (MAGNUS_AI_SCHEDULER_ENABLED=true)');
   startWebhookWorker();
   startCodexFleetMonitor();
   startArdentHiveMemRenewal();
@@ -183,6 +185,7 @@ async function shutdown(signal: string) {
     await Promise.race([(async () => {
       stopEmbermendDispatcher();
       stopRolloutReconciler();
+      stopAiScheduler();
       stopNodeIssueMonitor();
       stopUpgradeReadinessMonitor();
       stopApplicationProbes();

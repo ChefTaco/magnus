@@ -69,6 +69,7 @@ export const envSchema = z.object({
   MAGNUS_COLLECTOR_TOKEN_SHA256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
 
   MAGNUS_RESOURCE_LEASES_ENABLED: booleanEnvSchema,
+  MAGNUS_AI_SCHEDULER_ENABLED: booleanEnvSchema,
   RESOURCE_ENROLLMENT_DASHBOARD_SECRET: z.string().min(32).optional(),
   RESOURCE_ENROLLMENT_DASHBOARD_PARTICIPANT: z.enum(['gateway', 'absent']).optional(),
   FLEET_GATEWAY_URL: z.string().url().optional(),

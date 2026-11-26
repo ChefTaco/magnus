@@ -4,13 +4,15 @@ import { optional } from '../utils/optional.js';
  *
  * Manages recurring AI operations (fleet analysis, reports, runbooks)
  * using five-field cron expressions (see cron-next-run.ts). Due operations run when
- * POST /ai-schedules/execute-due is called.
+ * POST /ai-schedules/execute-due is called, and every minute from the server when
+ * MAGNUS_AI_SCHEDULER_ENABLED=true.
  */
 
 import { getDb } from '../db/index.js';
 import { chat } from './ai-assistant-service.js';
 import { nanoid } from 'nanoid';
 import { nextCronRun } from './cron-next-run.js';
+import { errorText } from '../utils/redact.js';
 
 /**
  * When the operation runs next. An expression that cannot be scheduled (only possible for a row
@@ -92,52 +94,88 @@ export async function getScheduledOp(id: string) {
 
 /**
  * Execute due scheduled operations.
- * Called periodically (e.g. every minute by BullMQ repeatable job).
+ *
+ * Each row is claimed before it runs: a compare-and-set moves `nextRunAt` from the value read to
+ * the next occurrence, so concurrent callers (the scheduler, `POST /ai-schedules/execute-due`, a
+ * second server) run every occurrence once. A run that fails is not retried until its next turn.
  */
-export async function executeDueOps(): Promise<number> {
+export async function executeDueOps(now: () => Date = () => new Date()): Promise<number> {
   const db = getDb();
 
   const dueOps = await db.aiScheduledOp.findMany({
     where: {
       enabled: true,
-      nextRunAt: { lte: new Date() },
+      nextRunAt: { lte: now() },
     },
+    orderBy: { nextRunAt: 'asc' },
     take: 10,
   });
 
   let executed = 0;
 
   for (const op of dueOps) {
+    const startedAt = now();
+    const claim = await db.aiScheduledOp.updateMany({
+      where: { id: op.id, enabled: true, nextRunAt: op.nextRunAt },
+      data: { nextRunAt: parseCronToNextRun(op.cronExpr), lastRunAt: startedAt },
+    });
+    if (claim.count !== 1) continue; // another caller has this occurrence, or the op changed
+
     try {
       const result = await chat({ message: op.prompt, type: op.type as 'chat' | 'analysis', ...optional("nodeId", op.nodeId ?? undefined), createdBy: `scheduler:${op.id}` });
-
-      const nextRunAt = parseCronToNextRun(op.cronExpr);
-
+      // A scheduled run never executes a tool that needs approval: nobody is there to approve it,
+      // so the run stops at that tool and is recorded as not completed, naming the tool.
+      const waiting = result.pendingApproval?.toolName;
       await db.aiScheduledOp.update({
         where: { id: op.id },
         data: {
-          lastRunAt: new Date(),
-          nextRunAt,
           runCount: { increment: 1 },
           lastResult: result.content.slice(0, 2000),
-          lastError: null,
+          lastError: waiting
+            ? `Stopped: the operation asked to run ${waiting}, which needs approval; scheduled operations do not run such tools unattended (conversation ${result.conversationId})`
+            : null,
         },
       });
-
-      executed++;
+      if (!waiting) executed++;
     } catch (err) {
-      const nextRunAt = parseCronToNextRun(op.cronExpr);
       await db.aiScheduledOp.update({
         where: { id: op.id },
-        data: {
-          lastRunAt: new Date(),
-          nextRunAt,
-          runCount: { increment: 1 },
-          lastError: err instanceof Error ? err.message : 'Unknown error',
-        },
-      });
+        data: { runCount: { increment: 1 }, lastError: err instanceof Error ? err.message.slice(0, 2000) : 'Unknown error' },
+      }).catch((error: unknown) => console.error(`[ai-schedule] ${op.id}: result not recorded: ${errorText(error)}`));
     }
   }
 
   return executed;
+}
+
+let schedulerTimer: ReturnType<typeof setInterval> | undefined;
+let schedulerBusy = false;
+
+/** MAGNUS_AI_SCHEDULER_ENABLED=true runs due operations every minute from the server itself. */
+export function aiSchedulerEnabled(): boolean {
+  return (process.env['MAGNUS_AI_SCHEDULER_ENABLED'] ?? 'false').toLowerCase() === 'true';
+}
+
+export function startAiScheduler(intervalMs = 60_000): boolean {
+  if (schedulerTimer || !aiSchedulerEnabled()) return false;
+  const tick = async () => {
+    if (schedulerBusy) return;
+    schedulerBusy = true;
+    try {
+      const ran = await executeDueOps();
+      if (ran > 0) console.log(`[ai-schedule] ran ${ran} scheduled operation(s)`);
+    } catch (error) {
+      console.error(`[ai-schedule] tick failed: ${errorText(error)}`);
+    } finally {
+      schedulerBusy = false;
+    }
+  };
+  schedulerTimer = setInterval(() => void tick(), intervalMs);
+  schedulerTimer.unref?.();
+  return true;
+}
+
+export function stopAiScheduler(): void {
+  if (schedulerTimer) clearInterval(schedulerTimer);
+  schedulerTimer = undefined;
 }

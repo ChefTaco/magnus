@@ -1,3 +1,4 @@
+import { redactUnknown } from '../utils/redact.js';
 import { optional } from '../utils/optional.js';
 /**
  * ai-assistant-service.ts — AI Fleet Operations Assistant powered by Ollama.
@@ -2266,7 +2267,8 @@ export async function getSharedConversation(token: string): Promise<{
       id: message.id,
       role: message.role,
       content: message.content,
-      toolCalls: JSON.parse(message.toolCalls),
+      // Rows stored before tool results were redacted are redacted on the way out too.
+      toolCalls: redactUnknown(JSON.parse(message.toolCalls)),
       thinking: message.thinking,
       structuredAnalysis: message.structuredAnalysis ? JSON.parse(message.structuredAnalysis) : null,
       createdAt: message.createdAt.toISOString(),
@@ -2852,7 +2854,7 @@ export async function chatStream(
             ...toolArgs,
             _conversationId: conversationId,
           },
-        });
+        }, { conversationId });
         toolResults.push(result);
         allToolResults.push(result);
 
@@ -3015,13 +3017,14 @@ export async function approveToolCall(messageId: string, actorId = 'operator'): 
   }
 
   // Execute the tool
+  // Execute the tool as the user who approved it.
   const toolResult = await executeAiTool({
     name: approval.toolName,
     arguments: {
       ...approval.toolArgs,
       _conversationId: approval.conversationId,
     },
-  });
+  }, { actorId, conversationId: approval.conversationId });
 
   // Continue the conversation with the tool result
   return chat({

@@ -20,6 +20,15 @@ All notable changes to this project are documented in this file. The format is b
   from the pinned Ardent into `dist/native-snapshot/journal.js` and reads it with Node's built-in SQLite;
   Ardent stays a development dependency of the agent.
 
+### Added
+
+- **Server-side AI scheduler.** `MAGNUS_AI_SCHEDULER_ENABLED=true` runs due AI scheduled operations every
+  minute from the server (off by default; `POST /ai-schedules/execute-due` still works). Every caller
+  claims an occurrence with a compare-and-set on `nextRunAt` before it runs, so two concurrent calls no
+  longer run the same operation twice, and a failed run waits for its next occurrence. Scheduled
+  operations no longer run tools that need approval (`execCommand`, `writeFile`, `runSkill`, ...)
+  unattended: a run that reaches one stops there and records it in `lastError`.
+
 ### Security
 
 - **Console proxy keeps the upstream content isolation headers.** `/api/proxy/*` now relays
@@ -77,6 +86,18 @@ All notable changes to this project are documented in this file. The format is b
 - **Anonymous refusals no longer write a log row each.** A 4xx answered to a request with no signed-in
   user and no node credential is counted (`httpUnauthenticatedRejectionsTotal` on `/metrics`) and
   summarized once a minute instead of being stored and streamed one row at a time.
+- **Confirming a pending AI tool call checks the tool policy again.** `POST /assistant/messages/:id/confirm`
+  refuses to run a tool that was disabled or denied after it went pending (for a natural-language
+  command, `execCommand` too), as `POST /assistant/messages/:id/approve` already did.
+- **AI tool results are redacted** (API keys, tokens, passwords, bearer values, private keys) before
+  they reach the model provider, the conversation store or share links; shared conversations redact
+  rows stored before this change on the way out.
+- **AI `execCommand` and `runSkill` go through the durable command queue.** Each call is a
+  `RemoteCommand` row dispatched by the command worker (signed request, receipt and result checks),
+  authored and audited as the user who approved it rather than `ai-assistant`, and linked to the
+  conversation (`correlationId`). The destructive-command check judges command words instead of
+  substrings, so `grep halted` is no longer refused while `/sbin/reboot` and `systemctl poweroff` are.
+
 - **Agent command arguments are passed literally.** `POST /api/v1/commands/execute` without the
   execution supervisor, and the supervisor's shell path for unregistered commands, joined `args` onto
   the command with spaces and no quoting, so an argument containing a space, quote or `;` changed
@@ -159,8 +180,8 @@ All notable changes to this project are documented in this file. The format is b
   values answer 400 instead of 500, and a pinned insight can no longer replace its generated `id`.
 
 **New environment variables:** agent `MAGNUS_AGENT_BODY_LIMIT_BYTES`, `HERMES_INSTALL_COMMIT`,
-`HERMES_INSTALL_SCRIPT_SHA256`; server `MAGNUS_API_SECRET_BYPASS` (all optional).
-`HERMES_INSTALL_SCRIPT_SHA256`, `MAGNUS_AGENT_FILE_ROOTS` (all optional).
+`HERMES_INSTALL_SCRIPT_SHA256`, `MAGNUS_AGENT_FILE_ROOTS`; server `MAGNUS_API_SECRET_BYPASS`,
+`MAGNUS_AI_SCHEDULER_ENABLED` (all optional).
 
 **Migration impact:** None. A deployment whose `IAM_CORE_URL` uses HTTP to a non-loopback host must switch
 it to HTTPS before upgrading; the server refuses to start otherwise. Hive IAM must issue tokens with `exp`
