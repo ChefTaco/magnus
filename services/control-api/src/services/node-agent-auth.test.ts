@@ -34,3 +34,18 @@ describe('server-to-agent shared secret and the evidence ratchet', () => {
     await vi.waitFor(() => expect(fake.state.credentials[0]!.evidenceSigning).toBe(false));
   });
 });
+
+describe('isolated rehearsal', () => {
+  afterEach(() => { delete process.env['HIVE_REHEARSAL']; });
+
+  it('authenticates no request to an agent, reads included', async () => {
+    process.env['HIVE_REHEARSAL'] = 'true';
+    const url = 'https://node-a.example.com:4100/api/v1/profiling';
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    expect(() => auth.agentAuthHeaders({ nodeId: 'node-a' }, 'GET', url)).toThrow(/Isolated rehearsal/);
+    expect(() => auth.unsignedAgentAuthHeaders({ nodeId: 'node-a' }, 'GET', url, 'test')).toThrow(/Isolated rehearsal/);
+    expect(() => auth.agentFetch({ nodeId: 'node-a' }, url)).toThrow(/Isolated rehearsal/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+});

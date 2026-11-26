@@ -137,11 +137,13 @@ to be private and on the release version.
 
 After the npm packages are published, the `images` job builds
 `ghcr.io/cheftaco/magnus-server`, `magnus-fleet-gateway`, `magnus-ui` and `magnus-agent` from
-`npm pack` tarballs of the same commit (the bytes that were published; the gateway is
+`npm pack` tarballs that each Dockerfile packs from the tagged commit's source (the same
+commit the npm packages were published from, not the published tarballs; the gateway is
 packed but never published), for `linux/amd64` and `linux/arm64`, with provenance and
-an SBOM. It tags them `X.Y.Z`, `X.Y` and `X`, never `latest`, and skips
-prereleases. It uses the workflow's `GITHUB_TOKEN` (`packages: write`), with
-no extra secret.
+an SBOM. Each architecture is first built, run and scanned with Trivy; the pushed
+multi-architecture image is then built again from the same source. It tags them `X.Y.Z`,
+`X.Y` and `X`, never `latest`; a prerelease gets only its `X.Y.Z-<pre>` tag. It uses the
+workflow's `GITHUB_TOKEN` (`packages: write`), with no extra secret.
 
 - **First push:** GHCR creates the packages as private. Make each one public
   under the repository's **Packages** and link it to the repository. The

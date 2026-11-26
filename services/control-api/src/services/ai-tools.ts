@@ -320,10 +320,14 @@ registerTool('getSystemUpdateFleetStatus', async () => {
   };
 });
 
+const HEALTH_HISTORY_MAX_HOURS = 168;
+
 registerTool('getHealthHistory', async (args) => {
   const db = getDb();
   const nodeId = String(args['nodeId'] ?? '');
-  const hours = Number(args['hours'] ?? 24);
+  // Bounded: snapshots are kept for days, and one request must not load all of them.
+  const requestedHours = Number(args['hours'] ?? 24);
+  const hours = Number.isFinite(requestedHours) ? Math.min(HEALTH_HISTORY_MAX_HOURS, Math.max(1, requestedHours)) : 24;
   if (!nodeId) return { error: 'nodeId is required' };
 
   const since = new Date(Date.now() - hours * 60 * 60 * 1000);
@@ -798,8 +802,9 @@ registerTool('getDashboardStats', async () => {
   ]);
 
   // Avg CPU/memory from latest health per online node
+  // Only recent snapshots: `distinct` is applied after the rows are read.
   const latestHealth = await db.healthSnapshot.findMany({
-    where: { node: { status: 'ONLINE' } },
+    where: { node: { status: 'ONLINE' }, timestamp: { gte: new Date(Date.now() - 60 * 60 * 1000) } },
     orderBy: { timestamp: 'desc' },
     distinct: ['nodeId'],
     select: { cpuUsagePercent: true, memoryPercent: true },

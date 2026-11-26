@@ -138,14 +138,21 @@ describe('migration files and backups', () => {
     expect(findReusableBackup(dir, 'pre-migrate-1.1.3', 'm1', 60_000, now)).toBeNull();
   });
 
-  it('prunes old dumps but keeps the newest of every label', () => {
+  it('prunes everything but the newest dumps, whatever their labels', () => {
     const dir = mkdtempSync(join(tmpdir(), 'magnus-backups-'));
     for (let i = 0; i < 6; i++) writeDump(dir, `loop-${i}.dump`, { createdAt: `2026-11-01T0${i}:00:00Z`, label: 'pre-migrate-1.1.3' });
     writeDump(dir, 'upgrade.dump', { createdAt: '2026-10-01T00:00:00Z', label: 'pre-upgrade-1.1.2-to-1.1.3' });
     const removed = pruneBackups(dir, 3);
-    expect(removed.map(file => file.slice(dir.length + 1)).sort()).toEqual(['loop-0.dump', 'loop-1.dump', 'loop-2.dump']);
-    expect(existsSync(join(dir, 'upgrade.dump'))).toBe(true);
+    expect(removed.map(file => file.slice(dir.length + 1)).sort()).toEqual(['loop-0.dump', 'loop-1.dump', 'loop-2.dump', 'upgrade.dump']);
+    expect(existsSync(join(dir, 'loop-5.dump'))).toBe(true);
     expect(existsSync(join(dir, 'loop-0.dump.json'))).toBe(false);
+  });
+
+  it('deletes old dumps when every release has its own label', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'magnus-backups-'));
+    for (let i = 0; i < 8; i++) writeDump(dir, `v${i}.dump`, { createdAt: `2026-11-0${i + 1}T00:00:00Z`, label: `pre-migrate-3.3.${i}` });
+    const removed = pruneBackups(dir, 5);
+    expect(removed.map(file => file.slice(dir.length + 1)).sort()).toEqual(['v0.dump', 'v1.dump', 'v2.dump']);
   });
 
   it('restores into a fresh schema and puts the original back when pg_restore fails', async () => {

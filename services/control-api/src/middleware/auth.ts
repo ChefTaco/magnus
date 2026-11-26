@@ -36,6 +36,7 @@ import { verifyIamAccessToken } from './iam-token.js';
 import { getCurrentUserStatus } from './user-status.js';
 import { matchesSha256Digest, safeEqual } from '../utils/safe-equal.js';
 import { OathweaveAccessDenied, oathweaveAuthentication } from './oathweave.js';
+import { iamCoreUrlProblem } from '../config/iam.js';
 
 /** Constant-time string comparison (re-exported for existing callers). */
 export { safeEqual };
@@ -54,14 +55,21 @@ const PUBLIC_KEY_TTL_MS = 60 * 60 * 1_000; // 1 hour
 // A forged or expired token must not turn every request into an IAM fetch.
 const FORCED_REFRESH_MIN_INTERVAL_MS = 60 * 1_000;
 
+const PUBLIC_KEY_FETCH_TIMEOUT_MS = 5_000;
+
 async function fetchIamPublicKey(): Promise<JoseKey> {
-  const url = `${IAM_CORE_URL}/api/v1/auth/public-key`;
-  const res = await fetch(url);
+  // The env schema refuses such a URL at startup; this guards callers that skipped validation.
+  const urlProblem = iamCoreUrlProblem(IAM_CORE_URL, process.env['ALLOW_INSECURE_HTTP'] === 'true' && process.env['NODE_ENV'] !== 'production');
+  if (urlProblem) throw new Error(urlProblem);
+  const url = `${IAM_CORE_URL.replace(/\/+$/, '')}/api/v1/auth/public-key`;
+  // A redirect could hand the trust anchor to another host, so it is an error, not followed.
+  const res = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(PUBLIC_KEY_FETCH_TIMEOUT_MS) });
   if (!res.ok) {
     throw new Error(`Failed to fetch IAM public key: ${res.status}`);
   }
-  const { publicKey: pem } = await res.json() as { publicKey: string };
-  const key = await jose.importSPKI(pem, 'RS256');
+  const body = await res.json() as { publicKey?: unknown };
+  if (typeof body.publicKey !== 'string') throw new Error('IAM public key response has no publicKey');
+  const key = await jose.importSPKI(body.publicKey, 'RS256');
   cachedPublicKey = key;
   publicKeyCachedAt = Date.now();
   return key;
@@ -93,12 +101,16 @@ const IAM_ROLE_MAP: Record<string, UserRole> = {
   DEPLOY_AGENT: 'OPERATOR',
 };
 
-function mapIamRoles(roles: string[]): UserRole {
+const ROLE_RANK: Record<UserRole, number> = { VIEWER: 0, OPERATOR: 1, ADMIN: 2 };
+
+/** The highest Magnus role any of the IAM roles maps to, whatever their order; VIEWER when none maps. */
+export function mapIamRoles(roles: string[]): UserRole {
+  let best: UserRole = 'VIEWER';
   for (const r of roles) {
     const mapped = IAM_ROLE_MAP[r];
-    if (mapped) return mapped;
+    if (mapped && ROLE_RANK[mapped] > ROLE_RANK[best]) best = mapped;
   }
-  return 'VIEWER';
+  return best;
 }
 
 // ──────────────────────────────────────────────────────────

@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { basename, dirname, join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { restoreAsideSchema, restoreFinishSql, restoreRevertSql, restoreSwapSql } from '@hivemagnus/magnus-contracts';
 import type pg from 'pg';
 
@@ -182,7 +182,7 @@ export interface BackupOptions {
   now?: Date;
   /** Newest applied migration, recorded so a crash loop can reuse the dump. */
   lastApplied?: string | null;
-  /** Dumps to keep in backupDir (MAGNUS_BACKUP_KEEP); the newest of each label is always kept. */
+  /** Dumps to keep in backupDir (MAGNUS_BACKUP_KEEP), the new one included. */
   keep?: number;
 }
 
@@ -224,21 +224,19 @@ export function findReusableBackup(dir: string, label: string, lastApplied: stri
 }
 
 /**
- * Keep the newest `keep` dumps; older ones go, except the newest dump of each
- * label (the one a rollback of that step would restore). Returns removed files.
+ * Keep the newest `keep` dumps; older ones go. The dump just written is the newest, so it always
+ * stays. Labels name a version (`pre-migrate-X.Y.Z`, `manual-X.Y.Z`), so exempting the newest dump of
+ * each label would keep one dump per release forever. Returns removed files.
  */
 export function pruneBackups(dir: string, keep: number): string[] {
   if (!Number.isInteger(keep) || keep < 1) return [];
   const dumps = dumpsIn(dir).map(file => {
     const meta = readMetadata(file);
-    return { file, label: meta?.label ?? basename(file), at: Date.parse(meta?.createdAt ?? '') || statSync(file).mtimeMs };
+    return { file, at: Date.parse(meta?.createdAt ?? '') || statSync(file).mtimeMs };
   }).sort((a, b) => b.at - a.at);
-  const newestPerLabel = new Set<string>();
   const removed: string[] = [];
   dumps.forEach((dump, index) => {
-    const newest = !newestPerLabel.has(dump.label);
-    newestPerLabel.add(dump.label);
-    if (index < keep || newest) return;
+    if (index < keep) return;
     rmSync(dump.file, { force: true });
     rmSync(`${dump.file}.json`, { force: true });
     removed.push(dump.file);
