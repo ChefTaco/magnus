@@ -19,6 +19,32 @@ The rules every upgrade path follows:
   `slow` or `one-way`). Upgrades print slow and one-way migrations and wait for confirmation
   (`--yes`). Startup auto-migrate refuses them unless `MAGNUS_AUTO_MIGRATE_ALLOW_SLOW=true` is set.
 
+## Version 3.4.0: hardening, Ardent 3.5.1 and two fast migrations
+
+Upgrade in this order: node agents, then the server and console, then managed Ardent profiles. A
+3.4.0 server writes files only through an agent that advertises `restrictedFileWrite` 2 and refuses
+older agents with 409 `AGENT_FILE_WRITE_UNSUPPORTED`; a 3.4.0 agent refuses system-path writes until
+the server sends `adminWrite`, so finish the server soon after the agents. Ardent 3.4 and later need
+the 3.4.0 node agent (it sends the management token with the `Bearer` scheme), so move profiles to a
+newer Ardent only after their node agent.
+
+Before upgrading the server, make sure `IAM_CORE_URL` (when set) uses HTTPS or names a loopback host,
+and that Hive IAM issues tokens with `exp` and `iat` and a lifetime of at most 24 hours. Remove
+`ALLOW_LEGACY_SESSION_SECRET`, `DASHBOARD_LOGIN_USERNAME` and `DASHBOARD_LOGIN_PASSWORD` from the
+console environment (`SESSION_SECRET` is required), and set `DASHBOARD_TRUSTED_PROXIES` when the
+console sits behind a reverse proxy. Backup pruning now deletes dumps beyond `MAGNUS_BACKUP_KEEP` /
+`keepBackups`; copy old dumps you want elsewhere first. On each node, set `HERMES_USER` where Hermes
+lives in another account's home, move shell syntax from command `args` into `command`, and re-run
+`sudo magnus-agent install-service`. AI tools that need approval now pause in every chat path,
+insights and scheduled operations; system-path file writes need ADMIN; alert rule node filters match
+exactly or as a `*` glob. History retention, the server-side AI scheduler and the API-secret bypass
+scope are opt-in. The [CHANGELOG](CHANGELOG.md) upgrade notes list every change in detail.
+
+Two fast migrations (`20261126120000_remote_command_status_index`,
+`20261126120100_remediation_execution_restrict`): `magnus upgrade` backs up and applies them, and a
+Hive suite upgrade that manages Magnus needs `--allow-migrations`. Both are safe under a 3.3.x
+server after a downgrade.
+
 ## Version 3.3.0: Ardent 3.2.0 runtime contracts
 
 Release every extension package that pins an exact `@hivemagnus/ardent` peer for 3.2.0 first; a
