@@ -2825,10 +2825,11 @@ export const ardentTaskDoneEventSchema = z.object({
  * history, artifact manifests and session contexts. 3: also skill-install, which installs a HiveSkills
  * catalog skill onto a profile. 4: also the Ardent 3.2.0 runtime contracts (task recovery and lineage,
  * execution context passthrough, artifact transfer v2 and imports), each further gated per profile by
- * the profile's own capabilities (see ardentProfileCapabilities). A route that needs a higher level than
- * the agent reports answers 409 AGENT_UPGRADE_REQUIRED.
+ * the profile's own capabilities (see ardentProfileCapabilities). 5: also the Ardent 3.4.0 operations
+ * (the metrics read, peer credential reload, management credential rotation and task list filters).
+ * A route that needs a higher level than the agent reports answers 409 AGENT_UPGRADE_REQUIRED.
  */
-export const ARDENT_STUDIO_CAPABILITY = { bridge: 1, missions: 2, skillInstall: 3, runtimeContracts: 4 } as const;
+export const ARDENT_STUDIO_CAPABILITY = { bridge: 1, missions: 2, skillInstall: 3, runtimeContracts: 4, operations: 5 } as const;
 /** task.event kinds that Ardent 2.2.0 adds. Other kinds appear too, so readers must accept unknown ones. */
 export const ARDENT_STUDIO_EVENT_KINDS = [
   'mission', 'team_handoff', 'team_ask_user', 'team_propose_decision', 'artifact_registered', 'development_note',

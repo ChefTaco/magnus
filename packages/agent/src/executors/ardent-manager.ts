@@ -1,7 +1,7 @@
 import { readFile, readdir, lstat, realpath, writeFile, chown, rename, rm } from 'node:fs/promises';
 import { userInfo } from 'node:os';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { gunzipSync } from 'node:zlib';
 import { execFile } from 'node:child_process';
 import { Hono } from 'hono';
@@ -14,7 +14,7 @@ import { childEnvironment } from '../utils/child-env.js';
 import { managedExecution } from '../security/managed-context.js';
 import { logger } from '../utils/logger.js';
 import {
-  ARDENT_CONTENT_HEADER_PATTERNS, ARDENT_IF_RANGE_PATTERN, ARDENT_INSTANCE_REF_ENV, ARDENT_INSTANCE_REF_PATTERN, ARDENT_RANGE_PATTERN, ardentInstanceRef, ARDENT_SKILL_ARCHIVE_LIMITS, ARDENT_SKILL_RECEIPT_FILE,
+  ARDENT_CONTENT_HEADER_PATTERNS, ARDENT_IF_RANGE_PATTERN, ARDENT_TASK_FILTER_QUERY, ardentCredentialReloadSchema, ARDENT_INSTANCE_REF_ENV, ARDENT_INSTANCE_REF_PATTERN, ARDENT_RANGE_PATTERN, ardentInstanceRef, ARDENT_SKILL_ARCHIVE_LIMITS, ARDENT_SKILL_RECEIPT_FILE,
   ardentArtifactImportSchema, ardentMediaType, ardentTraceHeaders, ardentDevelopmentNoteSchema, ardentMissionSubmitSchema,
   ardentPreviewSubmitSchema, ardentProfileCapabilities, ardentSessionOpenSchema, ardentSkillInstallNodeSchema, ardentSkillReceiptSchema,
   ardentTaskRecoveryDecisionSchema, checkArdentSkillArchive, parseArdentExecutionContext, type ArdentSkillInstallResult,
@@ -114,8 +114,12 @@ export async function profileConfig(root: string, name: string): Promise<{ confi
 }
 
 async function probe(port: number, dir: string, tokenEnv: string, profile: string): Promise<boolean> {
+  try { return await probeWith(port, await managementToken(dir, tokenEnv), profile); } catch { return false; }
+}
+
+/** Whether the profile's management API on `port` is this profile and accepts `token`. */
+async function probeWith(port: number, token: string, profile: string): Promise<boolean> {
   try {
-    const token = await managementToken(dir, tokenEnv);
     const response = await fetch(`http://127.0.0.1:${port}/api/v1/profile`, { headers: { Authorization: `Bearer ${token}` }, redirect: 'error', signal: AbortSignal.timeout(1500) });
     if (!response.ok) return false;
     const identity: unknown = await response.json();
@@ -342,7 +346,7 @@ async function managementToken(dir: string, envName: string): Promise<string> {
   return token;
 }
 
-const allowedRead = /^(?:openapi|status|profile|config|config\/schema|providers|channels|peers|peers\/config|memory\/status|skills|sessions|tasks|tasks\/[0-9a-f-]{36}(?:\/events|\/recovery|\/lineage)?|jobs\/definitions\/status|sessions\/[0-9a-f-]{36}\/messages|identity\/(?:soul|identity)(?:\/history)?|artifacts\/[a-f0-9]{64}(?:\/manifest|\/manifest\/v2|\/content|\/renditions)?|artifacts\/imports(?:\/[a-f0-9]{32})?|tasks\/[0-9a-f-]{36}\/(?:stream|artifacts)|development)$/;
+const allowedRead = /^(?:openapi|status|profile|config|config\/schema|providers|channels|peers|peers\/config|memory\/status|skills|sessions|tasks|tasks\/[0-9a-f-]{36}(?:\/events|\/recovery|\/lineage)?|jobs\/definitions\/status|sessions\/[0-9a-f-]{36}\/messages|identity\/(?:soul|identity)(?:\/history)?|artifacts\/[a-f0-9]{64}(?:\/manifest|\/manifest\/v2|\/content|\/renditions)?|artifacts\/imports(?:\/[a-f0-9]{32})?|tasks\/[0-9a-f-]{36}\/(?:stream|artifacts)|development|metrics)$/;
 /** Streamed rather than buffered: a task's events and an artifact's bytes (v1 octet stream, v2 content). */
 const streamedRead = /^(?:artifacts\/[a-f0-9]{64}(?:\/content)?|tasks\/[0-9a-f-]{36}\/stream)$/;
 /** Artifact transfer v2 content, relayed with its range and representation headers. */
@@ -360,6 +364,8 @@ export { ardentMediaType, ardentTraceHeaders };
 const readQuery: Record<string, RegExp> = {
   after: /^[A-Za-z0-9_-]{1,400}$/, limit: /^\d{1,3}$/, kind: /^[a-z][a-z0-9_]{0,63}$/, context: /^(?:direct|mission|preview)$/,
 };
+/** The task list adds Ardent 3.4.0's filters (state, caller, since, until and the peer and scheduled contexts). */
+const taskListQuery: Record<string, RegExp> = { ...readQuery, ...ARDENT_TASK_FILTER_QUERY };
 /** Ardent closes a task stream after 60 seconds; a relay with no bytes for as long ends too. */
 export const ARDENT_STREAM_IDLE_MS = 60_000;
 const DEFAULT_ARTIFACT_MAX_BYTES = 64 * 1024 * 1024;
@@ -541,7 +547,7 @@ async function relayArdentContent(url: URL, headers: Record<string, string>, max
 }
 const actionInput = z.object({
   profile: profileName,
-  action: z.enum(['profile-create', 'session-open', 'hivemem-credential-set', 'hivemem-credential-reload', 'config-validate', 'config-save', 'peer-validate', 'peer-save', 'identity-save', 'identity-restore', 'provider-test', 'channel-test', 'peer-test', 'memory-search', 'task-submit', 'task-cancel', 'mission-submit', 'task-pause', 'task-resume', 'preview-submit', 'development-note', 'skill-set', 'service-start', 'service-stop', 'service-restart', 'package-install', 'context-stage', 'context-adopt', 'context-rollback', 'skill-install', 'task-recovery', 'artifact-import', 'instance-ref-set']),
+  action: z.enum(['profile-create', 'session-open', 'hivemem-credential-set', 'hivemem-credential-reload', 'config-validate', 'config-save', 'peer-validate', 'peer-save', 'identity-save', 'identity-restore', 'provider-test', 'channel-test', 'peer-test', 'memory-search', 'task-submit', 'task-cancel', 'mission-submit', 'task-pause', 'task-resume', 'preview-submit', 'development-note', 'skill-set', 'service-start', 'service-stop', 'service-restart', 'package-install', 'context-stage', 'context-adopt', 'context-rollback', 'skill-install', 'task-recovery', 'artifact-import', 'instance-ref-set', 'peer-credential-reload', 'management-credential-rotate']),
   target: z.string().max(128).optional(),
   body: z.unknown().optional(),
   /** An execution context v1 for task-submit, mission-submit and preview-submit; an invalid one is dropped. */
@@ -590,7 +596,26 @@ const actionRoutes: Record<z.infer<typeof actionInput>['action'], { method: 'POS
   'task-recovery': { method: 'POST', path: target => `tasks/${target}/recovery`, target: /^[0-9a-f-]{36}$/ },
   'artifact-import': { method: 'POST', path: () => 'artifacts/imports' },
   'instance-ref-set': { method: 'POST', path: () => '' },
+  // Ardent 3.4.0 re-reads every A2A peer token from the profile's .env; a replaced inbound token stays valid for overlap_seconds.
+  'peer-credential-reload': { method: 'POST', path: () => 'credentials/peers/reload' },
+  // The agent writes a new management token and switches the gateway to it (rotateManagementCredential).
+  'management-credential-rotate': { method: 'POST', path: () => '' },
 };
+
+/** Ardent 3.4.0 refuses a management request body above 1 MiB (413 BODY_TOO_LARGE). */
+export const ARDENT_MANAGEMENT_BODY_LIMIT_BYTES = 1_048_576;
+/**
+ * The largest action body the agent accepts. A preview may carry a full soul and identity (128 KiB each);
+ * everything else that reaches Ardent, missions and configuration included, stays under 200 KB, well inside
+ * Ardent's limit. A skill installation's archive (1 MiB, base64) is unpacked by the agent and never sent to Ardent.
+ */
+export function ardentActionBodyLimit(action: z.infer<typeof actionInput>['action']): number {
+  return action === 'preview-submit' ? 300_000 : action === 'skill-install' ? 1_500_000 : 200_000;
+}
+/** Whether an action is a request to the profile's management API (the others are the agent's own work). */
+export function ardentActionReachesProfile(action: z.infer<typeof actionInput>['action']): boolean {
+  return actionRoutes[action].path('00000000-0000-4000-8000-000000000000') !== '';
+}
 
 /**
  * The command that runs `args` as the Ardent owner. It runs in the owner's home: the agent's own
@@ -853,6 +878,10 @@ const PROFILE_ENV_VALUES = { [ARDENT_HIVEMEM_TOKEN_ENV]: jwt, [ARDENT_INSTANCE_R
  */
 export async function writeProfileEnv(dir: string, key: keyof typeof PROFILE_ENV_VALUES, value: string): Promise<boolean> {
   PROFILE_ENV_VALUES[key].parse(value);
+  return replaceProfileEnvLine(dir, key, value);
+}
+
+async function replaceProfileEnvLine(dir: string, key: string, value: string): Promise<boolean> {
   const file = join(dir, '.env');
   const info = await lstat(file);
   if (info.isSymbolicLink() || !info.isFile() || info.size > 64_000 || (info.mode & 0o077) !== 0) throw new Error('Ardent credential file is invalid');
@@ -914,6 +943,58 @@ async function setHiveMemCredential(root: ArdentRoot, profile: string, body: unk
   await writeProfileCredential(dir, ARDENT_HIVEMEM_TOKEN_ENV, input.token);
   // Report only that the key is set: the token never leaves the node again.
   return { profile, tokenEnv: ARDENT_HIVEMEM_TOKEN_ENV, configured: true, activationRequired: true };
+}
+
+/** What Ardent accepts as a management token: 16 to 4096 characters without whitespace. */
+const managementTokenValue = z.string().regex(/^\S{16,4096}$/);
+
+/**
+ * Rotate a running profile's management token without a restart (Ardent 3.4.0). The node agent reads the
+ * token from the profile's `.env` for every request, so the new token is written there first and the
+ * gateway is then told to switch to it, authenticated with the token it still uses; the replaced token
+ * stays valid for `overlap_seconds`. When Ardent refuses, the previous token is written back. When the
+ * outcome is unclear, the token the gateway accepts is kept, and with neither accepted the outcome is
+ * unknown. Root only, like the HiveMem credential. The token never leaves the node.
+ */
+async function rotateManagementCredential(root: ArdentRoot, profile: string, body: unknown): Promise<object> {
+  if (process.getuid?.() !== 0) throw new Error('Ardent credential management requires a root node manager');
+  const input = ardentCredentialReloadSchema.parse(body ?? {});
+  const { config, dir } = await profileConfig(root.root, profile);
+  const tokenEnv = config.api.token_env;
+  if (Object.hasOwn(PROFILE_ENV_VALUES, tokenEnv)) throw new Error('The management token variable is one Magnus manages for another purpose');
+  if (process.env[tokenEnv]) throw new Error(`${tokenEnv} comes from the node agent's environment; rotate it there`);
+  const previous = managementTokenValue.parse(await managementToken(dir, tokenEnv));
+  const port = config.api.port;
+  if (!await probeWith(port, previous, profile)) throw new Error('Ardent management listener identity differs or is unavailable');
+  const next = randomBytes(32).toString('base64url');
+  await replaceProfileEnvLine(dir, tokenEnv, next);
+  const done = (changed: boolean, previousValidUntil: string | null) => ({ profile, tokenEnv, rotated: true, changed, previousValidUntil });
+  // After a failure: keep the token the gateway now accepts, the new one first (both work during an overlap).
+  const settle = async (failure: Error): Promise<object> => {
+    if (await probeWith(port, next, profile)) return done(true, null);
+    if (await probeWith(port, previous, profile)) {
+      try { await replaceProfileEnvLine(dir, tokenEnv, previous); }
+      catch (error: unknown) { throw new ArdentOutcomeUncertain('Ardent kept the previous management token, but it could not be written back', { cause: error }); }
+      throw failure;
+    }
+    throw new ArdentOutcomeUncertain('Ardent accepts neither the previous nor the new management token after the reload', { cause: failure });
+  };
+  let response: Response;
+  let answer: ArrayBuffer;
+  try {
+    response = await fetch(`http://127.0.0.1:${port}/api/v1/credentials/management/reload`, {
+      method: 'POST', headers: { Authorization: `Bearer ${previous}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(input), redirect: 'error', signal: AbortSignal.timeout(15_000) });
+    answer = await response.arrayBuffer();
+  } catch (error: unknown) {
+    return settle(new Error('Ardent did not answer the management credential reload', { cause: error }));
+  }
+  if (!response.ok) return settle(new Error(response.status === 404 ? 'Management credential rotation needs Ardent 3.4.0 or later'
+    : `Ardent refused the management credential reload with HTTP ${response.status}${upstreamMessage(answer)}`));
+  const result = z.object({ changed: z.boolean(), previous_valid_until: z.string().max(64).nullable() }).passthrough()
+    .safeParse((() => { try { return JSON.parse(Buffer.from(answer).toString('utf8')) as unknown; } catch { return null; } })());
+  if (!result.success) return settle(new Error('Ardent answered the management credential reload with an unexpected body'));
+  return done(result.data.changed, result.data.previous_valid_until);
 }
 
 function connectionRefused(error: unknown): boolean {
@@ -1104,7 +1185,7 @@ export function createArdentRoutes(resolveRoot: () => Promise<ArdentRoot> = arde
       const token = await managementToken(dir, config.api.token_env);
       if (streamedRead.test(suffix)) return await relayArdentStream(config.api.port, token, suffix, c.req.raw, c.req.raw.signal);
       const url = new URL(`http://127.0.0.1:${config.api.port}/${suffix === 'openapi' ? 'openapi.json' : `api/v1/${suffix}`}`);
-      for (const [key, pattern] of Object.entries(readQuery)) {
+      for (const [key, pattern] of Object.entries(suffix === 'tasks' ? taskListQuery : readQuery)) {
         const value = c.req.query(key);
         if (value === undefined) continue;
         if (!pattern.test(value)) return c.json({ error: `Invalid ${key} query` }, 400);
@@ -1137,6 +1218,8 @@ export function createArdentRoutes(resolveRoot: () => Promise<ArdentRoot> = arde
       && !z.object({}).strict().safeParse(input.body).success) return c.json({ error: 'Task pause and resume take no body' }, 400);
     if (input.action === 'hivemem-credential-reload' && input.body !== undefined && !z.object({}).strict().safeParse(input.body).success)
       return c.json({ error: 'Credential reload takes no body; the token is read from the profile .env' }, 400);
+    if ((input.action === 'peer-credential-reload' || input.action === 'management-credential-rotate') && input.body !== undefined
+      && !ardentCredentialReloadSchema.safeParse(input.body).success) return c.json({ error: 'Credential reload takes only overlap_seconds (0 to 3600)' }, 400);
     if (input.action === 'memory-search' && !z.object({ query: z.string().trim().min(1).max(1000) }).strict().safeParse(input.body).success)
       return c.json({ error: 'Memory search requires a bounded query' }, 400);
     if (input.action === 'skill-install' && !ardentSkillInstallNodeSchema.safeParse(input.body).success)
@@ -1163,9 +1246,7 @@ export function createArdentRoutes(resolveRoot: () => Promise<ArdentRoot> = arde
       if (header) forwarded['x-hive-execution'] = header; else delete forwarded['x-hive-execution'];
     }
     const body = JSON.stringify(execution ? { ...(input.body as object), execution } : input.body ?? {});
-    // A preview may carry a full soul and identity (128 KiB each) and a skill installation its archive (1 MiB, base64);
-    // everything else, missions included, stays under 200 KB.
-    const limit = input.action === 'preview-submit' ? 300_000 : input.action === 'skill-install' ? 1_500_000 : 200_000;
+    const limit = ardentActionBodyLimit(input.action);
     if (Buffer.byteLength(body) > limit) return c.json({ error: 'Ardent action exceeds size limit' }, 413);
     try {
       const root = await resolveRoot();
@@ -1198,6 +1279,8 @@ export function createArdentRoutes(resolveRoot: () => Promise<ArdentRoot> = arde
       if (input.action === 'instance-ref-set') return c.json(await setInstanceRef(root, input.profile, input.body));
       if (input.action === 'profile-create') return c.json(await withArdentLifecycle(root.install, () => createProfile(root, input.profile, input.body)));
       if (input.action === 'hivemem-credential-set') return c.json(await setHiveMemCredential(root, input.profile, input.body));
+      if (input.action === 'management-credential-rotate')
+        return c.json(await withArdentLifecycle(root.install, () => rotateManagementCredential(root, input.profile, input.body)));
       if (input.action === 'skill-install') return c.json(await installSkill(root, input.profile, input.body));
       if (input.action === 'service-start' || input.action === 'service-stop' || input.action === 'service-restart') {
         const action = input.action;

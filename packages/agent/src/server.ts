@@ -117,7 +117,7 @@ export async function createApp(): Promise<Hono> {
           commandReconciliation: commandReconciliationEnabled() ? 1 : 0,
           // Ardent Studio bridge level (ARDENT_AGENT_CAPABILITIES), which the server gates on: 1 sessions,
           // task streams and streamed artifacts; 2 also missions, pause and resume, previews and development
-          // history; 3 also HiveSkills skill-install.
+          // history; 3 also HiveSkills skill-install; 4 the Ardent 3.2.0 runtime contracts; 5 the Ardent 3.4.0 operations.
           studio: ENABLE_NODE_MANAGEMENT ? ARDENT_AGENT_CAPABILITIES.studio : 0,
           commandCompletionRegistry: { version: COMMAND_COMPLETION_REGISTRY.version,
             sha256: COMMAND_COMPLETION_REGISTRY_SHA256, enabled: MAGNUS_EXECUTION_SUPERVISOR_ENABLED ? 1 : 0 },
@@ -204,7 +204,7 @@ export async function createApp(): Promise<Hono> {
           commandReconciliation: commandReconciliationEnabled() ? 1 : 0,
           // Ardent Studio bridge level (ARDENT_AGENT_CAPABILITIES), which the server gates on: 1 sessions,
           // task streams and streamed artifacts; 2 also missions, pause and resume, previews and development
-          // history; 3 also HiveSkills skill-install.
+          // history; 3 also HiveSkills skill-install; 4 the Ardent 3.2.0 runtime contracts; 5 the Ardent 3.4.0 operations.
           studio: ENABLE_NODE_MANAGEMENT ? ARDENT_AGENT_CAPABILITIES.studio : 0,
         },
         heartbeat: getHeartbeatStatus(),

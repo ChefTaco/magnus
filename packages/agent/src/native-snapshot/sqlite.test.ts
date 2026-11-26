@@ -43,6 +43,24 @@ describe('offline journal startup safety', () => {
     const path = await journal(store => { store.claimInbound('telegram', 'fixture', '1'); store.closeAdmission(randomUUID()); });
     expect(await inspectSqlite(path)).toEqual({ active: 1, unknown: 0, unsupported: 1 });
   });
+  it('applies the Ardent 3.4.0 idle rules: bound outbound calls, recovery of settled tasks, seeded Mattermost history', async () => {
+    const path = await journal(store => {
+      const settled = task(store).id, running = task(store).id;
+      store.finishWithAssistant(settled, 'completed', 'done');
+      store.startQueued(running);
+      store.db.exec(`INSERT INTO task_recovery (task_id,status,reason_json,attempt,updated_ms) VALUES
+          ('${settled}','ready','{}',1,0), ('${running}','reconciling','{}',1,0);
+        CREATE TABLE IF NOT EXISTS a2a_outbound_calls (id TEXT PRIMARY KEY, peer_id TEXT NOT NULL, message_id TEXT NOT NULL, task_id TEXT,
+          token_hash TEXT NOT NULL UNIQUE, state TEXT NOT NULL, created_ms INTEGER NOT NULL, updated_ms INTEGER NOT NULL);
+        INSERT INTO a2a_outbound_calls VALUES ('bound','peer','m1','remote','h1','bound',0,0), ('pending','peer','m2',NULL,'h2','pending',0,0);`);
+    });
+    // History an earlier Ardent seeded on a channel's first sight: Mattermost, no channel type, no task, no delivery.
+    const db = new DatabaseSync(path);
+    db.exec("INSERT INTO channel_inbound (platform,account,update_id,task_id,created_ms) VALUES ('mattermost','bot','post-1',NULL,0)");
+    db.close();
+    // The running task and its reconciling recovery, and the pending call; nothing else.
+    expect(await inspectSqlite(path)).toEqual({ active: 3, unknown: 0, unsupported: 0 });
+  });
   it('holds tables and state values Ardent does not classify', async () => {
     const path = await journal(store => {
       const id = task(store).id;

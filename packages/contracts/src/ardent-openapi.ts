@@ -27,6 +27,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /** @description HiveCommon readiness body plus problems. The configuration check runs first; the selected backend (codex or llamacpp) is probed only when the configuration is complete. A 503 keeps the status degraded. */
         get: operations["getReadiness"];
         put?: never;
         post?: never;
@@ -190,6 +191,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /** @description Tasks newest first (by created_ms, then id), one page at a time. Pass next as after for the following page; filters combine with AND. */
         get: operations["listTasks"];
         put?: never;
         post: operations["submitTask"];
@@ -701,6 +703,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /** @description Configured providers. codex.auth_mode is the Codex account status (or the probe error) for a Codex profile, and not_selected for a llama.cpp profile unless probe=codex is given. The Codex probe is shared with readiness and cached for 30 seconds. */
         get: operations["getProviders"];
         put?: never;
         post?: never;
@@ -886,6 +889,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Profile metrics in the OpenMetrics text format: tasks by state, open recovery statuses, job windows, channel and A2A push deliveries by state, A2A rate-limit refusals since the process started (ardent_a2a_rate_limited_total by scope ip, peer or tasks) and Mattermost catch-up boundary and walk ages and gaps per channel. Gauges are read from the journal when scraped. */
+        get: operations["getMetrics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/credentials/management/reload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Re-read the management token named by api.token_env from the profile environment file the gateway started from and require it for every later request, without a restart. A token the service environment set cannot be rotated this way (409). The replaced token is still accepted for overlap_seconds (default 300, at most 3600; 0 ends it now), so a caller can switch over. Authenticate this request with the token in use. The token is never returned. */
+        post: operations["reloadManagementCredential"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/credentials/peers/reload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Re-read the inbound and outbound tokens of every configured A2A peer from the profile environment file and use them without a restart (the peer list itself still needs a restart). A replaced inbound token is still accepted for overlap_seconds (default 300, at most 3600). The new set is validated as at startup; when it is not valid nothing changes. Tokens are never returned. */
+        post: operations["reloadPeerCredentials"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/memory/credential/reload": {
         parameters: {
             query?: never;
@@ -1005,12 +1059,20 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Process is running */
+            /** @description Process is running (HiveCommon liveness body) */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        status: "live";
+                        service: string;
+                        version: string;
+                        time: string;
+                    };
+                };
             };
         };
     };
@@ -1028,14 +1090,58 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        status: "ready" | "degraded";
+                        service: string;
+                        version: string;
+                        time: string;
+                        /** @description configuration, and codex or llamacpp when probed */
+                        checks: {
+                            [key: string]: {
+                                /** @enum {string} */
+                                status: "up" | "down";
+                                critical: boolean;
+                                latencyMs: number;
+                                error?: string;
+                                details?: {
+                                    [key: string]: unknown;
+                                };
+                            };
+                        };
+                        problems: string[];
+                    };
+                };
             };
             /** @description Runtime dependency unavailable */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        status: "ready" | "degraded";
+                        service: string;
+                        version: string;
+                        time: string;
+                        /** @description configuration, and codex or llamacpp when probed */
+                        checks: {
+                            [key: string]: {
+                                /** @enum {string} */
+                                status: "up" | "down";
+                                critical: boolean;
+                                latencyMs: number;
+                                error?: string;
+                                details?: {
+                                    [key: string]: unknown;
+                                };
+                            };
+                        };
+                        problems: string[];
+                    };
+                };
             };
         };
     };
@@ -1646,8 +1752,19 @@ export interface operations {
     listTasks: {
         parameters: {
             query?: {
-                /** @description Maximum number of recent tasks */
+                /** @description Maximum number of tasks in the page */
                 limit?: number;
+                /** @description Cursor from a previous page (next) */
+                after?: string;
+                /** @description Comma-separated task states */
+                state?: string;
+                context?: "direct" | "peer" | "scheduled" | "mission" | "preview";
+                /** @description Exact caller, for example management or a peer ID */
+                caller?: string;
+                /** @description Tasks created at or after this time: epoch milliseconds or ISO 8601 */
+                since?: string;
+                /** @description Tasks created before this time: epoch milliseconds or ISO 8601 */
+                until?: string;
             };
             header?: never;
             path?: never;
@@ -1655,7 +1772,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Recent tasks */
+            /** @description One page of tasks; next is null on the last page */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -1680,7 +1797,8 @@ export interface operations {
                      *           "created_ms": 1790431200000,
                      *           "updated_ms": 1790431200000
                      *         }
-                     *       ]
+                     *       ],
+                     *       "next": null
                      *     }
                      */
                     "application/json": {
@@ -1751,8 +1869,16 @@ export interface operations {
                                 };
                             };
                         }[];
+                        next: string | null;
                     };
                 };
+            };
+            /** @description Invalid filter or cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -2656,7 +2782,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description SSE task.event carries TaskEvent JSON with the journal sequence as its id; task.done carries Task JSON. While the task runs, task.text carries the visible reply text of the current model step ({step, text}, sent on connect and when a step starts) and task.delta appends to it. Live text has no event id, is not journaled and is not replayed; the completed task result is authoritative. */
+            /** @description SSE task.event carries TaskEvent JSON with the journal sequence as its id; task.done carries Task JSON. An idle stream sends a `: keepalive` comment every 15 seconds. While the task runs, task.text carries the visible reply text of the current model step ({step, text}, sent on connect and when a step starts) and task.delta appends to it. Live text has no event id, is not journaled and is not replayed; the completed task result is authoritative. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -3627,7 +3753,10 @@ export interface operations {
     };
     getProviders: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description codex: probe the Codex account although llama.cpp is selected */
+                probe?: "codex";
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -3962,6 +4091,165 @@ export interface operations {
                         reason: string | null;
                     };
                 };
+            };
+        };
+    };
+    getMetrics: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OpenMetrics text, ending with # EOF */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/openmetrics-text": string;
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    reloadManagementCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    overlap_seconds?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Credential reloaded; changed is false when the file holds the token already in use */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {boolean} */
+                        reloaded: true;
+                        token_env: string;
+                        changed: boolean;
+                        /**
+                         * Format: date-time
+                         * @description Until when the replaced token is still accepted, or null
+                         */
+                        previous_valid_until: string | null;
+                    };
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The service environment sets the token */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Token missing, too short or malformed, or the environment file is unreadable; the token in use stays */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    reloadPeerCredentials: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    overlap_seconds?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Peer credentials reloaded */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {boolean} */
+                        reloaded: true;
+                        /** @description Enabled peers */
+                        peers: number;
+                        /** @description Peers whose inbound token changed */
+                        changed: string[];
+                        /** @description Token variables the service environment sets; they are not read from the file */
+                        service_environment: string[];
+                        /**
+                         * Format: date-time
+                         * @description Until when the replaced inbound tokens are still accepted, or null
+                         */
+                        previous_valid_until: string | null;
+                    };
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The A2A surface is not running */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description A peer credential is missing, too short, reused or not directional, or the environment file is unreadable; the credentials in use stay */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

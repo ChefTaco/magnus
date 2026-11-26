@@ -159,6 +159,20 @@ describe('New Agent operation', () => {
     await expect(deploy.startArdentAgentDeploy({ ...input, profile: 'other', artifacts_max_bytes: 128 * 1024 * 1024 }, actor)).rejects.toMatchObject({ status: 400 });
   });
 
+  it('names Magnus as the Agent Card provider on Ardent 3.4.0 or later, as older Ardent did, and keeps one the template sets', async () => {
+    await run(() => deploy.startArdentAgentDeploy(input, actor));
+    expect((YAML.parse(node.config) as Record<string, any>)['a2a']?.['provider']).toBeUndefined();
+    ardentVersion = '3.4.0';
+    node.profiles = node.profiles.filter(item => item.id !== 'lead');
+    node.config = TEMPLATE;
+    await run(() => deploy.startArdentAgentDeploy(input, actor));
+    expect((YAML.parse(node.config) as Record<string, any>)['a2a']).toMatchObject({ provider: { organization: 'Magnus', url: 'https://github.com/ChefTaco/magnus' } });
+    node.profiles = node.profiles.filter(item => item.id !== 'lead');
+    node.config = `${TEMPLATE.trimEnd()}\na2a:\n  enabled: false\n  provider:\n    organization: Example Lab\n    url: https://example.com/\n`;
+    await run(() => deploy.startArdentAgentDeploy(input, actor));
+    expect((YAML.parse(node.config) as Record<string, any>)['a2a']).toEqual({ enabled: false, provider: { organization: 'Example Lab', url: 'https://example.com/' } });
+  });
+
   it('leaves the artifact limit alone on an older Ardent and says so', async () => {
     const plain = await run(() => deploy.startArdentAgentDeploy(input, actor));
     expect((YAML.parse(node.config) as Record<string, any>)['artifacts']).toBeUndefined();

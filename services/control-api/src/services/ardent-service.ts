@@ -101,6 +101,11 @@ export async function getArdentProfileResource(nodeId: string, profile: string, 
   return clientFor(await nodeTarget(nodeId)).getArdentProfileResource<unknown>(profile, resource, query, headers);
 }
 
+/** A profile read answered as text (the OpenMetrics `metrics`), with its media type. */
+export async function getArdentProfileText(nodeId: string, profile: string, resource: 'metrics', headers?: Record<string, string>): Promise<{ contentType: string; text: string }> {
+  return clientFor(await nodeTarget(nodeId)).getArdentProfileText(profile, resource, headers);
+}
+
 /** An unbuffered task event stream or artifact byte stream (v1 octets or v2 ranged content), straight from the node agent. */
 export async function streamArdentProfileResource(nodeId: string, profile: string, resource: string,
   options: { after?: string; lastEventId?: string; signal?: AbortSignal; range?: string; ifRange?: string; headers?: Record<string, string> } = {}): Promise<Response> {
