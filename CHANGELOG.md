@@ -29,6 +29,10 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Changed
 
+- **Ardent 3.5.0.** The pins move to `@hivemagnus/ardent` 3.5.0, which resumes durable Codex threads on
+  Codex CLI 0.172.0 (`providers.codex.durable_threads: false` opts a profile out). Its management API,
+  journal policy (version 1) and Emberfold 0.4.0 are unchanged, so the generated Ardent client types,
+  the journal module's policy and the context overlay are the same.
 - Dependabot now opens one grouped weekly pull request (group `hivemagnus`) for `@hivemagnus/*` package updates, so suite package bumps arrive together. Repository configuration only; nothing to do when upgrading. The repository's own `@hivemagnus/magnus*` workspace packages are ignored; a grouped bump of a server or console dependency still needs `npm run locks:generate` for the shrinkwraps before it merges.
 - **Ardent 3.4.0.** The node agent and New Agent stage `@hivemagnus/ardent` 3.4.0 (pins in the root and
   agent `package.json` and the agent `npm-shrinkwrap.json`), and the generated Ardent client types follow
