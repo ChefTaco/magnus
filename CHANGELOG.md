@@ -204,6 +204,13 @@ All notable changes to this project are documented in this file. The format is b
 - The agent's native systemd, root and Docker tests now run in CI (a dedicated job), and the obsolete
   Emberfold bootstrap workflow is gone: Emberfold publishes from its own repository with provenance,
   so Magnus no longer runs another repository's verify and publish with the long-lived bootstrap token.
+- **Refused log batches are reported, and no longer refresh the node's server keys.** A log batch the
+  Control API refuses (401/403, typically a missing or wrong `LOG_INGEST_TOKEN` on a server that does
+  not yet verify node-signed batches) is dropped with an error at most every 10 minutes that counts
+  the lost entries; it no longer counts as a node-key refusal, which re-fetched the pinned server
+  keys every five minutes.
+- The agent build's review of the bundled Ardent journal module now also sees double-quoted and bare
+  side-effect imports, and a test exercises the built module against A2A task and team-claim rows.
 - `docs/PUBLISHING.md` now describes how images are built, scanned and tagged (prereleases get their
   `X.Y.Z-<pre>` tag).
 

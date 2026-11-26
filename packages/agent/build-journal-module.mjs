@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
+import { journalImports } from './journal-imports.mjs';
 
 // Ardent's journal policy and inspector come from the pinned, published @hivemagnus/ardent (a
 // devDependency; source: https://github.com/ChefTaco/Ardent). tsc emits src/native-snapshot/journal.ts
@@ -26,7 +27,7 @@ if (!emitted.startsWith(marker) && !emitted.split('\n').some(line => line === re
 
 // The inspector must stay dependency-light: refuse any import beyond this reviewed set.
 const source = await readFile(join(ardent, 'dist/journal.js'), 'utf8');
-const imports = [...source.matchAll(/^\s*(?:import|export)\b[^;]*?\bfrom\s+'([^']+)'/gm)].map(match => match[1]).sort();
+const imports = journalImports(source);
 const reviewed = ['./sqlite.js', 'node:crypto', 'node:fs', 'node:fs/promises', 'node:os', 'node:path', 'node:stream/promises', 'zod'];
 if (JSON.stringify(imports) !== JSON.stringify(reviewed) || /\bimport\s*\(|\brequire\s*\(/.test(source))
   throw new Error(`Ardent journal module imports changed: ${imports.join(', ')}`);
