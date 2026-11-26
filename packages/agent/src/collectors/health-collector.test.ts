@@ -2,7 +2,80 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { collectDisks, parseDiskOutput } from './health-collector.js';
+import { collectDisks, parseDiskOutput, parseWazuhManagerAddresses } from './health-collector.js';
+
+describe('parseWazuhManagerAddresses', () => {
+  it('reads a Wazuh 5 endpoint without the scheme, port, or path', () => {
+    for (const [endpoint, host] of [
+      [' manager.example.com ', 'manager.example.com'],
+      ['https://manager.example.com:1517/wazuh-manager', 'manager.example.com'],
+      ['manager.example.com:8443/gateway', 'manager.example.com'],
+      ['192.0.2.5:1517', '192.0.2.5'],
+      ['https://[2001:db8::1]:1517/', '2001:db8::1'],
+      ['[fe80::1%eth0]:1517', 'fe80::1%eth0'],
+    ]) {
+      expect(parseWazuhManagerAddresses(
+        `<ossec_config><agent><manager><endpoint>${endpoint}</endpoint></manager></agent></ossec_config>`,
+      )).toEqual([host]);
+    }
+  });
+
+  it('reports the last manager block, as the Wazuh 5 agent uses only that one', () => {
+    expect(parseWazuhManagerAddresses(`
+      <ossec_config>
+        <agent><manager><endpoint>first.example.com</endpoint></manager></agent>
+      </ossec_config>
+      <ossec_config>
+        <agent><manager><endpoint>manager.example.com:1517</endpoint></manager></agent>
+      </ossec_config>
+    `)).toEqual(['manager.example.com']);
+  });
+
+  it('prefers the Wazuh 5 endpoint over deprecated and legacy addresses', () => {
+    expect(parseWazuhManagerAddresses(`
+      <ossec_config>
+        <client><server><address>legacy.example.com</address></server></client>
+        <agent><manager>
+          <address>deprecated.example.com</address><port>1514</port>
+          <endpoint>manager.example.com</endpoint>
+        </manager></agent>
+      </ossec_config>
+    `)).toEqual(['manager.example.com']);
+    expect(parseWazuhManagerAddresses(`
+      <ossec_config>
+        <client><server><address>legacy.example.com</address></server></client>
+        <agent><manager><address>deprecated.example.com</address></manager></agent>
+      </ossec_config>
+    `)).toEqual(['deprecated.example.com']);
+  });
+
+  it('preserves legacy failover addresses and ignores comments and unrelated sections', () => {
+    expect(parseWazuhManagerAddresses(`
+      <ossec_config>
+        <!-- <agent><manager><endpoint>comment.example.com</endpoint></manager></agent> -->
+        <client>
+          <server><address>primary.example.com</address><port>1514</port></server>
+          <server><address>2001:db8::2</address></server>
+          <server><address>primary.example.com</address></server>
+        </client>
+        <agent><enrollment><endpoint>enrollment.example.com</endpoint></enrollment></agent>
+        <integration><address>integration.example.com</address></integration>
+      </ossec_config>
+    `)).toEqual(['primary.example.com', '2001:db8::2']);
+  });
+
+  it('ignores invalid endpoints and refuses entity declarations', () => {
+    for (const endpoint of ['https://operator:fake-password@manager.example.com', 'http://manager.example.com', '']) {
+      expect(parseWazuhManagerAddresses(
+        `<ossec_config><agent><manager><endpoint>${endpoint}</endpoint></manager></agent></ossec_config>`,
+      )).toEqual([]);
+    }
+    expect(parseWazuhManagerAddresses(`
+      <!DOCTYPE ossec_config [<!ENTITY host "manager.example.com">]>
+      <ossec_config><agent><manager><endpoint>&host;</endpoint></manager></agent></ossec_config>
+    `)).toEqual([]);
+  });
+});
 
 describe('parseDiskOutput', () => {
   it('keeps local, network, and Unraid user-share filesystems', () => {

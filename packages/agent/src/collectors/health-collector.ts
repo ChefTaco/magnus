@@ -1,6 +1,7 @@
 import * as os from 'node:os';
 import { readFileSync } from 'node:fs';
 import { exec, execFile, type ChildProcess } from 'node:child_process';
+import { XMLParser } from 'fast-xml-parser';
 import type { HealthSnapshot, HealthProvider } from '../types/index.js';
 import { collectDockerGroupService } from './docker-group.js';
 import { collectSystemUpdates } from './system-updates.js';
@@ -294,8 +295,59 @@ function getSystemdProperty(output: string, property: string): string {
     .trim() ?? '';
 }
 
+type WazuhServer = { address?: unknown[]; endpoint?: unknown[] };
+
+type WazuhConfig = {
+  ossec_config?: Array<{
+    agent?: Array<{ manager?: WazuhServer[] }>;
+    client?: Array<{ server?: WazuhServer[] }>;
+  }>;
+};
+
+// `[https://]host[:port][/prefix]`, where host is IPv4, a hostname or a bracketed IPv6 literal.
+const WAZUH_ENDPOINT = /^(?:https:\/\/)?(\[[a-f0-9:.]+(?:%[a-z0-9_.-]+)?\]|[a-z0-9_.-]+)(?::[0-9]+)?(?:\/[^\s?#]*)?$/i;
+
+function wazuhEndpointHost(endpoint: unknown): string | null {
+  if (typeof endpoint !== 'string') return null;
+  const host = WAZUH_ENDPOINT.exec(endpoint)?.[1];
+  return host ? host.replace(/^\[|\]$/g, '') : null;
+}
+
+function wazuhAddress(address: unknown): string | null {
+  return typeof address === 'string' && /^[^\s<>]+$/.test(address) ? address : null;
+}
+
+/** The address a `<manager>` or `<server>` block connects to; `<endpoint>` wins over `<address>`. */
+function wazuhTarget(block: WazuhServer): string | null {
+  const endpoint = block.endpoint?.at(-1);
+  if (endpoint !== undefined) return wazuhEndpointHost(endpoint);
+  return wazuhAddress(block.address?.at(-1));
+}
+
 /**
- * Report the local Wazuh agent posture without reading or exposing credentials.
+ * Read the manager addresses from an agent's ossec.conf. A Wazuh 5 agent connects to one manager:
+ * the last `<agent><manager>` block, or, on an agent upgraded from 4.x without one, the last
+ * `<client><server>` block. Legacy 4.x agents fail over across every `<client><server>` address,
+ * so those are all reported when no `<agent><manager>` block exists.
+ */
+export function parseWazuhManagerAddresses(config: string): string[] {
+  if (/<!DOCTYPE|<!ENTITY/i.test(config)) return [];
+  // Wazuh can repeat the root and connection blocks.
+  const parser = new XMLParser({ processEntities: false, parseTagValue: false, isArray: () => true });
+  const { ossec_config: sections = [] } = parser.parse(config) as WazuhConfig;
+
+  const managers = sections.flatMap(section => (section.agent ?? []).flatMap(agent => agent.manager ?? []));
+  if (managers.length) {
+    const manager = wazuhTarget(managers.at(-1)!);
+    if (manager) return [manager];
+  }
+
+  const servers = sections.flatMap(section => (section.client ?? []).flatMap(client => client.server ?? []));
+  return [...new Set(servers.flatMap(server => wazuhTarget(server) ?? []))];
+}
+
+/**
+ * Report the local Wazuh agent posture without exposing credentials.
  * The manager addresses are useful fleet inventory; keys and registration data
  * in ossec.conf are intentionally excluded.
  */
@@ -361,10 +413,7 @@ async function collectWazuhAgent(): Promise<WazuhAgentInfo> {
 
   try {
     const config = readFileSync('/var/ossec/etc/ossec.conf', 'utf-8');
-    result.managerAddresses = [...config.matchAll(/<address>\s*([^<\s]+)\s*<\/address>/gi)]
-      .map((match) => match[1] ?? '')
-      .filter(Boolean)
-      .filter((address, index, values) => values.indexOf(address) === index);
+    result.managerAddresses = parseWazuhManagerAddresses(config);
   } catch {
     // The service can be installed while the config is unreadable or not yet provisioned.
   }
