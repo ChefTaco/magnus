@@ -158,9 +158,9 @@ All notable changes to this project are documented in this file. The format is b
 - **Container hardening.** App code in the server, console, gateway and agent images is root-owned,
   so the runtime user cannot rewrite it. `docker/compose.yml` runs the server and console with
   `cap_drop: [ALL]`, a read-only root filesystem and a `/tmp` tmpfs, pins the PostgreSQL and Redis
-  images by digest, and keeps the Redis password off the `redis-server` command line (a private,
-  quoted
-  config file inside the container; the health check uses `REDISCLI_AUTH`). **Upgrade note:** a
+  images by digest, and keeps the Redis password off the `redis-server` command line (a private config
+  file inside the container, the password quoted so spaces and quotes work; the health check uses
+  `REDISCLI_AUTH`). **Upgrade note:** a
   deployment that adds its own writable paths to the console or server container needs a volume or
   tmpfs for them; update the PostgreSQL and Redis digests with the tag when you move either.
 
