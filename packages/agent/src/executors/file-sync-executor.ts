@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 import { z } from 'zod';
 import { agentPrivileged, isRoot, notPrivilegedMessage } from '../privileged.js';
 import { fileRoots } from './file-roots.js';
+import { filePathPolicy } from '@hivemagnus/magnus-contracts';
 
 const execFileAsync = promisify(execFile);
 
@@ -209,13 +210,15 @@ async function exclusiveReplace(directory: VerifiedDirectory, name: string, temp
  * of the directory or any component refuses the write. The existing file's mode and owner are
  * kept unless the request names new ones.
  */
-async function atomicWrite(target: string, content: string, options: { mode?: number; uid?: number; gid?: number; backup?: boolean }): Promise<{ backupPath: string | null }> {
+async function atomicWrite(target: string, content: string, options: { mode?: number; uid?: number; gid?: number; backup?: boolean; adminWrite?: boolean }): Promise<{ backupPath: string | null }> {
   const parent = dirname(target); const name = basename(target);
   const existing = await lstat(target).catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return null; throw error; });
   if (existing && !existing.isFile()) throw new FileWriteConflictError('Target is not a regular file');
   const trusted = new Set([0, process.geteuid?.() ?? 0, ...(existing ? [existing.uid] : []), ...(options.uid !== undefined ? [options.uid] : [])]);
   const directory = await VerifiedDirectory.open(parent, trusted);
   try {
+    // The verified, symlink-free directory (bound by dev/ino from here on) decides the policy.
+    assertWritePolicy(join(directory.path, name), options.adminWrite === true);
     await fileWriteRaceHooks.afterCheck?.();
     await directory.confirm();
     const backupPath = options.backup && existing ? await backupCopy(directory, name) : null;
@@ -339,7 +342,25 @@ fileRoutes.get('/read', async (c) => {
 const writeRequestSchema = writeBodySchema.extend({
   /** Copy the existing file to `<file>.magnus-backup.<timestamp>` (same directory) before replacing it. */
   backup: z.boolean().default(false),
+  /**
+   * The Control API's statement that an ADMIN asked for this write. A sensitive system destination
+   * (after symlinks are resolved) needs it; a missing field (older server) counts as false.
+   */
+  adminWrite: z.boolean().default(false),
 });
+
+/** Refused before anything is created: the destination needs an ADMIN's authority, or is never writable. */
+class FilePolicyError extends Error {
+  constructor(readonly code: 'BLOCKED_PATH' | 'SENSITIVE_PATH_ADMIN_ONLY', message: string) { super(message); }
+}
+
+/** Apply the shared system-path rule (packages/contracts file-policy) to one destination. */
+function assertWritePolicy(destination: string, adminWrite: boolean): void {
+  const policy = filePathPolicy(destination);
+  if (policy === 'blocked-path') throw new FilePolicyError('BLOCKED_PATH', `Writing ${destination} is blocked by policy`);
+  if (policy === 'sensitive-system-path' && !adminWrite)
+    throw new FilePolicyError('SENSITIVE_PATH_ADMIN_ONLY', `Writing ${destination} requires the ADMIN role`);
+}
 
 type WriteRequest = z.infer<typeof writeRequestSchema>;
 
@@ -349,7 +370,7 @@ type WriteRequest = z.infer<typeof writeRequestSchema>;
  * no directory, backup or temporary file behind.
  */
 async function handleWrite(c: Context, request: WriteRequest) {
-  const { filePath, content, createIfMissing, mode, owner, group, backup } = request;
+  const { filePath, content, createIfMissing, mode, owner, group, backup, adminWrite } = request;
   if ((owner || group) && !(agentPrivileged() && isRoot())) {
     return c.json({ success: false, error: { code: 'AGENT_NOT_PRIVILEGED', feature: 'file-ownership', message: notPrivilegedMessage('file-ownership') } }, 403);
   }
@@ -359,6 +380,10 @@ async function handleWrite(c: Context, request: WriteRequest) {
     if (!pathCheck.valid) {
       return c.json({ success: false, error: { code: 'VALIDATION_ERROR', message: pathCheck.reason } }, 403);
     }
+    // As requested and as resolved through symlinks: a link under an ordinary path must not carry a
+    // non-admin write into a system path. Checked before any directory is created.
+    assertWritePolicy(resolve(normalize(filePath)), adminWrite);
+    assertWritePolicy(pathCheck.resolved, adminWrite);
     const ids = {
       ...(mode ? { mode: parseInt(mode, 8) } : {}),
       ...(owner ? { uid: await accountId('passwd', owner) } : {}),
@@ -369,7 +394,7 @@ async function handleWrite(c: Context, request: WriteRequest) {
       await mkdir(dirname(pathCheck.resolved), { recursive: true });
     }
 
-    const { backupPath } = await atomicWrite(pathCheck.resolved, content, { ...ids, backup });
+    const { backupPath } = await atomicWrite(pathCheck.resolved, content, { ...ids, backup, adminWrite });
     const checksum = createHash('sha256').update(content).digest('hex');
 
     return c.json({
@@ -377,6 +402,7 @@ async function handleWrite(c: Context, request: WriteRequest) {
       data: { written: true, checksum, backupPath },
     });
   } catch (err: unknown) {
+    if (err instanceof FilePolicyError) return c.json({ success: false, error: { code: err.code, message: err.message } }, 403);
     if (err instanceof UnknownAccountError) return c.json({ success: false, error: { code: 'VALIDATION_ERROR', message: err.message } }, 400);
     if (err instanceof FileWriteConflictError) return c.json({ success: false, error: { code: 'PATH_CHANGED', message: err.message } }, 409);
     const message = err instanceof Error ? err.message : String(err);

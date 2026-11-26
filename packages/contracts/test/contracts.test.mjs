@@ -25,3 +25,13 @@ test('Ardent node state requires an ISO timestamp', () => {
   assert.equal(ArdentNodeStateSchema.parse(state).owner, 'operator');
   assert.throws(() => ArdentNodeStateSchema.parse({ ...state, checkedAt: 'yesterday' }));
 });
+
+test('file path policy: blocked, sensitive (admin only) and ordinary paths', async () => {
+  const { filePathPolicy } = await import('../dist/index.js');
+  assert.equal(filePathPolicy('/'), 'blocked-path');
+  for (const path of ['/proc/1/environ', '/sys/kernel', '/dev/sda', '/dev']) assert.equal(filePathPolicy(path), 'blocked-path', path);
+  for (const path of ['/etc/passwd', '/etc', '/root/.bashrc', '/var/lib/app/state', '/usr/local/bin/x', '/lib64/ld.so', '/home/operator/.ssh/authorized_keys'])
+    assert.equal(filePathPolicy(path), 'sensitive-system-path', path);
+  for (const path of ['/srv/www/index.html', '/opt/app/config.yml', '/home/operator/app.conf', '/etcetera/file'])
+    assert.equal(filePathPolicy(path), 'safe-app-path', path);
+});

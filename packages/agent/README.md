@@ -274,7 +274,13 @@ followed. The directory is checked once and held open: every path component must
 owned by root, the agent or the file's owner and not writable by every account (sticky `/tmp` is
 fine), and immediately before and after each rename the agent proves the path still names that
 directory inside the allowed roots. A write through a component another account could swap, or one
-that changed meanwhile, gets 409 `PATH_CHANGED` and leaves nothing behind. The file keeps its mode, owner and group; a new file is `0600` and owned by the agent
+that changed meanwhile, gets 409 `PATH_CHANGED` and leaves nothing behind. The system-path rule shared with the
+Control API (`filePathPolicy` in `@hivemagnus/magnus-contracts`) is applied to the request and to the
+real destination after symlinks are resolved: `/proc`, `/sys` and `/dev` are refused, and `/etc`,
+`/root`, `/var/lib`, `/var/spool`, `/boot`, `/usr`, `/bin`, `/sbin`, `/lib`, `/lib64` and any `.ssh`
+directory need `adminWrite: true`, which the Control API sends only for an ADMIN (403
+`SENSITIVE_PATH_ADMIN_ONLY` otherwise; nothing is created). `GET /api/v1/ping` reports this as
+`features.restrictedFileWrite: 2`. The file keeps its mode, owner and group; a new file is `0600` and owned by the agent
 unless the request sets `mode` (for example `"0644"`) or, in privileged mode, `owner` and `group`
 (name or id). With `backup: true` the existing file is first copied, after the path and roots
 check, to `<file>.magnus-backup.<UTC timestamp>` in the same directory (mode, owner and times kept);
