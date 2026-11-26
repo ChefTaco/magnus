@@ -1,0 +1,1 @@
+{"schema":1,"migration":"20261126120100_remediation_execution_restrict","impact":"fast","note":"Replaces one foreign key (remediation executions now restrict rule deletion); no row changes."}

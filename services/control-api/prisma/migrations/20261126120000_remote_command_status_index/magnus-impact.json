@@ -1,0 +1,1 @@
+{"schema":1,"migration":"20261126120000_remote_command_status_index","impact":"fast","note":"Builds one index on remote_commands (seconds for a few million rows); command inserts wait while it builds."}

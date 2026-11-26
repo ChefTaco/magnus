@@ -1,0 +1,19 @@
+{
+  "summary": "Draft: completed by the 3.4.0 release step. Migrations: an index on remote_commands(status, createdAt) and a restrict on deleting a remediation rule that has executions.",
+  "breaking": false,
+  "minUpgradeFrom": "2.10.2",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [
+    {
+      "name": "MAGNUS_HISTORY_RETENTION_DAYS",
+      "component": "server",
+      "description": "Days (at least 7) of finished command, webhook, alert, cron, anomaly and AI conversation history to keep; unset keeps everything.",
+      "secret": false
+    }
+  ],
+  "removedEnv": [],
+  "migrations": [
+    "20261126120000_remote_command_status_index",
+    "20261126120100_remediation_execution_restrict"
+  ]
+}

@@ -47,6 +47,7 @@ describe.skipIf(!enabled)('operations on disposable PostgreSQL', () => {
     await db.notification.deleteMany({ where: { sourceRef: { startsWith: prefix } } });
     await db.applicationObservation.deleteMany({ where: { id: { startsWith: prefix } } });
     await db.incidentLesson.deleteMany({ where: { reviewedBy: prefix } });
+    await db.remediationExecution.deleteMany({ where: { rule: { createdBy: prefix } } });
     await db.remediationRule.deleteMany({ where: { createdBy: prefix } });
     await db.executionRun.deleteMany({ where: { OR: [
       { createdBy: prefix }, { id: { in: remediationExecutions.map(({ id }) => `remediation_${id}`) } },

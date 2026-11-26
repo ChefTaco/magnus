@@ -197,6 +197,7 @@ export const ENV_CATALOG: readonly EnvVariable[] = [
   { name: 'LOG_RETENTION_DAYS', group: 'retention', default: '30', description: 'Days to keep ingested node logs.' },
   { name: 'HEALTH_SNAPSHOT_RETENTION_DAYS', group: 'retention', default: '7', description: 'Days to keep health snapshots.' },
   { name: 'NOTIFICATION_MAX_RETENTION_DAYS', group: 'retention', default: '90', description: 'Days to keep notifications.' },
+  { name: 'MAGNUS_HISTORY_RETENTION_DAYS', group: 'retention', description: 'Days (at least 7) to keep finished commands and their results, finished webhook deliveries, resolved alert violations and anomalies, finished cron executions and occurrences, and AI conversations not touched since. Unset keeps them all (the default). Unresolved and in-flight rows are never deleted.' },
 ];
 
 /** JSON document printed by `magnus-server env-schema`. */

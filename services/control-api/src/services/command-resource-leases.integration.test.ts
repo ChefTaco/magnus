@@ -88,6 +88,7 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('durable finite-command resou
     if (db) {
       await db.commandResourceFence.deleteMany({ where: { resourceKey: { in: [`node:${nodeId}`, `node:${nodeId}:ardent`] } } });
       await db.resourceEnrollment.deleteMany({ where: { nodeId } });
+      await db.remediationExecution.deleteMany({ where: { ruleId: prefix } });
       await db.remediationRule.deleteMany({ where: { id: prefix } }); await db.node.deleteMany({ where: { id: nodeId } });
       await (await import('../db/index.js')).disconnectDb();
     }
