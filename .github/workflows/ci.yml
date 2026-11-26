@@ -221,12 +221,15 @@ jobs:
           systemctl --user is-system-running --wait || true
           SUPERVISOR_NATIVE_TESTS=1 npx vitest run src/executors/execution-supervisor.native.test.ts
       - name: Restricted managed terminal as root, for a throwaway account
+        if: success() || failure()
         working-directory: packages/agent
         run: |
           sudo useradd --create-home --shell /bin/bash magnus-terminal-ci
           sudo env "PATH=$PATH" MAGNUS_EXECUTION_SUPERVISOR_ENABLED=true MAGNUS_NATIVE_TERMINAL_TEST_USER=magnus-terminal-ci \
             "$(command -v node)" ../../node_modules/vitest/vitest.mjs run src/executors/managed-terminal.native.test.ts
       - name: Embermend Compose inventory against real Docker containers
+        # Independent of the terminal step: run it even when that one failed.
+        if: success() || failure()
         working-directory: packages/agent
         env:
           FIXTURE_IMAGE: node:24.22.3-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54

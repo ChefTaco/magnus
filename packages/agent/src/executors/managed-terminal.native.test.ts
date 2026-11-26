@@ -4,7 +4,7 @@ import { lstat, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
-import { ManagedTerminals } from './managed-terminal.js';
+import { ManagedTerminals, terminalUnit } from './managed-terminal.js';
 import { HOST_FQDN } from '../env.js';
 
 describe.skipIf(!process.env['MAGNUS_NATIVE_TERMINAL_TEST_USER'])('restricted managed terminal (real systemd)', () => {
@@ -46,7 +46,10 @@ describe.skipIf(!process.env['MAGNUS_NATIVE_TERMINAL_TEST_USER'])('restricted ma
   it('cancels a just-opened unit before issuing any cleanup receipt', async () => {
     const value = authority(); await terminals.action(value, { action: 'open', size: { cols: 80, rows: 24 } });
     expect(await terminals.action(value, { action: 'close' })).toMatchObject({ state: 'completed', receipt: { groupEmpty: true } });
-  }, 15000);
+    // The receipt is issued only once no process is left in the unit's cgroup.
+    const procs = await readFile(`/sys/fs/cgroup/system.slice/${terminalUnit(value)}/cgroup.procs`, 'utf8').catch(() => '');
+    expect(procs.trim()).toBe('');
+  }, 20000);
   it('observes a normal shell exit without relying on gateway disconnection', async () => {
     const value = authority(); await terminals.action(value, { action: 'open', size: { cols: 80, rows: 24 } });
     await terminals.action(value, { action: 'input', data: 'exit\n' });

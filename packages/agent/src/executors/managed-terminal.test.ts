@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { Hono } from 'hono';
-import { managedTerminalRoutes, terminalMemoryExpired, terminalUnit, terminalUnitProperties, terminalUnitMatches, terminalUnitRetired, terminalFailureReason, type ManagedTerminals } from './managed-terminal.js';
+import { drainTerminalGroup, managedTerminalRoutes, terminalMemoryExpired, terminalUnit, terminalUnitProperties, terminalUnitMatches, terminalUnitRetired, terminalFailureReason, type ManagedTerminals } from './managed-terminal.js';
 
 const authority = () => ({ workId: randomUUID(), ownerId: randomUUID(), nodeId: 'node-1', nodeFqdn: 'node-1.example.com',
   epoch: 1, barrierId: randomUUID(), operationSha256: 'a'.repeat(64), requestSha256: 'b'.repeat(64), fence: '1', deadline: Date.now() + 60000 });
@@ -58,5 +58,24 @@ describe('managed terminal boundary', () => {
     expect(action).not.toHaveBeenCalled();
     expect((await send({ authority: authority(), action: 'open', size: { cols: 100, rows: 30 } })).status).toBe(200);
     expect(action).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('terminal group drain before a completion receipt', () => {
+  const clock = () => { let t = 0; return { now: () => t, sleep: async (ms: number) => { t += ms; } }; };
+  it('waits for a group that empties shortly after the stop', async () => {
+    const answers = [false, false, true]; const signal = vi.fn(async () => {});
+    const backend = { empty: vi.fn(async () => answers.shift() ?? true), signal };
+    expect(await drainTerminalGroup(backend, 'magnus-terminal-x.service', '/system.slice/x', clock())).toBe(true);
+    expect(backend.empty).toHaveBeenCalledTimes(3);
+    expect(signal).not.toHaveBeenCalled();
+  });
+  it('escalates to SIGKILL for the whole group, then reports whether it emptied', async () => {
+    let killed = false;
+    const backend = { empty: vi.fn(async () => killed), signal: vi.fn(async () => { killed = true; }) };
+    expect(await drainTerminalGroup(backend, 'magnus-terminal-x.service', '/system.slice/x', clock())).toBe(true);
+    expect(backend.signal).toHaveBeenCalledWith('magnus-terminal-x.service', 'SIGKILL');
+    const stuck = { empty: vi.fn(async () => false), signal: vi.fn(async () => { throw new Error('unit not loaded'); }) };
+    expect(await drainTerminalGroup(stuck, 'magnus-terminal-x.service', '/system.slice/x', clock())).toBe(false);
   });
 });
