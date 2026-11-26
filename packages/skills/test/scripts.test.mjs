@@ -57,3 +57,32 @@ test('news-reporter refuses settings that would add URL parameters, before any r
   }
   assert.deepEqual(readdirSync(root), []);
 });
+
+const entryPoints = readdirSync(skillsDir, { withFileTypes: true })
+  .filter(entry => entry.isDirectory())
+  .flatMap(entry => readdirSync(join(skillsDir, entry.name)).filter(name => name.endsWith('.sh')).map(name => join(skillsDir, entry.name, name)));
+
+test('every entry point refuses an unknown flag with status 2 and usage on stderr', () => {
+  assert.ok(entryPoints.length >= 26);
+  for (const script of entryPoints) {
+    const result = spawnSync('bash', [script, '--no-such-flag'], { encoding: 'utf8', input: '', timeout: 20_000 });
+    assert.equal(result.status, 2, script);
+    assert.match(result.stderr, /Unknown option: --no-such-flag[\s\S]*Usage:/, script);
+    assert.equal(result.stdout, '', script);
+  }
+});
+
+test('report skills finish when find, du or findmnt fail part-way', t => {
+  // Under `set -euo pipefail`, `X=$(find … | wc -l)` used to abort the whole script when find hit a
+  // directory it could not read. Stand-ins that print nothing and exit 1, as find and du do after
+  // EACCES, reproduce that quickly and without root.
+  const bin = workspace(t);
+  for (const tool of ['find', 'du', 'findmnt']) {
+    writeFileSync(join(bin, tool), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  }
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}` };
+  for (const script of ['disk-cleaner/cleaner.sh', 'security-auditor/audit.sh', 'cron-manager/crontabs.sh', 'mount-inspector/mounts.sh', 'package-manager/packages.sh']) {
+    const result = spawnSync('bash', [join(skillsDir, script)], { encoding: 'utf8', env, timeout: 60_000 });
+    assert.equal(result.status, 0, `${script}: ${result.stderr.slice(-500)}`);
+  }
+});

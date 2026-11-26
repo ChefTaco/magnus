@@ -41,7 +41,7 @@ while [[ $# -gt 0 ]]; do
     -vv) VERBOSE=2; shift ;;
     -v) VERBOSE=$((VERBOSE + 1)); shift ;;
     --) shift; break ;;
-    -*) echo "Unknown option: $1" >&2; usage ;;
+    -*) echo "Unknown option: $1" >&2; (usage) >&2; exit 2 ;;
     *) break ;;
   esac
 done
@@ -61,8 +61,8 @@ echo "  Uptime: $(uptime -p 2>/dev/null || uptime)"
 echo "--- CPU ---"
 CORES=$(grep -c ^processor /proc/cpuinfo)
 echo "  Cores: $CORES"
-uptime | awk -F'load average:' '{print "  Load:" $2}'
-top -bn1 | head -5 | sed 's/^/  /'
+uptime | awk -F'load average:' '{print "  Load:" $2}' || true
+top -bn1 | head -5 | sed 's/^/  /' || true
 
 echo "--- Memory ---"
 free -h
@@ -74,7 +74,7 @@ if [[ $VERBOSE -ge 1 ]]; then
 fi
 
 echo "--- Disk ---"
-df -h --output=target,size,used,avail,pcent | head -20
+df -h --output=target,size,used,avail,pcent | head -20 || true
 
 echo "--- Temperature ---"
 if command -v sensors &>/dev/null; then
@@ -98,29 +98,29 @@ fi
 if [[ $VERBOSE -ge 1 ]]; then
   echo "--- Disk I/O ---"
   if command -v iostat &>/dev/null; then
-    iostat -h 2>/dev/null | head -15 | sed 's/^/  /'
+    iostat -h 2>/dev/null | head -15 | sed 's/^/  /' || true
   else
-    cat /proc/diskstats 2>/dev/null | awk '{print "  " $3, "reads=" $4, "writes=" $8}' | head -10
+    cat /proc/diskstats 2>/dev/null | awk '{print "  " $3, "reads=" $4, "writes=" $8}' | head -10 || true
   fi
 fi
 
 # ── Hardware (verbose 2+) ──
 if [[ $VERBOSE -ge 2 ]]; then
   echo "--- Hardware ---"
-  CPU_MODEL=$(grep "model name" /proc/cpuinfo 2>/dev/null | head -1 | cut -d: -f2 | xargs)
-  TOTAL_MEM=$(grep MemTotal /proc/meminfo 2>/dev/null | awk '{printf "%.1f GB", $2/1024/1024}')
+  CPU_MODEL=$(grep "model name" /proc/cpuinfo 2>/dev/null | head -1 | cut -d: -f2 | xargs || true)
+  TOTAL_MEM=$(grep MemTotal /proc/meminfo 2>/dev/null | awk '{printf "%.1f GB", $2/1024/1024}' || true)
   echo "  CPU: ${CPU_MODEL:-unknown}"
   echo "  RAM: ${TOTAL_MEM:-unknown}"
   echo "  Architecture: $(uname -m)"
 
   if command -v lsblk &>/dev/null; then
     echo "  Block devices:"
-    lsblk -d -o NAME,SIZE,TYPE,ROTA 2>/dev/null | sed 's/^/    /'
+    lsblk -d -o NAME,SIZE,TYPE,ROTA 2>/dev/null | sed 's/^/    /' || true
   fi
 fi
 
 # ── Kernel modules (verbose 2+) ──
 if [[ $VERBOSE -ge 2 ]]; then
   echo "--- Loaded Kernel Modules ---"
-  lsmod 2>/dev/null | wc -l | xargs -I{} echo "  Total modules: {}"
+  lsmod 2>/dev/null | wc -l | xargs -I{} echo "  Total modules: {}" || true
 fi

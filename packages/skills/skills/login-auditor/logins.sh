@@ -41,7 +41,7 @@ while [[ $# -gt 0 ]]; do
     -vv) VERBOSE=2; shift ;;
     -v) VERBOSE=$((VERBOSE + 1)); shift ;;
     --) shift; break ;;
-    -*) echo "Unknown option: $1" >&2; usage ;;
+    -*) echo "Unknown option: $1" >&2; (usage) >&2; exit 2 ;;
     *) break ;;
   esac
 done
@@ -50,7 +50,7 @@ echo "=== Login Auditor ==="
 
 echo "--- Currently Logged In ---"
 who 2>/dev/null | sed 's/^/  /' || echo "  (who command unavailable)"
-LOGGED_IN=$(who 2>/dev/null | wc -l)
+LOGGED_IN=$(who 2>/dev/null | wc -l || true)
 echo "  Total sessions: $LOGGED_IN"
 
 echo "--- Recent Logins (last 20) ---"
@@ -61,9 +61,9 @@ FAILED_COUNT=$(journalctl --no-pager --since "24h ago" 2>/dev/null | grep -ci "f
 echo "  Count: $FAILED_COUNT"
 if [[ "$FAILED_COUNT" -gt 0 ]]; then
   echo "  Top source IPs:"
-  journalctl --no-pager --since "24h ago" 2>/dev/null | grep -i "failed password" | grep -oP 'from \K[\d.]+' | sort | uniq -c | sort -rn | head -10 | sed 's/^/    /'
+  journalctl --no-pager --since "24h ago" 2>/dev/null | grep -i "failed password" | grep -oP 'from \K[\d.]+' | sort | uniq -c | sort -rn | head -10 | sed 's/^/    /' || true
   echo "  Top targeted users:"
-  journalctl --no-pager --since "24h ago" 2>/dev/null | grep -i "failed password\|invalid user" | grep -oP '(user |for )\K\S+' | sort | uniq -c | sort -rn | head -10 | sed 's/^/    /'
+  journalctl --no-pager --since "24h ago" 2>/dev/null | grep -i "failed password\|invalid user" | grep -oP '(user |for )\K\S+' | sort | uniq -c | sort -rn | head -10 | sed 's/^/    /' || true
 fi
 
 echo "--- Last Login Per User ---"
@@ -85,9 +85,9 @@ if [[ $VERBOSE -ge 1 ]]; then
   echo "  Total sudo invocations: $SUDO_COUNT"
   if [[ "$SUDO_COUNT" -gt 0 ]]; then
     echo "  By user:"
-    journalctl --no-pager --since "24h ago" 2>/dev/null | grep "sudo:" | grep -oP '^\S+ \S+ \S+ \S+ sudo:\s+\K\S+' | sort | uniq -c | sort -rn | head -10 | sed 's/^/    /'
+    journalctl --no-pager --since "24h ago" 2>/dev/null | grep "sudo:" | grep -oP '^\S+ \S+ \S+ \S+ sudo:\s+\K\S+' | sort | uniq -c | sort -rn | head -10 | sed 's/^/    /' || true
     echo "  Recent commands:"
-    journalctl --no-pager --since "24h ago" 2>/dev/null | grep "sudo:" | grep "COMMAND=" | tail -10 | sed 's/^/    /'
+    journalctl --no-pager --since "24h ago" 2>/dev/null | grep "sudo:" | grep "COMMAND=" | tail -10 | sed 's/^/    /' || true
   fi
 
   echo "--- SSH Key Authentication ---"

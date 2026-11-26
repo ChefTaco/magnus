@@ -44,7 +44,7 @@ while [[ $# -gt 0 ]]; do
     -vv) VERBOSE=2; shift ;;
     -v) VERBOSE=$((VERBOSE + 1)); shift ;;
     --) shift; break ;;
-    -*) echo "Unknown option: $1" >&2; usage ;;
+    -*) echo "Unknown option: $1" >&2; (usage) >&2; exit 2 ;;
     *) break ;;
   esac
 done
@@ -70,9 +70,9 @@ for svc in "$@"; do
 
   # ── Restart counts (verbose 1+) ──
   if [[ $VERBOSE -ge 1 && "$STATUS" != "unknown" ]]; then
-    RESTART_COUNT=$(systemctl show "$svc" --property=NRestarts 2>/dev/null | cut -d= -f2)
-    MAIN_PID=$(systemctl show "$svc" --property=MainPID 2>/dev/null | cut -d= -f2)
-    UPTIME=$(systemctl show "$svc" --property=ActiveEnterTimestamp 2>/dev/null | cut -d= -f2)
+    RESTART_COUNT=$(systemctl show "$svc" --property=NRestarts 2>/dev/null | cut -d= -f2 || true)
+    MAIN_PID=$(systemctl show "$svc" --property=MainPID 2>/dev/null | cut -d= -f2 || true)
+    UPTIME=$(systemctl show "$svc" --property=ActiveEnterTimestamp 2>/dev/null | cut -d= -f2 || true)
     echo "  Restarts: ${RESTART_COUNT:-0}"
     echo "  Main PID: ${MAIN_PID:-N/A}"
     echo "  Active since: ${UPTIME:-N/A}"
@@ -80,7 +80,7 @@ for svc in "$@"; do
 
   # ── Resource usage (verbose 2+) ──
   if [[ $VERBOSE -ge 2 && "$STATUS" == "active" ]]; then
-    MEM=$(systemctl show "$svc" --property=MemoryCurrent 2>/dev/null | cut -d= -f2)
+    MEM=$(systemctl show "$svc" --property=MemoryCurrent 2>/dev/null | cut -d= -f2 || true)
     if [[ -n "$MEM" && "$MEM" != "[not set]" && "$MEM" != "infinity" ]]; then
       MEM_MB=$((MEM / 1024 / 1024))
       echo "  Memory: ${MEM_MB}MB"

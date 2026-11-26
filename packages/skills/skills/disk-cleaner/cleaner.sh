@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# disk-cleaner — Clean up disk space on Ubuntu servers
+# disk-cleaner — Report disk space cleanup opportunities on Ubuntu servers (read-only)
 set -euo pipefail
 
 VERBOSE=0
@@ -9,9 +9,10 @@ usage() {
   cat <<EOF
 Usage: $(basename "$0") [OPTIONS] [THRESHOLD]
 
-Automated disk space management for Ubuntu. Identifies cleanup
-opportunities: temp files, old logs, APT cache, snap cache,
-journal logs, Docker dangling images, and orphaned packages.
+Disk space report for Ubuntu. Identifies cleanup opportunities (temp
+files, old logs, APT cache, snap cache, journal logs, Docker dangling
+images, orphaned packages) and prints the commands to clean them.
+Read-only: it deletes nothing.
 
 Positional arguments:
   THRESHOLD      Disk usage % to consider critical (default: 80)
@@ -45,7 +46,7 @@ while [[ $# -gt 0 ]]; do
     -vv) VERBOSE=2; shift ;;
     -v) VERBOSE=$((VERBOSE + 1)); shift ;;
     --) shift; break ;;
-    -*) echo "Unknown option: $1" >&2; usage ;;
+    -*) echo "Unknown option: $1" >&2; (usage) >&2; exit 2 ;;
     *) break ;;
   esac
 done
@@ -56,16 +57,16 @@ echo "=== Disk Cleaner ==="
 echo "Critical threshold: ${THRESHOLD}%"
 
 echo "--- Current Usage ---"
-df -h --output=target,pcent,avail,size | head -15
+df -h --output=target,pcent,avail,size | head -15 || true
 # Flag any partition over threshold
-df --output=target,pcent 2>/dev/null | awk -v thresh="$THRESHOLD" 'NR>1 {gsub(/%/,"",$2); if ($2+0 >= thresh+0) print "  ⚠ " $1 " at " $2 "%"}'
+df --output=target,pcent 2>/dev/null | awk -v thresh="$THRESHOLD" 'NR>1 {gsub(/%/,"",$2); if ($2+0 >= thresh+0) print "  ⚠ " $1 " at " $2 "%"}' || true
 
 echo "--- Temp Files (> 7 days) ---"
-COUNT=$(find /tmp /var/tmp -type f -mtime +7 2>/dev/null | wc -l)
-SIZE=$(find /tmp /var/tmp -type f -mtime +7 -exec du -ch {} + 2>/dev/null | tail -1 | awk '{print $1}')
+COUNT=$(find /tmp /var/tmp -type f -mtime +7 2>/dev/null | wc -l || true)
+SIZE=$(find /tmp /var/tmp -type f -mtime +7 -exec du -ch {} + 2>/dev/null | tail -1 | awk '{print $1}' || true)
 echo "  Found $COUNT old temp files (${SIZE:-0})"
 if [[ $VERBOSE -ge 1 ]]; then
-  find /tmp /var/tmp -type f -mtime +7 2>/dev/null -exec ls -lh {} \; | awk '{print "    " $5, $9}' | head -15
+  find /tmp /var/tmp -type f -mtime +7 2>/dev/null -exec ls -lh {} \; | awk '{print "    " $5, $9}' | head -15 || true
 fi
 
 echo "--- Large Log Files (> 100MB) ---"
@@ -80,7 +81,7 @@ fi
 
 echo "--- APT Cache ---"
 if command -v apt &>/dev/null; then
-  CACHE_SIZE=$(du -sh /var/cache/apt/archives 2>/dev/null | awk '{print $1}')
+  CACHE_SIZE=$(du -sh /var/cache/apt/archives 2>/dev/null | awk '{print $1}' || true)
   echo "  APT cache: ${CACHE_SIZE:-unknown}"
   echo "  Clean with: sudo apt clean && sudo apt autoremove"
   if [[ $VERBOSE -ge 2 ]]; then
@@ -91,22 +92,22 @@ fi
 
 echo "--- Snap Cache ---"
 if command -v snap &>/dev/null; then
-  SNAP_CACHE=$(du -sh /var/lib/snapd/cache 2>/dev/null | awk '{print $1}')
+  SNAP_CACHE=$(du -sh /var/lib/snapd/cache 2>/dev/null | awk '{print $1}' || true)
   echo "  Snap cache: ${SNAP_CACHE:-N/A}"
   # Count disabled snap revisions
-  DISABLED=$(snap list --all 2>/dev/null | awk '/disabled/ {print $1, $3}' | wc -l)
+  DISABLED=$(snap list --all 2>/dev/null | awk '/disabled/ {print $1, $3}' | wc -l || true)
   if [[ $DISABLED -gt 0 ]]; then
     echo "  ⚠ $DISABLED disabled snap revision(s) can be removed"
     if [[ $VERBOSE -ge 1 ]]; then
-      snap list --all 2>/dev/null | awk '/disabled/ {print "    " $1, "rev", $3}'
+      snap list --all 2>/dev/null | awk '/disabled/ {print "    " $1, "rev", $3}' || true
     fi
   fi
 fi
 
 echo "--- Docker (if present) ---"
 if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
-  DANGLING=$(docker images -f "dangling=true" -q 2>/dev/null | wc -l)
-  STOPPED=$(docker ps -aq --filter "status=exited" 2>/dev/null | wc -l)
+  DANGLING=$(docker images -f "dangling=true" -q 2>/dev/null | wc -l || true)
+  STOPPED=$(docker ps -aq --filter "status=exited" 2>/dev/null | wc -l || true)
   echo "  Dangling images: $DANGLING"
   echo "  Stopped containers: $STOPPED"
   if [[ $DANGLING -gt 0 || $STOPPED -gt 0 ]]; then

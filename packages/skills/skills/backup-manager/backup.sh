@@ -51,7 +51,7 @@ while [[ $# -gt 0 ]]; do
     -vv) VERBOSE=2; shift ;;
     -v) VERBOSE=$((VERBOSE + 1)); shift ;;
     --) shift; break ;;
-    -*) echo "Unknown option: $1" >&2; usage ;;
+    -*) echo "Unknown option: $1" >&2; (usage) >&2; exit 2 ;;
     *) break ;;
   esac
 done
@@ -76,8 +76,8 @@ ARCHIVE="$DEST/backup-$STAMP.tar.gz"
 
 # ── Disk space check ──
 log_v1 "Checking available disk space at $DEST"
-AVAIL_KB=$(df --output=avail "$DEST" 2>/dev/null | tail -1 | xargs)
-SRC_KB=$(du -sk "$SRC" 2>/dev/null | awk '{print $1}')
+AVAIL_KB=$(df --output=avail "$DEST" 2>/dev/null | tail -1 | xargs || true)
+SRC_KB=$(du -sk "$SRC" 2>/dev/null | awk '{print $1}' || true)
 if [[ -n "$AVAIL_KB" && -n "$SRC_KB" && "$AVAIL_KB" -lt "$SRC_KB" ]]; then
   echo "⚠ Warning: available space (${AVAIL_KB}K) may be insufficient for source (${SRC_KB}K)"
 fi
@@ -107,7 +107,7 @@ fi
 
 echo "--- Retention Cleanup ---"
 # Only this tool's own archives directly in DEST, never matching files in directories below it.
-DELETED=$(find "$DEST" -maxdepth 1 -type f -name "backup-*.tar.gz" -mtime +"$RETENTION_DAYS" -delete -print | wc -l)
+DELETED=$(find "$DEST" -maxdepth 1 -type f -name "backup-*.tar.gz" -mtime +"$RETENTION_DAYS" -delete -print | wc -l || true)
 echo "Purged $DELETED old backup(s) (> ${RETENTION_DAYS} days)"
 
 echo "--- Current Backups ---"

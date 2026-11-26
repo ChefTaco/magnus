@@ -46,7 +46,7 @@ while [[ $# -gt 0 ]]; do
     -v) VERBOSE=$((VERBOSE + 1)); shift ;;
     --) shift; break ;;
     --since=*) SINCE="$1"; shift ;;
-    -*) echo "Unknown option: $1" >&2; usage ;;
+    -*) echo "Unknown option: $1" >&2; (usage) >&2; exit 2 ;;
     *) SINCE="$1"; shift ;;
   esac
 done
@@ -81,7 +81,7 @@ if [[ $VERBOSE -ge 1 ]]; then
 
   echo "--- APT History ---"
   if [[ -f /var/log/apt/history.log ]]; then
-    tail -20 /var/log/apt/history.log | sed 's/^/  /'
+    tail -20 /var/log/apt/history.log | sed 's/^/  /' || true
   else
     echo "  No APT history"
   fi

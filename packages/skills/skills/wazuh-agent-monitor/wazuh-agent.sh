@@ -40,7 +40,7 @@ while [[ $# -gt 0 ]]; do
     -vv) VERBOSE=2; shift ;;
     -v) VERBOSE=$((VERBOSE + 1)); shift ;;
     --) shift; break ;;
-    -*) echo "Unknown option: $1" >&2; usage ;;
+    -*) echo "Unknown option: $1" >&2; (usage) >&2; exit 2 ;;
     *) echo "Unexpected argument: $1" >&2; usage ;;
   esac
 done
@@ -73,7 +73,7 @@ MANAGERS=()
 if [[ -r "$CONFIG" ]]; then
   while IFS= read -r manager; do
     [[ -n "$manager" ]] && MANAGERS+=("$manager")
-  done < <(sed -n 's|.*<address>[[:space:]]*\([^<[:space:]]*\)[[:space:]]*</address>.*|\1|p' "$CONFIG" | sort -u)
+  done < <(sed -n 's|.*<address>[[:space:]]*\([^<[:space:]]*\)[[:space:]]*</address>.*|\1|p' "$CONFIG" | sort -u) || true
 fi
 echo "Managers: ${MANAGERS[*]:-none configured}"
 

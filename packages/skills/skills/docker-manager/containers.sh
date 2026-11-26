@@ -41,7 +41,7 @@ while [[ $# -gt 0 ]]; do
     -vv) VERBOSE=2; shift ;;
     -v) VERBOSE=$((VERBOSE + 1)); shift ;;
     --) shift; break ;;
-    -*) echo "Unknown option: $1" >&2; usage ;;
+    -*) echo "Unknown option: $1" >&2; (usage) >&2; exit 2 ;;
     *) break ;;
   esac
 done
@@ -66,18 +66,18 @@ log_v1 "Docker root: $(docker info --format '{{.DockerRootDir}}' 2>/dev/null)"
 
 # ── Containers ──
 echo "--- Containers ---"
-RUNNING=$(docker ps -q 2>/dev/null | wc -l)
-TOTAL=$(docker ps -aq 2>/dev/null | wc -l)
+RUNNING=$(docker ps -q 2>/dev/null | wc -l || true)
+TOTAL=$(docker ps -aq 2>/dev/null | wc -l || true)
 STOPPED=$((TOTAL - RUNNING))
 echo "  Running: $RUNNING | Stopped: $STOPPED | Total: $TOTAL"
 
 if [[ $RUNNING -gt 0 ]]; then
-  docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Image}}\t{{.Ports}}" 2>/dev/null | head -20
+  docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Image}}\t{{.Ports}}" 2>/dev/null | head -20 || true
 fi
 
 if [[ $STOPPED -gt 0 ]]; then
   echo "  Stopped containers:"
-  docker ps -a --filter "status=exited" --format "  {{.Names}} ({{.Status}})" 2>/dev/null | head -10
+  docker ps -a --filter "status=exited" --format "  {{.Names}} ({{.Status}})" 2>/dev/null | head -10 || true
 fi
 
 # ── Container stats (verbose 1+) ──
@@ -88,27 +88,27 @@ fi
 
 # ── Images ──
 echo "--- Images ---"
-IMAGE_COUNT=$(docker images -q 2>/dev/null | wc -l)
-DANGLING=$(docker images -f "dangling=true" -q 2>/dev/null | wc -l)
+IMAGE_COUNT=$(docker images -q 2>/dev/null | wc -l || true)
+DANGLING=$(docker images -f "dangling=true" -q 2>/dev/null | wc -l || true)
 echo "  Total: $IMAGE_COUNT | Dangling: $DANGLING"
 
 if [[ $VERBOSE -ge 1 ]]; then
-  docker images --format "  {{.Repository}}:{{.Tag}} ({{.Size}}, {{.CreatedSince}})" 2>/dev/null | head -15
+  docker images --format "  {{.Repository}}:{{.Tag}} ({{.Size}}, {{.CreatedSince}})" 2>/dev/null | head -15 || true
 fi
 
 if [[ $DANGLING -gt 0 ]]; then
-  DANGLING_SIZE=$(docker images -f "dangling=true" --format '{{.Size}}' 2>/dev/null | head -5)
+  DANGLING_SIZE=$(docker images -f "dangling=true" --format '{{.Size}}' 2>/dev/null | head -5 || true)
   echo "  ⚠ $DANGLING dangling image(s) can be cleaned with: docker image prune"
 fi
 
 # ── Volumes ──
 echo "--- Volumes ---"
-VOL_COUNT=$(docker volume ls -q 2>/dev/null | wc -l)
-DANGLING_VOLS=$(docker volume ls -f "dangling=true" -q 2>/dev/null | wc -l)
+VOL_COUNT=$(docker volume ls -q 2>/dev/null | wc -l || true)
+DANGLING_VOLS=$(docker volume ls -f "dangling=true" -q 2>/dev/null | wc -l || true)
 echo "  Total: $VOL_COUNT | Unused: $DANGLING_VOLS"
 
 if [[ $VERBOSE -ge 2 ]]; then
-  docker volume ls --format "  {{.Name}} ({{.Driver}})" 2>/dev/null | head -15
+  docker volume ls --format "  {{.Name}} ({{.Driver}})" 2>/dev/null | head -15 || true
 fi
 
 if [[ $DANGLING_VOLS -gt 0 ]]; then

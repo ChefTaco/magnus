@@ -41,7 +41,7 @@ while [[ $# -gt 0 ]]; do
     -vv) VERBOSE=2; shift ;;
     -v) VERBOSE=$((VERBOSE + 1)); shift ;;
     --) shift; break ;;
-    -*) echo "Unknown option: $1" >&2; usage ;;
+    -*) echo "Unknown option: $1" >&2; (usage) >&2; exit 2 ;;
     *) break ;;
   esac
 done
@@ -63,7 +63,7 @@ if [[ -f /var/run/reboot-required ]]; then
   echo "  ⚠ REBOOT REQUIRED"
   if [[ -f /var/run/reboot-required.pkgs ]]; then
     echo "  Packages requiring reboot:"
-    cat /var/run/reboot-required.pkgs | sed 's/^/    /'
+    cat /var/run/reboot-required.pkgs | sed 's/^/    /' || true
   fi
 else
   echo "  ✓ No reboot required"
@@ -79,7 +79,7 @@ if command -v apt &>/dev/null; then
   SECURITY=$(apt list --upgradable 2>/dev/null | grep -ci 'security' || echo 0)
   if [[ $SECURITY -gt 0 ]]; then
     echo "  ⚠ Security updates: $SECURITY"
-    apt list --upgradable 2>/dev/null | grep -i 'security' | head -10 | sed 's/^/    /'
+    apt list --upgradable 2>/dev/null | grep -i 'security' | head -10 | sed 's/^/    /' || true
   else
     echo "  ✓ No pending security updates"
   fi
@@ -89,10 +89,10 @@ fi
 
 # ── Held packages ──
 echo "--- Held Packages ---"
-HELD=$(apt-mark showhold 2>/dev/null | wc -l)
+HELD=$(apt-mark showhold 2>/dev/null | wc -l || true)
 if [[ $HELD -gt 0 ]]; then
   echo "  ⚠ $HELD held package(s):"
-  apt-mark showhold 2>/dev/null | sed 's/^/    /'
+  apt-mark showhold 2>/dev/null | sed 's/^/    /' || true
 else
   echo "  ✓ No held packages"
 fi
@@ -104,7 +104,7 @@ if dpkg -l unattended-upgrades &>/dev/null 2>&1; then
   if systemctl is-active apt-daily-upgrade.timer &>/dev/null; then
     echo "  ✓ Timer active"
     if [[ $VERBOSE -ge 1 ]]; then
-      systemctl status apt-daily-upgrade.timer --no-pager 2>/dev/null | grep -E 'Loaded|Active|Trigger' | sed 's/^/    /'
+      systemctl status apt-daily-upgrade.timer --no-pager 2>/dev/null | grep -E 'Loaded|Active|Trigger' | sed 's/^/    /' || true
     fi
   else
     echo "  ⚠ Timer not active"
@@ -115,7 +115,7 @@ if dpkg -l unattended-upgrades &>/dev/null 2>&1; then
     for f in /etc/apt/apt.conf.d/50unattended-upgrades /etc/apt/apt.conf.d/20auto-upgrades; do
       if [[ -f "$f" ]]; then
         echo "    $f:"
-        grep -Ev '^\s*//|^\s*$' "$f" 2>/dev/null | head -10 | sed 's/^/      /'
+        grep -Ev '^\s*//|^\s*$' "$f" 2>/dev/null | head -10 | sed 's/^/      /' || true
       fi
     done
   fi
@@ -126,7 +126,7 @@ fi
 # ── Last update ──
 echo "--- Last APT Activity ---"
 if [[ -f /var/log/apt/history.log ]]; then
-  LAST_UPDATE=$(grep "Start-Date" /var/log/apt/history.log 2>/dev/null | tail -1 | cut -d: -f2- | xargs)
+  LAST_UPDATE=$(grep "Start-Date" /var/log/apt/history.log 2>/dev/null | tail -1 | cut -d: -f2- | xargs || true)
   echo "  Last apt operation: ${LAST_UPDATE:-unknown}"
 else
   echo "  No apt history available"
@@ -144,24 +144,24 @@ fi
 if [[ $VERBOSE -ge 1 ]]; then
   echo "--- APT Sources ---"
   if [[ -f /etc/apt/sources.list ]]; then
-    grep -cEv '^\s*#|^\s*$' /etc/apt/sources.list 2>/dev/null | xargs -I{} echo "  /etc/apt/sources.list: {} entries"
+    grep -cEv '^\s*#|^\s*$' /etc/apt/sources.list 2>/dev/null | xargs -I{} echo "  /etc/apt/sources.list: {} entries" || true
   fi
-  EXTRA=$(find /etc/apt/sources.list.d/ -name "*.list" -o -name "*.sources" 2>/dev/null | wc -l)
+  EXTRA=$(find /etc/apt/sources.list.d/ -name "*.list" -o -name "*.sources" 2>/dev/null | wc -l || true)
   echo "  Extra source files: $EXTRA"
   if [[ $VERBOSE -ge 2 ]]; then
     find /etc/apt/sources.list.d/ -name "*.list" -o -name "*.sources" 2>/dev/null | while read -r f; do
       echo "    $(basename "$f")"
-    done
+    done || true
   fi
 fi
 
 # ── dpkg audit (verbose 2+) ──
 if [[ $VERBOSE -ge 2 ]]; then
   echo "--- DPKG Audit ---"
-  BROKEN=$(dpkg --audit 2>/dev/null | wc -l)
+  BROKEN=$(dpkg --audit 2>/dev/null | wc -l || true)
   if [[ $BROKEN -gt 0 ]]; then
     echo "  ⚠ $BROKEN issue(s) found:"
-    dpkg --audit 2>/dev/null | head -10 | sed 's/^/    /'
+    dpkg --audit 2>/dev/null | head -10 | sed 's/^/    /' || true
   else
     echo "  ✓ No broken packages"
   fi

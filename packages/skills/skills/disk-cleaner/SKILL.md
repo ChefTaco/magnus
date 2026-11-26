@@ -1,6 +1,6 @@
 ---
 name: disk-cleaner
-description: "Automated disk space management — cleans temp files, rotates logs, purges package caches, and identifies large/orphaned files. Configurable usage thresholds."
+description: "Disk space report — finds old temp files, large logs, package and container caches and the largest directories, and prints the cleanup commands to run. Read-only: it deletes nothing. Configurable usage threshold."
 version: 1.0.0
 platforms: [linux]
 metadata:
@@ -12,7 +12,7 @@ metadata:
 # Disk Cleaner
 
 ## When to Use
-Use this skill when managing or auditing a Magnus-managed Linux node and the task matches this capability: Automated disk space management — cleans temp files, rotates logs, purges package caches, and identifies large/orphaned files. Configurable usage thresholds.
+Use this skill when managing or auditing a Magnus-managed Linux node and the task matches this capability: Disk space report — finds old temp files, large logs, package and container caches and the largest directories, and prints the cleanup commands to run. Read-only: it deletes nothing. Configurable usage threshold.
 
 ## Procedure
 1. Inspect the local node context and confirm the task is appropriate for this skill.
@@ -21,7 +21,7 @@ Use this skill when managing or auditing a Magnus-managed Linux node and the tas
 4. Summarize the findings, actions taken, and any follow-up risk for the operator.
 
 ## Requirements
-Expected host commands: `find`, `du`, `df`, `logrotate`.
+Expected host commands: `find`, `du`, `df`.
 
 ## Verification
 Confirm the script exits successfully and that its summary output matches the requested node-management task.

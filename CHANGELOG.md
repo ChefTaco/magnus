@@ -307,6 +307,14 @@ All notable changes to this project are documented in this file. The format is b
   `group-populated` and blocked the next terminal. The agent now waits up to 5 s for the group to
   empty, then SIGKILLs the whole group and waits 3 s more; the completion receipt is still issued
   only once the group is empty.
+- **Skill scripts no longer abort when not run as root.** Under `set -euo pipefail`, an assignment
+  such as `COUNT=$(find … | wc -l)` stopped the whole script when `find`, `du`, `findmnt` or `grep`
+  hit a directory it could not read or found nothing (disk-cleaner, security-auditor, cron-manager,
+  package-manager, update-manager, mount-inspector and others), and so did a report pipeline whose
+  `grep` matched nothing or whose `head` closed it early. Report-only probes now tolerate that;
+  backup checksums and the news-reporter prompt filter still fail closed.
+- **Skill entry points exit 2 on an unknown flag** (usage on stderr) instead of printing usage and
+  exiting 0. The disk-cleaner manifest now says it reports and deletes nothing.
 - `docs/PUBLISHING.md` now describes how images are built, scanned and tagged (prereleases get their
   `X.Y.Z-<pre>` tag).
 - `x-api-secret` and shared node-secret checks cache the decrypted credential rotation state until the

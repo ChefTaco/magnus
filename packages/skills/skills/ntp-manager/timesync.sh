@@ -41,7 +41,7 @@ while [[ $# -gt 0 ]]; do
     -vv) VERBOSE=2; shift ;;
     -v) VERBOSE=$((VERBOSE + 1)); shift ;;
     --) shift; break ;;
-    -*) echo "Unknown option: $1" >&2; usage ;;
+    -*) echo "Unknown option: $1" >&2; (usage) >&2; exit 2 ;;
     *) break ;;
   esac
 done
@@ -70,7 +70,7 @@ if command -v timedatectl &>/dev/null; then
 
   if [[ $VERBOSE -ge 3 ]]; then
     echo "  Full timedatectl output:"
-    timedatectl status 2>/dev/null | sed 's/^/    /'
+    timedatectl status 2>/dev/null | sed 's/^/    /' || true
   fi
 else
   echo "  timedatectl not available"
@@ -96,7 +96,7 @@ if systemctl is-active chrony &>/dev/null 2>&1 || systemctl is-active chronyd &>
     for f in /etc/chrony/chrony.conf /etc/chrony.conf; do
       if [[ -f "$f" ]]; then
         echo "    $f:"
-        grep -Ev '^\s*#|^\s*$' "$f" 2>/dev/null | sed 's/^/      /'
+        grep -Ev '^\s*#|^\s*$' "$f" 2>/dev/null | sed 's/^/      /' || true
         break
       fi
     done
@@ -116,7 +116,7 @@ elif systemctl is-active systemd-timesyncd &>/dev/null 2>&1; then
     for f in /etc/systemd/timesyncd.conf /etc/systemd/timesyncd.conf.d/*.conf; do
       if [[ -f "$f" ]]; then
         echo "    $f:"
-        grep -Ev '^\s*#|^\s*$' "$f" 2>/dev/null | sed 's/^/      /'
+        grep -Ev '^\s*#|^\s*$' "$f" 2>/dev/null | sed 's/^/      /' || true
       fi
     done
   fi
@@ -138,7 +138,7 @@ fi
 if [[ $VERBOSE -ge 1 ]]; then
   echo "--- Clock Drift ---"
   if command -v chronyc &>/dev/null; then
-    OFFSET=$(chronyc tracking 2>/dev/null | grep "Last offset" | awk '{print $4}')
+    OFFSET=$(chronyc tracking 2>/dev/null | grep "Last offset" | awk '{print $4}' || true)
     echo "  Last offset: ${OFFSET:-unknown}"
   elif [[ -f /run/systemd/timesync/synchronized ]]; then
     echo "  ✓ systemd-timesyncd reports synchronized"

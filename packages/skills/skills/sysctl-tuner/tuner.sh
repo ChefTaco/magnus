@@ -41,7 +41,7 @@ while [[ $# -gt 0 ]]; do
     -vv) VERBOSE=2; shift ;;
     -v) VERBOSE=$((VERBOSE + 1)); shift ;;
     --) shift; break ;;
-    -*) echo "Unknown option: $1" >&2; usage ;;
+    -*) echo "Unknown option: $1" >&2; (usage) >&2; exit 2 ;;
     *) break ;;
   esac
 done
@@ -117,8 +117,8 @@ if [[ $VERBOSE -ge 1 ]]; then
   echo "--- File Descriptors ---"
   show_param "fs.file-max"                     "system-wide max"
   show_param "fs.nr_open"                      "per-process max"
-  OPEN=$(cat /proc/sys/fs/file-nr 2>/dev/null | awk '{print $1}')
-  MAX=$(cat /proc/sys/fs/file-nr 2>/dev/null | awk '{print $3}')
+  OPEN=$(cat /proc/sys/fs/file-nr 2>/dev/null | awk '{print $1}' || true)
+  MAX=$(cat /proc/sys/fs/file-nr 2>/dev/null | awk '{print $3}' || true)
   echo "  fs.file-nr (current open)                   = ${OPEN:-?} / ${MAX:-?}"
 fi
 
@@ -130,7 +130,7 @@ if [[ $VERBOSE -ge 2 ]]; then
     LINES=$(grep -cEv '^\s*#|^\s*$' "$f" 2>/dev/null || echo 0)
     if [[ $LINES -gt 0 ]]; then
       echo "  $f ($LINES settings):"
-      grep -Ev '^\s*#|^\s*$' "$f" 2>/dev/null | sed 's/^/    /'
+      grep -Ev '^\s*#|^\s*$' "$f" 2>/dev/null | sed 's/^/    /' || true
     fi
   done
 fi
@@ -138,6 +138,6 @@ fi
 # ── Full dump (verbose 3) ──
 if [[ $VERBOSE -ge 3 ]]; then
   echo "--- Full Sysctl Dump ---"
-  sysctl -a 2>/dev/null | sort | head -200
+  sysctl -a 2>/dev/null | sort | head -200 || true
   echo "  ... (truncated at 200 lines)"
 fi

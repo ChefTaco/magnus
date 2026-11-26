@@ -41,7 +41,7 @@ while [[ $# -gt 0 ]]; do
     -vv) VERBOSE=2; shift ;;
     -v) VERBOSE=$((VERBOSE + 1)); shift ;;
     --) shift; break ;;
-    -*) echo "Unknown option: $1" >&2; usage ;;
+    -*) echo "Unknown option: $1" >&2; (usage) >&2; exit 2 ;;
     *) break ;;
   esac
 done
@@ -95,7 +95,7 @@ if $OLLAMA_UP; then
   MODELS_JSON=$(curl -sf --connect-timeout 5 "${OLLAMA_HOST}/api/tags" 2>/dev/null || echo "")
   if [[ -n "$MODELS_JSON" ]]; then
     echo "$MODELS_JSON" | grep -oP '"name"\s*:\s*"\K[^"]+' | while read -r model; do
-      SIZE=$(echo "$MODELS_JSON" | grep -oP "\"name\"\\s*:\\s*\"${model}\"[^}]*\"size\"\\s*:\\s*\\K[0-9]+" | head -1)
+      SIZE=$(echo "$MODELS_JSON" | grep -oP "\"name\"\\s*:\\s*\"${model}\"[^}]*\"size\"\\s*:\\s*\\K[0-9]+" | head -1 || true)
       if [[ -n "$SIZE" ]]; then
         SIZE_GB=$(awk "BEGIN {printf \"%.1f\", $SIZE / 1073741824}")
         echo "  $model (${SIZE_GB} GB)"
@@ -103,7 +103,7 @@ if $OLLAMA_UP; then
         echo "  $model"
       fi
     done
-    MODEL_COUNT=$(echo "$MODELS_JSON" | grep -oP '"name"\s*:\s*"' | wc -l)
+    MODEL_COUNT=$(echo "$MODELS_JSON" | grep -oP '"name"\s*:\s*"' | wc -l || true)
     echo "  Total models: $MODEL_COUNT"
   else
     echo "  Failed to list models"
@@ -112,9 +112,9 @@ if $OLLAMA_UP; then
   echo "--- Ollama Running Models ---"
   RUNNING_JSON=$(curl -sf --connect-timeout 5 "${OLLAMA_HOST}/api/ps" 2>/dev/null || echo "")
   if [[ -n "$RUNNING_JSON" ]]; then
-    RUNNING=$(echo "$RUNNING_JSON" | grep -oP '"name"\s*:\s*"\K[^"]+')
+    RUNNING=$(echo "$RUNNING_JSON" | grep -oP '"name"\s*:\s*"\K[^"]+' || true)
     if [[ -n "$RUNNING" ]]; then
-      echo "$RUNNING" | sed 's/^/  ✓ /'
+      echo "$RUNNING" | sed 's/^/  ✓ /' || true
     else
       echo "  No models currently loaded in memory"
     fi
@@ -128,7 +128,7 @@ if $VLLM_UP; then
   echo "--- vLLM Models ---"
   VLLM_MODELS=$(curl -sf --connect-timeout 5 "${VLLM_HOST}/v1/models" 2>/dev/null || echo "")
   if [[ -n "$VLLM_MODELS" ]]; then
-    echo "$VLLM_MODELS" | grep -oP '"id"\s*:\s*"\K[^"]+' | sed 's/^/  /'
+    echo "$VLLM_MODELS" | grep -oP '"id"\s*:\s*"\K[^"]+' | sed 's/^/  /' || true
   else
     echo "  Could not query models"
   fi
@@ -137,17 +137,17 @@ fi
 echo "--- GPU Status ---"
 if command -v nvidia-smi &>/dev/null; then
   nvidia-smi --query-gpu=index,name,memory.used,memory.total,utilization.gpu,temperature.gpu --format=csv,noheader,nounits 2>/dev/null | while IFS=',' read -r idx name mem_used mem_total util temp; do
-    mem_used=$(echo "$mem_used" | tr -d ' ')
-    mem_total=$(echo "$mem_total" | tr -d ' ')
-    util=$(echo "$util" | tr -d ' ')
-    temp=$(echo "$temp" | tr -d ' ')
+    mem_used=$(echo "$mem_used" | tr -d ' ' || true)
+    mem_total=$(echo "$mem_total" | tr -d ' ' || true)
+    util=$(echo "$util" | tr -d ' ' || true)
+    temp=$(echo "$temp" | tr -d ' ' || true)
     MEM_PCT=$((mem_used * 100 / mem_total))
     STATUS="✓"
     [[ $MEM_PCT -ge 90 ]] && STATUS="⚠"
     echo "  GPU $idx ($name): ${mem_used}/${mem_total} MiB (${MEM_PCT}%), util: ${util}%, temp: ${temp}°C $STATUS"
   done
 elif command -v rocm-smi &>/dev/null; then
-  rocm-smi --showuse --showtemp 2>/dev/null | head -20 | sed 's/^/  /'
+  rocm-smi --showuse --showtemp 2>/dev/null | head -20 | sed 's/^/  /' || true
 else
   echo "  No GPU tools found (nvidia-smi / rocm-smi)"
 fi
@@ -158,7 +158,7 @@ if [[ $VERBOSE -ge 1 ]]; then
   OLLAMA_MODELS_DIR="${OLLAMA_MODELS:-/usr/share/ollama/.ollama/models}"
   [[ -d "$HOME/.ollama/models" ]] && OLLAMA_MODELS_DIR="$HOME/.ollama/models"
   if [[ -d "$OLLAMA_MODELS_DIR" ]]; then
-    TOTAL_SIZE=$(du -sh "$OLLAMA_MODELS_DIR" 2>/dev/null | awk '{print $1}')
+    TOTAL_SIZE=$(du -sh "$OLLAMA_MODELS_DIR" 2>/dev/null | awk '{print $1}' || true)
     echo "  Ollama models dir: $OLLAMA_MODELS_DIR ($TOTAL_SIZE)"
   else
     echo "  Ollama models dir: not found at default locations"
@@ -167,14 +167,14 @@ if [[ $VERBOSE -ge 1 ]]; then
   # HuggingFace cache
   HF_CACHE="${HF_HOME:-$HOME/.cache/huggingface}"
   if [[ -d "$HF_CACHE" ]]; then
-    HF_SIZE=$(du -sh "$HF_CACHE" 2>/dev/null | awk '{print $1}')
+    HF_SIZE=$(du -sh "$HF_CACHE" 2>/dev/null | awk '{print $1}' || true)
     echo "  HuggingFace cache: $HF_CACHE ($HF_SIZE)"
   fi
 
   echo "--- Inference Latency Test ---"
   if $OLLAMA_UP; then
     # Pick first available model
-    TEST_MODEL=$(curl -sf "${OLLAMA_HOST}/api/tags" 2>/dev/null | grep -oP '"name"\s*:\s*"\K[^"]+' | head -1)
+    TEST_MODEL=$(curl -sf "${OLLAMA_HOST}/api/tags" 2>/dev/null | grep -oP '"name"\s*:\s*"\K[^"]+' | head -1 || true)
     if [[ -n "$TEST_MODEL" ]]; then
       echo "  Testing with: $TEST_MODEL"
       START=$(date +%s%N)

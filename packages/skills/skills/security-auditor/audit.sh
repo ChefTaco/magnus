@@ -41,7 +41,7 @@ while [[ $# -gt 0 ]]; do
     -vv) VERBOSE=2; shift ;;
     -v) VERBOSE=$((VERBOSE + 1)); shift ;;
     --) shift; break ;;
-    -*) echo "Unknown option: $1" >&2; usage ;;
+    -*) echo "Unknown option: $1" >&2; (usage) >&2; exit 2 ;;
     *) break ;;
   esac
 done
@@ -55,12 +55,12 @@ echo "--- Users with UID 0 ---"
 awk -F: '$3 == 0 {print "  " $1}' /etc/passwd
 
 echo "--- SUID Binaries ---"
-SUID_COUNT=$(find / -perm -4000 -type f 2>/dev/null | wc -l)
+SUID_COUNT=$(find / -perm -4000 -type f 2>/dev/null | wc -l || true)
 echo "  Found: $SUID_COUNT SUID binaries"
 if [[ $VERBOSE -ge 2 ]]; then
-  find / -perm -4000 -type f 2>/dev/null | head -30 | sed 's/^/  /'
+  find / -perm -4000 -type f 2>/dev/null | head -30 | sed 's/^/  /' || true
 else
-  find / -perm -4000 -type f 2>/dev/null | head -15 | sed 's/^/  /'
+  find / -perm -4000 -type f 2>/dev/null | head -15 | sed 's/^/  /' || true
 fi
 
 echo "--- Listening Ports ---"
@@ -77,17 +77,17 @@ else
 fi
 
 echo "--- World-Writable Files in /etc ---"
-WW_COUNT=$(find /etc -perm -o+w -type f 2>/dev/null | wc -l)
+WW_COUNT=$(find /etc -perm -o+w -type f 2>/dev/null | wc -l || true)
 if [[ $WW_COUNT -gt 0 ]]; then
   echo "  ⚠ $WW_COUNT world-writable file(s):"
-  find /etc -perm -o+w -type f 2>/dev/null | head -20 | sed 's/^/    /'
+  find /etc -perm -o+w -type f 2>/dev/null | head -20 | sed 's/^/    /' || true
 else
   echo "  ✓ None"
 fi
 
 echo "--- Firewall Status ---"
 if command -v ufw &>/dev/null; then
-  UFW_STATUS=$(ufw status 2>/dev/null | head -1)
+  UFW_STATUS=$(ufw status 2>/dev/null | head -1 || true)
   echo "  UFW: $UFW_STATUS"
 else
   echo "  ⚠ UFW not installed"

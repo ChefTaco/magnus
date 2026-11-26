@@ -126,7 +126,7 @@
     "node_modules/@hivemagnus/magnus-skills": {
       "version": "3.3.6",
       "resolved": "https://registry.npmjs.org/@hivemagnus/magnus-skills/-/magnus-skills-3.3.6.tgz",
-      "integrity": "sha512-njP3nbIGcDnW2430BuOPBJ3uTrN7GtKaMObPfJh+clIGk60axBvkaQ2NINiKHeqLmlmdlca8WP+tycLjHfr6IQ==",
+      "integrity": "sha512-RaQHk9LOCjMa9D9hWaeGg6nBTzCoUhccNtMyWAR1qnSEj9JCbFcMEro/UoKYs74W1Wb0fkFumLoJsCuLt9tvjA==",
       "license": "Apache-2.0",
       "engines": {
         "node": "^24.22.3 || ^26.13.1"

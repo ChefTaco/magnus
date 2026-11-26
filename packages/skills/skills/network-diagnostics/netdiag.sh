@@ -41,7 +41,7 @@ while [[ $# -gt 0 ]]; do
     -vv) VERBOSE=2; shift ;;
     -v) VERBOSE=$((VERBOSE + 1)); shift ;;
     --) shift; break ;;
-    -*) echo "Unknown option: $1" >&2; usage ;;
+    -*) echo "Unknown option: $1" >&2; (usage) >&2; exit 2 ;;
     *) break ;;
   esac
 done
@@ -66,7 +66,7 @@ fi
 
 echo "--- DNS Resolution ---"
 for host in google.com cloudflare.com github.com; do
-  RESULT=$(dig +short "$host" A 2>/dev/null | head -1)
+  RESULT=$(dig +short "$host" A 2>/dev/null | head -1 || true)
   if [[ -n "$RESULT" ]]; then
     echo "  ✓ $host → $RESULT"
   else
@@ -80,7 +80,7 @@ if [[ $VERBOSE -ge 1 ]]; then
   if command -v resolvectl &>/dev/null; then
     resolvectl status 2>/dev/null | grep -E 'DNS Servers|DNS Domain|DNSSEC|Current' | head -10 | sed 's/^/  /' || true
   elif [[ -f /etc/resolv.conf ]]; then
-    grep nameserver /etc/resolv.conf | sed 's/^/  /'
+    grep nameserver /etc/resolv.conf | sed 's/^/  /' || true
   fi
 fi
 
@@ -96,7 +96,7 @@ echo "--- Listening Services ---"
 ss -tlnp 2>/dev/null | head -20 || true
 
 echo "--- Established Connections ---"
-CONN_COUNT=$(ss -tnp state established 2>/dev/null | wc -l)
+CONN_COUNT=$(ss -tnp state established 2>/dev/null | wc -l || true)
 echo "  Established connections: $CONN_COUNT"
 
 if [[ $VERBOSE -ge 1 ]]; then
