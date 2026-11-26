@@ -1,4 +1,5 @@
 import { optional } from '../utils/optional.js';
+import { errorText } from '../utils/redact.js';
 import { recordMonitorPulse } from './monitor-pulse.js';
 import { createHash } from 'node:crypto';
 import { nanoid } from 'nanoid';
@@ -447,23 +448,43 @@ export async function getRolloutStatus(runId: string) {
 }
 let timer: ReturnType<typeof setInterval> | undefined;
 let busy = false;
+/** Paused runs reconciled per tick, in a rotating window so none waits forever. */
+const PAUSED_PER_TICK = 25;
+let pausedCursor: string | undefined;
+
+/**
+ * The runs one reconciler tick visits: the 100 oldest created or running runs, plus the next
+ * window of paused ones. Paused runs only wait for an operator, so they never take the slots
+ * of runs that are making progress.
+ */
+export async function rolloutsToReconcile(): Promise<string[]> {
+  const db = getDb();
+  const active = await db.executionRun.findMany({
+    where: { status: { in: ['created', 'running'] } },
+    take: 100,
+    orderBy: { createdAt: 'asc' },
+    select: { id: true },
+  });
+  const paused = await db.executionRun.findMany({
+    where: { status: 'paused', ...(pausedCursor ? { id: { gt: pausedCursor } } : {}) },
+    take: PAUSED_PER_TICK,
+    orderBy: { id: 'asc' },
+    select: { id: true },
+  });
+  pausedCursor = paused.length === PAUSED_PER_TICK ? paused[paused.length - 1]!.id : undefined;
+  return [...active, ...paused].map((run) => run.id);
+}
 export function startRolloutReconciler() {
   if (timer) return;
   const tick = async () => {
     if (busy) return;
     busy = true;
     try {
-      const runs = await getDb().executionRun.findMany({
-        where: { status: { in: ['created', 'running', 'paused'] } },
-        take: 100,
-        orderBy: { createdAt: 'asc' },
-        select: { id: true },
-      });
-      for (const run of runs) {
+      for (const runId of await rolloutsToReconcile()) {
         try {
-          await executeRollout(run.id);
-        } catch {
-          console.error(`[rollout] reconciliation pending for ${run.id}`);
+          await executeRollout(runId);
+        } catch (error) {
+          console.error(`[rollout] reconciliation pending for ${runId}: ${errorText(error)}`);
         }
       }
       const { reconcileRemediation } = await import('./remediation-service.js');
@@ -474,7 +495,7 @@ export function startRolloutReconciler() {
     }
   };
   timer = setInterval(() => {
-    void tick().catch(() => console.error('[rollout] storage unavailable'));
+    void tick().catch((error) => console.error(`[rollout] storage unavailable: ${errorText(error)}`));
   }, 2000);
   timer.unref();
 }

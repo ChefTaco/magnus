@@ -143,6 +143,7 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('browser contract against rea
     if (db) {
       await db.executionRun.deleteMany({ where: { id: runId } });
       await db.ardentAgentOperation.deleteMany({ where: { id: operationId } });
+      await db.remediationExecution.deleteMany({ where: { rule: { name: { startsWith: prefix } } } });
       await db.remediationRule.deleteMany({ where: { name: { startsWith: prefix } } });
       await db.notification.deleteMany({ where: { nodeName: prefix } });
       await db.aiConversation.deleteMany({ where: { id: conversationId } });
@@ -303,7 +304,13 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('browser contract against rea
     const triggered = await call('POST', '/remediation/trigger', contract.triggerRemediationRequestSchema.parse({ anomalyEventId: anomalyId, ruleId: rule.data.id }));
     expect(triggered.status, JSON.stringify(triggered.json)).toBe(201);
     expectParses('POST /remediation/trigger', contract.triggerRemediationResponseSchema, triggered.json);
-    expectParses('DELETE /remediation/rules/{id}', contract.remediationRuleDeleteResponseSchema, (await call('DELETE', `/remediation/rules/${rule.data.id}`)).json);
+    // A rule that has executions keeps them: it is disabled, not deleted.
+    const kept = await call('DELETE', `/remediation/rules/${rule.data.id}`);
+    expect(kept.status).toBe(409);
+    expectParses('DELETE /remediation/rules/{id} (with executions)', contract.apiErrorSchema, kept.json);
+    const unused = await call('POST', '/remediation/rules', contract.createRemediationRuleRequestSchema.parse({ name: `${prefix}-unused`, agentDefinitionId: 'diagnostics.v1' }));
+    const unusedRule = expectParses('POST /remediation/rules', contract.remediationRuleResponseSchema, unused.json) as { data: { id: string } };
+    expectParses('DELETE /remediation/rules/{id}', contract.remediationRuleDeleteResponseSchema, (await call('DELETE', `/remediation/rules/${unusedRule.data.id}`)).json);
     const approval = await call('POST', '/remediation/executions/any/approve');
     expect(approval.status).toBe(403);
     expectParses('POST /remediation/executions/{id}/approve', contract.apiErrorSchema, approval.json);

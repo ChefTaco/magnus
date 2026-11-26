@@ -117,34 +117,17 @@ async function dispatchAndWait(
   return { exitCode: 124, stdout: '', stderr: 'Timed out waiting for command result' };
 }
 
-/** Write a file to the node via the node-manager API.
- * Falls back to base64+command when the agent lacks /files/write (404). */
+/**
+ * Write a file to the node through the agent's restricted write (path check, then write). There
+ * is no shell fallback: an agent without that guarantee is refused (AGENT_FILE_WRITE_UNSUPPORTED).
+ */
 async function writeFileToNode(
   ctx: ApplyContext,
   filePath: string,
   content: string,
 ): Promise<void> {
   const client = new NodeApiClient({ baseUrl: ctx.nodeBaseUrl, nodeToken: ctx.nodeToken, resourceNodeId: ctx.nodeId });
-  try {
-    await client.writeFile({ filePath, content, createIfMissing: true });
-  } catch (err: unknown) {
-    // If the agent is old and doesn't have /files/write (404),
-    // write via the command executor using base64 decode.
-    const is404 =
-      err && typeof err === 'object' && 'response' in err
-        ? (err as { response: { status: number } }).response.status === 404
-        : false;
-    if (!is404) throw err;
-
-    const b64 = Buffer.from(content, 'utf-8').toString('base64');
-    const parentDir = filePath.replace(/\/[^/]+$/, '');
-    const sq = (s: string): string => "'" + s.replace(/'/g, "'\\''" ) + "'";
-    const cmd = `mkdir -p ${sq(parentDir)} && printf '%s' ${sq(b64)} | base64 -d > ${sq(filePath)}`;
-    const result = await dispatchAndWait(ctx, 'bash', ['-c', cmd], 30);
-    if (result.exitCode !== 0) {
-      throw new Error(result.stderr || 'Failed to write file via command fallback');
-    }
-  }
+  await client.writeFile({ filePath, content, createIfMissing: true });
 }
 
 // ─── Apply Role ───

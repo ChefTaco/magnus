@@ -118,8 +118,23 @@ export async function updateRule(id: string, data: Partial<RuleInput>) {
   validateRule({ agentDefinitionId: data.agentDefinitionId ?? current.agentDefinitionId });
   return getDb().remediationRule.update({ where: { id }, data });
 }
+/**
+ * Delete a rule that never ran. A rule with executions keeps them: approval plans, results and
+ * in-flight runs are history, so it is disabled instead (409 RULE_HAS_EXECUTIONS).
+ */
 export async function deleteRule(id: string) {
-  await getDb().remediationRule.delete({ where: { id } });
+  await getDb().$transaction(async (tx) => {
+    // FOR UPDATE conflicts with the key-share lock a new execution's foreign key takes, so no
+    // execution can be added between the count and the delete.
+    const locked = await tx.$queryRaw<Array<{ id: string }>>`SELECT id FROM remediation_rules WHERE id = ${id} FOR UPDATE`;
+    if (locked.length === 0) throw new HttpError(404, 'NOT_FOUND', 'Rule not found');
+    const executions = await tx.remediationExecution.count({ where: { ruleId: id } });
+    if (executions > 0) {
+      throw new HttpError(409, 'RULE_HAS_EXECUTIONS',
+        `This rule has ${executions} execution(s); disable it instead so their history and approvals are kept`);
+    }
+    await tx.remediationRule.delete({ where: { id } });
+  });
 }
 export async function listExecutions(params?: {
   ruleId?: string;

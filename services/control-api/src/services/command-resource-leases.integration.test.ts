@@ -441,7 +441,7 @@ try { const row = await admitResourceCommand(JSON.parse(process.argv[2]), JSON.p
   it('serializes native writes with commands and settles the signed response without storing private bodies', async () => {
     let nativeId = ''; const content = 'private-native-body-not-in-receipts';
     const fetch = vi.fn(async (req: Request) => {
-      if (req.url.endsWith('/ping')) return json({ features: { managedMutations: 1 } });
+      if (req.url.endsWith('/ping')) return json({ features: { managedMutations: 1, restrictedFileWrite: 1 } });
       expect(req.url).toContain('/commands/managed-http');
       const value = await req.json(); nativeId = value.commandId;
       const input = { ...httpIdentity(value.commandId, value.method, value.path, value.body, value.timeoutSeconds), coordination: value.coordination };
@@ -465,7 +465,7 @@ try { const row = await admitResourceCommand(JSON.parse(process.argv[2]), JSON.p
     const app = new Hono().onError(errorHandler).route('/resource-leases', router);
     let commandId = '';
     vi.stubGlobal('fetch', vi.fn(async (req: Request) => {
-      if (req.url.endsWith('/ping')) return json({ features: { managedMutations: 1 } });
+      if (req.url.endsWith('/ping')) return json({ features: { managedMutations: 1, restrictedFileWrite: 1 } });
       expect(req.url).toContain('/commands/managed-http');
       const value = await req.json(); commandId = value.commandId;
       expect(value.path).toBe('/ardent/action');
@@ -500,7 +500,7 @@ try { const row = await admitResourceCommand(JSON.parse(process.argv[2]), JSON.p
       jobId: createHash('sha256').update(JSON.stringify([spec.nodeFqdn, spec.name])).digest('hex'), revision: 1,
       specSha256: createHash('sha256').update(JSON.stringify(spec)).digest('hex'), staged: true as const, enabled: false as const };
     const fetch = vi.fn(async (req: Request) => {
-      if (req.url.endsWith('/ping')) return json({ features: { managedMutations: 1 } });
+      if (req.url.endsWith('/ping')) return json({ features: { managedMutations: 1, restrictedFileWrite: 1 } });
       const value = await req.json();
       const input = { ...httpIdentity(value.commandId, value.method, value.path, value.body, value.timeoutSeconds), coordination: value.coordination };
       const response = { status: 200, body: JSON.stringify({ success: true, data: identity }) };
@@ -520,7 +520,7 @@ try { const row = await admitResourceCommand(JSON.parse(process.argv[2]), JSON.p
 
   it('retains native ownership when a signed response body is changed in transit', async () => {
     const fetch = vi.fn(async (req: Request) => {
-      if (req.url.endsWith('/ping')) return json({ features: { managedMutations: 1 } });
+      if (req.url.endsWith('/ping')) return json({ features: { managedMutations: 1, restrictedFileWrite: 1 } });
       const value = await req.json();
       const input = { ...httpIdentity(value.commandId, value.method, value.path, value.body, value.timeoutSeconds), coordination: value.coordination };
       const receipt = { ...signed(input), stdout: httpReceiptBody(value.method, value.path, 200, '{}') };
@@ -543,7 +543,7 @@ try { const row = await admitResourceCommand(JSON.parse(process.argv[2]), JSON.p
       { status: 409, headers: { 'content-type': 'application/json' } });
     };
     const agent = (reply: (value: never) => Response) => vi.stubGlobal('fetch', vi.fn(async (req: Request) => req.url.endsWith('/ping')
-      ? json({ features: { managedMutations: 1 } }) : reply(await req.json() as never)));
+      ? json({ features: { managedMutations: 1, restrictedFileWrite: 1 } }) : reply(await req.json() as never)));
     const fenceRow = () => db.commandResourceFence.findUniqueOrThrow({ where: { resourceKey: `node:${nodeId}` } });
 
     it('settles a signed STALE_FENCE as not-dispatched and moves the generation past the agent, so the next request passes', async () => {
