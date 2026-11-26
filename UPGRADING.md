@@ -19,6 +19,19 @@ The rules every upgrade path follows:
   `slow` or `one-way`). Upgrades print slow and one-way migrations and wait for confirmation
   (`--yes`). Startup auto-migrate refuses them unless `MAGNUS_AUTO_MIGRATE_ALLOW_SLOW=true` is set.
 
+## Version 3.4.0: security fixes and Ardent 3.3.0
+
+Before upgrading the server, make sure `IAM_CORE_URL` (when set) uses HTTPS, or names a loopback
+host: the server refuses to start with plain HTTP to any other host. AI tools that need approval now
+pause in non-streaming chat, insights and scheduled AI operations too, so a scheduled operation that
+ran `execCommand`, `writeFile`, `runSkill`, `createSkillDraft` or `generateRunbook` unattended now
+waits for an approval; tools disabled in the tool config are refused. Server and installer backup
+pruning now deletes dumps beyond `MAGNUS_BACKUP_KEEP` / `keepBackups`; copy any old dumps you want to
+keep elsewhere first. Upgraded node agents refuse request bodies over `MAGNUS_AGENT_BODY_LIMIT_BYTES`
+(default 16 MiB), and `POST /hermes/install` runs only the pinned, hash-checked Hermes installer
+(override with `HERMES_INSTALL_COMMIT` and `HERMES_INSTALL_SCRIPT_SHA256`) as the Hermes home owner.
+New Agent stages Ardent 3.3.0. No migrations.
+
 ## Version 3.3.0: Ardent 3.2.0 runtime contracts
 
 Release every extension package that pins an exact `@hivemagnus/ardent` peer for 3.2.0 first; a

@@ -7,6 +7,32 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [3.4.0] - 2026-11-26
+
+### Upgrade notes
+
+- **`IAM_CORE_URL` must be HTTPS** unless its host is loopback (or the development-only
+  `ALLOW_INSECURE_HTTP` is set). A server whose `IAM_CORE_URL` uses plain HTTP to any other host now
+  refuses to start: switch it to HTTPS before upgrading.
+- **AI tools that need approval now pause on every path.** `POST /assistant/chat` without streaming,
+  approval continuations, insights and scheduled AI operations save such a call as a pending approval
+  instead of running it, as streaming chat already did. Scheduled operations that relied on running
+  `execCommand`, `writeFile`, `runSkill`, `createSkillDraft` or `generateRunbook` unattended now wait
+  for an approval. Tools disabled in the tool config are refused however a call arrives.
+- **Agent request body limit.** Node agents answer 413 `PAYLOAD_TOO_LARGE` for request bodies over
+  `MAGNUS_AGENT_BODY_LIMIT_BYTES` (default 16 MiB, range 1 KiB to 256 MiB). Raise it on a node only if
+  you push larger files or skill payloads to it.
+- **Pinned Hermes installer.** `POST /hermes/install` runs the `install.sh` of one pinned Hermes Agent
+  commit (v0.23.4) after checking its SHA-256, and as root runs it as the account that owns the target
+  Hermes home rather than as root. To install a different commit on one node, set both
+  `HERMES_INSTALL_COMMIT` and `HERMES_INSTALL_SCRIPT_SHA256`.
+- **Backups are pruned.** `MAGNUS_BACKUP_KEEP` (server) and `keepBackups` (`magnus upgrade`) now delete
+  older dumps; before, one dump per release or upgrade step was kept forever. Copy any old dumps you
+  want to keep out of the backup directory before upgrading.
+- **Ardent 3.3.0.** New Agent stages Ardent 3.3.0. Native snapshots classify journals with Ardent's own
+  policy; a journal table, column or state that the pinned Ardent does not classify still blocks
+  automatic activation, as before.
+
 ### Changed
 
 - **Ardent 3.3.0.** The node agent and New Agent stage `@hivemagnus/ardent` 3.3.0 (pins in the root and
@@ -72,11 +98,18 @@ All notable changes to this project are documented in this file. The format is b
 - `docs/PUBLISHING.md` now describes how images are built, scanned and tagged (prereleases get their
   `X.Y.Z-<pre>` tag).
 
-**New environment variables:** agent `MAGNUS_AGENT_BODY_LIMIT_BYTES`, `HERMES_INSTALL_COMMIT`,
-`HERMES_INSTALL_SCRIPT_SHA256` (all optional).
+### New environment variables
 
-**Migration impact:** None. A deployment whose `IAM_CORE_URL` uses HTTP to a non-loopback host must switch
-it to HTTPS before upgrading; the server refuses to start otherwise.
+All optional (agent):
+
+- `MAGNUS_AGENT_BODY_LIMIT_BYTES`: largest agent API request body (default 16 MiB).
+- `HERMES_INSTALL_COMMIT` and `HERMES_INSTALL_SCRIPT_SHA256`: override the pinned Hermes installer
+  commit and its script hash on one node; set both or neither.
+
+### Migration impact
+
+None. A deployment whose `IAM_CORE_URL` uses HTTP to a non-loopback host must switch it to HTTPS
+before upgrading; the server refuses to start otherwise.
 
 ## [3.3.6] - 2026-11-25
 

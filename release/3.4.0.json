@@ -1,0 +1,28 @@
+{
+  "summary": "Pins Ardent 3.3.0, and native snapshots classify Ardent journals with Ardent's own journal policy. Security fixes: AI tool approval and disabled-tool refusal on every chat path with a fail-closed policy, an HTTPS-only Hive IAM key fetch (IAM_CORE_URL must be HTTPS for non-loopback hosts or the server refuses to start), a profiling type allowlist, console proxy content isolation headers, a pinned and hash-checked Hermes installer that runs as the Hermes home owner, and an agent request body limit. Server and installer backup pruning now deletes old dumps. No migrations.",
+  "breaking": false,
+  "minUpgradeFrom": "2.10.2",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [
+    {
+      "name": "MAGNUS_AGENT_BODY_LIMIT_BYTES",
+      "component": "agent",
+      "secret": false,
+      "description": "Largest request body the agent API accepts (1024 to 268435456 bytes, default 16777216), enforced before the request signature is verified. Larger bodies get 413 PAYLOAD_TOO_LARGE."
+    },
+    {
+      "name": "HERMES_INSTALL_COMMIT",
+      "component": "agent",
+      "secret": false,
+      "description": "Override the Hermes Agent commit that POST /hermes/install bootstraps (40 hex). Set together with HERMES_INSTALL_SCRIPT_SHA256; unset uses the pin shipped with this agent."
+    },
+    {
+      "name": "HERMES_INSTALL_SCRIPT_SHA256",
+      "component": "agent",
+      "secret": false,
+      "description": "SHA-256 (64 hex) of scripts/install.sh at HERMES_INSTALL_COMMIT. The installer runs only when the download matches."
+    }
+  ],
+  "removedEnv": [],
+  "migrations": []
+}
