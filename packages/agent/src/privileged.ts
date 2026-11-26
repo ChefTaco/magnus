@@ -7,7 +7,7 @@
 import type { MiddlewareHandler } from 'hono';
 
 export type PrivilegedFeature = 'embermend' | 'cron' | 'users' | 'system-updates' | 'docker-group-remediation'
-  | 'hiveskills-sync' | 'ardent-management' | 'credential-renewal' | 'execution-supervisor' | 'security-response' | 'codex-update' | 'managed-terminal';
+  | 'hiveskills-sync' | 'ardent-management' | 'credential-renewal' | 'execution-supervisor' | 'security-response' | 'codex-update' | 'managed-terminal' | 'file-ownership';
 
 /** Features that need root, with the routes or loops they cover. */
 export const PRIVILEGED_FEATURES: ReadonlyArray<{ feature: PrivilegedFeature; covers: string }> = [
@@ -23,6 +23,7 @@ export const PRIVILEGED_FEATURES: ReadonlyArray<{ feature: PrivilegedFeature; co
   { feature: 'security-response', covers: 'POST /api/v1/security-response (explicit opt-in and root-owned containment helper)' },
   { feature: 'execution-supervisor', covers: 'MAGNUS_EXECUTION_SUPERVISOR_ENABLED (transient systemd units for commands)' },
   { feature: 'codex-update', covers: 'POST /api/v1/codex/update (supervised Codex CLI installation)' },
+  { feature: 'file-ownership', covers: 'POST /api/v1/files/write with an explicit owner or group' },
 ];
 
 /** Read on every call so tests and `check` see the current environment. */

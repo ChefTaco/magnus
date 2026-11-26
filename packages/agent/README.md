@@ -122,7 +122,7 @@ verification is never disabled.
 | --- | --- | --- |
 | Heartbeat, health, drift, profiling, traces, network info | no | available |
 | Command execution (`/api/v1/commands`) | no | runs as the agent's account |
-| File read/write (`/api/v1/files`) | no | limited to what the account may access |
+| File read/write (`/api/v1/files`) | no | limited to what the account may access; an explicit `owner`/`group` needs privileged mode |
 | Skill publication (`/api/v1/skills`) | no | into a skills dir the account owns |
 | Workspace routes | no | below `MAGNUS_AGENT_WORKSPACE_ROOT` |
 | Hermes Agent and Codex CLI management | no | for the agent's own account only |
@@ -249,7 +249,28 @@ and `magnus-agent env-schema` prints them as JSON.
 | `MAGNUS_AGENT_TLS_RENEWAL=tailscale` | Renew a Tailscale listener certificate |
 | `MAGNUS_AGENT_PRIVILEGED` | Privileged (root, default `true`) or unprivileged mode |
 | `MAGNUS_AGENT_DOCKER_USER` | Account the docker-group check verifies |
+| `MAGNUS_AGENT_FILE_ROOTS` | Comma-separated directories the file API may reach (see [File API](#file-api)) |
 | `ENABLE_AGENT_DISCOVERY`, `AGENT_DISCOVERY_*` | Authenticated UDP discovery |
+
+### File API
+
+`GET /api/v1/files/read` and `POST /api/v1/files/write` never reach the agent's own state (install
+directory, identity, TLS key), `/proc`, `/sys`, `/dev` or `/boot/efi`, as written or through a
+symlink. Set `MAGNUS_AGENT_FILE_ROOTS` (for example `/etc/myapp,/srv/www`) to allow only those
+directories; `magnus-agent check` prints the roots in effect, and an invalid value disables the file
+API. A root-run agent can otherwise write anywhere else, including `/etc/cron.d` and
+`/etc/systemd/system`.
+
+A write goes to a temporary file in the same directory, is synced, and is renamed over the target, so
+a crash leaves the old or the new content and a symlink planted at the target is replaced, not
+followed. The file keeps its mode, owner and group; a new file is `0600` and owned by the agent
+unless the request sets `mode` (for example `"0644"`) or, in privileged mode, `owner` and `group`
+(name or id). With `backup: true` the existing file is first copied, after the path and roots
+check, to `<file>.magnus-backup.<UTC timestamp>` in the same directory (mode, owner and times kept);
+the response's `backupPath` names it, and a failed backup writes nothing. `GET /api/v1/ping`
+advertises this as `features.restrictedFileWrite: 1`; a Control API that needs a backup refuses
+agents without it instead of falling back to a shell copy. Reads open the file without following a
+final symlink and check what they opened.
 
 ### HiveMem credential renewal
 

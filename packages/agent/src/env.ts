@@ -11,6 +11,7 @@ import { getFqdn } from './fqdn.js';
 import { isIPv4 } from 'node:net';
 import { agentPrivileged, isRoot } from './privileged.js';
 import { ardentPackageNames } from './executors/ardent-packages.js';
+import { fileRoots } from './executors/file-roots.js';
 
 function envFlag(name: string, fallback = false): boolean {
   return (process.env[name] ?? String(fallback)).toLowerCase() === 'true';
@@ -93,6 +94,8 @@ export function configurationErrors(): string[] {
       errors.push(`${flag} must be true or false`);
     }
   }
+
+  errors.push(...fileRoots().errors);
 
   const nodeAuthMode = process.env['NODE_AUTH_MODE']?.trim().toLowerCase();
   if (nodeAuthMode && !['compat', 'warn', 'enforce'].includes(nodeAuthMode)) {
