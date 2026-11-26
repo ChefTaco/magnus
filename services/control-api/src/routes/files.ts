@@ -1,5 +1,6 @@
 import { clientErrorMessage } from '../utils/safe-errors.js';
 import { Hono } from 'hono';
+import path from 'node:path';
 import type { AppVariables } from '../types/index.js';
 import { getDb } from '../db/index.js';
 import { authMiddleware, getUser, requireRole } from '../middleware/auth.js';
@@ -26,11 +27,27 @@ function isNodeStale(lastHeartbeatAt: Date | null): boolean {
   return !lastHeartbeatAt || Date.now() - lastHeartbeatAt.getTime() > STALE_THRESHOLD_MS;
 }
 
-function pathPolicy(filePath: string): 'safe-app-path' | 'sensitive-system-path' | 'blocked-path' {
-  if (filePath.includes('..') || filePath.trim() === '/' || filePath.startsWith('/proc/') || filePath.startsWith('/sys/')) {
+const BLOCKED_PREFIXES = ['/proc/', '/sys/', '/dev/'];
+const SENSITIVE_PREFIXES = ['/etc/', '/root/', '/var/lib/', '/var/spool/', '/boot/', '/usr/', '/bin/', '/sbin/', '/lib/', '/lib64/'];
+
+/**
+ * The one spelling of a requested path that policy is judged on and the agent is sent:
+ * absolute, with `.`/`//` collapsed. `..` segments and NUL bytes are refused, not resolved.
+ */
+export function normalizeNodePath(filePath: string): string {
+  if (filePath.includes('\0')) throw new HttpError(400, 'BLOCKED_PATH', 'File path must not contain NUL bytes');
+  if (!filePath.startsWith('/')) throw new HttpError(400, 'BLOCKED_PATH', 'File path must be absolute');
+  if (filePath.split('/').includes('..')) throw new HttpError(400, 'BLOCKED_PATH', 'File path must not contain .. segments');
+  const normalized = path.posix.normalize(filePath);
+  return normalized.length > 1 ? normalized.replace(/\/+$/, '') : normalized;
+}
+
+export function pathPolicy(filePath: string): 'safe-app-path' | 'sensitive-system-path' | 'blocked-path' {
+  if (filePath === '/' || BLOCKED_PREFIXES.some((prefix) => filePath === prefix.slice(0, -1) || filePath.startsWith(prefix))) {
     return 'blocked-path';
   }
-  if (filePath.startsWith('/etc/') || filePath.startsWith('/root/') || filePath.startsWith('/var/lib/')) {
+  if (SENSITIVE_PREFIXES.some((prefix) => filePath === prefix.replace(/\/$/, '') || filePath.startsWith(prefix))
+    || filePath.split('/').includes('.ssh')) {
     return 'sensitive-system-path';
   }
   return 'safe-app-path';
@@ -43,17 +60,21 @@ filesRouter.post('/update', requireRole('ADMIN', 'OPERATOR'), async (c) => {
   const body = await parseBody(c, fileUpdateSchema);
 
   const nodeIds = body.nodeIds;
-  const filePath = body.filePath;
+  const filePath = normalizeNodePath(body.filePath);
   const content = body.content;
-
-  const nodes = await db.node.findMany({
-    where: { id: { in: nodeIds }, status: 'ONLINE' },
-  });
 
   const policy = pathPolicy(filePath);
   if (policy === 'blocked-path') {
     throw new HttpError(400, 'BLOCKED_PATH', `File path is blocked by policy: ${filePath}`);
   }
+  // System configuration, credentials and binaries change only with an ADMIN's authority.
+  if (policy === 'sensitive-system-path' && user.role !== 'ADMIN') {
+    throw new HttpError(403, 'SENSITIVE_PATH_ADMIN_ONLY', `Writing ${filePath} requires the ADMIN role`);
+  }
+
+  const nodes = await db.node.findMany({
+    where: { id: { in: nodeIds }, status: 'ONLINE' },
+  });
 
   const staleTargets = nodes.filter((node) => isNodeStale(node.lastHeartbeatAt));
   if (staleTargets.length > 0) {
@@ -101,54 +122,14 @@ filesRouter.post('/update', requireRole('ADMIN', 'OPERATOR'), async (c) => {
       });
 
       try {
-        if (body.backup) {
-          const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-          await client.executeCommand({
-            commandId: `file-backup-${Date.now()}`,
-            command: `if [ -f ${sq(filePath)} ]; then cp -p ${sq(filePath)} ${sq(`${filePath}.magnus-backup.${stamp}`)}; fi`,
-            args: [],
-            timeoutSeconds: 15,
-          }).catch(() => {
-            // Backup is best-effort for compatibility with restricted paths;
-            // the write path below will still report any real failure.
-          });
-        }
-
-        try {
-          await client.writeFile({
-            filePath,
-            content,
-            createIfMissing: body.createIfMissing ?? true,
-          });
-        } catch (writeErr: unknown) {
-          // Fallback: if the agent is old and doesn't have /files/write (404),
-          // write via the command executor using base64 decode piped to tee.
-          const is404 =
-            writeErr &&
-            typeof writeErr === 'object' &&
-            'response' in writeErr
-              ? (writeErr as { response: { status: number } }).response.status === 404
-              : false;
-
-          if (!is404) throw writeErr;
-
-          // Encode content as base64 to avoid shell escaping issues with
-          // arbitrary file content (quotes, newlines, special chars, etc.)
-          const b64 = Buffer.from(content, 'utf-8').toString('base64');
-          const parentDir = filePath.replace(/\/[^/]+$/, '');
-          const mkdirPrefix = body.createIfMissing !== false
-            ? `mkdir -p ${sq(parentDir)} && `
-            : '';
-          const pipeRes = await client.executeCommand({
-            commandId: `file-write-${Date.now()}`,
-            command: `${mkdirPrefix}printf '%s' ${sq(b64)} | base64 -d > ${sq(filePath)}`,
-            args: [],
-            timeoutSeconds: 15,
-          });
-          if (pipeRes.data.exitCode !== 0) {
-            throw new Error(pipeRes.data.stderr || 'Failed to write file via command fallback');
-          }
-        }
+        // The agent judges the path first and only then makes the backup and writes, so a
+        // refused write leaves nothing behind. Agents without that guarantee are refused.
+        await client.writeFile({
+          filePath,
+          content,
+          createIfMissing: body.createIfMissing ?? true,
+          backup: body.backup,
+        });
 
         await db.filePatchTask.update({
           where: { id: task.id },
@@ -171,7 +152,7 @@ filesRouter.post('/update', requireRole('ADMIN', 'OPERATOR'), async (c) => {
     actorId: user.userId,
     targetType: 'file',
     targetId: filePath,
-    details: { nodeIds, filePath },
+    details: { nodeIds, filePath, policy },
   });
 
   // If every task failed, return 502 so the dashboard can show an error
@@ -185,11 +166,12 @@ filesRouter.get('/read', requireRole('ADMIN', 'OPERATOR'), async (c) => {
   const db = getDb();
   const user = getUser(c);
   const nodeId = c.req.query('nodeId');
-  const filePath = c.req.query('filePath');
+  const requestedPath = c.req.query('filePath');
 
-  if (!nodeId || !filePath) {
+  if (!nodeId || !requestedPath) {
     throw new HttpError(400, 'VALIDATION_ERROR', 'nodeId and filePath are required');
   }
+  const filePath = normalizeNodePath(requestedPath);
 
   const node = await db.node.findUnique({ where: { id: nodeId } });
   if (!node) throw new HttpError(404, 'NOT_FOUND', 'Node not found');

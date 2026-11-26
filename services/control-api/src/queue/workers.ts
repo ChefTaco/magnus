@@ -1,3 +1,4 @@
+import { errorText } from '../utils/redact.js';
 import { optional } from '../utils/optional.js';
 import { ResourceLeaseConflict } from '../services/command-resource-leases.js';
 import { recordMonitorPulse } from '../services/monitor-pulse.js';
@@ -294,7 +295,7 @@ export function startCommandWorker(): Worker<CommandJobPayload> {
     try {
       await reconcileCommands();
       recordMonitorPulse('commands');
-    } catch { console.error('[commands] reconciliation pending'); }
+    } catch (error) { console.error(`[commands] reconciliation pending: ${errorText(error)}`); }
     finally { reconciliationBusy = false; }
   };
   void reconcile();

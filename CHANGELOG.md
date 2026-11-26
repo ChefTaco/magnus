@@ -163,6 +163,22 @@ All notable changes to this project are documented in this file. The format is b
   `REDISCLI_AUTH`). **Upgrade note:** a
   deployment that adds its own writable paths to the console or server container needs a volume or
   tmpfs for them; update the PostgreSQL and Redis digests with the tag when you move either.
+- **`POST /files/update` enforces its sensitive-path policy.** The path must be absolute and is
+  normalized before any check (`//etc/...` and `/./` no longer slip past a prefix; `..` and NUL are
+  refused), and the agent receives the normalized path. Writing system paths (`/etc`, `/root`,
+  `/var/lib`, `/var/spool`, `/boot`, `/usr`, `/bin`, `/sbin`, `/lib`, `/lib64`, any `.ssh` directory)
+  now needs the ADMIN role; `/dev` joins `/proc` and `/sys` as refused. `GET /files/read` also requires
+  an absolute path.
+- **File pushes go only through the agent's restricted write.** The server no longer copies the target
+  with a shell `cp` before writing, nor falls back to a shell write on agents without `/files/write`:
+  it asks the agent to make the backup (`backup: true`) after its own path check, so a refused write
+  leaves nothing behind. Agents that do not advertise `restrictedFileWrite` in their ping are refused
+  with `AGENT_FILE_WRITE_UNSUPPORTED` and nothing is written. Role applications and library skill
+  deploys use the same write and lose their shell fallback too.
+- **The agent upgrade run lock no longer falls back to process memory.** Without Redis, `POST
+  /agent-upgrades/runs` and `magnus-server agents upgrade` answer 503 `AGENT_UPGRADE_LOCK_UNAVAILABLE`
+  instead of taking a lock only this process can see. A run whose lock renewals fail for two thirds of
+  the lease, or whose lock another holder took, stops after its current nodes.
 
 - **Agent file writes are bound to the directory they were checked against.** `/files/write`
   checked the parent directory by path and then reused the path, so a local account able to swap a
@@ -255,6 +271,17 @@ All notable changes to this project are documented in this file. The format is b
 - The server, fleet gateway and Oathweave verifier use `@hivemagnus/hive-common` 0.7.0. For Magnus this
   means: concurrent `GET /health/ready` requests share one run of the readiness checks, the suite
   registry client refuses a response over 1 MiB, and the Oathweave userinfo check reads at most 64 KiB.
+- **One active alert violation per rule and node.** After the cooldown a rule reminds on its existing
+  active violation (updating its value) instead of inserting another active row, and the cooldown is
+  counted from the last reminder. Alert rule node filters match node IDs and names exactly, or as a
+  glob with `*`; `web1` no longer matches `web10`.
+- **Deleting a remediation rule keeps its history.** `DELETE /remediation/rules/:id` answers 409
+  `RULE_HAS_EXECUTIONS` for a rule that has executions (approval plans, results and in-flight runs);
+  disable it instead. A rule that never ran is still deleted.
+- **Paused rollouts no longer starve the reconciler.** Each tick visits the 100 oldest created or
+  running rollouts and a rotating window of 25 paused ones.
+- The command and rollout reconcilers and the agent upgrade audit writer log the failure they hit
+  instead of a fixed "reconciliation pending" line.
 
 **New environment variables:** agent `MAGNUS_AGENT_BODY_LIMIT_BYTES`, `HERMES_INSTALL_COMMIT`,
 `HERMES_INSTALL_SCRIPT_SHA256`, `MAGNUS_AGENT_FILE_ROOTS`; server `MAGNUS_API_SECRET_BYPASS`,
@@ -267,7 +294,11 @@ All notable changes to this project are documented in this file. The format is b
 it to HTTPS before upgrading; the server refuses to start otherwise. Hive IAM must issue tokens with `exp`
 and `iat` and a lifetime of at most 24 hours. Local session tokens issued before the upgrade carry no
 password stamp and stay valid until they expire (`JWT_EXPIRY`); sign in again to get a stamped one.
-Scripts that relied on the text of an unexpected 500 must read the server log instead.
+Scripts that relied on the text of an unexpected 500 must read the server log instead. Alert rules whose node
+filter relied on substring matching (`web` for `web1`, `web2`) need a `*` (`web*`). OPERATOR accounts that
+pushed files under the system paths above need an ADMIN to do it. Upgrade agents before the control
+server: until an agent is on a release with the restricted file write, file pushes to it fail with 409
+`AGENT_FILE_WRITE_UNSUPPORTED` (failing closed is intended).
 
 ## [3.3.6] - 2026-11-25
 

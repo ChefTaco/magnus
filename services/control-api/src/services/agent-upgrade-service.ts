@@ -1,3 +1,4 @@
+import { errorText } from '../utils/redact.js';
 import { optional } from '../utils/optional.js';
 /**
  * Server-driven agent upgrades (MAGNUS_AGENT_UPGRADES). The server pins one
@@ -635,8 +636,18 @@ export function defaultRunStore(): RunStore {
       const id = await (await redis()).get('agent-upgrade-run:latest');
       return id ? sharedStore!.get(id) : memory.latest();
     }, () => memory.latest()),
-    lock: token => either(async () => await (await redis()).set(LOCK_KEY, token, 'PX', LEASE_MS, 'NX') === 'OK', () => memory.lock(token)),
-    renew: token => either(async () => Number(await (await redis()).eval(RENEW_IF_OWNED, 1, LOCK_KEY, token, String(LEASE_MS))) === 1, () => memory.renew(token)),
+    // The run lock is fleet-wide: the API server and the `magnus-server agents upgrade` CLI are
+    // separate processes, so a lock held in one process's memory would let both run waves at once.
+    // Without Redis no run starts, and a renewal error is reported to the caller, never papered over.
+    async lock(token) {
+      try {
+        return await (await redis()).set(LOCK_KEY, token, 'PX', LEASE_MS, 'NX') === 'OK';
+      } catch (error) {
+        warnOnce(`run lock: ${error instanceof Error ? error.message : String(error)}`);
+        throw new HttpError(503, 'AGENT_UPGRADE_LOCK_UNAVAILABLE', 'Redis is unavailable, so the fleet-wide upgrade run lock cannot be taken; no run was started');
+      }
+    },
+    renew: async token => Number(await (await redis()).eval(RENEW_IF_OWNED, 1, LOCK_KEY, token, String(LEASE_MS))) === 1,
     unlock: token => either(async () => { await (await redis()).eval(RELEASE_IF_OWNED, 1, LOCK_KEY, token); }, () => memory.unlock(token)),
     async requestStop(id, actorId) {
       await memory.requestStop(id, actorId);
@@ -771,7 +782,9 @@ export function classifyDispatchFailure(error: unknown): DispatchFailure {
 }
 
 const audit = (action: AuditAction, run: UpgradeRun, details: Record<string, unknown>, targetType = 'fleet', targetId = run.id) =>
-  logAuditEvent({ action, actorId: run.actorId, targetType, targetId, details: { runId: run.id, version: run.version, ...details } }).catch(() => undefined);
+  logAuditEvent({ action, actorId: run.actorId, targetType, targetId, details: { runId: run.id, version: run.version, ...details } })
+    // The run goes on without its audit row, but the failure must be visible.
+    .catch((error: unknown) => console.error(`[agent-upgrade] run ${run.id}: audit ${action} not written: ${errorText(error)}`));
 
 /** Shared by the batches of one run and the watches they outlive. */
 interface RunContext {
@@ -1283,6 +1296,29 @@ export async function checkUpgrade(options: Pick<StartRunOptions, 'version' | 'i
   return { version, release, eligible: nodes.filter(node => node.eligible).length, blocked: nodes.filter(node => !node.eligible && node.code && !upgradeRemedy(node.code).informational).length, nodes };
 }
 
+/**
+ * Tracks renewals of the fleet-wide run lock. `lost` means another holder may own it: the key
+ * is gone or belongs to someone else, or renewals have failed for long enough that it may have
+ * expired (two thirds of the lease). A single failed renewal leaves it `uncertain`.
+ */
+export function runLockKeeper(store: Pick<RunStore, 'renew'>, token: string, leaseMs: number, now: () => number = Date.now) {
+  let lastRenewedAt = now();
+  return {
+    async renew(): Promise<'held' | 'uncertain' | 'lost'> {
+      let owned: boolean;
+      try {
+        owned = await store.renew(token);
+      } catch (error) {
+        warnOnce(`run lock renewal: ${error instanceof Error ? error.message : String(error)}`);
+        return now() - lastRenewedAt >= (leaseMs * 2) / 3 ? 'lost' : 'uncertain';
+      }
+      if (!owned) return 'lost';
+      lastRenewedAt = now();
+      return 'held';
+    },
+  };
+}
+
 /** Validate, take the fleet-wide run lock, create the run and start it in the background. */
 export async function startUpgradeRun(options: StartRunOptions): Promise<{ run: UpgradeRun; candidates: UpgradeCandidate[]; done: Promise<UpgradeRun> }> {
   const settings = upgradeSettings();
@@ -1345,9 +1381,18 @@ export async function startUpgradeRun(options: StartRunOptions): Promise<{ run: 
       majorNodes: run.allowMajor ? run.nodes.filter(node => isVersion(node.from) && classifyUpgrade(node.from, run.version) === 'major').map(node => node.name) : [],
       excluded: run.excluded!.map(node => `${node.name}: ${node.reason}`).slice(0, 50) });
     // Renew the lease while this process runs it; a reader that finds it expired marks the run interrupted.
+    const keeper = runLockKeeper(store, token, LEASE_MS);
+    let stopping = false;
     const renew = async () => {
-      run.leaseExpiresAt = new Date(Date.now() + LEASE_MS).toISOString();
-      if (!await store.renew(token).catch(() => false)) console.warn(`[agent-upgrade] run ${run.id}: could not renew the run lock`);
+      const state = await keeper.renew();
+      if (state === 'held') {
+        run.leaseExpiresAt = new Date(Date.now() + LEASE_MS).toISOString();
+      } else if (state === 'lost' && !stopping) {
+        // Another process may take the lock now: start no further waves.
+        stopping = true;
+        console.error(`[agent-upgrade] run ${run.id}: the run lock was lost; stopping after the current nodes`);
+        await store.requestStop(run.id, 'system:run-lock-lost').catch(() => undefined);
+      }
       await deps.save(run).catch(() => undefined);
     };
     const timer = setInterval(() => void renew(), LEASE_MS / 3);

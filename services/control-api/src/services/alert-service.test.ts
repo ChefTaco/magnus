@@ -20,6 +20,8 @@ const gpuFindMany = vi.fn();
 const violationFind = vi.fn();
 const violationCreate = vi.fn();
 const violationUpdateMany = vi.fn();
+const violationUpdate = vi.fn();
+const notificationFind = vi.fn();
 const createNotification = vi.fn();
 const publish = vi.fn();
 
@@ -27,7 +29,8 @@ vi.mock('../db/index.js', () => ({
   getDb: () => ({
     $transaction: (work: (tx: unknown) => Promise<unknown>) => work({
       $executeRaw: vi.fn().mockResolvedValue(undefined),
-      alertViolation: { findFirst: violationFind, create: violationCreate },
+      alertViolation: { findFirst: violationFind, create: violationCreate, update: violationUpdate },
+      notification: { findFirst: notificationFind },
     }),
     alertRule: { findMany },
     alertConditionState: { findUnique: stateFind, upsert: stateUpsert, deleteMany: stateDelete },
@@ -42,7 +45,7 @@ vi.mock('./event-bus.js', () => ({
   eventBus: { publish },
 }));
 
-const { evaluateHealth } = await import('./alert-service.js');
+const { evaluateHealth, matchesNodeFilter } = await import('./alert-service.js');
 
 describe('sustained GPU fan alerts', () => {
   beforeEach(() => {
@@ -53,6 +56,8 @@ describe('sustained GPU fan alerts', () => {
     violationFind.mockResolvedValue(null);
     violationCreate.mockResolvedValue({});
     violationUpdateMany.mockResolvedValue({ count: 0 });
+    violationUpdate.mockResolvedValue({});
+    notificationFind.mockResolvedValue(null);
     createNotification.mockResolvedValue({});
     publish.mockResolvedValue(undefined);
     gpuFindMany.mockResolvedValue([]);
@@ -136,5 +141,53 @@ describe('sustained GPU fan alerts', () => {
     expect(violationUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { ruleId: rule.id, nodeId: 'node-1', status: 'active' },
     }));
+  });
+
+  const saturated = () => {
+    const devices = [{ index: 0, vendor: 'nvidia', uuid: 'GPU-1', fanPercent: 100 }];
+    gpuFindMany.mockResolvedValue(Array.from({ length: 962 }, (_, index) => ({
+      sampledAt: new Date(Date.parse('2026-09-04T08:00:30.000Z') - index * 30 * 1000),
+      devices: JSON.stringify(devices),
+    })));
+    return { gpuFanPercent: 100, gpuSampledAt: new Date('2026-09-04T08:00:30.000Z'), gpuSampleIsNew: true, gpuDevices: devices };
+  };
+
+  it('reminds on the one active violation after the cooldown instead of adding another', async () => {
+    violationFind.mockResolvedValue({ id: 'violation-1', createdAt: new Date(Date.now() - 9 * 60 * 60 * 1000) });
+    notificationFind.mockResolvedValue({ createdAt: new Date(Date.now() - 8.5 * 60 * 60 * 1000) });
+
+    await evaluateHealth('node-1', 'gpu-host', saturated());
+
+    expect(violationCreate).not.toHaveBeenCalled();
+    expect(violationUpdate).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'violation-1' } }));
+    expect(createNotification).toHaveBeenCalledOnce();
+  });
+
+  it('counts the cooldown from the last reminder, not from when the violation began', async () => {
+    violationFind.mockResolvedValue({ id: 'violation-1', createdAt: new Date(Date.now() - 20 * 60 * 60 * 1000) });
+    notificationFind.mockResolvedValue({ createdAt: new Date(Date.now() - 60 * 60 * 1000) });
+
+    await evaluateHealth('node-1', 'gpu-host', saturated());
+
+    expect(violationCreate).not.toHaveBeenCalled();
+    expect(violationUpdate).not.toHaveBeenCalled();
+    expect(createNotification).not.toHaveBeenCalled();
+  });
+});
+
+describe('alert node filters', () => {
+  it('matches node IDs and names exactly, not as substrings', () => {
+    expect(matchesNodeFilter('web1', 'node-a', 'web1')).toBe(true);
+    expect(matchesNodeFilter('web1', 'node-b', 'web10')).toBe(false);
+    expect(matchesNodeFilter('node-b', 'node-b', 'web10')).toBe(true);
+    expect(matchesNodeFilter('db1, web1', 'node-a', 'web1')).toBe(true);
+  });
+
+  it('treats * as a wildcard', () => {
+    expect(matchesNodeFilter('*', 'node-a', 'anything')).toBe(true);
+    expect(matchesNodeFilter('web*', 'node-b', 'web10')).toBe(true);
+    expect(matchesNodeFilter('web*', 'node-c', 'db1')).toBe(false);
+    expect(matchesNodeFilter('*.example.com', 'node-d', 'web1.example.com')).toBe(true);
+    expect(matchesNodeFilter('web.*', 'node-e', 'webXexample')).toBe(false);
   });
 });

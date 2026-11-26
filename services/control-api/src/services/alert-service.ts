@@ -70,13 +70,19 @@ export async function evaluateHealth(
   }
 }
 
-function matchesNodeFilter(filter: string, nodeId: string, nodeName: string): boolean {
-  if (filter === '*') return true;
+/**
+ * A comma-separated list of node IDs or names. Each entry matches exactly, or as a glob when it
+ * contains `*` (`web*` matches `web1` and `web10`; `web1` matches only `web1`).
+ */
+export function matchesNodeFilter(filter: string, nodeId: string, nodeName: string): boolean {
+  if (filter.trim() === '*') return true;
 
   const parts = filter.split(',').map((s) => s.trim()).filter(Boolean);
-  return parts.some((part) =>
-    part === nodeId || part === nodeName || nodeName.includes(part),
-  );
+  return parts.some((part) => {
+    if (!part.includes('*')) return part === nodeId || part === nodeName;
+    const pattern = new RegExp(`^${part.split('*').map((piece) => piece.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`);
+    return pattern.test(nodeId) || pattern.test(nodeName);
+  });
 }
 
 function extractMetric(metric: string, metrics: HealthMetrics): number | null {
@@ -235,26 +241,37 @@ async function handleViolation(
     });
 
     if (existing) {
-      // Check cooldown — don't create a new notification within the cooldown period.
+      // One active violation per rule and node. While it stays active, a reminder goes out at
+      // most once per cooldown, counted from the last notification (or the violation itself).
       const cooldownMs = rule.cooldownMinutes * 60 * 1000;
-      if (Date.now() - existing.createdAt.getTime() < cooldownMs) {
+      const lastNotice = await tx.notification.findFirst({
+        where: { type: `alert.${rule.metric}`, nodeId, sourceRef: rule.id },
+        orderBy: { createdAt: 'desc' },
+        select: { createdAt: true },
+      });
+      const lastAt = Math.max(existing.createdAt.getTime(), lastNotice?.createdAt.getTime() ?? 0);
+      if (Date.now() - lastAt < cooldownMs) {
         return false; // Within cooldown
       }
+      await tx.alertViolation.update({
+        where: { id: existing.id },
+        data: { nodeName, value, threshold: rule.threshold, severity: rule.severity },
+      });
+    } else {
+      // Create the violation and its notification outbox in one transaction.
+      await tx.alertViolation.create({
+        data: {
+          id: nanoid(),
+          ruleId: rule.id,
+          nodeId,
+          nodeName,
+          metric: rule.metric,
+          value,
+          threshold: rule.threshold,
+          severity: rule.severity,
+        },
+      });
     }
-
-    // Create new violation and its notification outbox in one transaction.
-    await tx.alertViolation.create({
-      data: {
-        id: nanoid(),
-        ruleId: rule.id,
-        nodeId,
-        nodeName,
-        metric: rule.metric,
-        value,
-        threshold: rule.threshold,
-        severity: rule.severity,
-      },
-    });
 
     const label = metricLabel(rule.metric);
     const duration = formatDuration(rule.durationSeconds);

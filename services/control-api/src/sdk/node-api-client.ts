@@ -254,7 +254,7 @@ export function classifyAgentRequestError(error: unknown, dispatched: boolean): 
 const UNSIGNED_REQUEST = 'x-magnus-internal-unsigned';
 /** A 2.10.0 or 2.10.1 agent with a node key that this server cannot reach on its managed HTTP route. */
 export const AGENT_MANAGED_HTTP_NEEDS_UPGRADE = 'AGENT_MANAGED_HTTP_NEEDS_UPGRADE';
-type ManagedPing = { version?: unknown; features?: { managedMutations?: number; nodeAuth?: unknown } };
+type ManagedPing = { version?: unknown; features?: { managedMutations?: number; nodeAuth?: unknown; restrictedFileWrite?: number } };
 
 export class NodeApiClient {
   private api: KyInstance;
@@ -659,11 +659,23 @@ export class NodeApiClient {
     return this.api.get('files/read', { searchParams: { filePath } }).json();
   }
 
+  /**
+   * Write one file through the agent's restricted write: the agent checks the path (including
+   * MAGNUS_AGENT_FILE_ROOTS), then makes the optional backup, then writes atomically. An agent
+   * that does not advertise `features.restrictedFileWrite: 1` is refused before anything is sent,
+   * so there is never a backup or a write the agent's path check did not judge first.
+   */
   async writeFile(payload: {
     filePath: string;
     content: string;
     createIfMissing?: boolean;
-  }): Promise<ApiResponse<{ written: boolean; checksum: string }>> {
+    backup?: boolean;
+  }): Promise<ApiResponse<{ written: boolean; checksum: string; backupPath?: string | null }>> {
+    const ping = await this.api.get('ping', { retry: 0, timeout: 10_000 }).json<ApiResponse<ManagedPing>>().catch(() => null);
+    if (ping?.data?.features?.restrictedFileWrite !== 1) {
+      throw new NotDispatchedError('AGENT_FILE_WRITE_UNSUPPORTED',
+        'This agent does not support restricted file writes (path check, then backup, then atomic write); upgrade it first. Nothing was written.');
+    }
     return this.mutate('POST', 'files/write', payload);
   }
 

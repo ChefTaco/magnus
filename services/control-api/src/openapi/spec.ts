@@ -1641,7 +1641,7 @@ const paths: Record<string, Record<string, unknown>> = {
     post: {
       tags: ['Files'],
       summary: 'Push file to nodes',
-      description: 'Write file content to one or more nodes. Supports write and command-based fallback modes.',
+      description: 'Write file content to one or more nodes through the agent\'s restricted write: the agent checks the path (including its `MAGNUS_AGENT_FILE_ROOTS`), then makes the optional backup, then writes atomically. An agent that does not advertise `restrictedFileWrite` fails that node with `AGENT_FILE_WRITE_UNSUPPORTED`; there is no shell fallback. `filePath` must be absolute and is normalized (`//` and `.` collapsed; `..` refused) before policy applies. `/proc`, `/sys` and `/dev` are refused; system paths (`/etc`, `/root`, `/var/lib`, `/var/spool`, `/boot`, `/usr`, `/bin`, `/sbin`, `/lib`, `/lib64` and any `.ssh` directory) need the ADMIN role (403 `SENSITIVE_PATH_ADMIN_ONLY`).',
       security: apiSecretAuth,
       requestBody: jsonBody('FileUpdate'),
       responses: {
