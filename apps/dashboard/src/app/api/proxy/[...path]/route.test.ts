@@ -12,7 +12,7 @@ vi.mock('../allowed-targets', () => ({ validateProxyTarget: vi.fn(async () => ({
   allowed: true, baseUrl: 'https://control.example', credentialHeaders: { 'x-api-secret': 'fixture-api-secret' },
 })) }));
 vi.mock('@/lib/control-api-fetch', () => ({ controlApiFetch: upstream.fetch }));
-import { POST } from './route';
+import { GET, POST } from './route';
 
 function request(body: ReadableStream<Uint8Array>): NextRequest {
   return new NextRequest(new Request('https://dashboard.example/api/proxy/commands', {
@@ -68,5 +68,33 @@ describe('proxy body rejection before upstream effects', () => {
     expect((await POST(request(body), { params: Promise.resolve({ path: path.split('/') }) })).status).toBe(200);
     expect(upstream.fetch).toHaveBeenCalledWith(`https://control.example/api/v1/${path}`,
       expect.objectContaining({ method: 'POST' }), timeout);
+  });
+
+  it('keeps the upstream content isolation headers on proxied artifact content', async () => {
+    upstream.fetch.mockResolvedValue(new Response('<script>fixture</script>', { status: 200, headers: {
+      'content-type': 'text/html', 'content-security-policy': "default-src 'none'; sandbox",
+      'content-disposition': 'attachment; filename="ardent-fixture"', 'x-content-type-options': 'nosniff',
+      'cache-control': 'no-store', 'set-cookie': 'fixture=1', 'x-internal-fixture': 'drop-me',
+    } }));
+    const path = 'ardent/installations/node-1/profiles/main/artifacts/a1/content';
+    const req = new NextRequest(new Request(`https://dashboard.example/api/proxy/${path}`, {
+      headers: { cookie: 'magnus_session=fixture-token', 'x-proxy-target': 'https://control.example' },
+    }));
+    const res = await GET(req, { params: Promise.resolve({ path: path.split('/') }) });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-security-policy')).toBe("default-src 'none'; sandbox");
+    expect(res.headers.get('content-disposition')).toBe('attachment; filename="ardent-fixture"');
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    expect(res.headers.get('set-cookie')).toBeNull();
+    expect(res.headers.get('x-internal-fixture')).toBeNull();
+  });
+
+  it('marks proxied JSON nosniff even when the upstream omits it', async () => {
+    const body = new ReadableStream<Uint8Array>({ start(controller) { controller.close(); } });
+    const res = await POST(request(body), params);
+    expect(res.headers.get('content-type')).toContain('application/json');
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(res.headers.get('content-security-policy')).toBeNull();
   });
 });

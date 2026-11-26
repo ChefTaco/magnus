@@ -56,6 +56,19 @@ browser. Each installation must have an entry in `HERMES_SSH_AUTHORIZATIONS_FILE
 installation ID and node ID to exact addresses and expected SHA-256 host keys. See
 [observability](OBSERVABILITY.md#hermes-proxy-security-events) for the proxy's event log.
 
+## Installing Hermes
+
+`POST /api/v1/hermes/install` on the node agent runs the upstream bootstrap script
+(`scripts/install.sh`) from one pinned Hermes commit, and only after the downloaded bytes match the
+pinned SHA-256. The installer is told to check out that same commit (`--commit`). A root agent runs
+it as the account that controls the target Hermes home, never as root on that account's behalf.
+
+The pin ships with the agent in `packages/agent/src/executors/hermes-install-pin.ts`. To move it to
+a newer Hermes release, run `node scripts/update-hermes-install-pin.mjs [tag]` from
+`packages/agent` (no tag means the latest stable release), review the upstream script diff and
+commit the result. To use a different commit on one node without a Magnus release, set both
+`HERMES_INSTALL_COMMIT` and `HERMES_INSTALL_SCRIPT_SHA256` in the agent environment.
+
 ## Managed configuration
 
 When the server installs or updates Hermes on a host, it can pass a managed configuration that the

@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
-import { access, mkdir, readFile, readdir, realpath, stat, writeFile } from 'node:fs/promises';
+import { access, chmod, chown, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
@@ -11,9 +11,8 @@ import { parseGatewayStatusText } from './hermes-gateway-status.js';
 import { childEnvironment } from '../utils/child-env.js';
 import { armChildTimeout } from '../utils/child-timeout.js';
 import { ownerExecution } from '../utils/owner-exec.js';
+import { fetchPinnedHermesInstallScript, hermesInstallPin } from './hermes-install-pin.js';
 
-const OFFICIAL_INSTALL_SCRIPT =
-  'https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh';
 const DEFAULT_HERMES_HOME = process.env['HERMES_HOME'] ?? '~/.hermes';
 const MAX_PLUGIN_BYTES = 768 * 1024;
 const MAGNUS_STATE_FILE = '.magnus-managed.json';
@@ -1209,13 +1208,44 @@ hermesRoutes.post('/configure', async (c) => {
   } catch (err) { return errorResponse(c, err); }
 });
 
+/**
+ * Run the official Hermes bootstrap script from the pinned commit after its
+ * SHA-256 matches (`hermes-install-pin.ts`), and install that same commit. A
+ * root agent runs it as the account that controls the target home, so the
+ * installer never runs as root on another account's behalf.
+ */
+export async function runPinnedHermesInstaller(home: string, skipBrowser: boolean, fetcher: typeof fetch = fetch): Promise<CommandResult> {
+  const pin = hermesInstallPin();
+  const execution = await ownerExecution('/bin/bash', { home });
+  if (!execution.ok) return { code: execution.code, stdout: '', stderr: execution.reason };
+  const bytes = await fetchPinnedHermesInstallScript(pin, fetcher);
+  const tempDir = await mkdtemp(join(tmpdir(), 'magnus-hermes-install-'));
+  try {
+    const script = join(tempDir, 'install.sh');
+    await writeFile(script, bytes, { mode: 0o600 });
+    await chmod(script, 0o644);
+    if (execution.uid !== undefined && execution.gid !== undefined) {
+      await chown(tempDir, execution.uid, execution.gid);
+      await chown(script, execution.uid, execution.gid);
+    }
+    const args = [script, '--commit', pin.commit, '--non-interactive', '--hermes-home', home, ...(skipBrowser ? ['--skip-browser'] : [])];
+    return await run(execution.command, args, {
+      env: { HERMES_HOME: home, ...execution.env },
+      timeoutMs: 20 * 60_000,
+      ...(execution.uid !== undefined && execution.gid !== undefined
+        ? { identity: { uid: execution.uid, gid: execution.gid, ...(execution.cwd ? { cwd: execution.cwd } : {}) } } : {}),
+    });
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+}
+
 hermesRoutes.post('/install', async (c) => {
   const parsed = installSchema.safeParse(await c.req.json());
   if (!parsed.success) return c.json({ success: false, error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
   try {
     const { home } = target(parsed.data);
-    const args = parsed.data.skipBrowser ? ['--skip-browser'] : [];
-    const result = await run('/bin/bash', ['-c', `curl -fsSL ${OFFICIAL_INSTALL_SCRIPT} | bash -s -- "$@"`, 'hermes-agent-install', ...args], { env: { HERMES_HOME: home }, timeoutMs: 20 * 60_000 });
+    const result = await runPinnedHermesInstaller(home, parsed.data.skipBrowser);
     forgetHermesVersionProbes();
     if (result.code !== 0) throw new Error(redact(result.stderr || result.stdout || 'Official Hermes installer failed'));
     const configured = parsed.data.configuration

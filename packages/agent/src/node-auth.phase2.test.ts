@@ -312,3 +312,58 @@ describe('one signed request is verified once, wherever the middleware is mounte
     expect((await post(app, { 'x-node-token': SECRET })).status).toBe(401);
   });
 });
+
+describe('request body limit before signature verification', () => {
+  const LIMIT = 1024;
+  function echoApp(): Hono {
+    const app = new Hono();
+    app.use('/api/v1/*', nodeAuthMiddleware);
+    app.post('/api/v1/files/write', async c => c.json({ success: true, data: await c.req.json() }));
+    return app;
+  }
+  beforeEach(() => { vi.stubEnv('MAGNUS_AGENT_BODY_LIMIT_BYTES', String(LIMIT)); });
+  afterEach(() => { vi.stubEnv('MAGNUS_AGENT_BODY_LIMIT_BYTES', ''); });
+
+  it('refuses a body larger than the limit that names a pinned key, without verifying it', async () => {
+    await bind();
+    const body = JSON.stringify({ pad: 'x'.repeat(LIMIT) });
+    const headers = serverSigned('POST', '/api/v1/files/write', body);
+    const response = await echoApp().request('/api/v1/files/write', { method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body });
+    expect(response.status).toBe(413);
+    expect(await response.json()).toMatchObject({ error: { code: 'PAYLOAD_TOO_LARGE' } });
+  });
+
+  it('stops reading a chunked body with no Content-Length once it passes the limit', async () => {
+    await bind();
+    const headers = serverSigned('POST', '/api/v1/files/write', '{}');
+    let pulled = 0;
+    const cancel = vi.fn();
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) { pulled += 1; controller.enqueue(new Uint8Array(512)); }, cancel,
+    });
+    const request = new Request('http://localhost/api/v1/files/write', { method: 'POST', headers, body: stream, duplex: 'half' } as RequestInit);
+    expect(request.headers.get('content-length')).toBeNull();
+    const response = await echoApp().request(request);
+    expect(response.status).toBe(413);
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(pulled).toBeLessThan(10);
+  });
+
+  it('verifies and hands the handler the same bytes when the body is within the limit', async () => {
+    await bind();
+    const body = JSON.stringify({ path: '/tmp/fixture', content: 'ok' });
+    const headers = serverSigned('POST', '/api/v1/files/write', body);
+    const response = await echoApp().request('/api/v1/files/write', { method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ success: true, data: { path: '/tmp/fixture', content: 'ok' } });
+  });
+
+  it('applies the same limit to the deprecated shared secret', async () => {
+    vi.stubEnv('NODE_AUTH_MODE', 'compat');
+    const body = JSON.stringify({ pad: 'x'.repeat(LIMIT) });
+    const response = await echoApp().request('/api/v1/files/write', { method: 'POST', headers: { 'x-node-token': SECRET, 'content-type': 'application/json' }, body });
+    expect(response.status).toBe(413);
+    const small = await echoApp().request('/api/v1/files/write', { method: 'POST', headers: { 'x-node-token': SECRET, 'content-type': 'application/json' }, body: '{"a":1}' });
+    expect(small.status).toBe(200);
+  });
+});

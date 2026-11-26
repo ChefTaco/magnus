@@ -607,14 +607,17 @@ describe('generated files', () => {
     expect(() => Project.load(project.dir)).toThrow(/magnus-project\.json is not valid JSON.*magnus-project\.json\.bak/s);
   });
 
-  it('prunes old dumps but keeps the newest per label and the protected one', () => {
+  it('prunes old dumps to the newest `keep` plus the protected one, even when every label is unique', () => {
     const dir = mkdtempSync(join(tmpdir(), 'magnus-dumps-'));
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 8; i++) {
       writeFileSync(join(dir, `${i}.dump`), 'PGDMP');
-      writeFileSync(join(dir, `${i}.dump.json`), JSON.stringify({ label: i === 0 ? 'other' : 'same', createdAt: `2026-11-0${i + 1}T00:00:00Z` }));
+      writeFileSync(join(dir, `${i}.dump.json`), JSON.stringify({ label: `pre-upgrade-3.0.${i}-to-3.0.${i + 1}`, createdAt: `2026-11-0${i + 1}T00:00:00Z` }));
     }
-    expect(pruneBackups(dir, 1).map((file) => file.slice(dir.length + 1))).toEqual(['2.dump', '1.dump']);
-    expect(existsSync(join(dir, '0.dump'))).toBe(true);
+    const removed = pruneBackups(dir, 3, [join(dir, '0.dump')]).map((file) => file.slice(dir.length + 1));
+    expect(removed).toEqual(['4.dump', '3.dump', '2.dump', '1.dump']);
+    expect(['0.dump', '5.dump', '6.dump', '7.dump'].every((name) => existsSync(join(dir, name)))).toBe(true);
+    expect(existsSync(join(dir, '1.dump.json'))).toBe(false);
+    expect(pruneBackups(dir, 3, [join(dir, '0.dump')])).toEqual([]);
   });
 });
 

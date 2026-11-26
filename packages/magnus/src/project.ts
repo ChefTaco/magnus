@@ -70,7 +70,7 @@ export interface ProjectState {
   current: string | null;
   previous: string | null;
   keepVersions: number;
-  /** Dumps kept in backups/ (default 5); the newest of each label always stays. */
+  /** Dumps kept in backups/ (default 5), plus the dump the current upgrade's rollback restores. */
   keepBackups?: number;
   /** Node.js the units run (and the upgrade uses for npm and the server CLI); default: the units' ExecStart. */
   nodePath?: string;

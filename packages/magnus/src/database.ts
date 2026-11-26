@@ -1,6 +1,6 @@
 /** Pre-migration dumps and restores for both database kinds a project can use. */
 import { closeSync, chmodSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { compareVersions, restoreAsideSchema, restoreFinishSql, restoreRevertSql, restoreSwapSql } from '@hivemagnus/magnus-contracts';
 import { readEnvFile } from './env-file.js';
 import { mustRun, type Io } from './io.js';
@@ -54,24 +54,22 @@ export async function databaseBytes(io: Io, project: Project): Promise<number | 
 }
 
 /**
- * Keep the newest `keep` dumps in backups/; older ones go, except the newest
- * dump of each label (the one a rollback of that step restores) and any file
- * in `protect`.
+ * Keep the newest `keep` dumps in backups/ and any file in `protect` (the dump
+ * the current upgrade's rollback restores); older ones go. Upgrade labels are
+ * unique per step (`pre-upgrade-A-to-B`), so a per-label exemption would keep
+ * every dump forever.
  */
 export function pruneBackups(dir: string, keep: number, protect: readonly string[] = []): string[] {
   if (!existsSync(dir) || keep < 1) return [];
   const dumps = readdirSync(dir).filter((name) => name.endsWith('.dump')).map((name) => {
     const file = join(dir, name);
-    let meta: { label?: string; createdAt?: string } = {};
+    let meta: { createdAt?: string } = {};
     try { meta = JSON.parse(readFileSync(`${file}.json`, 'utf8')) as typeof meta; } catch { /* no metadata */ }
-    return { file, label: meta.label ?? basename(file), at: Date.parse(meta.createdAt ?? '') || statSync(file).mtimeMs };
+    return { file, at: Date.parse(meta.createdAt ?? '') || statSync(file).mtimeMs };
   }).sort((a, b) => b.at - a.at);
-  const seen = new Set<string>();
   const removed: string[] = [];
   dumps.forEach((dump, index) => {
-    const newest = !seen.has(dump.label);
-    seen.add(dump.label);
-    if (index < keep || newest || protect.includes(dump.file)) return;
+    if (index < keep || protect.includes(dump.file)) return;
     rmSync(dump.file, { force: true });
     rmSync(`${dump.file}.json`, { force: true });
     removed.push(dump.file);

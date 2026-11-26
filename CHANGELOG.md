@@ -7,6 +7,36 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Security
+
+- **Console proxy keeps the upstream content isolation headers.** `/api/proxy/*` now relays
+  `Content-Security-Policy`, `Content-Disposition`, `X-Content-Type-Options`, `Cache-Control` and the
+  range/digest headers from the Control API instead of rebuilding the response with only
+  `Content-Type`, and marks every proxied response `nosniff`. Ardent artifact content keeps its
+  `default-src 'none'; sandbox` policy and `attachment` disposition through the console.
+- **Pinned Hermes installer.** The node agent's `POST /api/v1/hermes/install` no longer pipes the
+  upstream `main` branch's `install.sh` into bash. It downloads the script from one pinned commit,
+  checks its SHA-256 before running it, installs that same commit (`--commit`), and as root runs it as
+  the account that controls the target Hermes home. The pin lives in
+  `packages/agent/src/executors/hermes-install-pin.ts`; `node scripts/update-hermes-install-pin.mjs
+  [tag]` moves it, and `HERMES_INSTALL_COMMIT` with `HERMES_INSTALL_SCRIPT_SHA256` overrides it on one
+  node.
+- **Agent request body limit.** The node agent reads a request body at most once, up to
+  `MAGNUS_AGENT_BODY_LIMIT_BYTES` (default 16 MiB), before it verifies the request signature, and
+  answers 413 `PAYLOAD_TOO_LARGE` for anything larger, whether declared by `Content-Length` or sent
+  chunked. The same limit applies under the deprecated shared secret.
+
+### Fixed
+
+- **Installer backup pruning deletes old dumps.** `magnus upgrade` kept the newest dump of every label,
+  and every upgrade step has its own label, so no dump was ever deleted. It now keeps the newest
+  `keepBackups` dumps plus the one the current upgrade's rollback restores.
+
+**New environment variables:** agent `MAGNUS_AGENT_BODY_LIMIT_BYTES`, `HERMES_INSTALL_COMMIT`,
+`HERMES_INSTALL_SCRIPT_SHA256` (all optional).
+
+**Migration impact:** None.
+
 ## [3.3.6] - 2026-11-25
 
 ### Security
