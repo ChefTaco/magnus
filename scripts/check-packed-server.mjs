@@ -8,7 +8,7 @@
 // Build first (`npm run build`). Needs the public npm registry, like check-packed-agent.mjs.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -33,12 +33,18 @@ export async function checkPackedServerAndConsole(root) {
   const work = mkdtempSync(join(tmpdir(), 'magnus-packed-server-'));
   try {
     const { buildInstallationReport } = await import(pathToFileURL(join(root, 'services/control-api/dist/services/installation-report-service.js')).href);
-    for (const [target, { directory, siblings }] of Object.entries(LOCKED)) {
+    for (const [target, { directory, siblings, installationReport = true }] of Object.entries(LOCKED)) {
       const packs = join(work, target, 'packs');
       mkdirSync(packs, { recursive: true });
       const locals = siblings.map((sibling) => packWorkspace(join(root, sibling), packs).file);
       const { file, manifest } = packWorkspace(join(root, directory), packs);
       const installed = installShrinkwrapped(join(work, target), file, locals);
+      if (!installationReport) {
+        // The image-only gateway: its shrinkwrap installs with `npm ci` and yields this exact version.
+        assert.equal(JSON.parse(readFileSync(join(installed, 'package.json'), 'utf8')).version, manifest.version);
+        console.log(`Packed ${manifest.name}: shrinkwrapped install succeeds`);
+        continue;
+      }
       const report = buildInstallationReport(installed);
       assert.equal(report.magnus.layout, 'package');
       assert.equal(report.resolution.reference, 'npm-shrinkwrap', `${manifest.name} tarball must carry its shrinkwrap`);

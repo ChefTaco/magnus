@@ -1,6 +1,6 @@
 # Build context filter for services/fleet-gateway/Dockerfile (context: repo root).
 # Only the root manifests, every workspace manifest (so `npm ci` can validate the lockfile) and the
-# two workspaces this image builds are sent.
+# two workspaces this image builds are sent, plus the script that turns its shrinkwrap into a lock.
 **
 !package.json
 !package-lock.json
@@ -9,6 +9,7 @@
 !services/*/package.json
 !packages/oathweave/**
 !services/fleet-gateway/**
+!scripts/shrinkwrap-install-lock.mjs
 
 **/node_modules
 **/dist

@@ -13,7 +13,8 @@ PROJECT="magnus-compose-e2e-$$"
 WORK=$(mktemp -d)
 read -r -a DC <<< "${DOCKER_COMPOSE:-docker compose}"
 compose() { "${DC[@]}" -p "$PROJECT" -f "$ROOT/docker/compose.yml" --env-file "$WORK/.env" "$@"; }
-cleanup() { compose down -v --remove-orphans >/dev/null 2>&1 || true; rm -rf "$WORK"; }
+redis_only() { "${DC[@]}" -p "$PROJECT-redis" -f "$ROOT/docker/compose.yml" --env-file "$WORK/redis.env" "$@"; }
+cleanup() { compose down -v --remove-orphans >/dev/null 2>&1 || true; [ -f "$WORK/redis.env" ] && { redis_only down -v >/dev/null 2>&1 || true; }; rm -rf "$WORK"; }
 trap cleanup EXIT
 fail() { echo "FAIL: $*" >&2; compose logs --no-color --tail 80 >&2 || true; exit 1; }
 
@@ -47,5 +48,15 @@ compose exec -T magnus-server sh -c 'test ! -e /var/lib/magnus-cert/server.key' 
 echo ">>> 3. Recreating the containers (pull && up -d) keeps the stack healthy"
 compose up -d --force-recreate --wait --wait-timeout 300 || fail "the recreated stack did not become healthy"
 grep -q 'nothing to do' <<< "$(compose logs magnus-server)" || fail "auto-migrate did not find the database current"
+
+echo ">>> 4. Redis starts with a password containing spaces, quotes and a backslash"
+# The password reaches Redis through a private config file, never the command line.
+grep -v '^REDIS_PASSWORD=' "$WORK/.env" > "$WORK/redis.env"
+printf '%s\n' "REDIS_PASSWORD='pass with \"quotes\" and \\ spaces'" >> "$WORK/redis.env"
+redis_only up -d --wait --wait-timeout 120 redis || fail "Redis did not start with a quoted password"
+[[ $(redis_only exec -T redis sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli --no-auth-warning ping') == PONG ]] || fail "the quoted password does not authenticate"
+redis_only exec -T redis redis-cli ping 2>&1 | grep -q NOAUTH || fail "Redis answered without the password"
+! redis_only exec -T redis sh -c 'cat /proc/1/cmdline' | tr '\0' ' ' | grep -q quotes || fail "the password is on the command line"
+redis_only down -v >/dev/null 2>&1
 
 echo "PASS: docker/compose.yml"

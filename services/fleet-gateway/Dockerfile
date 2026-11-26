@@ -7,8 +7,9 @@
 #   docker build -f services/fleet-gateway/Dockerfile -t magnus-fleet-gateway:local .
 #
 # This image is how the gateway ships: it is not published to npm. Stage 1 builds the workspace
-# packages and packs the gateway, whose tarball carries the Oathweave package. Stage 2 installs that
-# tarball the way a registry install would, so third-party dependencies come from npm.
+# packages and packs the gateway, whose tarball carries the Oathweave package and its
+# npm-shrinkwrap.json. Stage 2 installs that tarball from the shrinkwrap with `npm ci`, so
+# third-party dependencies come from npm at the locked versions and integrities.
 #
 # Runs as a non-root user and works with a read-only root filesystem:
 #
@@ -43,19 +44,16 @@ LABEL org.opencontainers.image.title="magnus-fleet-gateway" \
       org.opencontainers.image.version="${MAGNUS_VERSION}"
 WORKDIR /opt/magnus-fleet-gateway
 COPY --from=builder /packages/ /tmp/packages/
+COPY --from=builder /opt/magnus-build/scripts/shrinkwrap-install-lock.mjs /tmp/shrinkwrap-install-lock.mjs
+# Install the packed gateway from its npm-shrinkwrap.json (scripts/package-locks.mjs), so every
+# build gets the reviewed dependency graph instead of resolving the caret ranges again.
 # --ignore-scripts: ssh2 falls back to Node's own crypto, so the image carries no compiler and no
 # native addon to patch.
-RUN node -e ' \
-      const fs = require("node:fs"); \
-      const files = fs.readdirSync("/tmp/packages"); \
-      const find = (prefix) => "file:/tmp/packages/" + files.find((file) => file.startsWith(prefix)); \
-      fs.writeFileSync("package.json", JSON.stringify({ \
-        name: "magnus-fleet-gateway-runtime", private: true, \
-        dependencies: { "@hivemagnus/magnus-fleet-gateway": find("hivemagnus-magnus-fleet-gateway-") }, \
-      }, null, 2)); ' \
-  && npm install --omit=dev --no-audit --no-fund --ignore-scripts \
+RUN node /tmp/shrinkwrap-install-lock.mjs --out . --name magnus-fleet-gateway-runtime \
+      --package /tmp/packages/hivemagnus-magnus-fleet-gateway-*.tgz \
+  && npm ci --omit=dev --no-audit --no-fund --ignore-scripts \
   && npm cache clean --force \
-  && rm -rf /tmp/packages /root/.npm \
+  && rm -rf /tmp/packages /tmp/shrinkwrap-install-lock.mjs /root/.npm \
   && install -d -o node -g node -m 0700 /var/lib/fleet-gateway /var/lib/fleet-gateway/known-hosts
 
 # Runtime carries only the packed product and its patched shared libraries.
@@ -68,7 +66,8 @@ LABEL org.opencontainers.image.title="magnus-fleet-gateway" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.version="${MAGNUS_VERSION}"
 WORKDIR /opt/magnus-fleet-gateway
-COPY --from=runtime-dependencies --chown=node:node /opt/magnus-fleet-gateway/ /opt/magnus-fleet-gateway/
+# App code stays root-owned: the node user can run it but not rewrite it.
+COPY --from=runtime-dependencies /opt/magnus-fleet-gateway/ /opt/magnus-fleet-gateway/
 RUN mkdir -p /var/lib/fleet-gateway /var/lib/fleet-gateway/known-hosts && chown -R node:node /var/lib/fleet-gateway /var/lib/fleet-gateway/known-hosts && chmod 0700 /var/lib/fleet-gateway
 RUN node -e "const req=require('node:module').createRequire(process.cwd()+'/node_modules/@hivemagnus/magnus-fleet-gateway/package.json'); if(typeof req('ssh2').Client!=='function')throw Error('SSH runtime failed');"
 

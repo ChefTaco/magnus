@@ -146,6 +146,23 @@ All notable changes to this project are documented in this file. The format is b
   credential metadata and the session-secret source are returned only to a local administrator session
   (not to viewers, operators or named Hive sessions),
   and misconfigured credentials give `unhealthy` (503) instead of an unhandled 500.
+- **The fleet-gateway image installs a locked dependency graph.** Its runtime stage ran `npm install`
+  against caret ranges, so the service that holds the SSH key got a new graph on every build. The
+  gateway now carries `services/fleet-gateway/npm-shrinkwrap.json` and the image installs it with
+  `npm ci`, as the server and console images do; `npm run check:packs` and `locks:refresh` cover it.
+- **Released images are scanned as pushed.** The publish job built and scanned each architecture,
+  then rebuilt for the push. The rebuild is now pushed by digest only, the job runs and Trivy-scans
+  that exact digest on both architectures, and only then moves the `X.Y.Z`, `X.Y` and `X` tags to it
+  (no rebuild); a failed scan leaves no tag. The unused `id-token: write`
+  permission is gone from the images job.
+- **Container hardening.** App code in the server, console, gateway and agent images is root-owned,
+  so the runtime user cannot rewrite it. `docker/compose.yml` runs the server and console with
+  `cap_drop: [ALL]`, a read-only root filesystem and a `/tmp` tmpfs, pins the PostgreSQL and Redis
+  images by digest, and keeps the Redis password off the `redis-server` command line (a private config
+  file inside the container, the password quoted so spaces and quotes work; the health check uses
+  `REDISCLI_AUTH`). **Upgrade note:** a
+  deployment that adds its own writable paths to the console or server container needs a volume or
+  tmpfs for them; update the PostgreSQL and Redis digests with the tag when you move either.
 
 - **Agent file writes are bound to the directory they were checked against.** `/files/write`
   checked the parent directory by path and then reused the path, so a local account able to swap a

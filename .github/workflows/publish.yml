@@ -96,7 +96,6 @@ jobs:
     permissions:
       contents: read
       packages: write # push to ghcr.io with the workflow token
-      id-token: write # build provenance attestation
     env:
       DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'true' || 'false' }}
     strategy:
@@ -160,6 +159,63 @@ jobs:
               --image-src docker --platform "linux/$arch" --scanners vuln --severity HIGH,CRITICAL \
               --format json --output "/reports/$arch.json" --exit-code 1 "magnus-runtime-check:$arch"
           done
+      # Pushed by digest only: no tag points at these bytes until they pass the scan below.
+      - name: Build and push
+        id: push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ${{ matrix.image.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          outputs: type=image,name=ghcr.io/cheftaco/${{ matrix.image.name }},push-by-digest=true,name-canonical=true,push=${{ env.DRY_RUN != 'true' }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: MAGNUS_VERSION=${{ steps.release.outputs.version }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha,scope=${{ matrix.image.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}
+
+      # The push above rebuilds from source, so its bytes are not the ones scanned before. Execute
+      # and scan exactly the pushed (still untagged) digest on both architectures; only then do the
+      # release tags move to it.
+      - name: Execute and scan the published digest
+        if: env.DRY_RUN != 'true'
+        env:
+          IMAGE_REF: ghcr.io/cheftaco/${{ matrix.image.name }}@${{ steps.push.outputs.digest }}
+          IMAGE_REPORT_DIR: ${{ runner.temp }}/image-security-${{ matrix.image.name }}
+          TRIVY_CACHE_DIR: ${{ runner.temp }}/trivy-cache-${{ matrix.image.name }}
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          [[ "$IMAGE_REF" =~ @sha256:[0-9a-f]{64}$ ]] || { echo "No pushed digest" >&2; exit 1; }
+          for arch in amd64 arm64; do
+            docker pull --platform "linux/$arch" "$IMAGE_REF"
+            docker run --rm --platform "linux/$arch" --read-only --user 1000:1000 --cap-drop ALL \
+              --security-opt no-new-privileges:true --entrypoint node "$IMAGE_REF" -e 'if(process.getuid()!==1000)throw Error("Unexpected user")'
+            docker run --rm -e TRIVY_USERNAME -e TRIVY_PASSWORD \
+              -v "$TRIVY_CACHE_DIR:/root/.cache/trivy" -v "$IMAGE_REPORT_DIR:/reports" \
+              aquasec/trivy@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e image \
+              --image-src remote --platform "linux/$arch" --scanners vuln --severity HIGH,CRITICAL \
+              --format json --output "/reports/published-$arch.json" --exit-code 1 "$IMAGE_REF"
+          done
+
+      - name: Tag the scanned digest
+        if: env.DRY_RUN != 'true'
+        env:
+          IMAGE_REF: ghcr.io/cheftaco/${{ matrix.image.name }}@${{ steps.push.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          [[ "$IMAGE_REF" =~ @sha256:[0-9a-f]{64}$ ]] || { echo "No pushed digest" >&2; exit 1; }
+          args=()
+          while IFS= read -r tag; do [ -n "$tag" ] && args+=(-t "$tag"); done <<< "$TAGS"
+          (( ${#args[@]} )) || { echo "No release tags" >&2; exit 1; }
+          # Same bytes, no rebuild: the index (attestations included) is copied under each tag.
+          docker buildx imagetools create "${args[@]}" "$IMAGE_REF"
+          for tag in "${args[@]}"; do [ "$tag" = -t ] && continue
+            [ "$(docker buildx imagetools inspect "$tag" --format '{{json .Manifest.Digest}}' | tr -d '"')" = "${IMAGE_REF##*@}" ] \
+              || { echo "$tag does not point at the scanned digest" >&2; exit 1; }
+          done
+
       - name: Retain unfiltered security reports
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -167,18 +223,3 @@ jobs:
           name: image-security-${{ matrix.image.name }}
           path: ${{ runner.temp }}/image-security-${{ matrix.image.name }}
           if-no-files-found: ignore
-
-      - name: Build and push
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          file: ${{ matrix.image.dockerfile }}
-          platforms: linux/amd64,linux/arm64
-          push: ${{ env.DRY_RUN != 'true' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: MAGNUS_VERSION=${{ steps.release.outputs.version }}
-          provenance: mode=max
-          sbom: true
-          cache-from: type=gha,scope=${{ matrix.image.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}
