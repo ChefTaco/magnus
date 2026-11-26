@@ -395,6 +395,7 @@ libraryRouter.post(
                   filePath,
                   content: content as string,
                   createIfMissing: true,
+                  adminWrite: false,
                 });
               }
             }

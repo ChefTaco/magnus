@@ -76,10 +76,11 @@ describe('file path policy', () => {
 
   it('lets an OPERATOR write application paths and an ADMIN write system paths, sending the normalized path', async () => {
     expect((await update('/srv/app//config.yml')).status).toBe(201);
-    expect(mocks.writeFile).toHaveBeenLastCalledWith(expect.objectContaining({ filePath: '/srv/app/config.yml' }));
+    // The agent re-checks the resolved destination, so it is told whether an ADMIN asked.
+    expect(mocks.writeFile).toHaveBeenLastCalledWith(expect.objectContaining({ filePath: '/srv/app/config.yml', adminWrite: false }));
     mocks.role = 'ADMIN';
     expect((await update('//etc/app.conf')).status).toBe(201);
-    expect(mocks.writeFile).toHaveBeenLastCalledWith(expect.objectContaining({ filePath: '/etc/app.conf' }));
+    expect(mocks.writeFile).toHaveBeenLastCalledWith(expect.objectContaining({ filePath: '/etc/app.conf', adminWrite: true }));
   });
 
   it('reads only absolute, normalized paths', async () => {

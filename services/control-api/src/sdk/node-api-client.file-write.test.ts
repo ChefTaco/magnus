@@ -21,20 +21,20 @@ function agent(features: Record<string, unknown>) {
 }
 
 describe('restricted file writes', () => {
-  it('refuses an agent that does not advertise restricted writes, sending nothing that changes the node', async () => {
-    const calls = agent({ managedMutations: 1 });
-    await expect(client().writeFile({ filePath: '/srv/app/config.yml', content: 'x', backup: true }))
+  it.each([[{ managedMutations: 1 }], [{ managedMutations: 1, restrictedFileWrite: 1 }]])('refuses an agent without restricted writes on the resolved destination (%j), sending nothing that changes the node', async (features) => {
+    const calls = agent(features);
+    await expect(client().writeFile({ filePath: '/srv/app/config.yml', content: 'x', backup: true, adminWrite: false }))
       .rejects.toMatchObject({ status: 409, code: 'AGENT_FILE_WRITE_UNSUPPORTED' });
     expect(calls.map((call) => `${call.method} ${call.path}`)).toEqual(['GET /api/v1/ping']);
   });
 
   it('sends the backup request to an agent that checks the path before backing up', async () => {
-    agent({ managedMutations: 1, restrictedFileWrite: 1 });
+    agent({ managedMutations: 1, restrictedFileWrite: 2 });
     // The managed mutation path itself (admission, signing) is covered elsewhere.
     const mutate = vi.spyOn(NodeApiClient.prototype as unknown as { mutate: () => Promise<unknown> }, 'mutate')
       .mockResolvedValue({ success: true, data: { written: true, checksum: 'abc', backupPath: null } });
-    await client().writeFile({ filePath: '/srv/app/config.yml', content: 'x', backup: true });
-    expect(mutate).toHaveBeenCalledWith('POST', 'files/write', { filePath: '/srv/app/config.yml', content: 'x', backup: true });
+    await client().writeFile({ filePath: '/srv/app/config.yml', content: 'x', backup: true, adminWrite: true });
+    expect(mutate).toHaveBeenCalledWith('POST', 'files/write', { filePath: '/srv/app/config.yml', content: 'x', backup: true, adminWrite: true });
     mutate.mockRestore();
   });
 });

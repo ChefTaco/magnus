@@ -1,5 +1,6 @@
 import { clientErrorMessage } from '../utils/safe-errors.js';
 import { Hono } from 'hono';
+import { filePathPolicy } from '@hivemagnus/magnus-contracts';
 import path from 'node:path';
 import type { AppVariables } from '../types/index.js';
 import { getDb } from '../db/index.js';
@@ -27,9 +28,6 @@ function isNodeStale(lastHeartbeatAt: Date | null): boolean {
   return !lastHeartbeatAt || Date.now() - lastHeartbeatAt.getTime() > STALE_THRESHOLD_MS;
 }
 
-const BLOCKED_PREFIXES = ['/proc/', '/sys/', '/dev/'];
-const SENSITIVE_PREFIXES = ['/etc/', '/root/', '/var/lib/', '/var/spool/', '/boot/', '/usr/', '/bin/', '/sbin/', '/lib/', '/lib64/'];
-
 /**
  * The one spelling of a requested path that policy is judged on and the agent is sent:
  * absolute, with `.`/`//` collapsed. `..` segments and NUL bytes are refused, not resolved.
@@ -42,16 +40,8 @@ export function normalizeNodePath(filePath: string): string {
   return normalized.length > 1 ? normalized.replace(/\/+$/, '') : normalized;
 }
 
-export function pathPolicy(filePath: string): 'safe-app-path' | 'sensitive-system-path' | 'blocked-path' {
-  if (filePath === '/' || BLOCKED_PREFIXES.some((prefix) => filePath === prefix.slice(0, -1) || filePath.startsWith(prefix))) {
-    return 'blocked-path';
-  }
-  if (SENSITIVE_PREFIXES.some((prefix) => filePath === prefix.replace(/\/$/, '') || filePath.startsWith(prefix))
-    || filePath.split('/').includes('.ssh')) {
-    return 'sensitive-system-path';
-  }
-  return 'safe-app-path';
-}
+/** The suite-wide path policy, shared with the agent, which applies it again to the resolved destination. */
+export const pathPolicy = filePathPolicy;
 
 // ── Push file update to nodes ──
 filesRouter.post('/update', requireRole('ADMIN', 'OPERATOR'), async (c) => {
@@ -129,6 +119,9 @@ filesRouter.post('/update', requireRole('ADMIN', 'OPERATOR'), async (c) => {
           content,
           createIfMissing: body.createIfMissing ?? true,
           backup: body.backup,
+          // The agent re-applies the system-path rule to the destination it resolves (symlinks
+          // included), so it must know whether an ADMIN asked.
+          adminWrite: user.role === 'ADMIN',
         });
 
         await db.filePatchTask.update({
