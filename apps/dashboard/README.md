@@ -128,16 +128,25 @@ Every variable the runtime configuration accepts. `magnus-ui env-schema` prints 
 | `HERMES_WEBSOCKET_ALLOWED_ORIGINS` | Optional | None | Comma-separated additional allowed Hermes WebSocket origins. |
 | `DASHBOARD_ADMIN_USERNAME` | Required with DASHBOARD_ADMIN_PASSWORD_HASH; deployment may serialize it | None | Dedicated dashboard administrator identity. |
 | `DASHBOARD_ADMIN_USERNAME_B64` | Optional | None | Serializer-managed base64 form of the dashboard administrator identity. |
-| `DASHBOARD_ADMIN_PASSWORD_HASH` | Required with DASHBOARD_ADMIN_USERNAME; Argon2id only | None | Non-reusable Argon2id dashboard administrator password verifier. |
+| `DASHBOARD_ADMIN_PASSWORD_HASH` | Required with DASHBOARD_ADMIN_USERNAME unless DASHBOARD_ADMIN_PASSWORD is set; Argon2id only | None | Non-reusable Argon2id dashboard administrator password verifier. |
+| `DASHBOARD_ADMIN_PASSWORD` | Optional; takes precedence over DASHBOARD_ADMIN_PASSWORD_HASH when set with DASHBOARD_ADMIN_USERNAME | None | Plaintext dashboard administrator password. Prefer the Argon2id hash; a set value silently wins over it. |
+| `DASHBOARD_ADMIN_PASSWORD_B64` | Optional | None | Serializer-managed base64 form of DASHBOARD_ADMIN_PASSWORD (same precedence). |
+| `LOCAL_SESSION_GENERATION` | Optional | None | Any value; changing it signs out every local console session (as changing the administrator credential does). |
 | `DASHBOARD_ADMIN_PASSWORD_HASH_B64` | Optional | None | Serializer-managed base64 form of the Argon2id verifier. |
 | `DASHBOARD_ADMIN_CREDENTIAL_METADATA_B64` | Optional | None | Versioned non-secret credential purpose, rotation, fleet-password, and fingerprint-separation evidence. |
 | `DASHBOARD_LOGIN_USERNAME` | Optional | None | Temporary two-phase migration source for the former dedicated dashboard login. |
 | `DASHBOARD_LOGIN_PASSWORD` | Optional | None | Temporary two-phase reusable secret; rejected when equal to fleet or bootstrap credentials. |
+| `DASHBOARD_TRUSTED_PROXIES` | Optional | None | Comma-separated reverse-proxy addresses or CIDR ranges whose X-Forwarded-For names the client for login throttling and audit. Unset: the socket peer. |
 | `REDIS_URL` | Optional | None | Durable dashboard authentication throttling and concurrency store. |
 | `REDIS_PREFIX` | Optional | `magnus-` | Namespace prefix for durable Redis authentication limiter keys. |
 | `AUTH_RATE_LIMIT_LABEL_KEY` | Optional | None | Optional dedicated HMAC key for de-identifying authentication limiter labels. |
 | `DASHBOARD_SSH_USERNAME` | Required for the terminal and Hermes proxy | None | Dedicated, unprivileged dashboard proxy account on managed nodes. |
 | `DASHBOARD_SSH_PASSWORD` | Optional | None | Optional dedicated dashboard SSH password; restricted keys are preferred. |
+| `SSH_HOST_KEY_PINNING` | Optional | `enforce` | Terminal SSH host-key pinning: enforce refuses a host whose key differs from the pinned one; warn only logs the mismatch and connects anyway (never use warn in production). Any other value means enforce. |
+| `SSH_HOST_KEYS_FILE` | Optional | `terminal-audit/known-hosts.json` | Pinned terminal SSH host keys (trust on first use), relative to the working directory. |
+| `TERMINAL_AUDIT_DIR` | Optional | `terminal-audit` | Directory of the terminal host-key trust audit log, relative to the working directory. |
+| `DASHBOARD_DEPENDENCY_TIMEOUT_MS` | Optional | `8000` | Timeout of console requests to the Control API and Hive Router, in milliseconds. |
+| `MAGNUS_CONTROL_NODES_CONFIG_DIR` | Optional | None | Test-only override of the control-node registry directory; honoured only with NODE_ENV=test (otherwise .magnus/ in the working directory). |
 | `DASHBOARD_SSH_PRIVATE_KEY_PATH` | Required for the terminal and Hermes proxy (or DASHBOARD_SSH_PASSWORD) | None | Restricted dashboard-proxy private key with no deployment privileges. |
 | `NEXT_PUBLIC_API_URL` | Optional | `https://localhost:4000` | Legacy build-time Control API URL; must never contain a secret. |
 | `HIVE_OAUTH_DISCOVERY_URL` | Optional | None | Hive OAuth discovery URL for optional named dashboard login; HTTPS required. |

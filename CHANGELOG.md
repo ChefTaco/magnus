@@ -131,6 +131,20 @@ All notable changes to this project are documented in this file. The format is b
   (loopback, trusting only the certificate in `TLS_CERT_PATH`, or `MAGNUS_AGENT_SELF_URL` with full
   certificate checks). Otherwise the
   launcher reverts it when the confirm window ends.
+- **Console refuses cross-site state changes.** Every non-GET `/api/*` request to the standalone console
+  (proxy, terminal, control nodes, login) must carry an `Origin` equal to `DASHBOARD_PUBLIC_ORIGIN` or
+  to its own host, or a same-origin `Sec-Fetch-Site`; otherwise 403 `cross_site_request_refused`.
+  `SameSite=Lax` alone did not stop a sibling subdomain. Clients that send neither header (scripts)
+  are unaffected.
+- **Anonymous login attempts no longer lock the administrator out.** Past the per-username budget
+  (10 per 15 minutes across all sources) a wrong password is throttled, but the correct one signs in;
+  the per-source and per-source-and-username limits still apply before the password is checked.
+  `DASHBOARD_TRUSTED_PROXIES` (addresses or CIDR ranges) lets the console attribute requests from a
+  listed reverse proxy to the client in its `X-Forwarded-For`, so clients behind a proxy no longer
+  share one source bucket. **Upgrade note:** set it when the console runs behind a reverse proxy.
+- **Console `/api/health` answers only its status to anonymous callers.** The login source, SSH and
+  credential metadata and the session-secret source are returned only to a signed-in administrator,
+  and misconfigured credentials give `unhealthy` (503) instead of an unhandled 500.
 
 ### Fixed
 
@@ -166,6 +180,11 @@ All notable changes to this project are documented in this file. The format is b
   under the unit's `UMask=0077`; `mode` (octal string) now sets its permissions, and `owner`/`group`
   set its ownership in privileged mode (403 `AGENT_NOT_PRIVILEGED` otherwise). **Upgrade note:** an
   overwrite now replaces the file (new inode), so hard links to it are not updated.
+- The console's environment schema and generated README table now list `DASHBOARD_ADMIN_PASSWORD`
+  (and `_B64`, which take precedence over the Argon2id hash), `SSH_HOST_KEY_PINNING` (`warn` connects
+  despite a changed host key), `SSH_HOST_KEYS_FILE`, `TERMINAL_AUDIT_DIR`,
+  `DASHBOARD_DEPENDENCY_TIMEOUT_MS`, `LOCAL_SESSION_GENERATION` and the test-only
+  `MAGNUS_CONTROL_NODES_CONFIG_DIR`.
 - `docs/PUBLISHING.md` now describes how images are built, scanned and tagged (prereleases get their
   `X.Y.Z-<pre>` tag).
 
@@ -182,6 +201,9 @@ All notable changes to this project are documented in this file. The format is b
 **New environment variables:** agent `MAGNUS_AGENT_BODY_LIMIT_BYTES`, `HERMES_INSTALL_COMMIT`,
 `HERMES_INSTALL_SCRIPT_SHA256`, `MAGNUS_AGENT_FILE_ROOTS`; server `MAGNUS_API_SECRET_BYPASS`,
 `MAGNUS_AI_SCHEDULER_ENABLED` (all optional).
+`HERMES_INSTALL_SCRIPT_SHA256`; server `MAGNUS_API_SECRET_BYPASS` (all optional).
+`HERMES_INSTALL_SCRIPT_SHA256`, `MAGNUS_AGENT_FILE_ROOTS` (all optional).
+`HERMES_INSTALL_SCRIPT_SHA256`; console `DASHBOARD_TRUSTED_PROXIES` (all optional).
 
 **Migration impact:** None. A deployment whose `IAM_CORE_URL` uses HTTP to a non-loopback host must switch
 it to HTTPS before upgrading; the server refuses to start otherwise. Hive IAM must issue tokens with `exp`
