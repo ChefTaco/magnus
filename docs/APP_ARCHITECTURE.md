@@ -73,8 +73,12 @@ The console always has one local administrator: `DASHBOARD_ADMIN_USERNAME` with 
 `DASHBOARD_ADMIN_PASSWORD_HASH`. A successful sign-in sets a signed session cookie, and
 `src/proxy.ts` requires that cookie on every non-public route. Sign-in attempts are throttled in
 Redis by source, by username and by both together, with progressive delays and a global
-concurrency limit. The TLS front end ignores inbound forwarding headers and takes the client
-address from the socket, so the throttle cannot be bypassed with a spoofed header.
+concurrency limit; past the per-username budget only a wrong password is refused, so anonymous
+attempts cannot lock the administrator out. The TLS front end ignores inbound forwarding headers and
+takes the client address from the socket, or, for a reverse proxy listed in
+`DASHBOARD_TRUSTED_PROXIES`, from the right-most untrusted `X-Forwarded-For` hop, so the throttle
+cannot be bypassed with a spoofed header. Non-GET `/api` requests must come from the console's own
+origin (`Origin` or `Sec-Fetch-Site`), and every page carries a same-origin Content Security Policy.
 
 Named users can sign in through an OIDC provider such as Oathweave (formerly Hive IAM) when the
 `HIVE_OAUTH_*` variables are set. The provider remains the identity provider; Magnus does not

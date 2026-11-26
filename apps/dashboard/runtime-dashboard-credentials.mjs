@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
 
-export const LEGACY_DASHBOARD_CREDENTIALS_DEADLINE = '2026-10-01';
 export const DASHBOARD_ADMIN_CREDENTIAL_VERSION = 2;
 
 /** @param {string | undefined} first @param {string | undefined} second @param {string} message */
@@ -20,8 +19,8 @@ function credentialValue(env, key) {
   return env[key];
 }
 
-/** @param {Record<string, string | undefined>} env @param {Date} now */
-export function resolveDashboardLoginCredentials(env = process.env, now = new Date()) {
+/** @param {Record<string, string | undefined>} env */
+export function resolveDashboardLoginCredentials(env = process.env) {
   const username = credentialValue(env, 'DASHBOARD_ADMIN_USERNAME');
   const password = credentialValue(env, 'DASHBOARD_ADMIN_PASSWORD');
   // A dedicated plaintext admin password takes precedence when configured.
@@ -37,23 +36,8 @@ export function resolveDashboardLoginCredentials(env = process.env, now = new Da
     return { username, passwordHash, source: 'dashboard-admin-hash', version: DASHBOARD_ADMIN_CREDENTIAL_VERSION };
   }
 
-  // Two-phase compatibility path for installations following the former
-  // dedicated-login guidance. Fleet SSH or bootstrap credentials are never accepted.
-  const legacyUsername = credentialValue(env, 'DASHBOARD_LOGIN_USERNAME');
-  const legacyPassword = credentialValue(env, 'DASHBOARD_LOGIN_PASSWORD');
-  requirePair(legacyUsername, legacyPassword, 'DASHBOARD_LOGIN_USERNAME and DASHBOARD_LOGIN_PASSWORD must be configured together');
-  if (!legacyUsername || !legacyPassword) {
-    throw new Error('Dedicated dashboard administrator credentials are required');
-  }
-  if (now >= new Date(`${LEGACY_DASHBOARD_CREDENTIALS_DEADLINE}T00:00:00Z`)) {
-    throw new Error('Legacy dashboard login credentials have expired; configure the dashboard administrator hash');
-  }
-  for (const key of ['DASHBOARD_SSH_PASSWORD', 'BOOTSTRAP_SSH_PASSWORD']) {
-    if (env[key] && legacyPassword === env[key]) {
-      throw new Error(`Dashboard login password must not equal ${key}`);
-    }
-  }
-  return { username: legacyUsername, password: legacyPassword, source: 'legacy-dashboard-login', version: 1 };
+  // The former DASHBOARD_LOGIN_* credentials expired on 2026-10-01 and are no longer read.
+  throw new Error('Dedicated dashboard administrator credentials are required (DASHBOARD_ADMIN_USERNAME with DASHBOARD_ADMIN_PASSWORD_HASH)');
 }
 
 /**
@@ -85,9 +69,9 @@ function dashboardSshConfigured(env) {
   }
 }
 
-/** @param {Record<string, string | undefined>} env @param {Date} now */
-export function dashboardCredentialDiagnostics(env = process.env, now = new Date()) {
-  const login = resolveDashboardLoginCredentials(env, now);
+/** @param {Record<string, string | undefined>} env */
+export function dashboardCredentialDiagnostics(env = process.env) {
+  const login = resolveDashboardLoginCredentials(env);
   // SSH credentials are only needed by the terminal and Hermes proxy.
   const sshConfigured = dashboardSshConfigured(env);
   let metadata = null;
@@ -116,9 +100,8 @@ export function dashboardCredentialDiagnostics(env = process.env, now = new Date
     loginSource: login.source,
     credentialVersion: login.version,
     metadata,
-    migrationDeadline: LEGACY_DASHBOARD_CREDENTIALS_DEADLINE,
     warning: !loginMigrated
-      ? `CRITICAL: dashboard credential migration is incomplete and expires ${LEGACY_DASHBOARD_CREDENTIALS_DEADLINE}`
+      ? 'CRITICAL: DASHBOARD_ADMIN_CREDENTIAL_METADATA_B64 does not prove the v2 credential separation'
       : null,
   };
 }

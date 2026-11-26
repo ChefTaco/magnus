@@ -12,45 +12,19 @@ export const SESSION_ALGORITHMS = ['HS256'] as const;
 export const SESSION_ISSUER = readDashboardEnvironment('SESSION_ISSUER') as string;
 export const SESSION_AUDIENCE = readDashboardEnvironment('SESSION_AUDIENCE') as string;
 
-export const LEGACY_SESSION_SECRET_MIGRATION_DEADLINE = '2026-10-01T00:00:00.000Z';
-let legacyWarningEmitted = false;
-
-export function sessionSecretDiagnostics(now = Date.now()): {
-  configured: boolean;
-  source: 'dedicated' | 'legacy_jwt_secret' | 'missing';
-  legacyFallbackActive: boolean;
-  legacyFallbackAllowed: boolean;
-  migrationDeadline: string;
-} {
+/** The JWT_SECRET session fallback expired on 2026-10-01 and is gone: SESSION_SECRET is required. */
+export function sessionSecretDiagnostics(): { configured: boolean; source: 'dedicated' | 'missing' } {
   const dedicated = Boolean(process.env['SESSION_SECRET']);
-  const legacyAvailable = Boolean(process.env['JWT_SECRET']);
-  const legacyOptIn = process.env['ALLOW_LEGACY_SESSION_SECRET'] === 'true';
-  const deadlinePassed = now >= Date.parse(LEGACY_SESSION_SECRET_MIGRATION_DEADLINE);
-  return {
-    configured: dedicated || (legacyAvailable && legacyOptIn && !deadlinePassed),
-    source: dedicated ? 'dedicated' : legacyAvailable && legacyOptIn && !deadlinePassed ? 'legacy_jwt_secret' : 'missing',
-    legacyFallbackActive: !dedicated && legacyAvailable && legacyOptIn && !deadlinePassed,
-    legacyFallbackAllowed: legacyOptIn && !deadlinePassed,
-    migrationDeadline: LEGACY_SESSION_SECRET_MIGRATION_DEADLINE,
-  };
+  return { configured: dedicated, source: dedicated ? 'dedicated' : 'missing' };
 }
 
 /** Derive the HS256 signing key from the dedicated dashboard secret. */
 export function getSecretKey(): Uint8Array {
-  let secret = process.env['SESSION_SECRET'];
-  const diagnostics = sessionSecretDiagnostics();
-  if (!secret && diagnostics.legacyFallbackActive) {
-    secret = process.env['JWT_SECRET'];
-    if (!legacyWarningEmitted) {
-      legacyWarningEmitted = true;
-      console.error(`[SECURITY:HIGH] ALLOW_LEGACY_SESSION_SECRET=true is reusing JWT_SECRET for dashboard sessions; migrate before ${LEGACY_SESSION_SECRET_MIGRATION_DEADLINE}`);
-    }
-  }
+  const secret = process.env['SESSION_SECRET'];
   if (!secret) {
-    if (process.env['JWT_SECRET'] && process.env['ALLOW_LEGACY_SESSION_SECRET'] !== 'true') {
-      throw new Error('SESSION_SECRET is required; JWT_SECRET fallback requires ALLOW_LEGACY_SESSION_SECRET=true.');
-    }
-    throw new Error(`SESSION_SECRET is required; legacy fallback expires ${LEGACY_SESSION_SECRET_MIGRATION_DEADLINE}.`);
+    throw new Error(process.env['JWT_SECRET']
+      ? 'SESSION_SECRET is required; the JWT_SECRET session fallback was removed after it expired on 2026-10-01.'
+      : 'SESSION_SECRET is required.');
   }
   return new TextEncoder().encode(secret);
 }

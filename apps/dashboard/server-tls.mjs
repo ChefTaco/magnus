@@ -42,7 +42,7 @@ import {
 import { readDashboardEnvironment, validateDashboardEnvironment } from './runtime-environment.mjs';
 import { parseTrustedProxies, resolveClientAddress } from './runtime-client-address.mjs';
 import { recordHermesSecurityEvent } from './runtime-hermes-security-events.mjs';
-import { resolveSessionSecret, sessionSecretDiagnostics } from './runtime-session-secret.mjs';
+import { resolveSessionSecret } from './runtime-session-secret.mjs';
 import { dashboardCredentialDiagnostics, resolveDashboardSshCredentials } from './runtime-dashboard-credentials.mjs';
 import { hermesEnabled } from './runtime-integrations.mjs';
 import { guardFrameworkUpgradeListener, parseRequestTarget, rejectUpgrade } from './runtime-upgrade.mjs';
@@ -79,10 +79,6 @@ const COOKIE_NAME = 'magnus_session';
 const HERMES_PROXY_BASE = '/api/hermes/dashboard';
 const HERMES_INSTALLATION_COOKIE = 'magnus_hermes_dashboard_installation_id';
 const jwtSecret = resolveSessionSecret();
-const sessionSecretState = sessionSecretDiagnostics();
-if (sessionSecretState.legacyFallbackActive) {
-  recordHermesSecurityEvent({ type: 'legacy_session_secret', reason: `migration_deadline_${sessionSecretState.migrationDeadline}` });
-}
 validateDashboardEnvironment(process.env);
 const credentialState = dashboardCredentialDiagnostics();
 if (credentialState.warning) console.error(credentialState.warning);

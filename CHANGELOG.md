@@ -332,6 +332,12 @@ All notable changes to this project are documented in this file. The format is b
   palette and the keyboard shortcut reference are modal dialogs for assistive technology. The
   unreachable `/governor/share/<token>` page is gone (nothing links to it). Documentation now calls
   Hive Router Emberpath and points named login at OIDC providers such as Oathweave.
+- **Expired console credential fallbacks are gone.** The `JWT_SECRET` session fallback
+  (`ALLOW_LEGACY_SESSION_SECRET`) and the `DASHBOARD_LOGIN_USERNAME`/`DASHBOARD_LOGIN_PASSWORD` login
+  stopped working on 2026-10-01; their code, settings and documentation are removed, and
+  `SESSION_SECRET` is now declared required. `JWT_SECRET` is still read to decrypt control-node
+  credentials stored before the dedicated key (re-encrypt them with
+  `apps/dashboard/scripts/migrate-control-node-credentials.mjs` before that fallback can go).
 - `docs/PUBLISHING.md` now describes how images are built, scanned and tagged (prereleases get their
   `X.Y.Z-<pre>` tag).
 - `x-api-secret` and shared node-secret checks cache the decrypted credential rotation state until the

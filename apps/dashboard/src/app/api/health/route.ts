@@ -41,7 +41,7 @@ export async function GET(): Promise<NextResponse> {
     dashboardCredentials = { error: error instanceof Error ? error.message : 'Dashboard credentials are misconfigured' };
   }
   const healthy = session.configured && credentialsValid;
-  const degraded = session.legacyFallbackActive || securityEvents.droppedEvents > 0;
+  const degraded = securityEvents.droppedEvents > 0;
   const status = healthy ? (degraded ? 'degraded' : 'healthy') : 'unhealthy';
   const body = await localAdministrator()
     ? { status, diagnostics: { sessionSecret: session, dashboardCredentials, hermesSecurityEvents: securityEvents } }

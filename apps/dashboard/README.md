@@ -119,10 +119,9 @@ Every variable the runtime configuration accepts. `magnus-ui env-schema` prints 
 | `DASHBOARD_PROXY_BODY_LIMIT_BYTES` | Optional | `1048576` | Maximum forwarded request body size in bytes, enforced while streaming. |
 | `API_SECRET` | Required | None | Server-side secret injected into Control API proxy requests. |
 | `CONTROL_NODE_CREDENTIAL_KEY` | Required | None | Dedicated key for encrypted control-node credentials at rest. |
-| `SESSION_SECRET` | Required; temporary legacy fallback is separately gated | None | Dedicated dashboard session signing secret. |
+| `SESSION_SECRET` | Required | None | Dedicated dashboard session signing secret. |
 | `SESSION_ISSUER` | Optional | `magnus-dashboard` | Required issuer claim for dashboard session tokens. |
 | `SESSION_AUDIENCE` | Optional | `magnus-dashboard-session` | Required audience claim for dashboard session tokens. |
-| `ALLOW_LEGACY_SESSION_SECRET` | Optional | `false` | Temporary opt-in for the expiring JWT_SECRET session fallback. |
 | `HERMES_SSH_AUTHORIZATIONS_FILE` | Required (default path shown) | `.magnus/hermes-ssh-authorizations.json` | Reviewed installation, node, address, and SSH host-key bindings. |
 | `DASHBOARD_PUBLIC_ORIGIN` | Required | None | Canonical browser origin allowed to open the Hermes WebSocket bridge. |
 | `HERMES_WEBSOCKET_ALLOWED_ORIGINS` | Optional | None | Comma-separated additional allowed Hermes WebSocket origins. |
@@ -134,8 +133,6 @@ Every variable the runtime configuration accepts. `magnus-ui env-schema` prints 
 | `LOCAL_SESSION_GENERATION` | Optional | None | Any value; changing it signs out every local console session (as changing the administrator credential does). |
 | `DASHBOARD_ADMIN_PASSWORD_HASH_B64` | Optional | None | Serializer-managed base64 form of the Argon2id verifier. |
 | `DASHBOARD_ADMIN_CREDENTIAL_METADATA_B64` | Optional | None | Versioned non-secret credential purpose, rotation, fleet-password, and fingerprint-separation evidence. |
-| `DASHBOARD_LOGIN_USERNAME` | Optional | None | Temporary two-phase migration source for the former dedicated dashboard login. |
-| `DASHBOARD_LOGIN_PASSWORD` | Optional | None | Temporary two-phase reusable secret; rejected when equal to fleet or bootstrap credentials. |
 | `DASHBOARD_TRUSTED_PROXIES` | Optional | None | Comma-separated reverse-proxy addresses or CIDR ranges whose X-Forwarded-For names the client for login throttling and audit. Unset: the socket peer. |
 | `REDIS_URL` | Optional | None | Durable dashboard authentication throttling and concurrency store. |
 | `REDIS_PREFIX` | Optional | `magnus-` | Namespace prefix for durable Redis authentication limiter keys. |
