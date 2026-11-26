@@ -234,6 +234,10 @@ All notable changes to this project are documented in this file. The format is b
   /agent-upgrades/runs` and `magnus-server agents upgrade` answer 503 `AGENT_UPGRADE_LOCK_UNAVAILABLE`
   instead of taking a lock only this process can see. A run whose lock renewals fail for two thirds of
   the lease, or whose lock another holder took, stops after its current nodes.
+- **Console-wide Content Security Policy.** Every console page now sends a policy that limits scripts,
+  connections, forms and frames to the console's own origin, forbids plugins and `<base>` changes, and
+  refuses framing by other sites. The embedded Hermes and router dashboards may be framed only by the
+  console itself.
 
 - **Agent file writes are bound to the directory they were checked against.** `/files/write`
   checked the parent directory by path and then reused the path, so a local account able to swap a
@@ -320,6 +324,20 @@ All notable changes to this project are documented in this file. The format is b
   backup checksums and the news-reporter prompt filter still fail closed.
 - **Skill entry points exit 2 on an unknown flag** (usage on stderr) instead of printing usage and
   exiting 0. The disk-cleaner manifest now says it reports and deletes nothing.
+- **The embedded router admin proxy is bounded.** `/api/hive-router/dashboard` read request and
+  response bodies without a limit and kept only the first `Set-Cookie`. It now applies
+  `DASHBOARD_PROXY_BODY_LIMIT_BYTES` to requests (413), stops at 16 MiB of router response (502) and
+  relays every cookie. It is deprecated: current Emberpath (formerly Hive Router) has no admin UI.
+- The console login page drops its unused MFA step and announces errors as an alert; the command
+  palette and the keyboard shortcut reference are modal dialogs for assistive technology. The
+  unreachable `/governor/share/<token>` page is gone (nothing links to it). Documentation now calls
+  Hive Router Emberpath and points named login at OIDC providers such as Oathweave.
+- **Expired console credential fallbacks are gone.** The `JWT_SECRET` session fallback
+  (`ALLOW_LEGACY_SESSION_SECRET`) and the `DASHBOARD_LOGIN_USERNAME`/`DASHBOARD_LOGIN_PASSWORD` login
+  stopped working on 2026-10-01; their code, settings and documentation are removed, and
+  `SESSION_SECRET` is now declared required. `JWT_SECRET` is still read to decrypt control-node
+  credentials stored before the dedicated key (re-encrypt them with
+  `apps/dashboard/scripts/migrate-control-node-credentials.mjs` before that fallback can go).
 - `docs/PUBLISHING.md` now describes how images are built, scanned and tagged (prereleases get their
   `X.Y.Z-<pre>` tag).
 - `x-api-secret` and shared node-secret checks cache the decrypted credential rotation state until the

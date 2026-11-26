@@ -72,8 +72,6 @@ describe('validateCredentials', () => {
   beforeEach(async () => {
     process.env['DASHBOARD_ADMIN_USERNAME'] = 'admin';
     process.env['DASHBOARD_ADMIN_PASSWORD_HASH'] = await hash('secret123', { type: argon2id });
-    delete process.env['DASHBOARD_LOGIN_USERNAME'];
-    delete process.env['DASHBOARD_LOGIN_PASSWORD'];
   });
 
   it('should return true for matching credentials', async () => {

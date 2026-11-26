@@ -16,7 +16,7 @@ import type { IntegrationFlags } from '@/lib/routes';
  */
 export function DashboardShell({ children, integrations }: { children: ReactNode; integrations: IntegrationFlags }): React.ReactElement {
   const pathname = usePathname();
-  const isAuthPage = pathname === '/login' || pathname.startsWith('/governor/share/');
+  const isAuthPage = pathname === '/login';
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Connect to fleet event bus SSE for real-time toast notifications

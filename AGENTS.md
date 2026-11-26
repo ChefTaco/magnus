@@ -36,9 +36,10 @@ applies to `CLAUDE.local.md`.
    environment variables or config files. It never ships personal defaults or fallback secret values.
    A required secret that is missing must fail fast. Generating a strong random secret on first
    install is fine.
-4. **Integrations stay optional.** Hive IAM, Hive Router, HiveMem, an external security console,
-   Hermes Agent and Codex are optional. When one is not configured, the feature is off and
-   everything else keeps working. Never hard-code their URLs.
+4. **Integrations stay optional.** Oathweave (or the retired Hive IAM), Emberpath (formerly Hive
+   Router), HiveMem, an external security console, Hermes Agent and Codex are optional. When one
+   is not configured, the feature is off and everything else keeps working. Never hard-code their
+   URLs.
 5. **Keep commit messages and PR text generic.** Describe what changed in the code. Don't mention
    private machines, private projects, customers, or internal program names.
 6. **Test fixtures use fake data only**, such as `example.com`, `alice@example.com`, and obviously

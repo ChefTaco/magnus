@@ -10,7 +10,7 @@ vi.mock('next/headers', () => ({ cookies: async () => ({ get: () => (mocks.cooki
 vi.mock('@/lib/auth', () => ({ verifySessionToken: mocks.verifySessionToken }));
 vi.mock('@/lib/auth-constants', () => ({
   COOKIE_NAME: 'magnus_session',
-  sessionSecretDiagnostics: () => ({ configured: true, legacyFallbackActive: false, source: 'SESSION_SECRET' }),
+  sessionSecretDiagnostics: () => ({ configured: true, source: 'dedicated' }),
 }));
 vi.mock('../../../../runtime-hermes-security-event-state.mjs', () => ({ hermesSecurityEventDiagnostics: () => ({ droppedEvents: 0 }) }));
 vi.mock('../../../../runtime-dashboard-credentials.mjs', () => ({ dashboardCredentialDiagnostics: mocks.credentials }));
@@ -35,7 +35,7 @@ describe('GET /api/health', () => {
     mocks.verifySessionToken.mockResolvedValue({ username: 'admin' });
     const body = await (await GET()).json();
     expect(body.diagnostics.dashboardCredentials).toMatchObject({ loginSource: 'dashboard-admin-password', sshConfigured: true });
-    expect(body.diagnostics.sessionSecret).toMatchObject({ source: 'SESSION_SECRET' });
+    expect(body.diagnostics.sessionSecret).toMatchObject({ source: 'dedicated' });
   });
 
   it('answers only the status to viewers, operators and named (Hive) sessions', async () => {

@@ -73,14 +73,19 @@ The console always has one local administrator: `DASHBOARD_ADMIN_USERNAME` with 
 `DASHBOARD_ADMIN_PASSWORD_HASH`. A successful sign-in sets a signed session cookie, and
 `src/proxy.ts` requires that cookie on every non-public route. Sign-in attempts are throttled in
 Redis by source, by username and by both together, with progressive delays and a global
-concurrency limit. The TLS front end ignores inbound forwarding headers and takes the client
-address from the socket, so the throttle cannot be bypassed with a spoofed header.
+concurrency limit; past the per-username budget only a wrong password is refused, so anonymous
+attempts cannot lock the administrator out. The TLS front end ignores inbound forwarding headers and
+takes the client address from the socket, or, for a reverse proxy listed in
+`DASHBOARD_TRUSTED_PROXIES`, from the right-most untrusted `X-Forwarded-For` hop, so the throttle
+cannot be bypassed with a spoofed header. State-changing API requests must come from the console's own
+origin (`Origin` or `Sec-Fetch-Site`), and every page carries a same-origin Content Security Policy.
 
-Named users can sign in through Hive IAM (OIDC) when the `HIVE_OAUTH_*` variables are set. Hive IAM
-remains the identity provider; Magnus does not administer it. The dashboard uses the authorization
-code flow with S256 PKCE on every sign-in. Register its client in Hive IAM either as a public client
+Named users can sign in through an OIDC provider such as Oathweave (formerly Hive IAM) when the
+`HIVE_OAUTH_*` variables are set. The provider remains the identity provider; Magnus does not
+administer it. The dashboard uses the authorization code flow with S256 PKCE on every sign-in.
+Register its client with the provider either as a public client
 (no secret; leave `HIVE_OAUTH_CLIENT_SECRET` unset) or as a confidential client, in which case
-`HIVE_OAUTH_CLIENT_SECRET` must hold its secret: Hive IAM refuses a confidential client's code
+`HIVE_OAUTH_CLIENT_SECRET` must hold its secret: the provider refuses a confidential client's code
 exchange without it (`invalid_client`), and the dashboard logs that reason when it happens.
 
 ### Terminals and SSH
@@ -137,7 +142,7 @@ and SSH execution logs redact values that look like secrets. Set `OTEL_EXPORTER_
 export traces over OTLP HTTP. See [observability](OBSERVABILITY.md).
 
 Authentication uses local users with server-issued JWTs by default. When `IAM_CORE_URL`,
-`IAM_TOKEN_ISSUER` and `IAM_TOKEN_AUDIENCE` are set, RS256 access tokens issued by Hive IAM are
+`IAM_TOKEN_ISSUER` and `IAM_TOKEN_AUDIENCE` are set, RS256 access tokens issued by the retired Hive IAM are
 accepted instead. Services that call the server (a collector, a Hermes plugin, an approval
 bridge) get their own scoped credentials, which the server stores only as SHA-256 digests.
 

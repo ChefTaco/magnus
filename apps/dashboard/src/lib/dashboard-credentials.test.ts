@@ -47,19 +47,9 @@ describe('dashboard credential migration', () => {
     })).toMatchObject({ source: 'dashboard-admin-password' });
   });
 
-  it('rejects a legacy dedicated password reused by fleet bootstrap', () => {
-    expect(() => resolveDashboardLoginCredentials({
-      DASHBOARD_LOGIN_USERNAME: 'admin',
-      DASHBOARD_LOGIN_PASSWORD: 'same-secret',
-      BOOTSTRAP_SSH_PASSWORD: 'same-secret',
-    }, new Date('2026-08-06T00:00:00Z'))).toThrow(/must not equal BOOTSTRAP_SSH_PASSWORD/);
-  });
-
-  it('expires legacy login credentials at the exact migration deadline', () => {
-    const env = { DASHBOARD_LOGIN_USERNAME: 'legacy-admin', DASHBOARD_LOGIN_PASSWORD: 'dedicated-legacy-password' };
-    expect(resolveDashboardLoginCredentials(env, new Date('2026-09-30T23:59:59Z')))
-      .toMatchObject({ source: 'legacy-dashboard-login' });
-    expect(() => resolveDashboardLoginCredentials(env, new Date('2026-10-01T00:00:00Z'))).toThrow('have expired');
+  it('no longer reads the expired DASHBOARD_LOGIN_* credentials', () => {
+    expect(() => resolveDashboardLoginCredentials({ DASHBOARD_LOGIN_USERNAME: 'legacy-admin', DASHBOARD_LOGIN_PASSWORD: 'dedicated-legacy-password' }))
+      .toThrow('Dedicated dashboard administrator credentials are required');
   });
 
   it('uses a dedicated proxy identity and key', () => {
@@ -111,19 +101,18 @@ describe('canonical dotenv serialization', () => {
     ` both'"\\# `,
   ])('round-trips %j through dotenv', (value) => {
     const serialized = upsertDotenvValues('UNCHANGED=present\n', {
-      DASHBOARD_LOGIN_USERNAME: value,
-      DASHBOARD_LOGIN_PASSWORD: value,
+      DASHBOARD_ADMIN_USERNAME: value,
+      DASHBOARD_ADMIN_PASSWORD: value,
     });
     const parsed = dotenv.parse(serialized);
-    // This serialization fixture intentionally uses the former login names.
-    const resolved = resolveDashboardLoginCredentials(parsed, new Date('2026-09-30T23:59:59Z'));
+    const resolved = resolveDashboardLoginCredentials(parsed);
     expect(resolved.username).toBe(value);
     expect(resolved.password).toBe(value);
     expect(parsed.UNCHANGED).toBe('present');
   });
 
   it('rejects newline and NUL injection', () => {
-    expect(() => upsertDotenvValues('', { DASHBOARD_LOGIN_PASSWORD: 'first\nSECOND=bad' })).toThrow();
-    expect(() => upsertDotenvValues('', { DASHBOARD_LOGIN_PASSWORD: 'bad\0value' })).toThrow();
+    expect(() => upsertDotenvValues('', { DASHBOARD_ADMIN_PASSWORD: 'first\nSECOND=bad' })).toThrow();
+    expect(() => upsertDotenvValues('', { DASHBOARD_ADMIN_PASSWORD: 'bad\0value' })).toThrow();
   });
 });

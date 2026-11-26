@@ -18,6 +18,24 @@ const MAGNUS_VERSION = (JSON.parse(readFileSync(resolve(__dirname, 'package.json
 // Load .env so NEXT_PUBLIC_* vars are available to the client bundle
 config({ path: resolve(__dirname, '.env') });
 
+// Console-wide Content Security Policy. Next.js inlines its bootstrap scripts, so scripts need
+// 'unsafe-inline' (and React's development build needs eval); everything else is locked to this
+// origin: no plugins, no foreign connections, forms or frames, and no framing by other sites.
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  `script-src 'self' 'unsafe-inline'${process.env['NODE_ENV'] === 'production' ? '' : " 'unsafe-eval'"}`,
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "connect-src 'self'",
+  "frame-src 'self'",
+  "worker-src 'self' blob:",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join('; ');
+
 const nextConfig: NextConfig = {
   // Standalone output bundles everything for deployment — no npm install needed on target
   output: 'standalone',
@@ -42,6 +60,7 @@ const nextConfig: NextConfig = {
         // Hive Router dashboard proxy — allow same-origin iframe embedding
         source: '/api/hive-router/dashboard',
         headers: [
+          { key: 'Content-Security-Policy', value: "object-src 'none'; base-uri 'self'; frame-ancestors 'self'" },
           { key: 'X-Content-Type-Options', value: 'nosniff' },
           { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
           { key: 'X-XSS-Protection', value: '1; mode=block' },
@@ -53,6 +72,7 @@ const nextConfig: NextConfig = {
       {
         source: '/api/hive-router/dashboard/:path+',
         headers: [
+          { key: 'Content-Security-Policy', value: "object-src 'none'; base-uri 'self'; frame-ancestors 'self'" },
           { key: 'X-Content-Type-Options', value: 'nosniff' },
           { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
           { key: 'X-XSS-Protection', value: '1; mode=block' },
@@ -66,6 +86,7 @@ const nextConfig: NextConfig = {
         // Hermes dashboard proxy — allow same-origin iframe embedding
         source: '/api/hermes/dashboard',
         headers: [
+          { key: 'Content-Security-Policy', value: "object-src 'none'; base-uri 'self'; frame-ancestors 'self'" },
           { key: 'X-Content-Type-Options', value: 'nosniff' },
           { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
           { key: 'X-XSS-Protection', value: '1; mode=block' },
@@ -77,6 +98,7 @@ const nextConfig: NextConfig = {
       {
         source: '/api/hermes/dashboard/:path+',
         headers: [
+          { key: 'Content-Security-Policy', value: "object-src 'none'; base-uri 'self'; frame-ancestors 'self'" },
           { key: 'X-Content-Type-Options', value: 'nosniff' },
           { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
           { key: 'X-XSS-Protection', value: '1; mode=block' },
@@ -88,6 +110,7 @@ const nextConfig: NextConfig = {
       {
         source: '/((?!api/hive-router/dashboard|api/hermes/dashboard).*)',
         headers: [
+          { key: 'Content-Security-Policy', value: CONTENT_SECURITY_POLICY },
           { key: 'X-Content-Type-Options', value: 'nosniff' },
           { key: 'X-Frame-Options', value: 'DENY' },
           { key: 'X-XSS-Protection', value: '1; mode=block' },
