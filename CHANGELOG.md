@@ -7,8 +7,33 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Upgrade notes
+
+- **Ardent 3.4.0 needs this Magnus on managed hosts.** Ardent 3.4.0 refuses a management token sent
+  without the `Bearer` scheme and stops naming Magnus on its Agent Card. Upgrade Magnus (server, then
+  node agents) together with or after Ardent 3.4.0 on every host where Magnus manages Ardent: the node
+  agent always sends `Authorization: Bearer <token>`, New Agent sets `a2a.provider`, and the Ardent 3.4.0
+  operations below need node agents at `studio` level 5. Upgrade the server before the agents, so a
+  new agent's `capabilities.task_filters` is never reported by a server that drops the filters.
+- **`execution.max_parallel_tasks` 5 to 16 now takes effect.** Ardent before 3.4.0 ran at most 4 tasks at
+  once whatever a profile set; 3.4.0 runs what the profile sets (1 to 16). A profile that sets more than
+  4 runs more tasks at once after the Ardent upgrade; set 4 to keep the previous concurrency.
+- **Agent Card provider.** A profile New Agent (or a definition install) creates on Ardent 3.4.0 gets
+  `a2a.provider: { organization: Magnus, url: https://github.com/ChefTaco/magnus }`, as every earlier
+  Ardent reported. Existing profiles are not changed and report Ardent after the Ardent upgrade; set
+  `a2a.provider` in their configuration to keep Magnus.
+
 ### Changed
 
+- **Ardent 3.4.0.** The node agent and New Agent stage `@hivemagnus/ardent` 3.4.0 (pins in the root and
+  agent `package.json` and the agent `npm-shrinkwrap.json`), and the generated Ardent client types follow
+  its management API (task pages and filters, metrics, credential reload, HiveCommon health bodies,
+  `providers?probe=codex`). The native-snapshot journal module is Ardent 3.4.0's (policy version 1
+  still): a bound outbound A2A call is finished, a `ready` or `reconciling` recovery row counts only
+  while its task runs, and Mattermost history an earlier Ardent seeded is not work.
+- **Context adoption overlays Emberfold 0.4.0**, the engine Ardent 3.4.0 depends on (it was 0.1.0); the
+  context release reports `engine_version: 0.4.0`, and `ArdentContextReleaseSchema` accepts both.
+- **Node agent `studio` level 5** and `capabilities.task_filters: 1` in the Ardent installation report.
 - **Ardent 3.3.0.** The node agent and New Agent stage `@hivemagnus/ardent` 3.3.0 (pins in the root and
   agent `package.json` and the agent `npm-shrinkwrap.json`). The generated Ardent client types gain the
   optional `task_states` and `jobs.last_tick_error` fields of `GET /api/v1/status`; no route or action
@@ -22,6 +47,18 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Added
 
+- **Ardent 3.4.0 operations through Magnus** (node agent `studio` 5, Ardent 3.4.0; see
+  [docs/ARDENT.md](docs/ARDENT.md#ardent-340-operations-studio-5)):
+  - `GET …/profiles/:name/tasks` passes `after` (the previous page's `next`), `limit` and the task
+    filters `state`, `context` (now also `peer` and `scheduled`), `caller`, `since` and `until` on, each
+    checked first; a filter on an older node agent answers 409 `AGENT_UPGRADE_REQUIRED` instead of an
+    unfiltered list.
+  - `GET …/profiles/:name/metrics` (ADMIN people) answers the profile's OpenMetrics text.
+  - `peer-credential-reload` (ADMIN people) has a running profile re-read its A2A peer tokens without a
+    restart, with an optional `overlap_seconds` for replaced inbound tokens.
+  - `management-credential-rotate` (ADMIN people) rotates a running profile's management token without
+    a restart: the node agent writes a new random token into the profile's `.env` and switches the
+    gateway to it with the token in use, and writes the previous one back when Ardent refuses.
 - **Server-side AI scheduler.** `MAGNUS_AI_SCHEDULER_ENABLED=true` runs due AI scheduled operations every
   minute from the server (off by default; `POST /ai-schedules/execute-due` still works). Every caller
   claims an occurrence with a compare-and-set on `nextRunAt` before it runs, so two concurrent calls no

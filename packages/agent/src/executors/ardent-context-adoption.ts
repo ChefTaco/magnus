@@ -10,7 +10,7 @@ import { managedExecution } from '../security/managed-context.js';
 const sha = z.string().regex(/^[a-f0-9]{64}$/);
 const hash = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex');
 export const contextAdoptionInput = ArdentContextAdoptionInputSchema;
-const bundleSchema = z.object({ schema_version: z.union([z.literal(1), z.literal(2)]), engine_version: z.literal('0.1.0'), validator_version: z.literal('4.6.7'),
+const bundleSchema = z.object({ schema_version: z.union([z.literal(1), z.literal(2)]), engine_version: z.literal('0.4.0'), validator_version: z.literal('4.6.7'),
   files: z.array(z.object({ path: z.string().regex(/^(?:ardent\/(?:context|context-checkpoints|context-maintenance|sqlite)\.js|sqlite\/(?:package\.json|LICENSE|dist\/(?:index\.(?:mjs|cjs)|chunk-[A-Z0-9]+\.mjs)|prebuilds\/linux-(?:x64|arm64)\/@photostructure\+sqlite\.glibc\.node)|sqlite-loader\/(?:package\.json|LICENSE|index\.js|node-gyp-build\.js|optional\.js)|emberfold\/(?:package\.json|LICENSE|NOTICE|README\.md|dist\/[A-Za-z0-9._-]+)|zod\/(?:package\.json|index\.js|LICENSE|v4\/[A-Za-z0-9_./-]+\.js))$/),
     sha256: sha, content: z.string().max(4 * 1024 * 1024) }).strict()).min(10).max(1000) }).strict();
 export type ContextBundle = z.infer<typeof bundleSchema>;

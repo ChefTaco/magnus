@@ -65,7 +65,7 @@ await walk(join(zod, 'v4'), 'zod/v4/', path => path.endsWith('.js'));
 files.sort((first, second) => first.path.localeCompare(second.path, 'en'));
 const manifest = { schema_version: hasStorageBoundary ? 2 : 1, engine_version: JSON.parse(await readFile(join(engine, 'package.json'))).version,
   validator_version: JSON.parse(await readFile(join(zod, 'package.json'))).version, files };
-if (manifest.engine_version !== '0.1.0' || manifest.validator_version !== '4.6.7') throw new Error('Context runtime dependency pin differs');
+if (manifest.engine_version !== '0.4.0' || manifest.validator_version !== '4.6.7') throw new Error('Context runtime dependency pin differs');
 if (files.reduce((total, file) => total + Buffer.from(file.content, 'base64').length, 0) > 12 * 1024 * 1024) throw new Error('Context payload exceeds the reviewed size bound');
 const bytes = JSON.stringify(manifest);
 await mkdir(join(import.meta.dirname, 'dist'), { recursive: true });

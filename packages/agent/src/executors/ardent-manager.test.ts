@@ -438,15 +438,17 @@ describe('accepted Ardent package names', () => {
 
 describe('Ardent Studio bridge', () => {
   const taskId = '00000000-0000-4000-8000-0000000000aa';
-  async function fixtureProfile(handler: (request: import('node:http').IncomingMessage, response: import('node:http').ServerResponse) => void) {
-    const requests: Array<{ url: string; method: string; body: string; lastEventId?: string }> = [];
+  async function fixtureProfile(handler: (request: import('node:http').IncomingMessage, response: import('node:http').ServerResponse) => void,
+    authorized: (header: string | undefined) => boolean = header => header === 'Bearer private-fixture-token') {
+    const requests: Array<{ url: string; method: string; body: string; lastEventId?: string; authorization?: string }> = [];
     const server = createServer((request, response) => {
       let body = '';
       request.on('data', chunk => { body += String(chunk); });
       request.on('end', () => {
         requests.push({ url: request.url ?? '', method: request.method ?? '', body,
-          ...(typeof request.headers['last-event-id'] === 'string' ? { lastEventId: request.headers['last-event-id'] } : {}) });
-        if (request.headers.authorization !== 'Bearer private-fixture-token') { response.writeHead(401).end('{}'); return; }
+          ...(typeof request.headers['last-event-id'] === 'string' ? { lastEventId: request.headers['last-event-id'] } : {}),
+          ...(request.headers.authorization !== undefined ? { authorization: request.headers.authorization } : {}) });
+        if (!authorized(request.headers.authorization)) { response.writeHead(401).end('{}'); return; }
         if (request.url === '/api/v1/profile') { response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ profile: 'example', product: 'Magnus Ardent' })); return; }
         handler(request, response);
       });
@@ -498,7 +500,7 @@ describe('Ardent Studio bridge', () => {
     const home = await mkdtemp(join(tmpdir(), 'magnus-ardent-capability-'));
     dirs.push(home);
     const state = await readArdentState({ owner: 'fixture', home, root: join(home, '.ardent'), install: join(home, 'install') }) as { capabilities?: { studio?: number } };
-    expect(state.capabilities).toEqual({ studio: 4, recovery: 1, lineage: 1, artifact_transfer: 2 });
+    expect(state.capabilities).toEqual({ studio: 5, recovery: 1, lineage: 1, artifact_transfer: 2, task_filters: 1 });
   });
 
   it('opens sessions and submits session-bound tasks with bounded input', async () => {
@@ -604,6 +606,106 @@ describe('Ardent Studio bridge', () => {
     expect((await routes.request('/action', action({ profile: 'example', action: 'hivemem-credential-reload', body: { token: 'a.b.c' } }))).status).toBe(400);
     supported = false;
     expect((await routes.request('/action', action({ profile: 'example', action: 'hivemem-credential-reload' }))).status).toBe(404);
+  });
+
+  it('reads metrics as OpenMetrics text and passes task list filters and the cursor only to the task list', async () => {
+    const { routes, requests } = await fixtureProfile((request, response) => {
+      if (request.url === '/api/v1/metrics') {
+        response.setHeader('Content-Type', 'application/openmetrics-text; version=1.0.0; charset=utf-8');
+        response.end('# TYPE ardent_tasks gauge\nardent_tasks{state="running"} 1\n# EOF\n');
+        return;
+      }
+      response.setHeader('Content-Type', 'application/json');
+      if (request.url?.startsWith('/api/v1/tasks')) response.end(JSON.stringify({ tasks: [], next: 'WzEsImEiXQ' }));
+      else if (request.url?.startsWith('/api/v1/sessions')) response.end(JSON.stringify({ sessions: [] }));
+      else response.writeHead(404).end('{}');
+    });
+    const metrics = await routes.request('/profiles/example/api/metrics');
+    expect(metrics.status).toBe(200);
+    expect(metrics.headers.get('content-type')).toBe('application/openmetrics-text; version=1.0.0; charset=utf-8');
+    expect(await metrics.text()).toContain('# EOF');
+    const filtered = await routes.request('/profiles/example/api/tasks?state=running,queued&context=peer&caller=telegram:bot:42&since=1700000000000&until=2026-11-26T00:00:00Z&after=WzEsImEiXQ&limit=10');
+    expect(filtered.status).toBe(200);
+    expect(await filtered.json()).toEqual({ tasks: [], next: 'WzEsImEiXQ' });
+    expect((await routes.request('/profiles/example/api/tasks?context=scheduled')).status).toBe(200);
+    // Bad values are refused before Ardent sees them; on other reads the task filters are not passed on.
+    expect((await routes.request('/profiles/example/api/tasks?state=Running')).status).toBe(400);
+    expect((await routes.request('/profiles/example/api/tasks?since=yesterday')).status).toBe(400);
+    expect((await routes.request('/profiles/example/api/tasks?caller=a%20b')).status).toBe(400);
+    expect((await routes.request('/profiles/example/api/sessions?state=running&caller=x')).status).toBe(200);
+    expect((await routes.request('/profiles/example/api/sessions?context=scheduled')).status).toBe(400);
+    expect(requests.filter(item => item.url !== '/api/v1/profile').map(item => item.url)).toEqual([
+      '/api/v1/metrics',
+      '/api/v1/tasks?after=WzEsImEiXQ&limit=10&context=peer&state=running%2Cqueued&caller=telegram%3Abot%3A42&since=1700000000000&until=2026-11-26T00%3A00%3A00Z',
+      '/api/v1/tasks?context=scheduled', '/api/v1/sessions',
+    ]);
+    // Every request to the profile carries the Bearer scheme Ardent 3.4.0 requires.
+    expect(requests.every(item => item.authorization === 'Bearer private-fixture-token')).toBe(true);
+  });
+
+  it('asks Ardent to reload the A2A peer credentials with a bounded overlap', async () => {
+    let supported = true;
+    const { routes, requests } = await fixtureProfile((request, response) => {
+      response.setHeader('Content-Type', 'application/json');
+      if (supported && request.method === 'POST' && request.url === '/api/v1/credentials/peers/reload')
+        response.end(JSON.stringify({ reloaded: true, peers: 2, changed: ['peer-a'], service_environment: [], previous_valid_until: '2026-11-26T12:05:00.000Z' }));
+      else response.writeHead(404).end(JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Not found' } }));
+    });
+    const run = async (body?: unknown) => routes.request('/action', action({ profile: 'example', action: 'peer-credential-reload', ...(body === undefined ? {} : { body }) }));
+    const reloaded = await run({ overlap_seconds: 60 });
+    expect(reloaded.status).toBe(200);
+    expect(await reloaded.json()).toMatchObject({ reloaded: true, changed: ['peer-a'] });
+    expect(requests.find(item => item.url === '/api/v1/credentials/peers/reload')?.body).toBe('{"overlap_seconds":60}');
+    expect((await run({ overlap_seconds: 3601 })).status).toBe(400);
+    expect((await run({ token: 'fixture' })).status).toBe(400);
+    supported = false;
+    expect((await run()).status).toBe(404);
+  });
+
+  it('rotates the management token, switching Ardent with the token in use, and writes the old one back when Ardent refuses', async () => {
+    vi.spyOn(process, 'getuid').mockReturnValue(0);
+    try {
+      let current = 'private-fixture-token';
+      let refuse = false;
+      let previous: string | undefined;
+      const { routes, requests, profile } = await fixtureProfile((request, response) => {
+        response.setHeader('Content-Type', 'application/json');
+        if (request.method !== 'POST' || request.url !== '/api/v1/credentials/management/reload') { response.writeHead(404).end('{}'); return; }
+        if (refuse) { response.writeHead(409).end(JSON.stringify({ error: { code: 'CONFLICT', message: 'ARDENT_API_TOKEN is set by the service environment' } })); return; }
+        // Like Ardent: re-read the profile environment file, keep the replaced token for the overlap.
+        void readFile(join(profile, '.env'), 'utf8').then(text => {
+          const next = /^ARDENT_API_TOKEN=(.*)$/m.exec(text)?.[1] ?? '';
+          previous = current; current = next;
+          response.end(JSON.stringify({ reloaded: true, token_env: 'ARDENT_API_TOKEN', changed: true, previous_valid_until: '2026-11-26T12:05:00.000Z' }));
+        });
+      }, header => header === `Bearer ${current}` || (previous !== undefined && header === `Bearer ${previous}`));
+      const rotated = await routes.request('/action', action({ profile: 'example', action: 'management-credential-rotate', body: { overlap_seconds: 300 } }));
+      expect(rotated.status).toBe(200);
+      const answer = await rotated.text();
+      expect(JSON.parse(answer)).toEqual({ profile: 'example', tokenEnv: 'ARDENT_API_TOKEN', rotated: true, changed: true, previousValidUntil: '2026-11-26T12:05:00.000Z' });
+      const env = await readFile(join(profile, '.env'), 'utf8');
+      const written = /^ARDENT_API_TOKEN=(.*)$/m.exec(env)?.[1] ?? '';
+      expect(written).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(written).toBe(current);
+      expect(answer).not.toContain(written);
+      expect((await lstat(join(profile, '.env'))).mode & 0o777).toBe(0o600);
+      // The reload is authenticated with the token Ardent still used.
+      const reload = requests.find(item => item.url === '/api/v1/credentials/management/reload');
+      expect(reload?.authorization).toBe('Bearer private-fixture-token');
+      expect(reload?.body).toBe('{"overlap_seconds":300}');
+      // Ardent refuses: it keeps its token, and so does the profile file.
+      refuse = true; previous = undefined;
+      const refused = await routes.request('/action', action({ profile: 'example', action: 'management-credential-rotate' }));
+      expect(refused.status).toBe(422);
+      expect(JSON.stringify(await refused.json())).toContain('HTTP 409');
+      expect(await readFile(join(profile, '.env'), 'utf8')).toBe(env);
+      // A token the agent's own environment supplies is not rotated through the file.
+      vi.stubEnv('ARDENT_API_TOKEN', current);
+      const fromEnvironment = await routes.request('/action', action({ profile: 'example', action: 'management-credential-rotate' }));
+      expect(fromEnvironment.status).toBe(422);
+      expect(JSON.stringify(await fromEnvironment.json())).toContain("node agent's environment");
+      expect((await routes.request('/action', action({ profile: 'example', action: 'management-credential-rotate', body: { token: 'x' } }))).status).toBe(400);
+    } finally { vi.restoreAllMocks(); }
   });
 
   it('submits missions and previews, pauses and resumes tasks and records development notes', async () => {

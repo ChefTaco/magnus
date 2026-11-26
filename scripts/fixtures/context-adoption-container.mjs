@@ -126,7 +126,7 @@ try {
   const adopted = await invoke('context-adopt');
   assert.equal(adopted.state, 'active'); assert.equal(adopted.rollback_verified, true);
   assert.equal(await readFile(join(packagePath, 'dist/extension-fixture.js'), 'utf8'), originalExtension);
-  assert.equal(JSON.parse(await readFile(join(packagePath, 'package.json'), 'utf8')).dependencies['@hivemagnus/emberfold'], '0.1.0');
+  assert.equal(JSON.parse(await readFile(join(packagePath, 'package.json'), 'utf8')).dependencies['@hivemagnus/emberfold'], '0.4.0');
   assert.equal(await health(), true);
   const rolledBack = await invoke('context-rollback');
   assert.equal(rolledBack.state, 'rolled-back');

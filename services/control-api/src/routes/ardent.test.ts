@@ -3,12 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppVariables, AuthTokenPayload } from '../types/index.js';
 
 const mocks = vi.hoisted(() => ({ stream: vi.fn(), studio: vi.fn(), action: vi.fn(), audit: vi.fn(), read: vi.fn(), block: vi.fn(), reconcile: vi.fn(),
-  capability: vi.fn(), studioAt: vi.fn(), execution: vi.fn() }));
+  capability: vi.fn(), studioAt: vi.fn(), execution: vi.fn(), text: vi.fn() }));
 vi.mock('../services/ardent-command-owner.js', () => ({ ardentOwnerBlock: mocks.block, reconcileArdentCommandOwner: mocks.reconcile }));
 vi.mock('../services/ardent-service.js', () => ({
   streamArdentProfileResource: mocks.stream, requireArdentStudioAgent: mocks.studio, performArdentAction: mocks.action,
   getArdentContextAdoption: vi.fn(), getArdentContextRelease: vi.fn(), getArdentInstallation: vi.fn(),
-  getArdentProfileResource: mocks.read, listArdentInstallations: vi.fn(), getArdentSkillReceipts: vi.fn(),
+  getArdentProfileResource: mocks.read, getArdentProfileText: mocks.text, listArdentInstallations: vi.fn(), getArdentSkillReceipts: vi.fn(),
   requireArdentProfileCapability: mocks.capability, ardentStudioAgentAt: mocks.studioAt, ardentAcceptsExecution: mocks.execution,
 }));
 vi.mock('../services/audit-service.js', () => ({ logAuditEvent: mocks.audit }));
@@ -430,5 +430,91 @@ describe('Ardent 3.2.0 runtime contracts', () => {
     mocks.action.mockResolvedValue({ installed: true, version: '3.2.0', changed: true });
     expect((await post({ action: 'package-install', body: { anything: true } })).status).toBe(200);
     expect(mocks.action).toHaveBeenLastCalledWith('node-1', 'example', 'package-install', undefined, { node_id: 'node-1' });
+  });
+});
+
+describe('Ardent 3.4.0 operations', () => {
+  const profilePath = '/ardent/installations/node-1/profiles/example';
+  const admin = { 'x-test-role': 'ADMIN' };
+  const post = (body: unknown, role = 'ADMIN') => app.request(`${profilePath}/action`, { method: 'POST', headers: { 'x-test-role': role, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+
+  it('passes task list filters and the cursor on only from a studio 5 agent, and checks them first', async () => {
+    mocks.read.mockResolvedValue({ tasks: [], next: 'WzEsImEiXQ' });
+    const filtered = await app.request(`${profilePath}/tasks?state=failed,unknown&context=scheduled&caller=peer-a&since=1700000000000&until=2026-11-26T00:00:00Z&after=WzEsImEiXQ&limit=20&ignored=1`, { headers: admin });
+    expect(filtered.status).toBe(200);
+    expect((await filtered.json()).data).toEqual({ tasks: [], next: 'WzEsImEiXQ' });
+    expect(mocks.read).toHaveBeenLastCalledWith('node-1', 'example', 'tasks', { after: 'WzEsImEiXQ', limit: '20', context: 'scheduled', state: 'failed,unknown',
+      caller: 'peer-a', since: '1700000000000', until: '2026-11-26T00:00:00Z' });
+    expect(mocks.studio).toHaveBeenCalledWith('node-1', 5);
+    // Without filters (and with the contexts older agents know) the task list needs nothing new.
+    mocks.studio.mockClear();
+    expect((await app.request(`${profilePath}/tasks?limit=5&after=WzEsImEiXQ`, { headers: admin })).status).toBe(200);
+    expect(mocks.studio).not.toHaveBeenCalled();
+    await app.request(`${profilePath}/tasks?context=mission`, { headers: admin });
+    expect(mocks.studio.mock.calls).toEqual([['node-1', 2]]);
+    // Filters are only for the task list, and bad values never reach the node.
+    mocks.read.mockClear();
+    expect((await app.request(`${profilePath}/sessions?state=running`, { headers: admin })).status).toBe(200);
+    expect(mocks.read).toHaveBeenLastCalledWith('node-1', 'example', 'sessions', {});
+    for (const query of ['state=Running', 'since=yesterday', 'until=1e9', 'caller=a%20b', 'context=team'])
+      expect((await app.request(`${profilePath}/tasks?${query}`, { headers: admin })).status, query).toBe(400);
+    expect((await app.request(`${profilePath}/sessions?context=peer`, { headers: admin })).status).toBe(400);
+    const { HttpError } = await import('../middleware/error-handler.js');
+    mocks.studio.mockRejectedValue(new HttpError(409, 'AGENT_UPGRADE_REQUIRED', 'Upgrade the Magnus agent on node-1'));
+    expect((await app.request(`${profilePath}/tasks?state=running`, { headers: admin })).status).toBe(409);
+  });
+
+  it('answers the metrics read as OpenMetrics text for ADMIN people on a studio 5 agent', async () => {
+    mocks.text.mockResolvedValue({ contentType: 'application/openmetrics-text; version=1.0.0; charset=utf-8', text: 'ardent_tasks{state="running"} 1\n# EOF\n' });
+    const metrics = await app.request(`${profilePath}/metrics`, { headers: admin });
+    expect(metrics.status).toBe(200);
+    expect(metrics.headers.get('content-type')).toBe('application/openmetrics-text; version=1.0.0; charset=utf-8');
+    expect(metrics.headers.get('cache-control')).toBe('no-store');
+    expect(await metrics.text()).toBe('ardent_tasks{state="running"} 1\n# EOF\n');
+    expect(mocks.studio).toHaveBeenCalledWith('node-1', 5);
+    expect(mocks.read).not.toHaveBeenCalled();
+    // Any other media type is passed on as plain text, never as HTML.
+    mocks.text.mockResolvedValue({ contentType: 'text/html', text: '<b>x</b>' });
+    expect((await app.request(`${profilePath}/metrics`, { headers: admin })).headers.get('content-type')).toBe('text/plain; charset=utf-8');
+    const { HTTPError } = await import('ky');
+    mocks.text.mockRejectedValue(new HTTPError(new Response('{}', { status: 404 }), new Request('http://192.0.2.1/'), {} as never));
+    const old = await app.request(`${profilePath}/metrics`, { headers: admin });
+    expect(old.status).toBe(404);
+    expect((await old.json()).error.message).toContain('3.4.0');
+    expect((await app.request(`${profilePath}/metrics`, { headers: { 'x-test-role': 'OPERATOR' } })).status).toBe(403);
+  });
+
+  it('reloads peer credentials and rotates the management token for ADMIN people on a studio 5 agent', async () => {
+    mocks.action.mockResolvedValue({ reloaded: true, peers: 1, changed: ['peer-a'], service_environment: [], previous_valid_until: null });
+    expect((await post({ action: 'peer-credential-reload', body: { overlap_seconds: 120 } })).status).toBe(200);
+    expect(mocks.action).toHaveBeenLastCalledWith('node-1', 'example', 'peer-credential-reload', undefined, { overlap_seconds: 120 });
+    expect(mocks.studio).toHaveBeenLastCalledWith('node-1', 5);
+    mocks.action.mockResolvedValue({ profile: 'example', tokenEnv: 'ARDENT_API_TOKEN', rotated: true, changed: true, previousValidUntil: null });
+    expect((await post({ action: 'management-credential-rotate' })).status).toBe(200);
+    expect(mocks.audit).toHaveBeenLastCalledWith(expect.objectContaining({ action: 'ardent.management-credential-rotate' }));
+    for (const body of [{ action: 'peer-credential-reload', body: { overlap_seconds: 3601 } }, { action: 'peer-credential-reload', body: { token: 'x' } },
+      { action: 'management-credential-rotate', target: 'ARDENT_API_TOKEN' }]) {
+      mocks.action.mockClear();
+      expect((await post(body)).status, JSON.stringify(body)).toBe(400);
+      expect(mocks.action).not.toHaveBeenCalled();
+    }
+    expect((await post({ action: 'peer-credential-reload' }, 'OPERATOR')).status).toBe(403);
+  });
+
+  it('passes on Ardent\'s credential refusals with their meaning', async () => {
+    const { AgentResponseError } = await import('../sdk/node-api-client.js');
+    mocks.action.mockRejectedValue(new AgentResponseError(404, { code: 'NOT_FOUND', message: 'Not found' }));
+    const old = await post({ action: 'peer-credential-reload' });
+    expect(old.status).toBe(404);
+    expect((await old.json()).error.message).toContain('3.4.0');
+    mocks.action.mockRejectedValue(new AgentResponseError(409, { code: 'CONFLICT', message: 'The A2A surface is not running' }));
+    expect(await (await post({ action: 'peer-credential-reload' })).json()).toMatchObject({ error: { code: 'CONFLICT', message: 'The A2A surface is not running' } });
+    mocks.action.mockRejectedValue(new AgentResponseError(422, { code: 'INVALID_CREDENTIAL', message: 'peer-a: token is reused' }));
+    expect(await (await post({ action: 'peer-credential-reload' })).json()).toMatchObject({ error: { code: 'INVALID_CREDENTIAL', message: 'peer-a: token is reused' } });
+    // A failure the node agent itself finished is a settled dependency failure with its reason.
+    mocks.action.mockRejectedValue(new AgentResponseError(422, { code: 'ARDENT_ACTION_FAILED', message: 'Ardent refused the management credential reload with HTTP 409' }));
+    const rotated = await post({ action: 'management-credential-rotate' });
+    expect(rotated.status).toBe(503);
+    expect((await rotated.json()).error.message).toContain('HTTP 409');
   });
 });

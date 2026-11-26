@@ -895,6 +895,14 @@ export class NodeApiClient {
       ...(headers && Object.keys(headers).length ? { headers: ardentTraceHeaders(name => headers[name]) } : {}), timeout: 15_000 }).json<T>();
   }
 
+  /** A bounded profile read answered as text, such as Ardent's OpenMetrics `metrics` (the agent caps it at 2 MiB). */
+  async getArdentProfileText(profile: string, resource: 'metrics', headers?: Record<string, string>): Promise<{ contentType: string; text: string }> {
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(profile) || resource !== 'metrics') throw new Error('Invalid Ardent profile resource');
+    const response = await this.api.get(`ardent/profiles/${profile}/api/${resource}`, {
+      ...(headers && Object.keys(headers).length ? { headers: ardentTraceHeaders(name => headers[name]) } : {}), timeout: 15_000 });
+    return { contentType: response.headers.get('content-type') ?? 'text/plain', text: await response.text() };
+  }
+
   /**
    * Open an unbuffered byte stream from the agent: a task's SSE events
    * (`tasks/<id>/stream`), an artifact's bytes (`artifacts/<sha256>`) or its transfer v2

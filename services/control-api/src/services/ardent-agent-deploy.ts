@@ -133,6 +133,9 @@ function message(error: unknown): string {
 /** artifacts.max_bytes a New Agent gets when the request does not set it: 64 MiB, the node agent's default relay cap. */
 export const ARDENT_NEW_AGENT_ARTIFACT_MAX_BYTES = 64 * 1024 * 1024;
 
+/** The Agent Card provider of an agent Magnus deploys (Ardent 3.4.0 `a2a.provider`), as every Ardent before 3.4.0 reported it. */
+export const ARDENT_MAGNUS_AGENT_CARD_PROVIDER = { organization: 'Magnus', url: 'https://github.com/ChefTaco/magnus' } as const;
+
 function newerOrEqual(version: string | null, wanted: [number, number, number]): boolean {
   const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version ?? '');
   if (!match) return false;
@@ -464,6 +467,10 @@ const STEPS: Record<StepName, (context: Context) => Promise<Result>> = {
       const { installation } = await profileOf(context);
       if (newerOrEqual(installation.version, [2, 2, 0])) document.setIn(['artifacts', 'max_bytes'], request.artifacts_max_bytes ?? ARDENT_NEW_AGENT_ARTIFACT_MAX_BYTES);
       else if (request.artifacts_max_bytes !== undefined) notes.push(`artifacts.max_bytes needs Ardent 2.2.0 or later; this node runs ${installation.version ?? 'an unknown version'}`);
+      // Ardent before 3.4.0 always named Magnus as its Agent Card provider; 3.4.0 names Ardent unless a2a.provider says
+      // otherwise. A new agent Magnus deploys keeps naming Magnus; a provider the template already sets stays.
+      if (newerOrEqual(installation.version, [3, 4, 0]) && !document.hasIn(['a2a', 'provider']))
+        document.setIn(['a2a', 'provider'], document.createNode(ARDENT_MAGNUS_AGENT_CARD_PROVIDER));
       const definition = request.definition;
       if (definition) {
         for (const [key, value] of Object.entries(definition.execution)) if (value !== undefined) document.setIn(['execution', key], value);

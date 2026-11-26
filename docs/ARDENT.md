@@ -15,11 +15,16 @@ Every route below needs a node agent that reports a `studio` level in its ping f
 | 2 | Also missions, task pause and resume, previews, development history and notes, artifact manifests and session contexts (Ardent 2.2.0) |
 | 3 | Also `skill-install`, which installs a HiveSkills catalog release onto a profile |
 | 4 | Also the Ardent 3.2.0 runtime contracts: task recovery and lineage, execution context, artifact transfer v2 and imports, and `ARDENT_INSTANCE_REF` |
+| 5 | Also the Ardent 3.4.0 operations: task list filters (`capabilities.task_filters: 1`), the metrics read, peer credential reload and management credential rotation |
 
 A request that needs a higher level than the agent reports answers 409 `AGENT_UPGRADE_REQUIRED`:
 upgrade the agent from the console first. Level 2 features also need Ardent 2.2.0 or later on the
 node; an older Ardent answers 404 for their routes. Level 4 features are also gated per profile, see
-[Recovery, lineage and artifact transfer](#recovery-lineage-and-artifact-transfer-studio-4).
+[Recovery, lineage and artifact transfer](#recovery-lineage-and-artifact-transfer-studio-4). Level 5
+features need Ardent 3.4.0; see [Ardent 3.4.0 operations](#ardent-340-operations-studio-5).
+
+Every request the node agent makes to a profile's management API sends `Authorization: Bearer <token>`,
+which Ardent 3.4.0 requires (it refuses a bare token).
 
 ## New Agent
 
@@ -50,6 +55,10 @@ node; an older Ardent answers 404 for their routes. Level 4 features are also ga
   new agent gets 64 MiB, the node agent's default relay cap, instead of Ardent's 2 MiB default. Only
   Ardent 2.2.0 or later has the setting; older runtimes skip it, and say so in the `config-save`
   receipt when it was requested.
+- On Ardent 3.4.0 or later, the configuration also gets `a2a.provider: { organization: Magnus, url:
+  https://github.com/ChefTaco/magnus }`, the Agent Card provider every Ardent before 3.4.0 reported
+  (3.4.0 names Ardent unless `a2a.provider` says otherwise). A provider the profile already sets is
+  kept. Existing profiles are not changed; set `a2a.provider` in their configuration to name Magnus.
 
 The answer is `202 { "operationId": "…" }`. The operation runs these steps in order:
 
@@ -364,6 +373,38 @@ Instance reference: Ardent names its own instance in execution references with `
 `.env` when New Agent or a definition install creates the profile, before its first start, and into
 every profile of the node after a `package-install`. It applies when the profile next starts. A
 reference longer than Ardent accepts (96 characters) is not written, and the profile keeps the default.
+
+## Ardent 3.4.0 operations (studio 5)
+
+These need a node agent at `studio` level 5 (409 `AGENT_UPGRADE_REQUIRED` otherwise) and Ardent 3.4.0 on
+the profile; an older Ardent answers 404, or ignores the task filters.
+
+- **Task list pages and filters.** `GET …/profiles/:name/tasks` returns `{tasks, next}` from Ardent 3.4.0;
+  pass `next` back as `after` for the following page (`limit` sets the page size). The filters `state`
+  (comma-separated), `context` (`direct`, `peer`, `scheduled`, `mission` or `preview`), `caller`,
+  `since` and `until` (epoch milliseconds or ISO 8601) combine. Magnus checks each value
+  (`ARDENT_TASK_FILTER_QUERY` in the contracts) and refuses a filter on an older agent instead of
+  listing unfiltered tasks. The installation report carries `capabilities.task_filters: 1`, which
+  `@hivemagnus/ardent-client` needs before it sends filters through Magnus.
+- **Metrics.** `GET …/profiles/:name/metrics` (ADMIN people) answers the profile's OpenMetrics text as
+  is, with its media type and no JSON envelope: tasks by state, open recoveries, job windows, delivery
+  states, A2A rate-limit refusals and Mattermost catch-up ages.
+- **Peer credential reload.** `{"action": "peer-credential-reload", "body": {"overlap_seconds": 300}}`
+  (ADMIN people) has the running profile re-read its A2A peer tokens from its `.env`
+  (`POST /api/v1/credentials/peers/reload`); a replaced inbound token stays valid for
+  `overlap_seconds` (0 to 3600, Ardent's default 300). The peer list itself still needs a restart.
+  Ardent's 409 (the A2A surface is not running) and 422 (an invalid peer set; the tokens in use stay)
+  come back with that status.
+- **Management credential rotation.** `{"action": "management-credential-rotate", "body":
+  {"overlap_seconds": 300}}` (ADMIN people) rotates a running profile's management token without a
+  restart. The node agent reads that token from the profile's `.env` for every request, so it writes
+  a new random token there and then switches the gateway to it
+  (`POST /api/v1/credentials/management/reload`), authenticated with the token still in use. The
+  answer is `{profile, tokenEnv, rotated, changed, previousValidUntil}`; the token never leaves the
+  node. When Ardent refuses (for example 409 for a token the service environment sets), the previous
+  token is written back; when the outcome is unclear, the token the gateway accepts is kept. Requests
+  that read the file in the moment between the write and the switch may be refused once. A token the
+  node agent's own environment supplies is not rotated this way.
 
 ## HiveSkills skill install
 

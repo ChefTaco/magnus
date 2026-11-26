@@ -25,7 +25,7 @@
         "magnus-agent": "dist/index.js"
       },
       "devDependencies": {
-        "@hivemagnus/ardent": "3.3.0",
+        "@hivemagnus/ardent": "3.4.0",
         "@types/node": "^24.19.2",
         "@types/tar-stream": "^3.1.5",
         "tsx": "^4.23.15",
@@ -604,9 +604,9 @@
       }
     },
     "node_modules/@hivemagnus/ardent": {
-      "version": "3.3.0",
-      "resolved": "https://registry.npmjs.org/@hivemagnus/ardent/-/ardent-3.3.0.tgz",
-      "integrity": "sha512-9A5JqKSLmoZPoki8Q1CZ6ManKNpOqHJEIqOpjsP3pwWcJlBTAKu0chS+BvL+lC3VQd59KsayBthCTnYqNbYDJA==",
+      "version": "3.4.0",
+      "resolved": "https://registry.npmjs.org/@hivemagnus/ardent/-/ardent-3.4.0.tgz",
+      "integrity": "sha512-+lOvyp8Og3O+RMOYMa2ph6raHxXYBlEJFaudRc8MuuFARlHeTESCLRV1LDQOnyMPEUvF3NsuNSVMdbdHDRdJ1g==",
       "dev": true,
       "license": "Apache-2.0",
       "dependencies": {
@@ -614,7 +614,7 @@
         "@bufbuild/protobuf": "2.16.0",
         "@grpc/grpc-js": "1.14.7",
         "@hivemagnus/canvas-word-codec": "1.1.0",
-        "@hivemagnus/emberfold": "0.1.0",
+        "@hivemagnus/emberfold": "0.4.0",
         "@hivemagnus/hive-common": "0.6.0",
         "@hono/node-server": "^2.1.11",
         "@photostructure/sqlite": "3.3.1",
@@ -653,16 +653,16 @@
       }
     },
     "node_modules/@hivemagnus/emberfold": {
-      "version": "0.1.0",
-      "resolved": "https://registry.npmjs.org/@hivemagnus/emberfold/-/emberfold-0.1.0.tgz",
-      "integrity": "sha512-pPQUe2rfDro2q7MCSL0CVug2HK/ytD9NqFO6wsNFalGHe3EZAfWiwWCNr4WS488bdYuBA2abMkEE+RpEwS++eQ==",
+      "version": "0.4.0",
+      "resolved": "https://registry.npmjs.org/@hivemagnus/emberfold/-/emberfold-0.4.0.tgz",
+      "integrity": "sha512-BAoa+mwB4+E7UrJ22i12W0KQuvFwoJ1spornI6dQl53/vOR0EWGikC+Uvt1lxMT277YkP+Wl4bovMd/yCdlHnw==",
       "dev": true,
       "license": "Apache-2.0",
       "dependencies": {
         "zod": "4.6.7"
       },
       "engines": {
-        "node": "^24.22.1 || ^26.13.0"
+        "node": "^24.22.3 || ^26.13.1"
       }
     },
     "node_modules/@hivemagnus/hive-common": {
@@ -689,7 +689,7 @@
     "node_modules/@hivemagnus/magnus-contracts": {
       "version": "3.3.6",
       "resolved": "https://registry.npmjs.org/@hivemagnus/magnus-contracts/-/magnus-contracts-3.3.6.tgz",
-      "integrity": "sha512-ZUoWfQEI3RpteoOD0QTGZjhHjoaXgxEAriAV/1buNM/877lpuPUXW6+YwuK44YZ3qZfd7i+a6KfKpvyhtCWK9Q==",
+      "integrity": "sha512-akz2/Hd7K4UdvqzTYI4/y8CO5Sa8eNheJZCocwntrnTfQpRDviCdr5X0ataD+kTWq8k6GKhp8e6Qtbv/2TOIjg==",
       "license": "Apache-2.0",
       "dependencies": {
         "openapi-fetch": "^0.17.0",

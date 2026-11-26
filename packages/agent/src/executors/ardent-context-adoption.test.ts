@@ -7,11 +7,11 @@ import { managedExecution } from '../security/managed-context.js';
 function bundle() {
   const files = ['ardent/context.js', 'ardent/context-checkpoints.js', 'ardent/context-maintenance.js', 'emberfold/package.json',
     'emberfold/dist/index.js', 'emberfold/dist/compat.js', 'emberfold/LICENSE', 'emberfold/NOTICE', 'zod/package.json', 'zod/index.js'].map(path => {
-    const text = path === 'emberfold/package.json' ? JSON.stringify({ name: '@hivemagnus/emberfold', type: 'module', version: '0.1.0' })
+    const text = path === 'emberfold/package.json' ? JSON.stringify({ name: '@hivemagnus/emberfold', type: 'module', version: '0.4.0' })
       : path === 'zod/package.json' ? JSON.stringify({ name: 'zod', type: 'module', version: '4.6.7' }) : 'synthetic payload';
     return { path, content: Buffer.from(text).toString('base64'), sha256: createHash('sha256').update(text).digest('hex') };
   });
-  return { schema_version: 1, engine_version: '0.1.0', validator_version: '4.6.7', files };
+  return { schema_version: 1, engine_version: '0.4.0', validator_version: '4.6.7', files };
 }
 
 describe('context-only adoption boundary', () => {
