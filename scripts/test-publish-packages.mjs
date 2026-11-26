@@ -179,3 +179,18 @@ test('a release older than npm latest is published under a maintenance tag, neve
   assert.deepEqual(calls[0][1].slice(0, 4), ['publish', '--provenance', '--tag', 'maintenance-1.0']);
   assert.deepEqual(calls[1][1].slice(0, 4), ['publish', '--provenance', '--tag', 'latest']);
 });
+
+test('the images job scans the digest it pushed and asks for no OIDC token', () => {
+  const workflow = parse(readFileSync(new URL('../.github/workflows/publish.yml', import.meta.url), 'utf8'));
+  const job = workflow.jobs.images;
+  assert.equal(job.permissions['id-token'], undefined);
+  const names = job.steps.map(step => step.name);
+  const push = job.steps.find(step => step.name === 'Build and push');
+  const scan = job.steps.find(step => step.name === 'Execute and scan the published digest');
+  assert.equal(push.id, 'push');
+  assert.ok(names.indexOf(scan.name) > names.indexOf(push.name));
+  assert.equal(scan.if, "env.DRY_RUN != 'true'");
+  assert.match(scan.env.IMAGE_REF, /@\$\{\{ steps\.push\.outputs\.digest \}\}$/);
+  assert.match(scan.run, /--image-src remote --platform "linux\/\$arch"[\s\S]*--exit-code 1 "\$IMAGE_REF"/);
+  assert.equal(names.at(-1), 'Retain unfiltered security reports');
+});

@@ -91,7 +91,8 @@ LABEL org.opencontainers.image.title="magnus-server" \
 # PostgreSQL 18 clients can back up 17/18; pg_restore stays paired.
 RUN apk add --no-cache postgresql-18-client-base
 WORKDIR /opt/magnus-server
-COPY --from=runtime-dependencies --chown=node:node /opt/magnus-server/ /opt/magnus-server/
+# App code stays root-owned: the node user can run it but not rewrite it.
+COPY --from=runtime-dependencies /opt/magnus-server/ /opt/magnus-server/
 COPY --from=runtime-dependencies --chmod=0755 /usr/local/bin/magnus-server-entrypoint /usr/local/bin/magnus-server-entrypoint
 RUN mkdir -p /var/lib/magnus /var/lib/magnus-cert && chown -R node:node /var/lib/magnus /var/lib/magnus-cert && chmod 0700 /var/lib/magnus
 RUN /usr/libexec/postgresql18/pg_dump --version && /usr/libexec/postgresql18/pg_restore --version

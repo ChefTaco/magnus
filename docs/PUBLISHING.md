@@ -141,7 +141,10 @@ After the npm packages are published, the `images` job builds
 commit the npm packages were published from, not the published tarballs; the gateway is
 packed but never published), for `linux/amd64` and `linux/arm64`, with provenance and
 an SBOM. Each architecture is first built, run and scanned with Trivy; the pushed
-multi-architecture image is then built again from the same source. It tags them `X.Y.Z`,
+multi-architecture image is then built again from the same source (every Dockerfile packs from
+source, so these are new bytes), and the job runs and scans exactly the pushed digest on both
+architectures again. A failure there fails the release after the tags exist: withdraw them before
+fixing forward. It tags them `X.Y.Z`,
 `X.Y` and `X`, never `latest`; a prerelease gets only its `X.Y.Z-<pre>` tag. It uses the
 workflow's `GITHUB_TOKEN` (`packages: write`), with no extra secret.
 
@@ -211,4 +214,4 @@ pinned, maintained Node 26 runtime image (`RUNTIME_IMAGE` in each `Dockerfile`).
 newer archive headers. Native Ardent 3 installs use packaged Node-API binaries
 without lifecycle scripts or a C++ toolchain.
 
-Every release image is built, executed as a non-root user and scanned on both supported architectures before publication. HIGH/CRITICAL findings fail the gate even when no fix is available; raw reports remain attached to the workflow.
+Every release image is built, executed as a non-root user and scanned on both supported architectures before publication, and the published digest is executed and scanned again after the push. HIGH/CRITICAL findings fail the gate even when no fix is available; raw reports remain attached to the workflow.

@@ -59,7 +59,8 @@ LABEL org.opencontainers.image.title="magnus-agent" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.version="${MAGNUS_VERSION}"
 WORKDIR /opt/magnus-agent
-COPY --from=runtime-dependencies --chown=node:node /opt/magnus-agent/ /opt/magnus-agent/
+# App code stays root-owned: the node user can run it but not rewrite it.
+COPY --from=runtime-dependencies /opt/magnus-agent/ /opt/magnus-agent/
 RUN install -d -o node -g node -m 0700 /var/lib/magnus-agent \
   && node node_modules/@hivemagnus/magnus-agent/dist/index.js --version
 

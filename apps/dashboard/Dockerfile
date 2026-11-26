@@ -67,7 +67,8 @@ LABEL org.opencontainers.image.title="magnus-ui" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.version="${MAGNUS_VERSION}"
 WORKDIR /opt/magnus-ui
-COPY --from=runtime-dependencies --chown=node:node /opt/magnus-ui/ /opt/magnus-ui/
+# App code stays root-owned: the node user can run it but not rewrite it.
+COPY --from=runtime-dependencies /opt/magnus-ui/ /opt/magnus-ui/
 COPY --from=runtime-dependencies --chmod=0755 /usr/local/bin/magnus-ui-entrypoint /usr/local/bin/magnus-ui-entrypoint
 RUN mkdir -p /var/lib/magnus-ui && chown -R node:node /var/lib/magnus-ui && chmod 0700 /var/lib/magnus-ui
 RUN node -e "const req=require('node:module').createRequire(process.cwd()+'/node_modules/@hivemagnus/magnus-ui/package.json'); if(typeof req('ssh2').Client!=='function')throw Error('SSH runtime failed');(async()=>{const argon=req('argon2'); const hash=await argon.hash('synthetic proof',{memoryCost:8192,timeCost:1}); if(!await argon.verify(hash,'synthetic proof'))throw Error('Native password hashing failed')})().catch(e=>{console.error(e.message);process.exitCode=1})"

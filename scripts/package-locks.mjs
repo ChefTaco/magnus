@@ -1,14 +1,14 @@
 #!/usr/bin/env node
-// The standalone npm-shrinkwrap.json files of the server and console packages.
+// The standalone npm-shrinkwrap.json files of the server, console and fleet gateway packages.
 //
 // A published package's own overrides and the workspace lock never reach a consumer: `npm install
 // @hivemagnus/magnus-server` would resolve every semver range again (in 3.1.5 that brought back
 // the effect release the server's override exists to avoid). A shrinkwrap in the tarball pins the
 // whole graph for the image build and for a native npm install alike.
 //
-//   node scripts/package-locks.mjs --generate [server|ui]  regenerate from the workspace lock (network; review the diff)
-//   node scripts/package-locks.mjs --refresh  [server|ui]  version-only update from the local packs (offline)
-//   node scripts/package-locks.mjs --check    [server|ui]  fail when a lock is stale or does not honour the overrides
+//   node scripts/package-locks.mjs --generate [server|ui|gateway]  regenerate from the workspace lock (network; review the diff)
+//   node scripts/package-locks.mjs --refresh  [server|ui|gateway]  version-only update from the local packs (offline)
+//   node scripts/package-locks.mjs --check    [server|ui|gateway]  fail when a lock is stale or does not honour the overrides
 //
 // Generation seeds a disposable standalone project with the versions the workspace lock (and so CI)
 // resolved, lets npm prune and complete that graph for the package alone, and records the sibling
@@ -31,6 +31,9 @@ export const LOCKED = {
   // The console compiles the contracts into its build; it lists them as a development dependency,
   // so they are not in its (production) shrinkwrap.
   ui: { directory: 'apps/dashboard', siblings: ['packages/contracts'] },
+  // The fleet gateway ships only as an image; its lock pins the graph that image installs. It has
+  // no installation report, so check-packed-server only proves the shrinkwrapped install works.
+  gateway: { directory: 'services/fleet-gateway', siblings: [], installationReport: false },
 };
 export const SHRINKWRAP = 'npm-shrinkwrap.json';
 
