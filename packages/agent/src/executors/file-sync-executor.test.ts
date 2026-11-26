@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { chmod, lstat, mkdtemp, mkdir, readdir, readFile, readlink, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdtemp, mkdir, readdir, readFile, readlink, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -206,5 +206,39 @@ describe('file write backups', () => {
     const fifo = join(folder, 'pipe'); execFileSync('mkfifo', [fifo]);
     expect((await write({ filePath: fifo, content: 'x', backup: true })).status).toBe(409);
     expect((await readdir(folder)).sort()).toEqual(['app.conf', 'pipe']);
+  });
+});
+
+describe('file writes bound to the verified directory', () => {
+  afterEach(() => { routes.fileWriteRaceHooks.afterCheck = undefined; routes.fileWriteRaceHooks.beforeRename = undefined; vi.unstubAllEnvs(); });
+
+  async function layout(name: string) {
+    const base = join(dir, name); const data = join(base, 'root', 'data'); const outside = join(base, 'outside');
+    await mkdir(data, { recursive: true }); await mkdir(outside);
+    await writeFile(join(data, 'app.conf'), 'original');
+    vi.stubEnv('MAGNUS_AGENT_FILE_ROOTS', join(base, 'root'));
+    // The attacker's move: the checked directory is replaced by a symlink to a directory outside the root.
+    const swap = async () => { await rename(data, `${data}.moved`); await symlink(outside, data); };
+    return { data, outside, swap };
+  }
+
+  for (const window of ['afterCheck', 'beforeRename'] as const) {
+    it(`refuses and writes nothing outside the root when the directory is swapped (${window})`, async () => {
+      const { data, outside, swap } = await layout(`race-${window}`);
+      routes.fileWriteRaceHooks[window] = swap;
+      const response = await write({ filePath: join(data, 'app.conf'), content: 'attacker-visible', backup: true });
+      expect(response.status).toBe(409);
+      expect(await readdir(outside)).toEqual([]);
+      expect(await readFile(join(`${data}.moved`, 'app.conf'), 'utf8')).toBe('original');
+    });
+  }
+
+  it('refuses a path through a directory every account may write', async () => {
+    const open = join(dir, 'world-writable'); await mkdir(open); await chmod(open, 0o777);
+    const response = await write({ filePath: join(open, 'app.conf'), content: 'x' });
+    expect(response.status).toBe(409);
+    expect(await response.text()).toContain('writable by every account');
+    expect(await readdir(open)).toEqual([]);
+    await chmod(open, 0o755);
   });
 });

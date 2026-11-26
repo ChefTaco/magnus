@@ -270,7 +270,11 @@ API. A root-run agent can otherwise write anywhere else, including `/etc/cron.d`
 
 A write goes to a temporary file in the same directory, is synced, and is renamed over the target, so
 a crash leaves the old or the new content and a symlink planted at the target is replaced, not
-followed. The file keeps its mode, owner and group; a new file is `0600` and owned by the agent
+followed. The directory is checked once and held open: every path component must be a real directory
+owned by root, the agent or the file's owner and not writable by every account (sticky `/tmp` is
+fine), and immediately before and after each rename the agent proves the path still names that
+directory inside the allowed roots. A write through a component another account could swap, or one
+that changed meanwhile, gets 409 `PATH_CHANGED` and leaves nothing behind. The file keeps its mode, owner and group; a new file is `0600` and owned by the agent
 unless the request sets `mode` (for example `"0644"`) or, in privileged mode, `owner` and `group`
 (name or id). With `backup: true` the existing file is first copied, after the path and roots
 check, to `<file>.magnus-backup.<UTC timestamp>` in the same directory (mode, owner and times kept);

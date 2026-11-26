@@ -147,6 +147,14 @@ All notable changes to this project are documented in this file. The format is b
   (not to viewers, operators or named Hive sessions),
   and misconfigured credentials give `unhealthy` (503) instead of an unhandled 500.
 
+- **Agent file writes are bound to the directory they were checked against.** `/files/write`
+  checked the parent directory by path and then reused the path, so a local account able to swap a
+  component between check and write could redirect a privileged write outside the allowed roots.
+  The agent now refuses paths through a component owned by another account or writable by every
+  account (without the sticky bit), holds the checked directory open, and proves its identity and
+  roots immediately before and after the backup and replacement renames; a mismatch gets 409
+  `PATH_CHANGED` and removes only the agent's own file. **Upgrade note:** writes into a directory
+  owned by an account other than root, the agent or the file's owner are now refused.
 ### Fixed
 
 - **Installer backup pruning deletes old dumps.** `magnus upgrade` kept the newest dump of every label,
