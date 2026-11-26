@@ -29,6 +29,7 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Changed
 
+- Dependabot now opens one grouped weekly pull request (group `hivemagnus`) for `@hivemagnus/*` package updates, so suite package bumps arrive together. Repository configuration only; nothing to do when upgrading. The repository's own `@hivemagnus/magnus*` workspace packages are ignored; a grouped bump of a server or console dependency still needs `npm run locks:generate` for the shrinkwraps before it merges.
 - **Ardent 3.4.0.** The node agent and New Agent stage `@hivemagnus/ardent` 3.4.0 (pins in the root and
   agent `package.json` and the agent `npm-shrinkwrap.json`), and the generated Ardent client types follow
   its management API (task pages and filters, metrics, credential reload, HiveCommon health bodies,
