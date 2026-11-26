@@ -13,6 +13,7 @@ import { logger } from '../utils/logger.js';
 import { CONTROL_API_URL, LOG_INGEST_TOKEN } from '../env.js';
 import { getFqdn } from '../fqdn.js';
 import { controlApiFetch } from '../tls.js';
+import { controlApiAuthHeaders, noteControlApiResponse } from '../node-auth.js';
 
 export const ENABLE_LOG_FORWARDING =
   (process.env['ENABLE_LOG_FORWARDING'] ?? 'false').toLowerCase() === 'true';
@@ -157,17 +158,35 @@ export function batchRejected(error: unknown): boolean {
   return status === 400 || status === 413 || status === 422;
 }
 
+const INGEST_URL = () => `${CONTROL_API_URL}/api/v1/logs/ingest`;
+
+/**
+ * Authentication for one ingest batch: the node signature over the exact body
+ * (as on heartbeats), plus the deprecated per-node `LOG_INGEST_TOKEN` when it is
+ * set, for a Control API that only checks that token.
+ */
+export function logIngestHeaders(url: string, body: string, token: string = LOG_INGEST_TOKEN,
+  sign: typeof controlApiAuthHeaders = controlApiAuthHeaders): Record<string, string> {
+  return {
+    'content-type': 'application/json',
+    ...(token ? { 'x-log-token': token } : {}),
+    ...sign('POST', url, body),
+  };
+}
+
 /** Flush queued log entries to the control API. */
 async function flushOnce(): Promise<void> {
   if (queue.length === 0) return;
 
   const batch = queue.take(BATCH_SIZE);
   try {
-    await ky.post(`${CONTROL_API_URL}/api/v1/logs/ingest`, {
-      json: batch,
-      headers: { 'x-log-token': LOG_INGEST_TOKEN },
+    await ky.post(INGEST_URL(), {
+      body: JSON.stringify(batch),
+      headers: logIngestHeaders(INGEST_URL(), JSON.stringify(batch)),
       timeout: 10_000,
+      retry: 0,
       fetch: controlApiFetch,
+      hooks: { afterResponse: [({ response }) => { noteControlApiResponse(response); }] },
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

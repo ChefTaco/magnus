@@ -81,8 +81,9 @@ export function configurationErrors(): string[] {
       reconciliation].some(value => value && value === previousReconciliation))) {
     errors.push('COMMAND_RECONCILIATION_PREVIOUS_SECRET must be an independent secret of at least 32 characters, other than COMMAND_RECONCILIATION_SECRET');
   }
-  if ((process.env['ENABLE_LOG_FORWARDING'] ?? 'false').toLowerCase() === 'true' && LOG_INGEST_TOKEN.length < 32) {
-    errors.push('LOG_INGEST_TOKEN is required when ENABLE_LOG_FORWARDING=true');
+  // Log batches are signed with the node key; the derived LOG_INGEST_TOKEN is optional (older servers).
+  if (LOG_INGEST_TOKEN && LOG_INGEST_TOKEN.length < 32) {
+    errors.push('LOG_INGEST_TOKEN, when set, must be the node-bound HMAC value the Control API derives from LOG_INGEST_SIGNING_SECRET (43 characters)');
   }
 
   for (const flag of ['ENABLE_NODE_MANAGEMENT', 'ENABLE_LOG_FORWARDING', 'ENABLE_AGENT_DISCOVERY', 'ALLOW_INSECURE_HTTP',

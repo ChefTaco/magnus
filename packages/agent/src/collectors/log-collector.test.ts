@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   BoundedLogQueue,
   batchRejected,
+  logIngestHeaders,
   parseJournalLine,
   singleFlight,
   type LogEntry,
@@ -90,5 +91,16 @@ describe('rejected batches', () => {
     expect(batchRejected({ response: { status: 401 } })).toBe(false);
     expect(batchRejected({ response: { status: 503 } })).toBe(false);
     expect(batchRejected(new Error('fetch failed'))).toBe(false);
+  });
+});
+
+describe('log ingest authentication', () => {
+  const url = 'https://magnus.example.com/api/v1/logs/ingest';
+  it('signs the exact batch body with the node key and sends the legacy token only when set', () => {
+    const sign = vi.fn((_method: string, _url: string | URL, body?: string) => ({ 'x-magnus-signature': `sig:${body}` }));
+    const body = JSON.stringify([entry('one')]);
+    expect(logIngestHeaders(url, body, '', sign)).toEqual({ 'content-type': 'application/json', 'x-magnus-signature': `sig:${body}` });
+    expect(sign).toHaveBeenCalledWith('POST', url, body);
+    expect(logIngestHeaders(url, body, 'fixture-node-bound-token', sign)).toMatchObject({ 'x-log-token': 'fixture-node-bound-token' });
   });
 });

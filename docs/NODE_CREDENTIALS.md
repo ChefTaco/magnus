@@ -699,8 +699,10 @@ running server notices the change within a second.
   2.10.x. Both are removed in the next major.
 - The replay cache lives in the server process: run one Control API instance. Open two-ADMIN
   scheduler-source requests live there too.
-- Log forwarding (`LOG_INGEST_TOKEN`) and the Hermes registry token are separate credentials and
-  are unchanged.
+- Log forwarding: agents sign each `/logs/ingest` batch with the node key (as heartbeats) and send
+  the older per-node `LOG_INGEST_TOKEN` only when it is set. Until the Control API verifies that
+  signature, it still checks only the token. The Hermes registry token is a separate credential and
+  is unchanged.
 
 ## Phases
 
