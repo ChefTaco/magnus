@@ -9,13 +9,21 @@ const exec = promisify(execFile);
 const REPOSITORY = 'https://github.com/NousResearch/hermes-agent.git';
 let cache: { expiresAt: number; tag: string; commit: string; bootstrapScriptSha256: string } | null = null;
 
+/**
+ * A stable upstream release tag: the older date tags (`v2026.9.24`, optionally `.N`) or the semver
+ * tags upstream uses now (`v0.23.4`). Nothing else reaches `git ls-remote`.
+ */
+export function isStableHermesTag(tag: string): boolean {
+  return /^v20\d{2}\.\d{1,2}\.\d{1,2}(?:\.\d+)?$/.test(tag) || /^v\d{1,3}\.\d{1,4}\.\d{1,4}$/.test(tag);
+}
+
 export async function stableRelease(): Promise<{ tag: string; commit: string; bootstrapScriptSha256: string }> {
   if (cache && cache.expiresAt > Date.now()) return { tag: cache.tag, commit: cache.commit, bootstrapScriptSha256: cache.bootstrapScriptSha256 };
   const response = await fetch('https://api.github.com/repos/NousResearch/hermes-agent/releases/latest', {
     headers: { accept: 'application/vnd.github+json', 'user-agent': 'magnus-hermes-registry' }, signal: AbortSignal.timeout(10_000) });
   if (!response.ok) throw new HttpError(503, 'UPSTREAM_UNAVAILABLE', 'Stable Hermes release feed is unavailable');
   const data = await response.json() as { tag_name?: string; draft?: boolean; prerelease?: boolean };
-  if (data.draft || data.prerelease || !/^v20\d{2}\.\d{1,2}\.\d{1,2}(?:\.\d+)?$/.test(data.tag_name ?? ''))
+  if (data.draft || data.prerelease || !isStableHermesTag(data.tag_name ?? ''))
     throw new HttpError(503, 'UPSTREAM_INVALID', 'Stable Hermes release record is invalid');
   const tag = data.tag_name!;
   const { stdout } = await exec('git', ['ls-remote', '--tags', REPOSITORY, `refs/tags/${tag}`, `refs/tags/${tag}^{}`], { timeout: 15_000, maxBuffer: 16_384 });
