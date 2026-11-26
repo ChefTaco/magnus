@@ -193,6 +193,9 @@ All notable changes to this project are documented in this file. The format is b
   `error.details` is kept, `timelineItem.type` is an enum and `node` may be null, and the readiness
   node and incident summary carry their full fields. **Upgrade note:** TypeScript consumers of the
   root entry point see the narrower or wider types.
+- The agent's native systemd, root and Docker tests now run in CI (a dedicated job), and the obsolete
+  Emberfold bootstrap workflow is gone: Emberfold publishes from its own repository with provenance,
+  so Magnus no longer runs another repository's verify and publish with the long-lived bootstrap token.
 - `docs/PUBLISHING.md` now describes how images are built, scanned and tagged (prereleases get their
   `X.Y.Z-<pre>` tag).
 
