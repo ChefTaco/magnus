@@ -166,30 +166,19 @@ function unique(values: Array<string | null | undefined>): string[] {
   return [...new Set(values.filter((value): value is string => Boolean(value && value.trim())).map((value) => value.trim()))];
 }
 
-async function userHomeCandidates(): Promise<string[]> {
-  const configuredUsers = unique([
-    process.env['HERMES_USER'],
-    process.env['HERMES_OWNER'],
-    process.env['SUDO_USER'],
-    process.env['USER'] && process.env['USER'] !== 'root' ? process.env['USER'] : null,
-  ]);
-  const configuredHomes = configuredUsers.map((user) => `/home/${user}`);
-
-  let scannedHomes: string[] = [];
-  try {
-    const entries = await readdir('/home', { withFileTypes: true });
-    scannedHomes = entries
-      .filter((entry) => entry.isDirectory() && /^[a-z_][a-z0-9_-]*[$]?$/i.test(entry.name))
-      .map((entry) => `/home/${entry.name}`);
-  } catch {
-    // /home may not be readable or present in minimal containers.
-  }
-
-  return unique([...configuredHomes, ...scannedHomes]);
+/**
+ * Homes of the accounts named by explicit settings only (`HERMES_USER`, and the
+ * older `HERMES_OWNER`). No fallback to `SUDO_USER`, `USER` or a scan of /home:
+ * the agent runs as root, and it must not adopt some other account's Hermes.
+ */
+function userHomeCandidates(env: NodeJS.ProcessEnv = process.env): string[] {
+  return unique([env['HERMES_USER'], env['HERMES_OWNER']])
+    .filter((user) => /^[a-z_][a-z0-9_-]*[$]?$/i.test(user))
+    .map((user) => `/home/${user}`);
 }
 
-async function homeCandidates(requestedHome: string): Promise<string[]> {
-  const userHomes = await userHomeCandidates();
+export async function homeCandidates(requestedHome: string): Promise<string[]> {
+  const userHomes = userHomeCandidates();
   return unique([
     resolve(expandHome(requestedHome)),
     process.env['HERMES_HOME'] ? resolve(expandHome(process.env['HERMES_HOME'])) : null,
@@ -1201,7 +1190,7 @@ hermesRoutes.get('/state', async (c) => {
 });
 
 hermesRoutes.post('/configure', async (c) => {
-  const parsed = targetSchema.extend({ configuration: configurationSchema }).safeParse(await c.req.json());
+  const parsed = targetSchema.extend({ configuration: configurationSchema }).safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ success: false, error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
   try {
     return c.json({ success: true, data: await configureHermes(parsed.data, parsed.data.configuration) });
@@ -1241,7 +1230,7 @@ export async function runPinnedHermesInstaller(home: string, skipBrowser: boolea
 }
 
 hermesRoutes.post('/install', async (c) => {
-  const parsed = installSchema.safeParse(await c.req.json());
+  const parsed = installSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ success: false, error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
   try {
     const { home } = target(parsed.data);
@@ -1256,7 +1245,7 @@ hermesRoutes.post('/install', async (c) => {
 });
 
 hermesRoutes.post('/update', async (c) => {
-  const parsed = updateSchema.safeParse(await c.req.json());
+  const parsed = updateSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ success: false, error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
   try {
     const args = ['update'];
@@ -1273,7 +1262,7 @@ hermesRoutes.post('/update', async (c) => {
 });
 
 hermesRoutes.post('/uninstall', async (c) => {
-  const parsed = uninstallSchema.safeParse(await c.req.json());
+  const parsed = uninstallSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ success: false, error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
   try {
     await runHermes(parsed.data, ['gateway', 'stop'], 30_000);
@@ -1373,7 +1362,7 @@ function validationError(c: Context, err: z.ZodError): Response {
 }
 
 hermesRoutes.post('/skills/sync', async (c) => {
-  const parsed = skillsSyncSchema.safeParse(await c.req.json());
+  const parsed = skillsSyncSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return validationError(c, parsed.error);
   try {
     const outputs: string[] = [];
@@ -1388,7 +1377,7 @@ hermesRoutes.post('/skills/sync', async (c) => {
 });
 
 hermesRoutes.post('/toolsets/apply', async (c) => {
-  const parsed = toolsetApplySchema.safeParse(await c.req.json());
+  const parsed = toolsetApplySchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return validationError(c, parsed.error);
   try {
     const args = ['tools', parsed.data.enabled ? 'enable' : 'disable', ...profileArgs(parsed.data.profile), parsed.data.toolset];
@@ -1398,7 +1387,7 @@ hermesRoutes.post('/toolsets/apply', async (c) => {
 });
 
 hermesRoutes.post('/providers/apply', async (c) => {
-  const parsed = providerApplySchema.safeParse(await c.req.json());
+  const parsed = providerApplySchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return validationError(c, parsed.error);
   try {
     const payload = JSON.stringify({
@@ -1417,7 +1406,7 @@ hermesRoutes.post('/providers/apply', async (c) => {
 });
 
 hermesRoutes.post('/providers/test', async (c) => {
-  const parsed = providerTestSchema.safeParse(await c.req.json());
+  const parsed = providerTestSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return validationError(c, parsed.error);
   try {
     const args = ['providers', 'test', ...profileArgs(parsed.data.profile), parsed.data.provider, '--prompt', parsed.data.prompt];
@@ -1427,7 +1416,7 @@ hermesRoutes.post('/providers/test', async (c) => {
 });
 
 hermesRoutes.post('/credential-pools/apply', async (c) => {
-  const parsed = credentialPoolApplySchema.safeParse(await c.req.json());
+  const parsed = credentialPoolApplySchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return validationError(c, parsed.error);
   try {
     const action = parsed.data.detach ? 'detach' : 'attach';
@@ -1440,7 +1429,7 @@ hermesRoutes.post('/credential-pools/apply', async (c) => {
 });
 
 hermesRoutes.post('/mcp/apply', async (c) => {
-  const parsed = mcpApplySchema.safeParse(await c.req.json());
+  const parsed = mcpApplySchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return validationError(c, parsed.error);
   try {
     if (parsed.data.detach) {
@@ -1456,7 +1445,7 @@ hermesRoutes.post('/mcp/apply', async (c) => {
 });
 
 hermesRoutes.post('/messaging/apply', async (c) => {
-  const parsed = messagingApplySchema.safeParse(await c.req.json());
+  const parsed = messagingApplySchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return validationError(c, parsed.error);
   try {
     const action = parsed.data.detach ? 'remove' : 'add';
@@ -1466,7 +1455,7 @@ hermesRoutes.post('/messaging/apply', async (c) => {
 });
 
 hermesRoutes.post('/cron/apply', async (c) => {
-  const parsed = cronApplySchema.safeParse(await c.req.json());
+  const parsed = cronApplySchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return validationError(c, parsed.error);
   try {
     if (parsed.data.remove) {
@@ -1485,7 +1474,7 @@ hermesRoutes.post('/cron/apply', async (c) => {
 });
 
 hermesRoutes.post('/plugins/install', async (c) => {
-  const parsed = pluginInstallSchema.safeParse(await c.req.json());
+  const parsed = pluginInstallSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return validationError(c, parsed.error);
   try {
     const ref = parsed.data.pinnedVersion ? `${parsed.data.pluginSlug}@${parsed.data.pinnedVersion}` : parsed.data.pluginSlug;
@@ -1495,7 +1484,7 @@ hermesRoutes.post('/plugins/install', async (c) => {
 });
 
 hermesRoutes.post('/plugins/uninstall', async (c) => {
-  const parsed = pluginUninstallSchema.safeParse(await c.req.json());
+  const parsed = pluginUninstallSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return validationError(c, parsed.error);
   try {
     const out = await runReconcile(parsed.data, ['plugins', 'uninstall', parsed.data.pluginSlug]);
@@ -1504,7 +1493,7 @@ hermesRoutes.post('/plugins/uninstall', async (c) => {
 });
 
 hermesRoutes.post('/role/apply', async (c) => {
-  const parsed = roleApplySchema.safeParse(await c.req.json());
+  const parsed = roleApplySchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return validationError(c, parsed.error);
   try {
     const out = await runReconcile(parsed.data, ['role', 'apply', ...profileArgs(parsed.data.profile), parsed.data.roleName]);

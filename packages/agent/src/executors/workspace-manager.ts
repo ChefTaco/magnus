@@ -31,7 +31,7 @@ const createBodySchema = z.object({
 // ── Create workspace ─────────────────────────────────────────────────────────
 
 workspaceRoutes.post('/', async (c) => {
-  const body = await c.req.json()
+  const body = await c.req.json().catch(() => null)
   const parsed = createBodySchema.safeParse(body)
   if (!parsed.success) {
     return c.json({ error: 'VALIDATION_ERROR', message: parsed.error.message }, 400)

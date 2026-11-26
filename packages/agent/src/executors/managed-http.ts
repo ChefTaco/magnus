@@ -143,7 +143,7 @@ export const managedMutationGuard: MiddlewareHandler = async (c, next) => {
 
 export function registerManagedHttp(app: Hono): void {
   app.post('/api/v1/commands/managed-http', async c => {
-    const parsed = managedHttpRequestSchema.safeParse(await c.req.json());
+    const parsed = managedHttpRequestSchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ success: false, error: { code: 'INVALID_MANAGED_MUTATION' } }, 400);
     const value = parsed.data;
     if (value.recoveryOnly && (value.method !== 'POST' || value.path !== '/skills/install'))

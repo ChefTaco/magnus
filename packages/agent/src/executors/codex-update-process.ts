@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { managedExecution } from '../security/managed-context.js';
 import { agentPrivileged } from '../privileged.js';
-import { ExecutionSupervisor } from './execution-supervisor.js';
+import { ExecutionSupervisor, supervisorNodeBinary } from './execution-supervisor.js';
 
 /** Includes npm, release discovery and the final App Server inspection in one cgroup. */
 export async function runCodexUpdateWorker(target: { user: string; home: string; codexHome: string; bin: string | null }): Promise<string> {
@@ -12,14 +12,14 @@ export async function runCodexUpdateWorker(target: { user: string; home: string;
   const context = managedExecution.getStore();
   const identity = context ? `${context.commandId}:${context.requestSha256}` : randomUUID();
   const commandId = `codex-update-${createHash('sha256').update(identity).digest('hex')}`;
-  // The supervisor's unregistered worker uses a shell. Quote each argument;
-  // neither account settings nor installation paths become executable syntax.
+  // The supervisor's unregistered worker uses a shell: the command is a shell
+  // string (quoted here) and the worker quotes each argument itself.
   const quote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
   const worker = join(dirname(fileURLToPath(import.meta.url)), 'codex-update-worker.js');
   const observation = await new ExecutionSupervisor().run({
     commandId,
-    command: quote('/usr/bin/node'),
-    args: [quote(worker)],
+    command: quote(supervisorNodeBinary()),
+    args: [worker],
     timeoutSeconds: 780,
     ...(context?.coordination ? { coordination: context.coordination } : {}),
     environment: {

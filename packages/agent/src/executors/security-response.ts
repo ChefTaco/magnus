@@ -18,7 +18,7 @@ const schema = z
   .strict();
 export const securityResponseRoutes = new Hono();
 securityResponseRoutes.post('/', requirePrivileged('security-response'), async (c) => {
-  const parsed = schema.safeParse(await c.req.json());
+  const parsed = schema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success || process.env['MAGNUS_SECURITY_RESPONSE_ENABLED'] !== 'true')
     return c.json(
       {

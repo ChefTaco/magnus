@@ -10,7 +10,7 @@ import { requirePrivileged } from '../privileged.js';
 import { managedExecution } from '../security/managed-context.js';
 import { retainEmbermendExecution } from './embermend-execution.js';
 import type { SupervisorInput } from './execution-supervisor-state.js';
-import { ExecutionSupervisor } from './execution-supervisor.js';
+import { ExecutionSupervisor, supervisorNodeBinary } from './execution-supervisor.js';
 import { loadEmbermendConfig } from './embermend-config.js';
 import { logger } from '../utils/logger.js';
 import { readJson } from './execution-supervisor-state.js';
@@ -35,15 +35,18 @@ embermendRoutes.get('/capabilities', async c => {
   return c.json({ success: true, data: { protocol: 1, platform, targetKind: 'host', actions: [...new Set(actions)] } });
 });
 embermendRoutes.post('/action', requirePrivileged('embermend'), async c => {
-  const request = embermendOperationSchema.parse(await c.req.json()); const context = managedExecution.getStore();
+  const body = embermendOperationSchema.safeParse(await c.req.json().catch(() => null));
+  if (!body.success) return c.json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid Embermend action request' } }, 400);
+  const request = body.data; const context = managedExecution.getStore();
   if (!context || !context.coordination || process.env['MAGNUS_EXECUTION_SUPERVISOR_ENABLED'] !== 'true') return c.json({ success: false, error: { code: 'MANAGED_SUPERVISOR_REQUIRED' } }, 403);
   const config = await loadEmbermendConfig();
+  // The supervisor's shell path quotes each argument; the command is a shell string.
   const quote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
   const worker = join(dirname(fileURLToPath(import.meta.url)), 'embermend-worker.js');
   const commandId = 'embermend-' + createHash('sha256').update(context.commandId + ':' + context.requestSha256).digest('hex');
   const agentCgroup = await readFile('/proc/self/cgroup', 'utf8');
   const agentUnit = agentCgroup.split('/').find(part => part.trim().endsWith('.service'))?.trim() ?? '';
-  const input: SupervisorInput = { commandId, command: quote('/usr/bin/node'), args: [quote(worker)], timeoutSeconds: 780, coordination: context.coordination, environment: { EMBERMEND_AGENT_UNIT: agentUnit, EMBERMEND_REQUEST: JSON.stringify(request), MAGNUS_EMBERMEND_CONFIG: process.env['MAGNUS_EMBERMEND_CONFIG'] ?? '', NODE_MANAGER_PORT: process.env['NODE_MANAGER_PORT'] ?? '4100', AGENT_INSTALL_DIR: process.env['AGENT_INSTALL_DIR'] ?? process.cwd() } };
+  const input: SupervisorInput = { commandId, command: quote(supervisorNodeBinary()), args: [worker], timeoutSeconds: 780, coordination: context.coordination, environment: { EMBERMEND_AGENT_UNIT: agentUnit, EMBERMEND_REQUEST: JSON.stringify(request), MAGNUS_EMBERMEND_CONFIG: process.env['MAGNUS_EMBERMEND_CONFIG'] ?? '', NODE_MANAGER_PORT: process.env['NODE_MANAGER_PORT'] ?? '4100', AGENT_INSTALL_DIR: process.env['AGENT_INSTALL_DIR'] ?? process.cwd() } };
   await retainEmbermendExecution(context, request, input);
   const observation = await new ExecutionSupervisor().run(input);
   if (['repository-scan.v1', 'repository-prepare.v1', 'repository-source.v1'].includes(request.action.version)) {

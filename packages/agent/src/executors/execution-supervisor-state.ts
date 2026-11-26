@@ -43,3 +43,23 @@ export async function readJson<T>(root:string,name:string,max=4*1024*1024):Promi
   let fd;try{fd=await open(join(root,name),constants.O_RDONLY|constants.O_NOFOLLOW);}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return undefined;throw error;}
   try{const st=await fd.stat();if(!st.isFile()||st.nlink!==1||st.mode&0o077||st.size>max||(process.getuid&&st.uid!==process.getuid()))throw new Error('Unsafe supervisor record');return JSON.parse(await fd.readFile('utf8')) as T;}finally{await fd.close();}
 }
+
+/**
+ * Command lines for the historical `shell: true` execution path.
+ *
+ * `command` stays a shell string (pipes, redirects and globs keep working), but
+ * every entry of `args` is one literal argument. Node's own `shell: true` joins
+ * `args` with spaces and no quoting (DEP0190), so an argument with a space,
+ * quote or `;` changed meaning, and the same request behaved differently from
+ * the supervisor's registered `shell: false` path.
+ */
+export function quoteShellArgument(value: string): string {
+  if (value.includes('\0')) throw new Error('Command arguments cannot contain NUL bytes');
+  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(value)) return value;
+  return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+/** The single string passed to `/bin/sh -c`: the command, then each argument quoted. */
+export function shellCommandLine(command: string, args: readonly string[]): string {
+  return args.length ? `${command} ${args.map(quoteShellArgument).join(' ')}` : command;
+}

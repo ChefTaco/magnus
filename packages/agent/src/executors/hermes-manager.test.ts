@@ -1,5 +1,5 @@
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -7,12 +7,27 @@ import {
   configureHermes,
   configureHermesDiscoveryForTests,
   hermesCliHealth,
+  homeCandidates,
   hermesInstallationStatus,
   hermesRoutes,
   hermesVersionProbeCountForTests,
   onHermesVersionProbeSettled,
   settleHermesVersionProbesForTests,
 } from './hermes-manager.js';
+
+describe('Hermes owner discovery', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('looks only in the homes of explicitly configured owners', async () => {
+    vi.stubEnv('HERMES_USER', 'operator');
+    vi.stubEnv('HERMES_OWNER', '../../tmp/rogue');
+    vi.stubEnv('SUDO_USER', 'sudoer');
+    vi.stubEnv('USER', 'someone');
+    const homes = (await homeCandidates('/opt/hermes-profile'))
+      .filter((home) => home.startsWith('/home/') && !home.startsWith(homedir() + '/'));
+    expect(homes).toEqual(['/home/operator/.hermes', '/home/operator/.config/hermes', '/home/operator/.config/hermes-agent']);
+  });
+});
 
 describe('Hermes runtime manager', () => {
   let home: string;
@@ -165,6 +180,13 @@ exit 1
     expect(hermesInstallationStatus({ ...base, runnable: true, configPresent: false })).toBe('needs_setup');
     expect(hermesInstallationStatus({ ...base, runnable: true, gatewayStatus: 'running' })).toBe('running');
     expect(hermesInstallationStatus({ ...base, installed: false })).toBe('not_installed');
+  });
+
+  it('answers malformed JSON bodies with 400 on every Hermes mutation route', async () => {
+    for (const path of ['/configure', '/install', '/update', '/uninstall', '/skills/sync', '/toolsets/apply', '/plugins/install', '/role/apply']) {
+      const response = await hermesRoutes.request(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{not json' });
+      expect(response.status, path).toBe(400);
+    }
   });
 
   it('uses unattended Hermes uninstall flags while preserving configuration by default', async () => {

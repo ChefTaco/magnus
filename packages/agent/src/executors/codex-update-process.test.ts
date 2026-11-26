@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ExecutionSupervisor, type SupervisorStatus } from './execution-supervisor.js';
 import { runCodexUpdateWorker } from './codex-update-process.js';
+import { shellCommandLine } from './execution-supervisor-state.js';
 import { managedExecution } from '../security/managed-context.js';
 import { codexRoutes } from './codex-manager.js';
 
@@ -60,8 +61,8 @@ describe('supervised Codex update', () => {
     await managedExecution.run(context, () => runCodexUpdateWorker(target));
     expect(run.mock.calls[1]![0]).toEqual(input);
     // The supervisor's shell sees exactly two literal argv elements.
-    expect(execFileSync('/bin/sh', ['-c', `printf '%s\\n' ${input.command} ${input.args.join(' ')}`], { encoding: 'utf8' }).trim().split('\n'))
-      .toEqual(['/usr/bin/node', expect.stringContaining('codex-update-worker.js')]);
+    expect(execFileSync('/bin/sh', ['-c', shellCommandLine(`printf '%s\\n' ${input.command}`, input.args)], { encoding: 'utf8' }).trim().split('\n'))
+      .toEqual([process.execPath, expect.stringContaining('codex-update-worker.js')]);
   });
 
   it.each([
