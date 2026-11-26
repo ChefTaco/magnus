@@ -48,6 +48,11 @@ All notable changes to this project are documented in this file. The format is b
 - **Installer backup pruning deletes old dumps.** `magnus upgrade` kept the newest dump of every label,
   and every upgrade step has its own label, so no dump was ever deleted. It now keeps the newest
   `keepBackups` dumps plus the one the current upgrade's rollback restores.
+- **Server backup pruning deletes old dumps.** `magnus-server backup` and startup auto-migrate kept the
+  newest dump of every label, and labels name a version, so one dump per release stayed forever. They now
+  keep the newest `MAGNUS_BACKUP_KEEP` dumps, the new one included.
+- **Hermes core rollout accepts upstream's semver release tags** (`v0.23.4`) as well as the older date
+  tags; the stable-release check refused every current release as invalid.
 - The AI `getHealthHistory` tool caps its window at 168 hours, the dashboard-stats tool reads only the
   last hour of snapshots, and AI share links (`ttlHours`) and tool-round budgets (`maxToolRounds`) are
   clamped. Conversation summary failures are logged instead of being swallowed.
