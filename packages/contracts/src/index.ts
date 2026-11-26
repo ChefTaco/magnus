@@ -1,36 +1,13 @@
 import { z } from 'zod';
 export * from './managed-terminal.js';
 
-export const dependencyHealthItemSchema = z.object({
-  name: z.string(),
-  status: z.enum(['pass', 'warn', 'fail', 'skip']),
-  message: z.string(),
-  latencyMs: z.number().optional(),
-});
-
-export const dependencyHealthSchema = z.object({
-  status: z.enum(['healthy', 'degraded', 'unhealthy']),
-  generatedAt: z.string(),
-  checks: z.array(dependencyHealthItemSchema),
-});
-
-export const fleetReadinessNodeSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  hostname: z.string(),
-  ipAddress: z.string(),
-  status: z.string(),
-  operationalStatus: z.string(),
-  agentVersion: z.string().nullable(),
-  agentStatus: z.string().nullable(),
-  os: z.string(),
-  arch: z.string(),
-  lastHeartbeatAt: z.string().nullable(),
-  heartbeatAgeMs: z.number().nullable(),
-  stale: z.boolean(),
-  deployEligible: z.boolean(),
-  destructiveActionsBlocked: z.boolean(),
-});
+// The five shapes the Control API emits are defined once, in the browser contract (which documents
+// each against its server source); the root entry point re-exports them instead of keeping a second,
+// diverging copy.
+export { apiErrorSchema, dependencyHealthSchema, fleetReadinessNodeSchema, incidentSummarySchema, timelineItemSchema,
+  dependencyHealthCheckSchema as dependencyHealthItemSchema } from './browser.js';
+import { dependencyHealthCheckSchema as dependencyHealthItemSchema, dependencyHealthSchema, fleetReadinessNodeSchema, incidentSummarySchema,
+  timelineItemSchema } from './browser.js';
 
 export const fleetReadinessSchema = z.object({
   generatedAt: z.string(),
@@ -43,18 +20,10 @@ export const fleetReadinessSchema = z.object({
   nodes: z.array(fleetReadinessNodeSchema),
 });
 
-export const apiErrorSchema = z.object({
-  success: z.literal(false),
-  error: z.object({ code: z.string(), message: z.string(), details: z.record(z.string(), z.unknown()).optional() }),
-});
 export const apiSuccessSchema = <T extends z.ZodTypeAny>(data: T) => z.object({
   success: z.literal(true), data,
   meta: z.object({ total: z.number().optional(), page: z.number().optional(), pageSize: z.number().optional(), hasMore: z.boolean().optional() }).optional(),
 });
-export const timelineItemSchema = z.object({
-  type: z.string(), severity: z.string(), title: z.string(), node: z.string().optional(), timestamp: z.string(), href: z.string(),
-}).passthrough();
-export const incidentSummarySchema = z.object({ generatedAt: z.string() }).passthrough();
 export const hermesEffectiveStateSchema = z.object({ generatedAt: z.string() }).passthrough();
 export const rolloutStatusSchema = z.object({
   id: z.string(), type: z.string(), strategy: z.string(), status: z.string(), totalNodes: z.number(), completedNodes: z.number(), failedNodes: z.number(),

@@ -50,10 +50,11 @@ export const consoleSessionSchema = z.object({
 export const consoleSessionResponseSchema = ok(consoleSessionSchema);
 
 // ─── Shared errors ───
-// services/control-api/src/middleware/error-handler.ts (routes/ops.ts also sends inline errors without a code)
+// services/control-api/src/middleware/error-handler.ts (routes/ops.ts also sends inline errors without a code;
+// an HttpError may carry structured, non-secret details)
 export const apiErrorSchema = z.object({
   success: z.literal(false),
-  error: z.object({ code: z.string().optional(), message: z.string() }),
+  error: z.object({ code: z.string().optional(), message: z.string(), details: z.record(z.string(), z.unknown()).optional() }),
 });
 
 // ── Shared enums ──
