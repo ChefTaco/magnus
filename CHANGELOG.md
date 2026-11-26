@@ -215,6 +215,13 @@ All notable changes to this project are documented in this file. The format is b
 - A route test calls every `user:*` row of the console route inventory with VIEWER, OPERATOR and ADMIN
   sessions and checks each answer against the row's `auth` column.
 
+- **The OpenAPI document covers more of the API and stays honest.** It now describes webhooks, the audit
+  exports and chain verification, node account provisioning and password changes, and ten more
+  `/ops` reads, and eight integration routes lost a doubled `/api/v1` prefix. A route test fails when
+  a mounted route has no entry or an entry names a route that is not mounted;
+  `services/control-api/src/openapi/undocumented-routes.json` lists the 123 routes still without one
+  and may only shrink.
+
 **New environment variables:** agent `MAGNUS_AGENT_BODY_LIMIT_BYTES`, `HERMES_INSTALL_COMMIT`,
 `HERMES_INSTALL_SCRIPT_SHA256`, `MAGNUS_AGENT_FILE_ROOTS`; server `MAGNUS_API_SECRET_BYPASS`,
 `MAGNUS_AI_SCHEDULER_ENABLED` (all optional).

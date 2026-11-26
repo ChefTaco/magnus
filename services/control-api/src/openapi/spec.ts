@@ -545,6 +545,26 @@ const componentSchemas: Record<string, JsonSchema> = {
 
 // ─── Paths ──────────────────────────────────────────────────────────
 
+/** Inline JSON request body, for routes whose schema has no component of its own. */
+function inlineBody(schema: JsonSchema, description?: string) {
+  return { required: true, ...(description && { description }), content: { 'application/json': { schema } } };
+}
+const csvExport = (description: string) => ({ description, content: { 'text/csv': { schema: { type: 'string' } } } });
+const linuxAccountBody = (description: string) => inlineBody({
+  type: 'object', required: ['username', 'password'], additionalProperties: false,
+  properties: { username: { type: 'string', description: 'Lowercase Linux account name' }, password: { type: 'string', format: 'password', writeOnly: true } },
+}, description);
+const webhookFields: Record<string, JsonSchema> = {
+  name: { type: 'string', minLength: 1, maxLength: 200 },
+  url: { type: 'string', format: 'uri', description: 'HTTPS URL whose origin is listed in WEBHOOK_ALLOWED_ORIGINS' },
+  type: { type: 'string', description: 'generic (default), slack, discord or mattermost' },
+  secret: { type: 'string', writeOnly: true, description: 'HMAC signing secret; stored encrypted, never returned' },
+  events: { type: 'array', items: { type: 'string' }, maxItems: 100 },
+  headers: { type: 'object', additionalProperties: { type: 'string' }, description: 'Stored encrypted; only whether any are set is returned' },
+  retries: { type: 'integer', minimum: 0, maximum: 10, default: 3 },
+  timeoutMs: { type: 'integer', minimum: 1000, maximum: 60000, default: 10000 },
+};
+
 const paths: Record<string, Record<string, unknown>> = {
   '/shared-resource-leases/reserve': {
     post: { tags: ['Operations'], summary: 'Atomically reserve global repository, provider and GPU resources',
@@ -589,6 +609,88 @@ const paths: Record<string, Record<string, unknown>> = {
       responses: { 200: success('Reviewed shared-resource settlement', ref('SharedResourceLeaseView')), 400: err400, 401: err401, 403: err403,
         404: err404, 409: err409, 503: { description: 'Dedicated reconciliation authority is unavailable' } } },
   },
+  // ──────────────── Webhooks (ADMIN) ────────────────
+  '/webhooks': {
+    get: { tags: ['Webhooks'], summary: 'List webhook endpoints', description: 'ADMIN only. Secrets and header values are never returned.', security: apiSecretAuth,
+      parameters: [qp('page', 'Page number (1-based)', { type: 'integer' }), qp('pageSize', 'Items per page', { type: 'integer' })],
+      responses: { 200: success('Webhook endpoints', { type: 'object', properties: { endpoints: { type: 'array', items: { type: 'object' } }, total: { type: 'integer' } } }), 401: err401, 403: err403 } },
+    post: { tags: ['Webhooks'], summary: 'Create a webhook endpoint', security: apiSecretAuth,
+      requestBody: inlineBody({ type: 'object', required: ['name', 'url'], properties: webhookFields }),
+      responses: { 201: success('Created endpoint', { type: 'object', properties: { endpoint: { type: 'object' } } }), 400: err400, 401: err401, 403: err403 } },
+  },
+  '/webhooks/dispatch': {
+    post: { tags: ['Webhooks'], summary: 'Dispatch an event to every subscribed endpoint', security: apiSecretAuth,
+      requestBody: inlineBody({ type: 'object', required: ['event'], properties: { event: { type: 'string', maxLength: 200 }, payload: { type: 'object' } } }),
+      responses: { 202: success('Deliveries queued'), 400: err400, 401: err401, 403: err403 } },
+  },
+  '/webhooks/{id}': {
+    get: { tags: ['Webhooks'], summary: 'Get a webhook endpoint', security: apiSecretAuth, parameters: [pp('id', 'Endpoint ID')],
+      responses: { 200: success('Endpoint', { type: 'object', properties: { endpoint: { type: 'object' } } }), 401: err401, 403: err403, 404: err404 } },
+    patch: { tags: ['Webhooks'], summary: 'Update a webhook endpoint', description: 'Send only the fields to change; `secret: null` removes the secret.', security: apiSecretAuth,
+      parameters: [pp('id', 'Endpoint ID')], requestBody: inlineBody({ type: 'object', properties: { ...webhookFields, active: { type: 'boolean' } } }),
+      responses: { 200: success('Updated endpoint'), 400: err400, 401: err401, 403: err403, 404: err404 } },
+    delete: { tags: ['Webhooks'], summary: 'Delete a webhook endpoint and its deliveries', security: apiSecretAuth, parameters: [pp('id', 'Endpoint ID')],
+      responses: { 200: success('Deleted'), 401: err401, 403: err403, 404: err404 } },
+  },
+  '/webhooks/{id}/deliveries': {
+    get: { tags: ['Webhooks'], summary: 'List deliveries of an endpoint', security: apiSecretAuth,
+      parameters: [pp('id', 'Endpoint ID'), qp('page', 'Page number (1-based)', { type: 'integer' }), qp('pageSize', 'Items per page', { type: 'integer' })],
+      responses: { 200: success('Deliveries'), 401: err401, 403: err403 } },
+  },
+  '/webhooks/{id}/test': {
+    post: { tags: ['Webhooks'], summary: 'Send a test event to an endpoint', security: apiSecretAuth, parameters: [pp('id', 'Endpoint ID')],
+      responses: { 200: success('Test delivery result'), 401: err401, 403: err403, 404: err404 } },
+  },
+  '/webhooks/{id}/deliveries/{deliveryId}/redeliver': {
+    post: { tags: ['Webhooks'], summary: 'Queue a delivery again', security: apiSecretAuth, parameters: [pp('id', 'Endpoint ID'), pp('deliveryId', 'Delivery ID')],
+      responses: { 200: success('New delivery', { type: 'object', properties: { deliveryId: { type: 'string' } } }), 401: err401, 403: err403, 404: err404 } },
+  },
+
+  // ──────────────── Audit exports ────────────────
+  '/audit/export': {
+    get: { tags: ['Audit'], summary: 'Export audit events', description: 'All events between `from` and `to` (default: everything) as CSV or JSON.', security: apiSecretAuth,
+      parameters: [qp('format', 'Output format', { enum: ['csv', 'json'] }), qp('from', 'Start date or date-time', { format: 'date-time' }), qp('to', 'End date or date-time', { format: 'date-time' })],
+      responses: { 200: { description: 'Audit events (CSV attachment, or a JSON array)', content: { 'text/csv': { schema: { type: 'string' } }, 'application/json': { schema: { type: 'array', items: { type: 'object' } } } } }, 400: err400, 401: err401 } },
+  },
+  '/audit/commands/export': {
+    get: { tags: ['Audit'], summary: 'Export command history as CSV', security: apiSecretAuth,
+      parameters: [qp('from', 'Start date-time', { format: 'date-time' }), qp('to', 'End date-time', { format: 'date-time' }), qp('nodeId', 'Only this node')],
+      responses: { 200: csvExport('Command history (attachment)'), 401: err401 } },
+  },
+  '/audit/logs/export': {
+    get: { tags: ['Audit'], summary: 'Export log entries as CSV (at most 50,000, newest first)', security: apiSecretAuth,
+      parameters: [qp('from', 'Start date-time', { format: 'date-time' }), qp('to', 'End date-time', { format: 'date-time' }), qp('nodeId', 'Only this node')],
+      responses: { 200: csvExport('Log entries (attachment)'), 401: err401 } },
+  },
+  '/audit/verify': {
+    get: { tags: ['Audit'], summary: 'Verify the HMAC chain of one audit day', security: apiSecretAuth, parameters: [qp('date', 'Day (YYYY-MM-DD); default today', { format: 'date' })],
+      responses: { 200: success('Verification result'), 400: err400, 401: err401 } },
+  },
+
+  // ──────────────── Node accounts ────────────────
+  '/nodes/{nodeId}/provision-user': {
+    post: { tags: ['Nodes'], summary: 'Create a Linux account on a node (operator/admin)', security: apiSecretAuth, parameters: [pp('nodeId', 'Node ID')],
+      requestBody: linuxAccountBody('`group` (optional) adds the account to an existing group.'),
+      responses: { 200: success('Agent result'), 400: err400, 401: err401, 403: err403, 404: err404 } },
+  },
+  '/nodes/{nodeId}/change-password': {
+    post: { tags: ['Nodes'], summary: 'Change a Linux account password on a node (operator/admin)', security: apiSecretAuth, parameters: [pp('nodeId', 'Node ID')],
+      requestBody: linuxAccountBody('The password is sent to the agent only and never stored or audited.'),
+      responses: { 200: success('Agent result'), 400: err400, 401: err401, 403: err403, 404: err404 } },
+  },
+
+  // ──────────────── Operations reads ────────────────
+  '/ops/dependency-health': { get: { tags: ['Operations'], summary: 'Health of the server\'s own dependencies (database, Redis, integrations)', security: apiSecretAuth, responses: { 200: success('Dependency health'), 401: err401 } } },
+  '/ops/readiness': { get: { tags: ['Operations'], summary: 'Fleet readiness per node', description: 'ADMIN callers also get the expected credential fingerprints.', security: apiSecretAuth, responses: { 200: success('Fleet readiness'), 401: err401 } } },
+  '/ops/timeline': { get: { tags: ['Operations'], summary: 'Recent fleet events across notifications, commands, deploys, Hermes, logs and audit', security: apiSecretAuth, parameters: [qp('limit', 'Items (1-200, default 80; clamped)', { type: 'integer' })], responses: { 200: success('Timeline items', { type: 'array', items: { type: 'object' } }), 401: err401 } } },
+  '/ops/retention': { get: { tags: ['Operations'], summary: 'Retention settings and row counts', security: apiSecretAuth, responses: { 200: success('Retention summary'), 401: err401 } } },
+  '/ops/trace-map': { get: { tags: ['Operations'], summary: 'Service dependency map from recent traces', security: apiSecretAuth, responses: { 200: success('Trace dependency map'), 401: err401 } } },
+  '/ops/predictive-maintenance': { get: { tags: ['Operations'], summary: 'Predicted capacity and failure risks per node', security: apiSecretAuth, responses: { 200: success('Predictive maintenance'), 401: err401 } } },
+  '/ops/incident-summary': { get: { tags: ['Operations'], summary: 'Incident summary for the fleet or one node', security: apiSecretAuth, parameters: [qp('nodeId', 'Only this node'), qp('hours', 'Window in hours (1-168, default 24; clamped)', { type: 'integer' })], responses: { 200: success('Incident summary'), 401: err401 } } },
+  '/ops/remediation-plan/classify': { post: { tags: ['Operations'], summary: 'Classify a free-text remediation plan by risk', security: apiSecretAuth, requestBody: inlineBody({ type: 'object', properties: { description: { type: 'string' } } }), responses: { 200: success('Classification'), 401: err401 } } },
+  '/ops/hermes-effective-state': { get: { tags: ['Operations'], summary: 'Effective Hermes Agent state across the fleet', security: apiSecretAuth, responses: { 200: success('Hermes effective state'), 401: err401 } } },
+  '/ops/package-security-posture': { get: { tags: ['Operations'], summary: 'Package update and security posture across the fleet', security: apiSecretAuth, responses: { 200: success('Package security posture'), 401: err401 } } },
+
   '/ops/observations': { get: { tags: ['Operations'], summary: 'Versioned bounded observations for an external collector', security: apiSecretAuth, responses: { '200': success('Operational observations v1', zod(magnusObservationSchema)), '401': err401, '403': err403 } } },
   '/ops/applications': { get: { tags: ['Operations'], summary: 'Sanitized configured application readiness', security: apiSecretAuth, responses: { '200': success('Application observations'), '401': err401 } } },
   '/ops/capacity-advice': { get: { tags: ['Operations'], summary: 'Freshness-qualified advisory GPU capacity', security: apiSecretAuth, responses: { '200': success('Capacity advice'), '401': err401 } } },
@@ -3123,14 +3225,14 @@ export function buildOpenApiSpec() {
       schemas: componentSchemas,
     },
     paths: { ...paths,
-      '/api/v1/hiveskills/targets/{target}':{get:{summary:'Verify exact enrolled native target and immutable client without dispatch',tags:['Skills'],security:[{skillsExecutorBearer:[]}],parameters:[{name:'target',in:'path',required:true,schema:{type:'string'}}],responses:{200:{description:'Read-only enrolled target posture; ready false retains operator review'},401:{description:'Dedicated executor credential required'},403:{description:'Target outside exact registry grant'}}}},
-      '/api/v1/embermend/capabilities': { get: { summary: 'Read enrolled Embermend target capabilities within an exact product grant', tags: ['Operations'], security: [{embermendExecutorBearer:[]}], responses: {200:{description:'Installation identity, compatible targets and supported action versions'},401:{description:'Endpoint-scoped credential required'}} } },
-      '/api/v1/embermend/operations': { post: { summary: 'Dispatch an exact authorized Embermend operation or separately approved quiescent-owner settlement', tags: ['Operations'], security: [{embermendExecutorBearer:[]}], requestBody: {required:true,content:{'application/json':{schema:zSchema.toJSONSchema(embermendOperationSchema)}}}, responses:{202:{description:'Durable original operation queued for managed admission'},200:{description:'Original receipt, request binding and retained outcome; success is not security verification'},403:{description:'Target or action outside product grant'},409:{description:'Incompatible enrollment, changed identity or uncertain execution'}} } },
-      '/api/v1/embermend/operations/{id}': { get: { summary: 'Reconcile the original signed Embermend operation without replay', tags: ['Operations'], security: [{embermendExecutorBearer:[]}], parameters:[{name:'id',in:'path',required:true,schema:{type:'string'}}], responses:{200:{description:'Original signed completion and ownership state'},404:{description:'No operation reserved for this integration'}} } },
-      '/api/v1/hiveskills/jobs/{id}': { post: { summary: 'Execute one exact approved HiveSkills publication through enrolled native admission', tags:['Skills'], requestBody:{required:true,content:{'application/json':{schema:zSchema.toJSONSchema(skillJobRequest)}}}, security: [{skillsExecutorBearer:[]}], parameters:[{name:'id',in:'path',required:true,schema:{type:'string',format:'uuid'}}], responses:{200:{description:'Bounded durable outcome; admitted operations are never replayed'},409:{description:'Publication conflict, not admitted or uncertain'}} }, get:{summary:'Reconcile only the original signed HiveSkills operation receipt',tags:['Skills'],security:[{skillsExecutorBearer:[]}],parameters:[{name:'id',in:'path',required:true,schema:{type:'string',format:'uuid'}},{name:'target',in:'query',required:true,schema:{type:'string'}}],responses:{200:{description:'Existing durable outcome'}}} },
-      '/api/v1/security-integration/response/execute': { post: { summary: 'Execute an exact Cindertrace-approved response through managed node admission', tags: ['Cindertrace'], security: [{cindertraceSignature:[]}], requestBody: {required:true,content:{'application/json':{schema:zSchema.toJSONSchema(responseRequestSchema)}}}, responses: { 200: { description: 'Signed completion receipt' }, 409: { description: 'Expired, already claimed, blocked, or uncertain execution' } } } },
-      '/api/v1/security-integration/response/{id}': { get: { summary: 'Read an existing Cindertrace execution without replay', tags: ['Cindertrace'], security: [{cindertraceSignature:[]}], parameters:[{name:'id',in:'path',required:true,schema:{type:'string'}}], responses: { 200: { description: 'Signed existing execution status' } } } },
-      '/api/v1/security-integration/response/targets/{id}/health': { get: { summary: 'Read fresh target health for Cindertrace', tags: ['Cindertrace'], security: [{cindertraceSignature:[]}], parameters:[{name:'id',in:'path',required:true,schema:{type:'string'}}], responses: { 200: { description: 'Signed minimal health snapshot' } } } },
+      '/hiveskills/targets/{target}':{get:{summary:'Verify exact enrolled native target and immutable client without dispatch',tags:['Skills'],security:[{skillsExecutorBearer:[]}],parameters:[{name:'target',in:'path',required:true,schema:{type:'string'}}],responses:{200:{description:'Read-only enrolled target posture; ready false retains operator review'},401:{description:'Dedicated executor credential required'},403:{description:'Target outside exact registry grant'}}}},
+      '/embermend/capabilities': { get: { summary: 'Read enrolled Embermend target capabilities within an exact product grant', tags: ['Operations'], security: [{embermendExecutorBearer:[]}], responses: {200:{description:'Installation identity, compatible targets and supported action versions'},401:{description:'Endpoint-scoped credential required'}} } },
+      '/embermend/operations': { post: { summary: 'Dispatch an exact authorized Embermend operation or separately approved quiescent-owner settlement', tags: ['Operations'], security: [{embermendExecutorBearer:[]}], requestBody: {required:true,content:{'application/json':{schema:zSchema.toJSONSchema(embermendOperationSchema)}}}, responses:{202:{description:'Durable original operation queued for managed admission'},200:{description:'Original receipt, request binding and retained outcome; success is not security verification'},403:{description:'Target or action outside product grant'},409:{description:'Incompatible enrollment, changed identity or uncertain execution'}} } },
+      '/embermend/operations/{id}': { get: { summary: 'Reconcile the original signed Embermend operation without replay', tags: ['Operations'], security: [{embermendExecutorBearer:[]}], parameters:[{name:'id',in:'path',required:true,schema:{type:'string'}}], responses:{200:{description:'Original signed completion and ownership state'},404:{description:'No operation reserved for this integration'}} } },
+      '/hiveskills/jobs/{id}': { post: { summary: 'Execute one exact approved HiveSkills publication through enrolled native admission', tags:['Skills'], requestBody:{required:true,content:{'application/json':{schema:zSchema.toJSONSchema(skillJobRequest)}}}, security: [{skillsExecutorBearer:[]}], parameters:[{name:'id',in:'path',required:true,schema:{type:'string',format:'uuid'}}], responses:{200:{description:'Bounded durable outcome; admitted operations are never replayed'},409:{description:'Publication conflict, not admitted or uncertain'}} }, get:{summary:'Reconcile only the original signed HiveSkills operation receipt',tags:['Skills'],security:[{skillsExecutorBearer:[]}],parameters:[{name:'id',in:'path',required:true,schema:{type:'string',format:'uuid'}},{name:'target',in:'query',required:true,schema:{type:'string'}}],responses:{200:{description:'Existing durable outcome'}}} },
+      '/security-integration/response/execute': { post: { summary: 'Execute an exact Cindertrace-approved response through managed node admission', tags: ['Cindertrace'], security: [{cindertraceSignature:[]}], requestBody: {required:true,content:{'application/json':{schema:zSchema.toJSONSchema(responseRequestSchema)}}}, responses: { 200: { description: 'Signed completion receipt' }, 409: { description: 'Expired, already claimed, blocked, or uncertain execution' } } } },
+      '/security-integration/response/{id}': { get: { summary: 'Read an existing Cindertrace execution without replay', tags: ['Cindertrace'], security: [{cindertraceSignature:[]}], parameters:[{name:'id',in:'path',required:true,schema:{type:'string'}}], responses: { 200: { description: 'Signed existing execution status' } } } },
+      '/security-integration/response/targets/{id}/health': { get: { summary: 'Read fresh target health for Cindertrace', tags: ['Cindertrace'], security: [{cindertraceSignature:[]}], parameters:[{name:'id',in:'path',required:true,schema:{type:'string'}}], responses: { 200: { description: 'Signed minimal health snapshot' } } } },
     },
   };
 }
