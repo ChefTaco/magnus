@@ -224,7 +224,7 @@ jobs:
         working-directory: packages/agent
         run: |
           sudo useradd --create-home --shell /bin/bash magnus-terminal-ci
-          sudo env "PATH=$PATH" MAGNUS_NATIVE_TERMINAL_TEST_USER=magnus-terminal-ci \
+          sudo env "PATH=$PATH" MAGNUS_EXECUTION_SUPERVISOR_ENABLED=true MAGNUS_NATIVE_TERMINAL_TEST_USER=magnus-terminal-ci \
             "$(command -v node)" ../../node_modules/vitest/vitest.mjs run src/executors/managed-terminal.native.test.ts
       - name: Embermend Compose inventory against real Docker containers
         working-directory: packages/agent
