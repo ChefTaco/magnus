@@ -293,41 +293,74 @@ export async function summarizeConversation(conversationId: string): Promise<str
       data: { summary },
     });
     return summary;
-  } catch {
+  } catch (err) {
+    console.warn('[AI] conversation summary failed:', err instanceof Error ? err.message : err);
     return null;
   }
 }
 
 // ── Tool Approval ──
 
-/** Tools that require human approval before execution. */
+/** Tools that always require human approval before execution. A stored policy can deny them, never allow them. */
 export const DANGEROUS_TOOLS = new Set(['execCommand', 'writeFile', 'runSkill', 'createSkillDraft', 'generateRunbook']);
 
-/**
- * Check if a tool requires human approval based on the configured policy.
- */
-export async function getToolApprovalPolicy(): Promise<{
+export interface ToolApprovalPolicy {
   alwaysAllow: string[];
   requireApproval: string[];
   alwaysDeny: string[];
-}> {
+}
+
+const DEFAULT_TOOL_APPROVAL_POLICY: ToolApprovalPolicy = {
+  alwaysAllow: ['getFleetStatus', 'getCodexFleetStatus', 'getNodeHealth', 'getHealthHistory', 'getWazuhFleetStatus', 'getActiveAnomalies',
+    'getNodeAnomalies', 'getActiveAlerts', 'getRecentCommands', 'getNodeLogs',
+    'readFile', 'listDirectory', 'recallMemories', 'searchNodes', 'getCronJobs',
+    'getSkills', 'getDashboardStats', 'getAuditLog', 'getNodeDetails',
+    'correlateAnomalies', 'getAnomalyTimeline', 'listSkillActions', 'listScratchpadVariables',
+    'saveResult', 'transformData', 'compareSnapshots'],
+  requireApproval: ['execCommand', 'writeFile', 'runSkill', 'createSkillDraft', 'generateRunbook', 'forgetMemory'],
+  alwaysDeny: [],
+};
+
+const storedToolApprovalPolicySchema = z.object({
+  alwaysAllow: z.array(z.string()).optional(),
+  requireApproval: z.array(z.string()).optional(),
+  alwaysDeny: z.array(z.string()).optional(),
+});
+
+/**
+ * Combine a stored policy with the defaults so it fails closed: a list the stored policy leaves out
+ * keeps its default, every dangerous tool requires approval unless the policy denies it, and a tool
+ * that is denied or needs approval is never also allowed.
+ */
+export function resolveToolApprovalPolicy(stored: unknown): ToolApprovalPolicy {
+  const parsed = storedToolApprovalPolicySchema.safeParse(stored);
+  const policy = parsed.success ? parsed.data : {};
+  const alwaysDeny = new Set(policy.alwaysDeny ?? DEFAULT_TOOL_APPROVAL_POLICY.alwaysDeny);
+  const requireApproval = new Set([...(policy.requireApproval ?? DEFAULT_TOOL_APPROVAL_POLICY.requireApproval), ...DANGEROUS_TOOLS]
+    .filter((name) => !alwaysDeny.has(name)));
+  const alwaysAllow = (policy.alwaysAllow ?? DEFAULT_TOOL_APPROVAL_POLICY.alwaysAllow)
+    .filter((name) => !alwaysDeny.has(name) && !requireApproval.has(name));
+  return {
+    alwaysAllow: [...new Set(alwaysAllow)],
+    requireApproval: [...requireApproval],
+    alwaysDeny: [...alwaysDeny],
+  };
+}
+
+/**
+ * The tool approval policy in force: the stored policy merged with the defaults (see
+ * `resolveToolApprovalPolicy`). A stored value that does not parse gives the defaults.
+ */
+export async function getToolApprovalPolicy(): Promise<ToolApprovalPolicy> {
   const db = getDb();
   const entry = await db.aiMemory.findUnique({ where: { key: 'tool_approval_policy' } });
+  let stored: unknown = null;
   if (entry) {
     try {
-      return JSON.parse(entry.content);
+      stored = JSON.parse(entry.content);
     } catch { /* use defaults */ }
   }
-  return {
-    alwaysAllow: ['getFleetStatus', 'getCodexFleetStatus', 'getNodeHealth', 'getHealthHistory', 'getWazuhFleetStatus', 'getActiveAnomalies',
-      'getNodeAnomalies', 'getActiveAlerts', 'getRecentCommands', 'getNodeLogs',
-      'readFile', 'listDirectory', 'recallMemories', 'searchNodes', 'getCronJobs',
-      'getSkills', 'getDashboardStats', 'getAuditLog', 'getNodeDetails',
-      'correlateAnomalies', 'getAnomalyTimeline', 'listSkillActions', 'listScratchpadVariables',
-      'saveResult', 'transformData', 'compareSnapshots'],
-    requireApproval: ['execCommand', 'writeFile', 'runSkill', 'createSkillDraft', 'forgetMemory'],
-    alwaysDeny: [],
-  };
+  return resolveToolApprovalPolicy(stored);
 }
 
 // ── Load AI context documents ──
@@ -1003,6 +1036,19 @@ async function callLlm<TStructured = unknown>(
 
 // Maximum rounds of tool calling before forcing a final response
 const MAX_TOOL_ROUNDS = DEFAULT_MAX_TOOL_ROUNDS;
+const TOOL_ROUNDS_CEILING = Math.max(1, Number.isFinite(DEFAULT_MAX_TOOL_ROUNDS) ? Math.floor(DEFAULT_MAX_TOOL_ROUNDS) : 100);
+
+/** A tool-round budget from a request or saved settings, kept between 1 and the server's ceiling. */
+export function clampToolRounds(value: number): number {
+  if (!Number.isFinite(value)) return TOOL_ROUNDS_CEILING;
+  return Math.min(TOOL_ROUNDS_CEILING, Math.max(1, Math.floor(value)));
+}
+
+/** Share links live 72 hours by default and at most 30 days. */
+export function clampShareTtlHours(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value)) return 72;
+  return Math.min(720, Math.max(1, value));
+}
 const LOOP_PROGRESS_SIMILARITY_THRESHOLD = 0.9;
 
 function stableSerialize(value: unknown): string {
@@ -1261,19 +1307,51 @@ function parseToolCallsFromThinking(thinking: string): string | null {
   return null;
 }
 
-async function executeToolCalls(calls: AiToolCall[]): Promise<AiToolResult[]> {
-  const policy = await getToolApprovalPolicy();
+/** What decides whether a tool call may run: the approval policy and the tools disabled in the tool config. */
+export interface ToolGate {
+  policy: ToolApprovalPolicy;
+  disabled: ReadonlySet<string>;
+}
+
+export async function loadToolGate(): Promise<ToolGate> {
+  const [policy, config] = await Promise.all([getToolApprovalPolicy(), getToolConfig()]);
+  return { policy, disabled: new Set(config.filter((entry) => !entry.enabled).map((entry) => entry.name)) };
+}
+
+/** Why a tool call may not run now, or null when it may. */
+export function toolCallBlock(name: string, gate: ToolGate): 'disabled' | 'denied' | 'approval' | null {
+  if (gate.disabled.has(name)) return 'disabled';
+  if (gate.policy.alwaysDeny.includes(name)) return 'denied';
+  if (gate.policy.requireApproval.includes(name)) return 'approval';
+  return null;
+}
+
+/**
+ * Run tool calls in order. A disabled or denied tool gets an error result. The first call that needs
+ * approval stops the round: it and the calls after it do not run, and it is returned as `pendingApproval`.
+ * This applies however the call arrived, native or parsed from the response text.
+ */
+export async function executeToolCalls(
+  calls: AiToolCall[],
+  gate: ToolGate,
+): Promise<{ results: AiToolResult[]; pendingApproval: AiToolCall | null }> {
   const results: AiToolResult[] = [];
   for (const call of calls) {
-    // Check denial policy
-    if (policy.alwaysDeny.includes(call.name)) {
+    const block = toolCallBlock(call.name, gate);
+    if (block === 'disabled') {
+      results.push({ name: call.name, success: false, result: null, error: 'Tool is disabled' });
+      continue;
+    }
+    if (block === 'denied') {
       results.push({ name: call.name, success: false, result: null, error: 'Tool is denied by policy' });
       continue;
     }
-    const result = await executeAiTool(call);
-    results.push(result);
+    if (block === 'approval') {
+      return { results, pendingApproval: call };
+    }
+    results.push(await executeAiTool(call));
   }
-  return results;
+  return { results, pendingApproval: null };
 }
 
 // ── Conversation management ──
@@ -1447,6 +1525,8 @@ export interface ChatResponse {
   tokenCount: number;
   thinking?: string;
   structuredAnalysis?: unknown;
+  /** Set when a tool call is waiting for approval; the message `messageId` holds it. */
+  pendingApproval?: { toolName: string };
 }
 
 /**
@@ -1487,7 +1567,7 @@ export async function chat(request: ChatRequest): Promise<ChatResponse> {
   const aiSettings = await getAiSettings();
   const modelProfile = await selectModel(request.type ?? 'chat');
   const activeModel = resolveRouteModel(modelProfile, aiSettings.model);
-  const maxToolRounds = request.maxToolRounds ?? aiSettings.maxToolRounds ?? modelProfile.maxToolRounds ?? MAX_TOOL_ROUNDS;
+  const maxToolRounds = clampToolRounds(request.maxToolRounds ?? aiSettings.maxToolRounds ?? modelProfile.maxToolRounds ?? MAX_TOOL_ROUNDS);
 
   // Auto-fetch fleet status and anomaly context for user chats
   let fleetContext = request.fleetContext;
@@ -1567,11 +1647,11 @@ export async function chat(request: ChatRequest): Promise<ChatResponse> {
   // Call Ollama with native tool definitions (filtered by tool config).
   // Heartbeat runs already pass pre-gathered fleet/anomaly context and should
   // avoid sending the full tool schema set on every scheduled analysis.
+  // The gate also applies to calls parsed from response text, which can name any registered tool.
+  const toolGate = await loadToolGate();
   const allTools = request.type === 'heartbeat' ? [] : getOllamaToolDefinitions();
-  const config = allTools.length > 0 ? await getToolConfig() : [];
-  const disabledSet = new Set(config.filter((e) => !e.enabled).map((e) => e.name));
-  const llmTools = disabledSet.size > 0
-    ? allTools.filter((t) => !disabledSet.has(t.function.name))
+  const llmTools = toolGate.disabled.size > 0
+    ? allTools.filter((t) => !toolGate.disabled.has(t.function.name))
     : allTools;
   console.log(`[AI] chat() start — type=${request.type ?? 'chat'} provider=${modelProfile.provider ?? 'ollama'} model=${activeModel} conversationId=${conversationId} historySize=${history.length} nativeTools=${llmTools.length}`);
   let llmResult: LlmResult;
@@ -1674,7 +1754,7 @@ export async function chat(request: ChatRequest): Promise<ChatResponse> {
       },
     }));
 
-    const roundResults = await executeToolCalls(executableToolCalls);
+    const { results: roundResults, pendingApproval } = await executeToolCalls(executableToolCalls, toolGate);
     allToolResults.push(...roundResults);
 
     if (request.replMode) {
@@ -1684,6 +1764,45 @@ export async function chat(request: ChatRequest): Promise<ChatResponse> {
           autoStoreToolResult(conversationId, call.name, result.result);
         }
       });
+    }
+
+    if (pendingApproval) {
+      // Same as the streaming path: save the call as a pending approval and stop. It runs only
+      // when an operator approves it (approveToolCall), which then resumes the conversation.
+      const toolArgs: Record<string, unknown> = { ...pendingApproval.arguments };
+      delete toolArgs['_conversationId'];
+      const cleaned = stripToolCallMarkup(responseContent, knownTools);
+      const visibleText = parseToolCalls(cleaned).length > 0 ? '' : cleaned;
+      const content = [visibleText, `I need to run \`${pendingApproval.name}\` but it requires your approval.`].filter(Boolean).join('\n\n');
+      const tokenCount = totalEvalCount > 0 ? totalEvalCount : Math.ceil(content.length / 4);
+      const messageId = nanoid();
+      await db.aiMessage.create({
+        data: {
+          id: messageId,
+          conversationId,
+          role: 'assistant',
+          content,
+          toolCalls: JSON.stringify(allToolResults),
+          thinking: responseThinking || null,
+          tokenCount,
+          isRead: false,
+          pendingApproval: JSON.stringify({ toolName: pendingApproval.name, toolArgs, round, conversationId }),
+        },
+      });
+      await db.aiConversation.update({
+        where: { id: conversationId },
+        data: { updatedAt: new Date() },
+      });
+      console.log(`[AI] chat() paused — ${pendingApproval.name} requires approval (message ${messageId})`);
+      return {
+        conversationId,
+        messageId,
+        content,
+        toolCalls: allToolResults,
+        tokenCount,
+        ...optional("thinking", responseThinking || undefined),
+        pendingApproval: { toolName: pendingApproval.name },
+      };
     }
 
     if (isNative) {
@@ -1804,7 +1923,7 @@ export async function chat(request: ChatRequest): Promise<ChatResponse> {
   // Auto-summarize if conversation is getting long
   const totalMessages = await db.aiMessage.count({ where: { conversationId } });
   if (totalMessages > 20 && totalMessages % 10 === 0) {
-    summarizeConversation(conversationId).catch(() => {}); // fire-and-forget
+    summarizeConversation(conversationId).catch((err: unknown) => console.warn('[AI] conversation summary failed:', err instanceof Error ? err.message : err)); // fire-and-forget
   }
 
   return {
@@ -2078,7 +2197,7 @@ export async function createConversationShare(
   }
 
   const token = nanoid(24);
-  const expiresAt = new Date(Date.now() + (options?.ttlHours ?? 72) * 60 * 60 * 1000).toISOString();
+  const expiresAt = new Date(Date.now() + clampShareTtlHours(options?.ttlHours) * 60 * 60 * 1000).toISOString();
 
   await upsertConfigurationEntry(
     `share:conversation:${token}`,
@@ -2506,7 +2625,7 @@ export async function chatStream(
 
     // Build system prompt and message history
     const activeModel = resolveRouteModel(profile, aiSettings.model);
-    const maxToolRounds = request.maxToolRounds ?? aiSettings.maxToolRounds ?? profile.maxToolRounds ?? DEFAULT_MAX_TOOL_ROUNDS;
+    const maxToolRounds = clampToolRounds(request.maxToolRounds ?? aiSettings.maxToolRounds ?? profile.maxToolRounds ?? DEFAULT_MAX_TOOL_ROUNDS);
     const memories = await getMemoriesAsContext();
     const systemPrompt = buildSystemPrompt({ memories, ...optional("fleetStatus", request.fleetContext), ...optional("anomalies", request.anomalyContext), ...optional("controllerContext", request.controllerContext), ...optional("userContext", request.userInfo
         ? [request.userInfo.email ? `Email: ${request.userInfo.email}` : null, request.userInfo.username ? `Username: ${request.userInfo.username}` : null, request.userInfo.role ? `Role: ${request.userInfo.role}` : null]
@@ -2532,12 +2651,10 @@ export async function chatStream(
     messages.push(userStreamMsg);
 
     const allTools = getOllamaToolDefinitions();
-    const config = await getToolConfig();
-    const disabledSet = new Set(config.filter((entry) => !entry.enabled).map((entry) => entry.name));
-    const tools = disabledSet.size > 0
-      ? allTools.filter((tool) => !disabledSet.has(tool.function.name))
+    const toolGate = await loadToolGate();
+    const tools = toolGate.disabled.size > 0
+      ? allTools.filter((tool) => !toolGate.disabled.has(tool.function.name))
       : allTools;
-    const approvalPolicy = await getToolApprovalPolicy();
     let totalTokens = 0;
     let finalContent = '';
     let finalThinking = '';
@@ -2686,13 +2803,18 @@ export async function chatStream(
         const toolName = tc.function.name;
         const toolArgs = tc.function.arguments;
 
-        // Check approval policy
-        if (approvalPolicy.alwaysDeny.includes(toolName)) {
+        // Check the tool config and approval policy
+        const block = toolCallBlock(toolName, toolGate);
+        if (block === 'disabled') {
+          toolResults.push({ name: toolName, success: false, result: null, error: 'Tool is disabled' });
+          continue;
+        }
+        if (block === 'denied') {
           toolResults.push({ name: toolName, success: false, result: null, error: 'Tool is denied by policy' });
           continue;
         }
 
-        if (approvalPolicy.requireApproval.includes(toolName)) {
+        if (block === 'approval') {
           // Save pending approval and stop
           const approvalData = JSON.stringify({
             toolName,
@@ -2810,7 +2932,7 @@ export async function chatStream(
     // Auto-summarize if conversation is getting long
     const messageCount = await db.aiMessage.count({ where: { conversationId } });
     if (messageCount > 20 && messageCount % 10 === 0) {
-      summarizeConversation(conversationId).catch(() => {}); // fire-and-forget
+      summarizeConversation(conversationId).catch((err: unknown) => console.warn('[AI] conversation summary failed:', err instanceof Error ? err.message : err)); // fire-and-forget
     }
 
     onEvent({
@@ -2880,6 +3002,17 @@ export async function approveToolCall(messageId: string, actorId = 'operator'): 
     targetId: messageId,
     details: { toolName: approval.toolName, conversationId: approval.conversationId, decision: 'approved' },
   });
+
+  // The tool may have been disabled or denied since the approval was requested.
+  const block = toolCallBlock(approval.toolName, await loadToolGate());
+  if (block === 'disabled' || block === 'denied') {
+    return chat({
+      conversationId: approval.conversationId,
+      message: `[Tool not run] The tool "${approval.toolName}" is ${block === 'disabled' ? 'disabled' : 'denied by policy'} and was not executed.`,
+      type: 'chat',
+      createdBy: 'system',
+    });
+  }
 
   // Execute the tool
   const toolResult = await executeAiTool({
