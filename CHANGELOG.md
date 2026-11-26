@@ -222,7 +222,9 @@ All notable changes to this project are documented in this file. The format is b
   it asks the agent to make the backup (`backup: true`) after its own path check, so a refused write
   leaves nothing behind. Agents that do not advertise `restrictedFileWrite` in their ping are refused
   with `AGENT_FILE_WRITE_UNSUPPORTED` and nothing is written. Role applications and library skill
-  deploys use the same write and lose their shell fallback too.
+  deploys use the same write and lose their shell fallback too. The server also tells the agent whether
+  an ADMIN asked (`adminWrite`), so the agent can apply the system-path rule to the destination it
+  resolves, symlinks included; it needs an agent that advertises `restrictedFileWrite` 2.
 - **The agent upgrade run lock no longer falls back to process memory.** Without Redis, `POST
   /agent-upgrades/runs` and `magnus-server agents upgrade` answer 503 `AGENT_UPGRADE_LOCK_UNAVAILABLE`
   instead of taking a lock only this process can see. A run whose lock renewals fail for two thirds of
@@ -359,8 +361,8 @@ password stamp and stay valid until they expire (`JWT_EXPIRY`); sign in again to
 Scripts that relied on the text of an unexpected 500 must read the server log instead. Alert rules whose node
 filter relied on substring matching (`web` for `web1`, `web2`) need a `*` (`web*`). OPERATOR accounts that
 pushed files under the system paths above need an ADMIN to do it. Upgrade agents before the control
-server: until an agent is on a release with the restricted file write, file pushes to it fail with 409
-`AGENT_FILE_WRITE_UNSUPPORTED` (failing closed is intended).
+server: until an agent is on a release with the restricted file write (`restrictedFileWrite` 2), file
+pushes to it fail with 409 `AGENT_FILE_WRITE_UNSUPPORTED` (failing closed is intended).
 
 ## [3.3.6] - 2026-11-25
 

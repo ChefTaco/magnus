@@ -129,6 +129,9 @@ filesRouter.post('/update', requireRole('ADMIN', 'OPERATOR'), async (c) => {
           content,
           createIfMissing: body.createIfMissing ?? true,
           backup: body.backup,
+          // The agent re-applies the system-path rule to the destination it resolves (symlinks
+          // included), so it must know whether an ADMIN asked.
+          adminWrite: user.role === 'ADMIN',
         });
 
         await db.filePatchTask.update({

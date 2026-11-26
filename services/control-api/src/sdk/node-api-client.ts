@@ -662,19 +662,24 @@ export class NodeApiClient {
   /**
    * Write one file through the agent's restricted write: the agent checks the path (including
    * MAGNUS_AGENT_FILE_ROOTS), then makes the optional backup, then writes atomically. An agent
-   * that does not advertise `features.restrictedFileWrite: 1` is refused before anything is sent,
-   * so there is never a backup or a write the agent's path check did not judge first.
+   * that does not advertise `features.restrictedFileWrite` 2 or later is refused before anything is
+   * sent, so there is never a backup or a write the agent's path check did not judge first. From
+   * level 2 the agent also applies the system-path rule to the symlink-resolved destination and
+   * writes a system path only when `adminWrite` is true (the caller is an ADMIN).
    */
   async writeFile(payload: {
     filePath: string;
     content: string;
     createIfMissing?: boolean;
     backup?: boolean;
+    /** True only when the user behind the write holds the ADMIN role. */
+    adminWrite: boolean;
   }): Promise<ApiResponse<{ written: boolean; checksum: string; backupPath?: string | null }>> {
     const ping = await this.api.get('ping', { retry: 0, timeout: 10_000 }).json<ApiResponse<ManagedPing>>().catch(() => null);
-    if (ping?.data?.features?.restrictedFileWrite !== 1) {
+    const level = ping?.data?.features?.restrictedFileWrite;
+    if (typeof level !== 'number' || level < 2) {
       throw new NotDispatchedError('AGENT_FILE_WRITE_UNSUPPORTED',
-        'This agent does not support restricted file writes (path check, then backup, then atomic write); upgrade it first. Nothing was written.');
+        'This agent does not support restricted file writes (path check on the resolved destination, then backup, then atomic write); upgrade it first. Nothing was written.');
     }
     return this.mutate('POST', 'files/write', payload);
   }

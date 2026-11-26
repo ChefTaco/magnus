@@ -127,7 +127,8 @@ async function writeFileToNode(
   content: string,
 ): Promise<void> {
   const client = new NodeApiClient({ baseUrl: ctx.nodeBaseUrl, nodeToken: ctx.nodeToken, resourceNodeId: ctx.nodeId });
-  await client.writeFile({ filePath, content, createIfMissing: true });
+  // Role files live under /opt/magnus/roles; never a system path, whoever applies the role.
+  await client.writeFile({ filePath, content, createIfMissing: true, adminWrite: false });
 }
 
 // ─── Apply Role ───

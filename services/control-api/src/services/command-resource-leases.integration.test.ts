@@ -442,7 +442,7 @@ try { const row = await admitResourceCommand(JSON.parse(process.argv[2]), JSON.p
   it('serializes native writes with commands and settles the signed response without storing private bodies', async () => {
     let nativeId = ''; const content = 'private-native-body-not-in-receipts';
     const fetch = vi.fn(async (req: Request) => {
-      if (req.url.endsWith('/ping')) return json({ features: { managedMutations: 1, restrictedFileWrite: 1 } });
+      if (req.url.endsWith('/ping')) return json({ features: { managedMutations: 1, restrictedFileWrite: 2 } });
       expect(req.url).toContain('/commands/managed-http');
       const value = await req.json(); nativeId = value.commandId;
       const input = { ...httpIdentity(value.commandId, value.method, value.path, value.body, value.timeoutSeconds), coordination: value.coordination };
@@ -452,7 +452,7 @@ try { const row = await admitResourceCommand(JSON.parse(process.argv[2]), JSON.p
       receipt.signature = createHmac('sha256', secret).update(commandResultSigningPayload(receipt)).digest('hex');
       return json({ response, receipt });
     }); vi.stubGlobal('fetch', fetch);
-    expect((await client().writeFile({ filePath: '/tmp/fixture', content })).data.written).toBe(true);
+    expect((await client().writeFile({ filePath: '/tmp/fixture', content, adminWrite: false })).data.written).toBe(true);
     const row = await db.commandResourceLease.findUniqueOrThrow({ where: { commandId: nativeId } });
     expect(row.state).toBe('released');
     const command = await db.remoteCommand.findUniqueOrThrow({ where: { id: nativeId } });
@@ -466,7 +466,7 @@ try { const row = await admitResourceCommand(JSON.parse(process.argv[2]), JSON.p
     const app = new Hono().onError(errorHandler).route('/resource-leases', router);
     let commandId = '';
     vi.stubGlobal('fetch', vi.fn(async (req: Request) => {
-      if (req.url.endsWith('/ping')) return json({ features: { managedMutations: 1, restrictedFileWrite: 1 } });
+      if (req.url.endsWith('/ping')) return json({ features: { managedMutations: 1, restrictedFileWrite: 2 } });
       expect(req.url).toContain('/commands/managed-http');
       const value = await req.json(); commandId = value.commandId;
       expect(value.path).toBe('/ardent/action');
@@ -501,7 +501,7 @@ try { const row = await admitResourceCommand(JSON.parse(process.argv[2]), JSON.p
       jobId: createHash('sha256').update(JSON.stringify([spec.nodeFqdn, spec.name])).digest('hex'), revision: 1,
       specSha256: createHash('sha256').update(JSON.stringify(spec)).digest('hex'), staged: true as const, enabled: false as const };
     const fetch = vi.fn(async (req: Request) => {
-      if (req.url.endsWith('/ping')) return json({ features: { managedMutations: 1, restrictedFileWrite: 1 } });
+      if (req.url.endsWith('/ping')) return json({ features: { managedMutations: 1, restrictedFileWrite: 2 } });
       const value = await req.json();
       const input = { ...httpIdentity(value.commandId, value.method, value.path, value.body, value.timeoutSeconds), coordination: value.coordination };
       const response = { status: 200, body: JSON.stringify({ success: true, data: identity }) };
@@ -521,14 +521,14 @@ try { const row = await admitResourceCommand(JSON.parse(process.argv[2]), JSON.p
 
   it('retains native ownership when a signed response body is changed in transit', async () => {
     const fetch = vi.fn(async (req: Request) => {
-      if (req.url.endsWith('/ping')) return json({ features: { managedMutations: 1, restrictedFileWrite: 1 } });
+      if (req.url.endsWith('/ping')) return json({ features: { managedMutations: 1, restrictedFileWrite: 2 } });
       const value = await req.json();
       const input = { ...httpIdentity(value.commandId, value.method, value.path, value.body, value.timeoutSeconds), coordination: value.coordination };
       const receipt = { ...signed(input), stdout: httpReceiptBody(value.method, value.path, 200, '{}') };
       receipt.signature = createHmac('sha256', secret).update(commandResultSigningPayload(receipt)).digest('hex');
       return json({ response: { status: 200, body: '{"tampered":true}' }, receipt });
     }); vi.stubGlobal('fetch', fetch);
-    await expect(client().writeFile({ filePath: '/tmp/fixture', content: 'fixture' })).rejects.toThrow('differs from signed receipt');
+    await expect(client().writeFile({ filePath: '/tmp/fixture', content: 'fixture', adminWrite: false })).rejects.toThrow('differs from signed receipt');
     expect((await db.commandResourceLease.findFirstOrThrow({ where: { nodeId } })).state).toBe('unknown');
     await expect(lease.admitResourceCommand(context, request())).rejects.toBeInstanceOf(lease.ResourceLeaseConflict);
   });
@@ -544,13 +544,13 @@ try { const row = await admitResourceCommand(JSON.parse(process.argv[2]), JSON.p
       { status: 409, headers: { 'content-type': 'application/json' } });
     };
     const agent = (reply: (value: never) => Response) => vi.stubGlobal('fetch', vi.fn(async (req: Request) => req.url.endsWith('/ping')
-      ? json({ features: { managedMutations: 1, restrictedFileWrite: 1 } }) : reply(await req.json() as never)));
+      ? json({ features: { managedMutations: 1, restrictedFileWrite: 2 } }) : reply(await req.json() as never)));
     const fenceRow = () => db.commandResourceFence.findUniqueOrThrow({ where: { resourceKey: `node:${nodeId}` } });
 
     it('settles a signed STALE_FENCE as not-dispatched and moves the generation past the agent, so the next request passes', async () => {
       const highWater = 1789962351090n;
       agent(value => refusalReply(value, 'STALE_FENCE', highWater.toString()));
-      await expect(client().writeFile({ filePath: '/tmp/fixture', content: 'fixture' })).rejects.toMatchObject({ certainRefusal: { code: 'STALE_FENCE' } });
+      await expect(client().writeFile({ filePath: '/tmp/fixture', content: 'fixture', adminWrite: false })).rejects.toMatchObject({ certainRefusal: { code: 'STALE_FENCE' } });
       const row = await db.commandResourceLease.findFirstOrThrow({ where: { nodeId } });
       expect(row).toMatchObject({ state: 'released', settlement: 'not-dispatched' });
       expect((await fenceRow()).generation).toBe(highWater + 1n);
@@ -564,13 +564,13 @@ try { const row = await admitResourceCommand(JSON.parse(process.argv[2]), JSON.p
     it('keeps a generation that is already higher', async () => {
       agent(value => refusalReply(value, 'STALE_FENCE', '3'));
       const before = await db.commandResourceFence.upsert({ where: { resourceKey: `node:${nodeId}` }, create: { resourceKey: `node:${nodeId}`, generation: 5_000_000_000_000n }, update: { generation: { increment: 5_000_000_000_000n } } });
-      await expect(client().writeFile({ filePath: '/tmp/fixture', content: 'fixture' })).rejects.toBeDefined();
+      await expect(client().writeFile({ filePath: '/tmp/fixture', content: 'fixture', adminWrite: false })).rejects.toBeDefined();
       expect((await fenceRow()).generation).toBe(before.generation + 1n);
     });
 
     it('holds the lease when a refusal is unsigned, forged, or from an older agent', async () => {
       const unknownAfter = async () => {
-        await expect(client().writeFile({ filePath: '/tmp/fixture', content: 'fixture' })).rejects.toBeDefined();
+        await expect(client().writeFile({ filePath: '/tmp/fixture', content: 'fixture', adminWrite: false })).rejects.toBeDefined();
         const row = await db.commandResourceLease.findFirstOrThrow({ where: { nodeId } });
         expect(row.state).toBe('unknown');
         await db.commandResourceLease.delete({ where: { id: row.id } });
@@ -593,7 +593,7 @@ try { const row = await admitResourceCommand(JSON.parse(process.argv[2]), JSON.p
           const unsigned = { commandId: value.commandId, requestSha256: commandRequestDigest(input), code: 'STALE_FENCE', highWater: '5', nodeFqdn: value.claim.nodeFqdn, leaseId: value.claim.leaseId, ...forge };
           return new Response(JSON.stringify({ success: false, error: { code: 'STALE_FENCE', executed: false, refusal: { ...unsigned, signature: createHmac('sha256', secret).update(commandRefusalSigningPayload(unsigned)).digest('hex') } } }), { status: 409, headers: { 'content-type': 'application/json' } });
         }) as never);
-        await expect(client().writeFile({ filePath: '/tmp/fixture', content: 'fixture' })).rejects.toBeDefined();
+        await expect(client().writeFile({ filePath: '/tmp/fixture', content: 'fixture', adminWrite: false })).rejects.toBeDefined();
         const row = await db.commandResourceLease.findFirstOrThrow({ where: { nodeId } });
         expect(row.state).toBe('unknown');
         await db.commandResourceLease.delete({ where: { id: row.id } });
@@ -604,14 +604,14 @@ try { const row = await admitResourceCommand(JSON.parse(process.argv[2]), JSON.p
       const other = { commandId: 'someone-else', requestSha256: 'a'.repeat(64), code: 'STALE_FENCE', highWater: null, nodeFqdn: `${prefix}.invalid`, leaseId: 'another-lease' };
       agent(() => new Response(JSON.stringify({ success: false, error: { code: 'STALE_FENCE', executed: false,
         refusal: { ...other, signature: createHmac('sha256', secret).update(commandRefusalSigningPayload(other)).digest('hex') } } }), { status: 409, headers: { 'content-type': 'application/json' } }));
-      await expect(client().writeFile({ filePath: '/tmp/fixture', content: 'fixture' })).rejects.toBeDefined();
+      await expect(client().writeFile({ filePath: '/tmp/fixture', content: 'fixture', adminWrite: false })).rejects.toBeDefined();
       expect((await db.commandResourceLease.findFirstOrThrow({ where: { nodeId } })).state).toBe('unknown');
     });
 
     it('leaves an over-the-cap high-water alone and reports it', async () => {
       const before = await db.commandResourceFence.findUnique({ where: { resourceKey: `node:${nodeId}` } });
       agent(value => refusalReply(value, 'STALE_FENCE', '9000000000000000000'));
-      await expect(client().writeFile({ filePath: '/tmp/fixture', content: 'fixture' })).rejects.toMatchObject({ certainRefusal: { code: 'FENCE_OVERFLOW' } });
+      await expect(client().writeFile({ filePath: '/tmp/fixture', content: 'fixture', adminWrite: false })).rejects.toMatchObject({ certainRefusal: { code: 'FENCE_OVERFLOW' } });
       expect((await db.commandResourceFence.findUnique({ where: { resourceKey: `node:${nodeId}` } }))!.generation).toBe((before?.generation ?? 0n) + 1n);
       expect((await db.commandResourceLease.findFirstOrThrow({ where: { nodeId } })).settlement).toBe('not-dispatched');
     });
