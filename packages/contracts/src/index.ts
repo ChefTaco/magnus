@@ -185,6 +185,7 @@ export type SecurityInventoryExport = z.infer<
 
 export * from './release.js';
 export * from './upgrade-remedies.js';
+export * from './file-policy.js';
 
 export { responseRequestSchema, type ResponseRequest } from './cindertrace-response.js';
 

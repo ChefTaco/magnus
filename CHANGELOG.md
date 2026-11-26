@@ -236,6 +236,14 @@ All notable changes to this project are documented in this file. The format is b
   roots immediately before and after the backup and replacement renames; a mismatch gets 409
   `PATH_CHANGED` and removes only the agent's own file. **Upgrade note:** writes into a directory
   owned by an account other than root, the agent or the file's owner are now refused.
+- **The agent applies the ADMIN-only system-path rule to the real destination.** The Control API judged
+  the requested path, but the agent resolved symlinks afterwards, so a link under an ordinary path
+  could carry an OPERATOR's write into `/etc` or a `.ssh` directory. `/files/write` now takes
+  `adminWrite` (sent by the Control API, true only for an ADMIN; missing counts as false) and applies
+  the shared `filePathPolicy` (new in `@hivemagnus/magnus-contracts`) to the request and to the
+  verified, symlink-resolved destination, refusing a sensitive one without it (403
+  `SENSITIVE_PATH_ADMIN_ONLY`, nothing created). Ping reports `features.restrictedFileWrite: 2`.
+  **Upgrade note:** until the Control API sends `adminWrite`, agents refuse writes to system paths.
 ### Fixed
 
 - **Installer backup pruning deletes old dumps.** `magnus upgrade` kept the newest dump of every label,

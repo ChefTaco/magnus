@@ -242,3 +242,30 @@ describe('file writes bound to the verified directory', () => {
     await chmod(open, 0o755);
   });
 });
+
+describe('system-path rule on the resolved destination', () => {
+  it('refuses a non-admin write that a symlink carries into a sensitive path, and lets an admin write', async () => {
+    const base = join(dir, 'sensitive'); const keys = join(base, 'home', '.ssh');
+    await mkdir(keys, { recursive: true });
+    await symlink(keys, join(base, 'innocent'));
+    const viaLink = join(base, 'innocent', 'authorized_keys');
+    for (const body of [{ filePath: viaLink, content: 'ssh-ed25519 AAAA fixture' }, { filePath: viaLink, content: 'x', adminWrite: false }]) {
+      const response = await write(body);
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({ error: { code: 'SENSITIVE_PATH_ADMIN_ONLY' } });
+    }
+    expect(await readdir(keys)).toEqual([]);
+    // Nothing is created even for a new directory below the sensitive destination.
+    expect((await write({ filePath: join(base, 'innocent', 'nested', 'file'), content: 'x', createIfMissing: true })).status).toBe(403);
+    expect(await readdir(keys)).toEqual([]);
+    const admin = await write({ filePath: viaLink, content: 'ssh-ed25519 AAAA fixture', adminWrite: true });
+    expect(admin.status).toBe(200);
+    expect(await readFile(join(keys, 'authorized_keys'), 'utf8')).toBe('ssh-ed25519 AAAA fixture');
+  });
+
+  it('refuses system paths requested directly without admin', async () => {
+    const response = await write({ filePath: '/etc/magnus-fixture-not-written.conf', content: 'x' });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ error: { code: 'SENSITIVE_PATH_ADMIN_ONLY' } });
+  });
+});
