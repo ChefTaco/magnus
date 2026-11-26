@@ -41,7 +41,7 @@ while [[ $# -gt 0 ]]; do
     -vv) VERBOSE=2; shift ;;
     -v) VERBOSE=$((VERBOSE + 1)); shift ;;
     --) shift; break ;;
-    -*) echo "Unknown option: $1" >&2; usage ;;
+    -*) echo "Unknown option: $1" >&2; (usage) >&2; exit 2 ;;
     *) break ;;
   esac
 done
@@ -75,7 +75,7 @@ CLEAN_COUNT=0
 for repo in "${REPOS[@]}"; do
   cd "$repo" 2>/dev/null || continue
   BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "detached")
-  DIRTY=$(git status --porcelain 2>/dev/null | wc -l)
+  DIRTY=$(git status --porcelain 2>/dev/null | wc -l || true)
   LAST_COMMIT=$(git log -1 --format='%cr' 2>/dev/null || echo "unknown")
 
   if [[ $DIRTY -gt 0 ]]; then
@@ -97,8 +97,8 @@ if [[ $VERBOSE -ge 1 ]]; then
   echo "--- Repository Sizes ---"
   for repo in "${REPOS[@]}"; do
     [[ -d "$repo/.git" ]] || continue
-    GIT_SIZE=$(du -sh "$repo/.git" 2>/dev/null | awk '{print $1}')
-    WORK_SIZE=$(du -sh "$repo" 2>/dev/null | awk '{print $1}')
+    GIT_SIZE=$(du -sh "$repo/.git" 2>/dev/null | awk '{print $1}' || true)
+    WORK_SIZE=$(du -sh "$repo" 2>/dev/null | awk '{print $1}' || true)
     echo "  $repo — working: $WORK_SIZE, .git: $GIT_SIZE"
   done | sort -t':' -k2 -rh | head -20
 
@@ -145,7 +145,7 @@ if [[ $VERBOSE -ge 2 ]]; then
   echo "--- Potential Secrets in Working Tree ---"
   SECRET_PATTERNS='(password|secret|api.key|token|private.key|AWS_SECRET|PRIVATE_KEY).*='
   for repo in "${REPOS[@]}"; do
-    HITS=$(grep -rl --include='*.env' --include='*.yml' --include='*.yaml' --include='*.json' --include='*.conf' -E "$SECRET_PATTERNS" "$repo" 2>/dev/null | head -5)
+    HITS=$(grep -rl --include='*.env' --include='*.yml' --include='*.yaml' --include='*.json' --include='*.conf' -E "$SECRET_PATTERNS" "$repo" 2>/dev/null | head -5 || true)
     if [[ -n "$HITS" ]]; then
       echo "  ⚠ $repo:"
       echo "$HITS" | sed 's/^/    /'
@@ -154,11 +154,11 @@ if [[ $VERBOSE -ge 2 ]]; then
 
   echo "--- Large Files (>10MB in working tree) ---"
   for repo in "${REPOS[@]}"; do
-    LARGE=$(find "$repo" -not -path '*/.git/*' -type f -size +10M 2>/dev/null | head -5)
+    LARGE=$(find "$repo" -not -path '*/.git/*' -type f -size +10M 2>/dev/null | head -5 || true)
     if [[ -n "$LARGE" ]]; then
       echo "  $repo:"
       echo "$LARGE" | while read -r f; do
-        SIZE=$(du -h "$f" 2>/dev/null | awk '{print $1}')
+        SIZE=$(du -h "$f" 2>/dev/null | awk '{print $1}' || true)
         echo "    $f ($SIZE)"
       done
     fi
@@ -168,7 +168,7 @@ if [[ $VERBOSE -ge 2 ]]; then
   for repo in "${REPOS[@]}"; do
     cd "$repo" 2>/dev/null || continue
     if git lfs ls-files &>/dev/null; then
-      LFS_COUNT=$(git lfs ls-files 2>/dev/null | wc -l)
+      LFS_COUNT=$(git lfs ls-files 2>/dev/null | wc -l || true)
       if [[ $LFS_COUNT -gt 0 ]]; then
         echo "  $repo: $LFS_COUNT LFS-tracked files"
       fi

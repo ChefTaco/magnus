@@ -57,3 +57,28 @@ test('news-reporter refuses settings that would add URL parameters, before any r
   }
   assert.deepEqual(readdirSync(root), []);
 });
+
+const entryPoints = readdirSync(skillsDir, { withFileTypes: true })
+  .filter(entry => entry.isDirectory())
+  .flatMap(entry => readdirSync(join(skillsDir, entry.name)).filter(name => name.endsWith('.sh')).map(name => join(skillsDir, entry.name, name)));
+
+test('every entry point refuses an unknown flag with status 2 and usage on stderr', () => {
+  assert.ok(entryPoints.length >= 26);
+  for (const script of entryPoints) {
+    const result = spawnSync('bash', [script, '--no-such-flag'], { encoding: 'utf8', input: '', timeout: 20_000 });
+    assert.equal(result.status, 2, script);
+    assert.match(result.stderr, /Unknown option: --no-such-flag[\s\S]*Usage:/, script);
+    assert.equal(result.stdout, '', script);
+  }
+});
+
+test('report skills finish when find meets a directory they cannot read', { skip: process.getuid?.() === 0 && 'root reads every directory' }, t => {
+  // Under `set -euo pipefail`, `X=$(find … | wc -l)` used to abort the script when find hit EACCES.
+  const locked = join(mkdtempSync('/tmp/magnus-skills-locked-'), 'locked');
+  mkdirSync(locked, { mode: 0o000 });
+  t.after(() => { spawnSync('chmod', ['700', locked]); rmSync(join(locked, '..'), { recursive: true, force: true }); });
+  for (const script of ['disk-cleaner/cleaner.sh', 'cron-manager/crontabs.sh', 'mount-inspector/mounts.sh', 'package-manager/packages.sh']) {
+    const result = spawnSync('bash', [join(skillsDir, script)], { encoding: 'utf8', timeout: 120_000 });
+    assert.equal(result.status, 0, `${script}: ${result.stderr.slice(-500)}`);
+  }
+});

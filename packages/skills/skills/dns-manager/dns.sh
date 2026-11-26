@@ -41,7 +41,7 @@ while [[ $# -gt 0 ]]; do
     -vv) VERBOSE=2; shift ;;
     -v) VERBOSE=$((VERBOSE + 1)); shift ;;
     --) shift; break ;;
-    -*) echo "Unknown option: $1" >&2; usage ;;
+    -*) echo "Unknown option: $1" >&2; (usage) >&2; exit 2 ;;
     *) break ;;
   esac
 done
@@ -71,7 +71,7 @@ NAMESERVERS=$(grep -E '^nameserver' /etc/resolv.conf 2>/dev/null | awk '{print $
 TEST_DOMAIN="google.com"
 for ns in $NAMESERVERS; do
   if dig +short +timeout=3 +tries=1 "$TEST_DOMAIN" "@$ns" >/dev/null 2>&1; then
-    LATENCY=$(dig +noall +stats "$TEST_DOMAIN" "@$ns" 2>/dev/null | grep 'Query time' | awk '{print $4 " " $5}')
+    LATENCY=$(dig +noall +stats "$TEST_DOMAIN" "@$ns" 2>/dev/null | grep 'Query time' | awk '{print $4 " " $5}' || true)
     echo "  ✓ $ns — responsive ($LATENCY)"
   else
     echo "  ✗ $ns — FAILED to resolve $TEST_DOMAIN"
@@ -80,7 +80,7 @@ done
 
 echo "--- Basic Resolution Test ---"
 for domain in google.com github.com apt.ubuntu.com; do
-  RESULT=$(dig +short "$domain" 2>/dev/null | head -3 | tr '\n' ', ' | sed 's/,$//')
+  RESULT=$(dig +short "$domain" 2>/dev/null | head -3 | tr '\n' ', ' | sed 's/,$//' || true)
   if [[ -n "$RESULT" ]]; then
     echo "  ✓ $domain → $RESULT"
   else
@@ -91,7 +91,7 @@ done
 echo "--- Reverse DNS ---"
 # Check if this node's IPs have valid PTR records
 for ip in $(hostname -I 2>/dev/null | tr ' ' '\n' | head -3); do
-  PTR=$(dig +short -x "$ip" 2>/dev/null | head -1)
+  PTR=$(dig +short -x "$ip" 2>/dev/null | head -1 || true)
   if [[ -n "$PTR" ]]; then
     echo "  $ip → $PTR"
   else
@@ -111,14 +111,14 @@ if [[ $VERBOSE -ge 1 ]]; then
 
   echo "--- DNSSEC Validation ---"
   # Test DNSSEC with a known signed zone
-  DNSSEC_RESULT=$(dig +dnssec +short dnssec.works 2>/dev/null | head -1)
+  DNSSEC_RESULT=$(dig +dnssec +short dnssec.works 2>/dev/null | head -1 || true)
   if [[ -n "$DNSSEC_RESULT" ]]; then
     echo "  ✓ DNSSEC validation working (dnssec.works resolved)"
   else
     echo "  ⚠ DNSSEC may not be enabled or working"
   fi
   # Test with a known DNSSEC-failing domain
-  FAIL_RESULT=$(dig +dnssec +short fail01.dnssec.works 2>/dev/null | head -1)
+  FAIL_RESULT=$(dig +dnssec +short fail01.dnssec.works 2>/dev/null | head -1 || true)
   if [[ -z "$FAIL_RESULT" ]]; then
     echo "  ✓ DNSSEC correctly rejects invalid signatures"
   else
@@ -131,12 +131,12 @@ if [[ $VERBOSE -ge 2 ]]; then
   echo "--- Split-Horizon Check ---"
   HOSTNAME_FQDN=$(hostname -f 2>/dev/null || hostname)
   for ns in $NAMESERVERS; do
-    RESULT=$(dig +short "$HOSTNAME_FQDN" "@$ns" 2>/dev/null | head -1)
+    RESULT=$(dig +short "$HOSTNAME_FQDN" "@$ns" 2>/dev/null | head -1 || true)
     echo "  $ns resolves $(hostname -f 2>/dev/null || hostname) → ${RESULT:-(NXDOMAIN)}"
   done
   # Also check against public resolvers
   for public in 8.8.8.8 1.1.1.1; do
-    RESULT=$(dig +short +timeout=3 "$HOSTNAME_FQDN" "@$public" 2>/dev/null | head -1)
+    RESULT=$(dig +short +timeout=3 "$HOSTNAME_FQDN" "@$public" 2>/dev/null | head -1 || true)
     echo "  $public resolves $(hostname -f 2>/dev/null || hostname) → ${RESULT:-(NXDOMAIN)}"
   done
 

@@ -41,7 +41,7 @@ while [[ $# -gt 0 ]]; do
     -vv) VERBOSE=2; shift ;;
     -v) VERBOSE=$((VERBOSE + 1)); shift ;;
     --) shift; break ;;
-    -*) echo "Unknown option: $1" >&2; usage ;;
+    -*) echo "Unknown option: $1" >&2; (usage) >&2; exit 2 ;;
     *) break ;;
   esac
 done
@@ -166,7 +166,7 @@ if [[ $VERBOSE -ge 1 ]]; then
     ZONE=$(basename "$tz")
     for trip in "${tz}"trip_point_*_temp; do
       [[ -f "$trip" ]] || continue
-      TRIP_NUM=$(echo "$trip" | grep -oP 'trip_point_\K\d+')
+      TRIP_NUM=$(echo "$trip" | grep -oP 'trip_point_\K\d+' || true)
       TRIP_TEMP=$(($(cat "$trip" 2>/dev/null || echo 0) / 1000))
       TRIP_TYPE=$(cat "${tz}trip_point_${TRIP_NUM}_type" 2>/dev/null || echo "?")
       echo "  $ZONE trip $TRIP_NUM: ${TRIP_TEMP}°C ($TRIP_TYPE)"
@@ -186,7 +186,7 @@ if [[ $VERBOSE -ge 2 ]]; then
   echo "--- Per-Core Frequency ---"
   for freq_file in /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq; do
     [[ -f "$freq_file" ]] || continue
-    CPU=$(echo "$freq_file" | grep -oP 'cpu\K\d+')
+    CPU=$(echo "$freq_file" | grep -oP 'cpu\K\d+' || true)
     FREQ=$(($(cat "$freq_file") / 1000))
     echo "  cpu$CPU: ${FREQ} MHz"
   done | head -32
@@ -200,7 +200,7 @@ if [[ $VERBOSE -ge 3 ]]; then
   echo "--- Runtime PM Stats ---"
   for dev in /sys/bus/pci/devices/*/power/runtime_status; do
     [[ -f "$dev" ]] || continue
-    DEVID=$(echo "$dev" | grep -oP '/\K[^/]+(?=/power)')
+    DEVID=$(echo "$dev" | grep -oP '/\K[^/]+(?=/power)' || true)
     STATUS=$(cat "$dev" 2>/dev/null)
     echo "  $DEVID: $STATUS"
   done 2>/dev/null | head -20

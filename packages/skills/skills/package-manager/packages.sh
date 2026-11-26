@@ -41,7 +41,7 @@ while [[ $# -gt 0 ]]; do
     -vv) VERBOSE=2; shift ;;
     -v) VERBOSE=$((VERBOSE + 1)); shift ;;
     --) shift; break ;;
-    -*) echo "Unknown option: $1" >&2; usage ;;
+    -*) echo "Unknown option: $1" >&2; (usage) >&2; exit 2 ;;
     *) break ;;
   esac
 done
@@ -94,11 +94,11 @@ fi
 if [[ $VERBOSE -ge 1 ]]; then
   echo "--- Snap Packages ---"
   if command -v snap &>/dev/null; then
-    SNAP_COUNT=$(snap list 2>/dev/null | tail -n +2 | wc -l)
+    SNAP_COUNT=$(snap list 2>/dev/null | tail -n +2 | wc -l || true)
     echo "  Installed snaps: $SNAP_COUNT"
     snap list 2>/dev/null | head -15 | sed 's/^/  /'
     # Check for refreshable snaps
-    REFRESH=$(snap refresh --list 2>/dev/null | tail -n +2 | wc -l)
+    REFRESH=$(snap refresh --list 2>/dev/null | tail -n +2 | wc -l || true)
     if [[ $REFRESH -gt 0 ]]; then
       echo "  ⚠ $REFRESH snap(s) have updates available"
     fi
@@ -110,11 +110,11 @@ fi
 # ── APT sources (verbose 1+) ──
 if [[ $VERBOSE -ge 1 ]]; then
   echo "--- APT Sources ---"
-  SOURCES=$(find /etc/apt/sources.list.d/ -name "*.list" -o -name "*.sources" 2>/dev/null | wc -l)
+  SOURCES=$(find /etc/apt/sources.list.d/ -name "*.list" -o -name "*.sources" 2>/dev/null | wc -l || true)
   echo "  Extra source files: $SOURCES"
   find /etc/apt/sources.list.d/ -name "*.list" -o -name "*.sources" 2>/dev/null | while read -r f; do
     echo "    $(basename "$f")"
-  done
+  done || true
 fi
 
 # ── Recently installed (verbose 2+) ──
@@ -123,7 +123,7 @@ if [[ $VERBOSE -ge 2 ]]; then
   grep " install " /var/log/dpkg.log 2>/dev/null | tail -20 | awk '{print "  " $1, $2, $4}' || echo "  No dpkg history"
 
   echo "--- DPKG Audit ---"
-  BROKEN=$(dpkg --audit 2>/dev/null | wc -l)
+  BROKEN=$(dpkg --audit 2>/dev/null | wc -l || true)
   if [[ $BROKEN -gt 0 ]]; then
     echo "  ⚠ $BROKEN issue(s):"
     dpkg --audit 2>/dev/null | head -10 | sed 's/^/    /'

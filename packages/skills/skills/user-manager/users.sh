@@ -41,7 +41,7 @@ while [[ $# -gt 0 ]]; do
     -vv) VERBOSE=2; shift ;;
     -v) VERBOSE=$((VERBOSE + 1)); shift ;;
     --) shift; break ;;
-    -*) echo "Unknown option: $1" >&2; usage ;;
+    -*) echo "Unknown option: $1" >&2; (usage) >&2; exit 2 ;;
     *) break ;;
   esac
 done
@@ -105,7 +105,7 @@ if [[ $VERBOSE -ge 2 ]]; then
   echo "--- Home Directory Sizes ---"
   for home in /home/*; do
     [[ -d "$home" ]] || continue
-    SIZE=$(du -sh "$home" 2>/dev/null | awk '{print $1}')
+    SIZE=$(du -sh "$home" 2>/dev/null | awk '{print $1}' || true)
     echo "  $(basename "$home"): ${SIZE:-unknown}"
   done
 fi

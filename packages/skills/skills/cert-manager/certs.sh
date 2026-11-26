@@ -45,7 +45,7 @@ while [[ $# -gt 0 ]]; do
     -vv) VERBOSE=2; shift ;;
     -v) VERBOSE=$((VERBOSE + 1)); shift ;;
     --) shift; break ;;
-    -*) echo "Unknown option: $1" >&2; usage ;;
+    -*) echo "Unknown option: $1" >&2; (usage) >&2; exit 2 ;;
     *) break ;;
   esac
 done
@@ -76,14 +76,14 @@ for dir in "${CERT_DIRS[@]}"; do
       echo "  ✓ $cert — ${DAYS_LEFT}d remaining"
     fi
     if [[ $VERBOSE -ge 1 ]]; then
-      SUBJECT=$(openssl x509 -subject -noout -in "$cert" 2>/dev/null | sed 's/subject=//')
-      ISSUER=$(openssl x509 -issuer -noout -in "$cert" 2>/dev/null | sed 's/issuer=//')
+      SUBJECT=$(openssl x509 -subject -noout -in "$cert" 2>/dev/null | sed 's/subject=//' || true)
+      ISSUER=$(openssl x509 -issuer -noout -in "$cert" 2>/dev/null | sed 's/issuer=//' || true)
       echo "      Subject: $SUBJECT"
       echo "      Issuer:  $ISSUER"
     fi
     if [[ $VERBOSE -ge 2 ]]; then
-      KEY_SIZE=$(openssl x509 -text -noout -in "$cert" 2>/dev/null | grep "Public-Key:" | head -1)
-      SIG_ALG=$(openssl x509 -text -noout -in "$cert" 2>/dev/null | grep "Signature Algorithm:" | head -1)
+      KEY_SIZE=$(openssl x509 -text -noout -in "$cert" 2>/dev/null | grep "Public-Key:" | head -1 || true)
+      SIG_ALG=$(openssl x509 -text -noout -in "$cert" 2>/dev/null | grep "Signature Algorithm:" | head -1 || true)
       echo "      ${KEY_SIZE:-}"
       echo "      ${SIG_ALG:-}"
       # Chain validation
@@ -92,7 +92,7 @@ for dir in "${CERT_DIRS[@]}"; do
     if [[ $VERBOSE -ge 3 ]]; then
       openssl x509 -text -noout -in "$cert" 2>/dev/null | sed 's/^/      /'
     fi
-  done
+  done || true
 done
 
 echo "--- Let's Encrypt Status ---"

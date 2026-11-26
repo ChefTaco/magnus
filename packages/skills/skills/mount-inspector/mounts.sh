@@ -41,7 +41,7 @@ while [[ $# -gt 0 ]]; do
     -vv) VERBOSE=2; shift ;;
     -v) VERBOSE=$((VERBOSE + 1)); shift ;;
     --) shift; break ;;
-    -*) echo "Unknown option: $1" >&2; usage ;;
+    -*) echo "Unknown option: $1" >&2; (usage) >&2; exit 2 ;;
     *) break ;;
   esac
 done
@@ -55,7 +55,7 @@ findmnt --noheadings -o FSTYPE 2>/dev/null | sort | uniq -c | sort -rn | sed 's/
 
 echo "--- Disk Mounts ---"
 findmnt -t ext4,xfs,btrfs,ext3,ext2,vfat --noheadings -o TARGET,SOURCE,FSTYPE,OPTIONS 2>/dev/null | while read -r target source fstype opts; do
-  USAGE=$(df --output=pcent "$target" 2>/dev/null | tail -1 | tr -d ' %')
+  USAGE=$(df --output=pcent "$target" 2>/dev/null | tail -1 | tr -d ' %' || true)
   echo "  $target ($fstype, ${USAGE:-?}% used)"
   echo "    Source: $source"
   # Flag missing security options on writable mounts
@@ -67,7 +67,7 @@ findmnt -t ext4,xfs,btrfs,ext3,ext2,vfat --noheadings -o TARGET,SOURCE,FSTYPE,OP
       echo "    ℹ Consider adding:$MISSING"
     fi
   fi
-done
+done || true
 
 echo "--- Security Audit ---"
 echo "  /tmp mount options:"
@@ -88,7 +88,7 @@ echo "--- fstab Consistency ---"
 FSTAB_ISSUES=0
 while IFS= read -r line; do
   [[ "$line" =~ ^#.*$ || -z "$line" ]] && continue
-  TARGET=$(echo "$line" | awk '{print $2}')
+  TARGET=$(echo "$line" | awk '{print $2}' || true)
   [[ "$TARGET" == "none" || "$TARGET" == "swap" ]] && continue
   if ! findmnt "$TARGET" &>/dev/null; then
     echo "  ⚠ fstab entry not mounted: $TARGET"
@@ -102,8 +102,8 @@ fi
 # ── Network mounts (verbose 1+) ──
 if [[ $VERBOSE -ge 1 ]]; then
   echo "--- Network Mounts ---"
-  NFS_MOUNTS=$(findmnt -t nfs,nfs4 --noheadings -o TARGET,SOURCE,OPTIONS 2>/dev/null)
-  CIFS_MOUNTS=$(findmnt -t cifs --noheadings -o TARGET,SOURCE,OPTIONS 2>/dev/null)
+  NFS_MOUNTS=$(findmnt -t nfs,nfs4 --noheadings -o TARGET,SOURCE,OPTIONS 2>/dev/null || true)
+  CIFS_MOUNTS=$(findmnt -t cifs --noheadings -o TARGET,SOURCE,OPTIONS 2>/dev/null || true)
 
   if [[ -n "$NFS_MOUNTS" ]]; then
     echo "  NFS:"
@@ -154,7 +154,7 @@ if [[ $VERBOSE -ge 2 ]]; then
   done
 
   echo "--- Overlay Mounts ---"
-  OVERLAYS=$(findmnt -t overlay --noheadings -o TARGET,SOURCE,OPTIONS 2>/dev/null)
+  OVERLAYS=$(findmnt -t overlay --noheadings -o TARGET,SOURCE,OPTIONS 2>/dev/null || true)
   if [[ -n "$OVERLAYS" ]]; then
     echo "$OVERLAYS" | head -10 | sed 's/^/  /'
   else

@@ -41,7 +41,7 @@ while [[ $# -gt 0 ]]; do
     -vv) VERBOSE=2; shift ;;
     -v) VERBOSE=$((VERBOSE + 1)); shift ;;
     --) shift; break ;;
-    -*) echo "Unknown option: $1" >&2; usage ;;
+    -*) echo "Unknown option: $1" >&2; (usage) >&2; exit 2 ;;
     *) break ;;
   esac
 done
@@ -107,8 +107,8 @@ fi
 # ── Hardware (verbose 2+) ──
 if [[ $VERBOSE -ge 2 ]]; then
   echo "--- Hardware ---"
-  CPU_MODEL=$(grep "model name" /proc/cpuinfo 2>/dev/null | head -1 | cut -d: -f2 | xargs)
-  TOTAL_MEM=$(grep MemTotal /proc/meminfo 2>/dev/null | awk '{printf "%.1f GB", $2/1024/1024}')
+  CPU_MODEL=$(grep "model name" /proc/cpuinfo 2>/dev/null | head -1 | cut -d: -f2 | xargs || true)
+  TOTAL_MEM=$(grep MemTotal /proc/meminfo 2>/dev/null | awk '{printf "%.1f GB", $2/1024/1024}' || true)
   echo "  CPU: ${CPU_MODEL:-unknown}"
   echo "  RAM: ${TOTAL_MEM:-unknown}"
   echo "  Architecture: $(uname -m)"

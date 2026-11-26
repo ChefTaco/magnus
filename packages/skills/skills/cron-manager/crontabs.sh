@@ -41,7 +41,7 @@ while [[ $# -gt 0 ]]; do
     -vv) VERBOSE=2; shift ;;
     -v) VERBOSE=$((VERBOSE + 1)); shift ;;
     --) shift; break ;;
-    -*) echo "Unknown option: $1" >&2; usage ;;
+    -*) echo "Unknown option: $1" >&2; (usage) >&2; exit 2 ;;
     *) break ;;
   esac
 done
@@ -62,12 +62,12 @@ done
 echo "--- Cron Directories ---"
 for dir in /etc/cron.hourly /etc/cron.daily /etc/cron.weekly /etc/cron.monthly; do
   if [[ -d "$dir" ]]; then
-    COUNT=$(find "$dir" -maxdepth 1 -type f -executable 2>/dev/null | wc -l)
+    COUNT=$(find "$dir" -maxdepth 1 -type f -executable 2>/dev/null | wc -l || true)
     echo "  $dir: $COUNT script(s)"
     if [[ $VERBOSE -ge 1 ]]; then
       find "$dir" -maxdepth 1 -type f -executable 2>/dev/null | while read -r s; do
         echo "    $(basename "$s")"
-      done
+      done || true
     fi
   fi
 done
@@ -107,7 +107,7 @@ fi
 # ── At queue ──
 echo "--- At Queue ---"
 if command -v atq &>/dev/null; then
-  AT_JOBS=$(atq 2>/dev/null | wc -l)
+  AT_JOBS=$(atq 2>/dev/null | wc -l || true)
   echo "  Pending at jobs: $AT_JOBS"
   if [[ $VERBOSE -ge 1 && $AT_JOBS -gt 0 ]]; then
     atq 2>/dev/null | head -10 | sed 's/^/    /'
@@ -122,7 +122,7 @@ if [[ $VERBOSE -ge 2 ]]; then
   for f in /etc/crontab /etc/cron.d/*; do
     [[ -f "$f" ]] || continue
     grep -Ev '^\s*#|^\s*$|^(SHELL|PATH|MAILTO|HOME)' "$f" 2>/dev/null | while read -r line; do
-      CMD=$(echo "$line" | awk '{for(i=6;i<=NF;i++) printf "%s ", $i; print ""}' | awk '{print $1}')
+      CMD=$(echo "$line" | awk '{for(i=6;i<=NF;i++) printf "%s ", $i; print ""}' | awk '{print $1}' || true)
       [[ -z "$CMD" ]] && continue
       if command -v "$CMD" &>/dev/null; then
         log_v2 "  ✓ $CMD exists"

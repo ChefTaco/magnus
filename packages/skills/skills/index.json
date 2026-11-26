@@ -1,6 +1,6 @@
 {
   "schema": "https://agentskills.io/schema/v1",
-  "generatedAt": "2026-07-29T01:22:28.611Z",
+  "generatedAt": "2026-11-26T14:50:42.595Z",
   "count": 26,
   "skills": [
     {
@@ -64,14 +64,13 @@
     {
       "name": "disk-cleaner",
       "version": "1.0.0",
-      "description": "Automated disk space management — cleans temp files, rotates logs, purges package caches, and identifies large/orphaned files. Configurable usage thresholds.",
+      "description": "Disk space report — finds old temp files, large logs, package and container caches and the largest directories, and prints the cleanup commands to run. Read-only: it deletes nothing. Configurable usage threshold.",
       "author": "magnus",
       "entryPoint": "cleaner.sh",
       "dependencies": [
         "find",
         "du",
-        "df",
-        "logrotate"
+        "df"
       ],
       "tags": [
         "disk",

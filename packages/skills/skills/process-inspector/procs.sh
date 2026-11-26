@@ -41,7 +41,7 @@ while [[ $# -gt 0 ]]; do
     -vv) VERBOSE=2; shift ;;
     -v) VERBOSE=$((VERBOSE + 1)); shift ;;
     --) shift; break ;;
-    -*) echo "Unknown option: $1" >&2; usage ;;
+    -*) echo "Unknown option: $1" >&2; (usage) >&2; exit 2 ;;
     *) break ;;
   esac
 done
@@ -55,7 +55,7 @@ echo "--- Top Memory Consumers ---"
 ps aux --sort=-%mem | head -11
 
 echo "--- Zombie Processes ---"
-ZOMBIES=$(ps aux | awk '$8 ~ /Z/ {print $2, $11}')
+ZOMBIES=$(ps aux | awk '$8 ~ /Z/ {print $2, $11}' || true)
 if [[ -n "$ZOMBIES" ]]; then
   echo "$ZOMBIES" | sed 's/^/  /'
 else

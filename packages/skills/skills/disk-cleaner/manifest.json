@@ -1,9 +1,9 @@
 {
   "name": "disk-cleaner",
   "version": "1.0.0",
-  "description": "Automated disk space management — cleans temp files, rotates logs, purges package caches, and identifies large/orphaned files. Configurable usage thresholds.",
+  "description": "Disk space report — finds old temp files, large logs, package and container caches and the largest directories, and prints the cleanup commands to run. Read-only: it deletes nothing. Configurable usage threshold.",
   "author": "magnus",
   "entryPoint": "cleaner.sh",
-  "dependencies": ["find", "du", "df", "logrotate"],
+  "dependencies": ["find", "du", "df"],
   "tags": ["disk", "cleanup", "maintenance", "storage"]
 }

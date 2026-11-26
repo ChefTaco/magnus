@@ -41,7 +41,7 @@ while [[ $# -gt 0 ]]; do
     -vv) VERBOSE=2; shift ;;
     -v) VERBOSE=$((VERBOSE + 1)); shift ;;
     --) shift; break ;;
-    -*) echo "Unknown option: $1" >&2; usage ;;
+    -*) echo "Unknown option: $1" >&2; (usage) >&2; exit 2 ;;
     *) break ;;
   esac
 done
@@ -117,8 +117,8 @@ if [[ $VERBOSE -ge 1 ]]; then
   echo "--- File Descriptors ---"
   show_param "fs.file-max"                     "system-wide max"
   show_param "fs.nr_open"                      "per-process max"
-  OPEN=$(cat /proc/sys/fs/file-nr 2>/dev/null | awk '{print $1}')
-  MAX=$(cat /proc/sys/fs/file-nr 2>/dev/null | awk '{print $3}')
+  OPEN=$(cat /proc/sys/fs/file-nr 2>/dev/null | awk '{print $1}' || true)
+  MAX=$(cat /proc/sys/fs/file-nr 2>/dev/null | awk '{print $3}' || true)
   echo "  fs.file-nr (current open)                   = ${OPEN:-?} / ${MAX:-?}"
 fi
 

@@ -41,7 +41,7 @@ while [[ $# -gt 0 ]]; do
     -vv) VERBOSE=2; shift ;;
     -v) VERBOSE=$((VERBOSE + 1)); shift ;;
     --) shift; break ;;
-    -*) echo "Unknown option: $1" >&2; usage ;;
+    -*) echo "Unknown option: $1" >&2; (usage) >&2; exit 2 ;;
     *) break ;;
   esac
 done
@@ -89,7 +89,7 @@ fi
 
 # ── Held packages ──
 echo "--- Held Packages ---"
-HELD=$(apt-mark showhold 2>/dev/null | wc -l)
+HELD=$(apt-mark showhold 2>/dev/null | wc -l || true)
 if [[ $HELD -gt 0 ]]; then
   echo "  ⚠ $HELD held package(s):"
   apt-mark showhold 2>/dev/null | sed 's/^/    /'
@@ -126,7 +126,7 @@ fi
 # ── Last update ──
 echo "--- Last APT Activity ---"
 if [[ -f /var/log/apt/history.log ]]; then
-  LAST_UPDATE=$(grep "Start-Date" /var/log/apt/history.log 2>/dev/null | tail -1 | cut -d: -f2- | xargs)
+  LAST_UPDATE=$(grep "Start-Date" /var/log/apt/history.log 2>/dev/null | tail -1 | cut -d: -f2- | xargs || true)
   echo "  Last apt operation: ${LAST_UPDATE:-unknown}"
 else
   echo "  No apt history available"
@@ -146,19 +146,19 @@ if [[ $VERBOSE -ge 1 ]]; then
   if [[ -f /etc/apt/sources.list ]]; then
     grep -cEv '^\s*#|^\s*$' /etc/apt/sources.list 2>/dev/null | xargs -I{} echo "  /etc/apt/sources.list: {} entries"
   fi
-  EXTRA=$(find /etc/apt/sources.list.d/ -name "*.list" -o -name "*.sources" 2>/dev/null | wc -l)
+  EXTRA=$(find /etc/apt/sources.list.d/ -name "*.list" -o -name "*.sources" 2>/dev/null | wc -l || true)
   echo "  Extra source files: $EXTRA"
   if [[ $VERBOSE -ge 2 ]]; then
     find /etc/apt/sources.list.d/ -name "*.list" -o -name "*.sources" 2>/dev/null | while read -r f; do
       echo "    $(basename "$f")"
-    done
+    done || true
   fi
 fi
 
 # ── dpkg audit (verbose 2+) ──
 if [[ $VERBOSE -ge 2 ]]; then
   echo "--- DPKG Audit ---"
-  BROKEN=$(dpkg --audit 2>/dev/null | wc -l)
+  BROKEN=$(dpkg --audit 2>/dev/null | wc -l || true)
   if [[ $BROKEN -gt 0 ]]; then
     echo "  ⚠ $BROKEN issue(s) found:"
     dpkg --audit 2>/dev/null | head -10 | sed 's/^/    /'

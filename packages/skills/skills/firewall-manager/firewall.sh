@@ -41,7 +41,7 @@ while [[ $# -gt 0 ]]; do
     -vv) VERBOSE=2; shift ;;
     -v) VERBOSE=$((VERBOSE + 1)); shift ;;
     --) shift; break ;;
-    -*) echo "Unknown option: $1" >&2; usage ;;
+    -*) echo "Unknown option: $1" >&2; (usage) >&2; exit 2 ;;
     *) break ;;
   esac
 done
@@ -87,7 +87,7 @@ if [[ $VERBOSE -ge 3 ]]; then
 fi
 
 echo "--- Open Ports (no firewall rule) ---"
-LISTENING=$(ss -tlnp 2>/dev/null | awk 'NR>1 {print $4}' | grep -oP ':\K\d+' | sort -un)
+LISTENING=$(ss -tlnp 2>/dev/null | awk 'NR>1 {print $4}' | grep -oP ':\K\d+' | sort -un || true)
 echo "  Listening: $(echo "$LISTENING" | tr '\n' ' ')"
 
 if [[ $VERBOSE -ge 2 ]]; then
@@ -103,7 +103,7 @@ if command -v fail2ban-client &>/dev/null; then
   if [[ "$STATUS" == "active" ]]; then
     fail2ban-client status 2>/dev/null | sed 's/^/  /' || true
     if [[ $VERBOSE -ge 1 ]]; then
-      JAILS=$(fail2ban-client status 2>/dev/null | grep "Jail list:" | sed 's/.*://; s/,/ /g' | xargs)
+      JAILS=$(fail2ban-client status 2>/dev/null | grep "Jail list:" | sed 's/.*://; s/,/ /g' | xargs || true)
       for jail in $JAILS; do
         echo "  --- Jail: $jail ---"
         fail2ban-client status "$jail" 2>/dev/null | grep -E 'Currently|Total' | sed 's/^/    /' || true

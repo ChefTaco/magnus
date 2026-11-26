@@ -41,7 +41,7 @@ while [[ $# -gt 0 ]]; do
     -vv) VERBOSE=2; shift ;;
     -v) VERBOSE=$((VERBOSE + 1)); shift ;;
     --) shift; break ;;
-    -*) echo "Unknown option: $1" >&2; usage ;;
+    -*) echo "Unknown option: $1" >&2; (usage) >&2; exit 2 ;;
     *) break ;;
   esac
 done
@@ -138,7 +138,7 @@ fi
 if [[ $VERBOSE -ge 1 ]]; then
   echo "--- Clock Drift ---"
   if command -v chronyc &>/dev/null; then
-    OFFSET=$(chronyc tracking 2>/dev/null | grep "Last offset" | awk '{print $4}')
+    OFFSET=$(chronyc tracking 2>/dev/null | grep "Last offset" | awk '{print $4}' || true)
     echo "  Last offset: ${OFFSET:-unknown}"
   elif [[ -f /run/systemd/timesync/synchronized ]]; then
     echo "  ✓ systemd-timesyncd reports synchronized"
