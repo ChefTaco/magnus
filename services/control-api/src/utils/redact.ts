@@ -24,3 +24,9 @@ export function redactUnknown(value: unknown): unknown {
   return value;
 }
 
+
+/** One line naming what failed, for logs: the error's message with secrets redacted. */
+export function errorText(error: unknown): string {
+  const text = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  return redactSecretText(text).replace(/\s+/g, ' ').slice(0, 500);
+}

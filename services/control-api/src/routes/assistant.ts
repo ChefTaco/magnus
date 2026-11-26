@@ -26,7 +26,7 @@ import { pagination } from '../utils/query.js';
 import { Hono, type Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import type { AppVariables } from '../types/index.js';
-import { authMiddleware, requireRole } from '../middleware/auth.js';
+import { authMiddleware, getUser, requireRole } from '../middleware/auth.js';
 import { HttpError } from '../middleware/error-handler.js';
 import { clientErrorMessage } from '../utils/safe-errors.js';
 import {
@@ -57,6 +57,8 @@ import {
   getSharedConversation,
   conversationOwners,
   getConversationAccess,
+  loadToolGate,
+  toolCallBlock,
 } from '../services/ai-assistant-service.js';
 import { executeAiTool } from '../services/ai-tools.js';
 import { logAuditEvent } from '../services/audit-service.js';
@@ -409,6 +411,23 @@ assistantRouter.post('/messages/:id/confirm', requireRole('ADMIN', 'OPERATOR'), 
     details: { toolName: approval.toolName, conversationId: approval.conversationId, decision: 'confirmed' },
   });
 
+  // The tool may have been disabled or denied since it went pending. A natural command runs as
+  // execCommand, so both names must still be allowed. Same rule as POST /messages/:id/approve.
+  const gate = await loadToolGate();
+  const natural = approval.toolName === 'executeNaturalCommand' && approval.toolArgs['_preview'];
+  const blockedBy = [approval.toolName, ...(natural ? ['execCommand'] : [])]
+    .map((name) => ({ name, block: toolCallBlock(name, gate) }))
+    .find(({ block }) => block === 'disabled' || block === 'denied');
+  if (blockedBy) {
+    const chatResult = await chat({
+      conversationId: approval.conversationId,
+      message: `[Tool not run] The tool "${blockedBy.name}" is ${blockedBy.block === 'disabled' ? 'disabled' : 'denied by policy'} and was not executed.`,
+      type: 'chat',
+      createdBy: 'system',
+    });
+    return c.json({ success: true, data: chatResult });
+  }
+
   // If this was a natural command, execute it via execCommand with the preview data
   if (approval.toolName === 'executeNaturalCommand' && approval.toolArgs['_preview']) {
     const preview = approval.toolArgs['_preview'] as {
@@ -426,7 +445,7 @@ assistantRouter.post('/messages/:id/confirm', requireRole('ADMIN', 'OPERATOR'), 
         args: preview.args,
         timeoutSeconds: 60,
       },
-    });
+    }, { actorId: getUser(c).userId, conversationId: approval.conversationId });
 
     // Continue conversation with the result
     const chatResult = await chat({
@@ -443,7 +462,7 @@ assistantRouter.post('/messages/:id/confirm', requireRole('ADMIN', 'OPERATOR'), 
   const toolResult = await executeAiTool({
     name: approval.toolName,
     arguments: approval.toolArgs,
-  });
+  }, { actorId: getUser(c).userId, conversationId: approval.conversationId });
 
   const chatResult = await chat({
     conversationId: approval.conversationId,

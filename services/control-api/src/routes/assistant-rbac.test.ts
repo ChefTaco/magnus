@@ -3,12 +3,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppVariables } from '../types/index.js';
 import { HttpError, errorHandler } from '../middleware/error-handler.js';
 
-const { approveToolCall, rejectToolCall, claimPendingApproval, getPendingApprovalConversation, getConversationAccess, executeAiTool } = vi.hoisted(() => ({
+const { approveToolCall, rejectToolCall, claimPendingApproval, getPendingApprovalConversation, getConversationAccess, executeAiTool, chat, loadToolGate, toolCallBlock } = vi.hoisted(() => ({
   approveToolCall: vi.fn(), rejectToolCall: vi.fn(), claimPendingApproval: vi.fn(), getPendingApprovalConversation: vi.fn(),
-  getConversationAccess: vi.fn(), executeAiTool: vi.fn(),
+  getConversationAccess: vi.fn(), executeAiTool: vi.fn(), chat: vi.fn(), loadToolGate: vi.fn(), toolCallBlock: vi.fn(),
 }));
 
 vi.mock('../middleware/auth.js', () => ({
+  getUser: (c: { get(key: string): unknown }) => c.get('user'),
   authMiddleware: async (c: { req: { header(name: string): string | undefined }; set(key: string, value: unknown): void }, next: () => Promise<void>) => {
     c.set('user', {
       userId: 'test-user',
@@ -28,7 +29,9 @@ vi.mock('../middleware/auth.js', () => ({
 }));
 
 vi.mock('../services/ai-assistant-service.js', () => ({
-  chat: vi.fn(),
+  chat,
+  loadToolGate,
+  toolCallBlock,
   chatStream: vi.fn(),
   listConversations: vi.fn(),
   getConversationMessages: vi.fn(),
@@ -167,5 +170,42 @@ describe('assistant route authorization', () => {
 
     expect(response.status).toBe(404);
     expect(executeAiTool).not.toHaveBeenCalled();
+  });
+});
+
+describe('confirming a pending tool call', () => {
+  const confirm = () => createApp().request('/assistant/messages/message-1/confirm', { method: 'POST', headers: { 'x-test-role': 'OPERATOR' } });
+  const natural = { toolName: 'executeNaturalCommand', conversationId: 'conversation-1',
+    toolArgs: { _preview: { command: 'systemctl', args: ['restart', 'nginx'], nodeId: 'node-1', nodeName: 'web1' } } };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getConversationAccess.mockResolvedValue('owner');
+    getPendingApprovalConversation.mockResolvedValue('conversation-1');
+    loadToolGate.mockResolvedValue({});
+    toolCallBlock.mockReturnValue(null);
+    chat.mockResolvedValue({ conversationId: 'conversation-1' });
+    executeAiTool.mockResolvedValue({ name: 'execCommand', success: true, result: {} });
+  });
+
+  it.each(['disabled', 'denied'])('does not run a natural command whose execCommand became %s', async (block) => {
+    claimPendingApproval.mockResolvedValue(natural);
+    toolCallBlock.mockImplementation((name: string) => (name === 'execCommand' ? block : null));
+    expect((await confirm()).status).toBe(200);
+    expect(executeAiTool).not.toHaveBeenCalled();
+    expect(chat).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('[Tool not run]') }));
+  });
+
+  it.each(['disabled', 'denied'])('does not run a standard tool that became %s', async (block) => {
+    claimPendingApproval.mockResolvedValue({ toolName: 'writeFile', toolArgs: { path: 'x' }, conversationId: 'conversation-1' });
+    toolCallBlock.mockImplementation((name: string) => (name === 'writeFile' ? block : null));
+    expect((await confirm()).status).toBe(200);
+    expect(executeAiTool).not.toHaveBeenCalled();
+  });
+
+  it('runs a confirmed natural command that is still allowed, as the confirming user', async () => {
+    claimPendingApproval.mockResolvedValue(natural);
+    expect((await confirm()).status).toBe(200);
+    expect(executeAiTool).toHaveBeenCalledWith(expect.objectContaining({ name: 'execCommand' }), expect.objectContaining({ actorId: 'test-user' }));
   });
 });

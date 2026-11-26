@@ -1,3 +1,5 @@
+import { redactSecretText, redactUnknown } from '../utils/redact.js';
+import { runQueuedCommand } from './queued-command.js';
 import { optional } from '../utils/optional.js';
 /**
  * ai-tools.ts — Tool system for the AI Fleet Operations Assistant.
@@ -61,7 +63,13 @@ export interface AiToolResult {
 
 // ── Tool registry ──
 
-type ToolHandler = (args: Record<string, unknown>) => Promise<unknown>;
+/** Who a tool call runs for: the user who approved it, when there is one. */
+export interface AiToolContext {
+  actorId?: string | undefined;
+  conversationId?: string | undefined;
+}
+
+type ToolHandler = (args: Record<string, unknown>, context: AiToolContext) => Promise<unknown>;
 
 const toolRegistry = new Map<string, ToolHandler>();
 
@@ -624,21 +632,35 @@ registerTool('forgetMemory', async (args) => {
 
 // ── Execution Tools ──
 
-registerTool('execCommand', async (args) => {
+/**
+ * Commands the assistant never runs, judged on the command's words rather than on a substring:
+ * power state, filesystem creation and raw device writes. Approval is the real gate; this only
+ * keeps the obvious accidents out of an approval request.
+ */
+export function blockedAiCommand(command: string, args: string[]): boolean {
+  const words = [command, ...args].join(' ').toLowerCase().split(/[\s;&|()`$]+/).filter(Boolean);
+  const names = words.map((word) => word.split('/').pop() ?? word);
+  const powerOff = ['shutdown', 'reboot', 'halt', 'poweroff'];
+  if (names.some((name) => powerOff.includes(name) || name.startsWith('mkfs') || name === 'wipefs')) return true;
+  if (names.some((name, index) => (name === 'init' || name === 'telinit') && ['0', '6'].includes(names[index + 1] ?? ''))) return true;
+  if (names.some((name, index) => name === 'systemctl' && powerOff.concat(['kexec']).includes(names[index + 1] ?? ''))) return true;
+  if (names.includes('dd') && words.some((word) => word.startsWith('of=/dev/'))) return true;
+  if (names.includes('rm') && words.some((word) => /^-[a-z]*r/.test(word)) && words.some((word) => word === '/' || word === '/*' || word === '--no-preserve-root')) return true;
+  return /:\(\)\s*\{/.test([command, ...args].join(' '));
+}
+
+registerTool('execCommand', async (args, context) => {
   const db = getDb();
   const nodeId = String(args['nodeId'] ?? '');
   const command = String(args['command'] ?? '');
   const argsArr = Array.isArray(args['args']) ? (args['args'] as string[]).map(String) : [];
   const workingDirectory = args['workingDirectory'] ? String(args['workingDirectory']) : undefined;
-  const timeoutSeconds = Math.min(Number(args['timeoutSeconds'] ?? 60), 120);
+  const timeoutSeconds = Math.max(1, Math.min(Number(args['timeoutSeconds'] ?? 60) || 60, 120));
 
   if (!nodeId) return { error: 'nodeId is required' };
   if (!command) return { error: 'command is required' };
 
-  // Block dangerous commands
-  const blocked = ['rm -rf /', 'mkfs', 'dd if=', ':(){', 'shutdown', 'reboot', 'init 0', 'init 6', 'halt', 'poweroff'];
-  const fullCmd = [command, ...argsArr].join(' ').toLowerCase();
-  if (blocked.some((b) => fullCmd.includes(b))) {
+  if (blockedAiCommand(command, argsArr)) {
     return { error: 'Command blocked: potentially destructive operation' };
   }
 
@@ -646,35 +668,32 @@ registerTool('execCommand', async (args) => {
   if (!node) return { error: 'Node not found' };
   if (node.status !== 'ONLINE') return { error: `Node is ${node.status}, must be ONLINE` };
 
-  const commandId = `cmd-${nanoid()}`;
   try {
-    const client = new NodeApiClient({
-      baseUrl: getNodeBaseUrl(node.ipAddress, node.port),
-      resourceNodeId: nodeId, resourceActorId: 'system:ai-assistant',
-      nodeToken: getNodeManagerSecret(),
-      timeout: (timeoutSeconds + 5) * 1_000,
+    // Through the durable queue: a RemoteCommand row, the worker's signed dispatch and receipt,
+    // and the approving user as its author.
+    const result = await runQueuedCommand({
+      nodeId, command, args: argsArr, workingDirectory, timeoutSeconds, source: 'ai-exec',
+      createdBy: context.actorId ?? 'ai-assistant', approvedBy: context.actorId, correlationId: context.conversationId,
     });
-
-    const rawResponse = await client.executeCommand({ commandId, command, args: argsArr, ...optional("workingDirectory", workingDirectory), timeoutSeconds });
-
-    const result = rawResponse.data;
 
     await logAuditEvent({
       action: 'command.ai_exec',
-      actorId: 'ai-assistant',
-      actorType: 'system',
+      actorId: context.actorId ?? 'ai-assistant',
+      actorType: context.actorId ? 'user' : 'system',
       targetType: 'node',
       targetId: nodeId,
-      details: { command, args: argsArr, exitCode: result.exitCode, durationMs: result.durationMs },
+      details: { command, args: argsArr, commandId: result.commandId, status: result.status, exitCode: result.exitCode, durationMs: result.durationMs, via: 'ai-assistant' },
     });
 
     return {
       node: node.name,
       command,
       args: argsArr,
+      commandId: result.commandId,
+      status: result.status,
       exitCode: result.exitCode,
-      stdout: result.stdout?.slice(0, 8192) ?? '',
-      stderr: result.stderr?.slice(0, 4096) ?? '',
+      stdout: result.stdout.slice(0, 8192),
+      stderr: result.stderr.slice(0, 4096),
       durationMs: result.durationMs,
     };
   } catch (err) {
@@ -960,7 +979,7 @@ registerTool('getNodeDetails', async (args) => {
 /** A skill name or action that is safe to place in the node-side shell command. */
 const SKILL_SHELL_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 
-registerTool('runSkill', async (args) => {
+registerTool('runSkill', async (args, context) => {
   const nodeId = String(args['nodeId'] ?? '');
   const skillName = String(args['skillName'] ?? '');
   const action = String(args['action'] ?? 'run');
@@ -974,7 +993,7 @@ registerTool('runSkill', async (args) => {
   const db = getDb();
   const node = await db.node.findUnique({
     where: { id: nodeId },
-    select: { ipAddress: true, port: true, status: true },
+    select: { status: true },
   });
   if (!node) return { error: 'Node not found' };
   if (node.status !== 'ONLINE') return { error: `Node is ${node.status}, cannot execute skill` };
@@ -983,37 +1002,30 @@ registerTool('runSkill', async (args) => {
   const skill = await getSkill(skillName);
   if (!skill) return { error: `Skill "${skillName}" not found` };
 
-  // Execute via agent
-  const client = new NodeApiClient({
-    baseUrl: getNodeBaseUrl(node.ipAddress, node.port),
-      resourceNodeId: nodeId, resourceActorId: 'system:ai-assistant',
-    nodeToken: getNodeManagerSecret(),
-    timeout: 120_000,
-  });
-
-  const result = await client.executeCommand({
-    commandId: `cmd-${nanoid()}`,
-    command: 'bash',
-    args: ['-c', `cd /opt/magnus/skills/${skillName} && bash ${action}.sh`],
-    timeoutSeconds: 90,
+  // Through the durable queue, as the approving user (see execCommand).
+  const result = await runQueuedCommand({
+    nodeId, command: 'bash', args: ['-c', `cd /opt/magnus/skills/${skillName} && bash ${action}.sh`], timeoutSeconds: 90,
+    source: 'ai-skill', createdBy: context.actorId ?? 'ai-assistant', approvedBy: context.actorId, correlationId: context.conversationId,
   });
 
   await logAuditEvent({
     action: 'command.ai_exec',
-    actorId: 'ai-assistant',
-    actorType: 'system',
+    actorId: context.actorId ?? 'ai-assistant',
+    actorType: context.actorId ? 'user' : 'system',
     targetType: 'skill',
     targetId: `${nodeId}/${skillName}`,
-    details: { action, exitCode: result.data.exitCode },
+    details: { action, commandId: result.commandId, status: result.status, exitCode: result.exitCode, via: 'ai-assistant' },
   });
 
   return {
     skillName,
     action,
     nodeId,
-    exitCode: result.data.exitCode,
-    stdout: (result.data.stdout ?? '').slice(0, 4000),
-    stderr: (result.data.stderr ?? '').slice(0, 2000),
+    commandId: result.commandId,
+    status: result.status,
+    exitCode: result.exitCode,
+    stdout: result.stdout.slice(0, 4000),
+    stderr: result.stderr.slice(0, 2000),
   };
 });
 
@@ -1542,21 +1554,23 @@ registerTool('getNodePredictions', async (args) => {
 
 // ── Tool executor ──
 
-export async function executeAiTool(call: AiToolCall): Promise<AiToolResult> {
+export async function executeAiTool(call: AiToolCall, context: AiToolContext = {}): Promise<AiToolResult> {
   const handler = toolRegistry.get(call.name);
   if (!handler) {
     return { name: call.name, success: false, result: null, error: `Unknown tool: ${call.name}` };
   }
 
+  // Tool output (log lines, command stdout/stderr, file content) goes to the model provider, the
+  // conversation store and share links, so secrets in it are redacted here, once, for all three.
   try {
-    const result = await handler(call.arguments);
-    return { name: call.name, success: true, result };
+    const result = await handler(call.arguments, context);
+    return { name: call.name, success: true, result: redactUnknown(result) };
   } catch (err) {
     return {
       name: call.name,
       success: false,
       result: null,
-      error: clientErrorMessage(err, 'Tool execution failed'),
+      error: redactSecretText(clientErrorMessage(err, 'Tool execution failed')),
     };
   }
 }

@@ -4,6 +4,8 @@ const mocks = vi.hoisted(() => ({
   memory: new Map<string, string>(),
   aiMessageCreate: vi.fn(),
   aiConversationUpdate: vi.fn(),
+  aiMessageFindUnique: vi.fn(),
+  aiMessageUpdateMany: vi.fn(),
   executeAiTool: vi.fn(),
   providerChat: vi.fn(),
 }));
@@ -21,6 +23,8 @@ vi.mock('../db/index.js', () => ({
       findMany: async () => [],
       create: mocks.aiMessageCreate,
       count: async () => 2,
+      findUnique: mocks.aiMessageFindUnique,
+      updateMany: mocks.aiMessageUpdateMany,
     },
     aiConversation: { update: mocks.aiConversationUpdate },
     node: { findMany: async () => [] },
@@ -52,7 +56,7 @@ vi.mock('./llm-providers/index.js', async (importOriginal) => {
   };
 });
 
-import { chat, executeToolCalls, resolveToolApprovalPolicy, type ToolGate } from './ai-assistant-service.js';
+import { approveToolCall, chat, executeToolCalls, resolveToolApprovalPolicy, type ToolGate } from './ai-assistant-service.js';
 
 function llmReply(content: string, nativeToolCalls: Array<{ name: string; arguments: Record<string, unknown> }> = []) {
   return { providerId: 'ollama', providerName: 'Ollama', model: 'test', content, thinking: '', evalCount: 10, nativeToolCalls, usedStructuredOutput: false };
@@ -179,5 +183,32 @@ describe('AI request bounds', () => {
     expect(clampShareTtlHours(undefined)).toBe(72);
     expect(clampShareTtlHours(1e9)).toBe(720);
     expect(clampShareTtlHours(-5)).toBe(1);
+  });
+});
+
+describe('approving a tool that changed state while it waited', () => {
+  beforeEach(() => {
+    mocks.aiMessageFindUnique.mockResolvedValue({ conversationId: 'conversation-1',
+      pendingApproval: JSON.stringify({ toolName: 'execCommand', toolArgs: { nodeId: 'node-1', command: 'id' }, conversationId: 'conversation-1' }) });
+    mocks.aiMessageUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.aiMessageCreate.mockResolvedValue({ id: 'message-2' });
+    mocks.providerChat.mockResolvedValue(llmReply('noted'));
+  });
+
+  it('does not run a tool disabled after it went pending', async () => {
+    mocks.memory.set('tool_config', JSON.stringify([{ name: 'execCommand', enabled: false }]));
+    await approveToolCall('message-1', 'alice@example.com');
+    expect(mocks.executeAiTool).not.toHaveBeenCalled();
+  });
+
+  it('does not run a tool denied after it went pending', async () => {
+    mocks.memory.set('tool_approval_policy', JSON.stringify({ alwaysDeny: ['execCommand'] }));
+    await approveToolCall('message-1', 'alice@example.com');
+    expect(mocks.executeAiTool).not.toHaveBeenCalled();
+  });
+
+  it('runs a tool that is still allowed, as the approving user', async () => {
+    await approveToolCall('message-1', 'alice@example.com');
+    expect(mocks.executeAiTool).toHaveBeenCalledWith(expect.objectContaining({ name: 'execCommand' }), expect.objectContaining({ actorId: 'alice@example.com' }));
   });
 });

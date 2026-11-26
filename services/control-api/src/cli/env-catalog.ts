@@ -163,6 +163,7 @@ export const ENV_CATALOG: readonly EnvVariable[] = [
   { name: 'MAGNUS_REGISTRY_SUBMIT_ONLY_HOSTS', group: 'hermes', default: '', description: 'Comma-separated short hostnames that may submit registry changes but never pull.' },
 
   // ── AI assistant ──
+  { name: 'MAGNUS_AI_SCHEDULER_ENABLED', group: 'ai', default: 'false', description: 'Run due AI scheduled operations every minute from the server. Off, they run only when POST /ai-schedules/execute-due is called. Each occurrence is claimed first, so it runs once; tools that need approval pause as in a chat.' },
   { name: 'OLLAMA_URL', group: 'ai', default: 'http://127.0.0.1:11434', description: 'Ollama endpoint for the fleet assistant.' },
   { name: 'OLLAMA_MODEL', group: 'ai', description: 'Ollama model name.' },
   { name: 'LLAMACPP_URL', group: 'ai', default: 'http://127.0.0.1:8080', description: 'llama.cpp (OpenAI-compatible) endpoint.' },
