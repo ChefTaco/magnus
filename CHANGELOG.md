@@ -88,6 +88,14 @@ All notable changes to this project are documented in this file. The format is b
   under `SUDO_USER`, `USER` or every directory in `/home`; it looks under `HERMES_USER` (or the older
   `HERMES_OWNER`), the agent's own home and the fixed `/opt` paths. **Upgrade note:** set `HERMES_USER`
   on a node whose Hermes lives in another account's home.
+- **Atomic, symlink-safe agent file writes.** `POST /api/v1/files/write` truncated the target in
+  place after a path check, following symlinks, so a crash could leave a half-written file and a swap
+  between check and write was followed. It now writes a temporary file in the same directory
+  (`O_EXCL|O_NOFOLLOW`), syncs it and renames it over the target, keeping the existing file's mode,
+  owner and group. `GET /files/read` opens with `O_NOFOLLOW` and judges the opened file. A path that
+  changes during the operation gets 409 `PATH_CHANGED`.
+- **Optional file API allowlist.** `MAGNUS_AGENT_FILE_ROOTS` (comma-separated absolute directories)
+  limits `/api/v1/files/*` to those directories, symlinks resolved; `magnus-agent check` reports it.
 
 ### Fixed
 
@@ -119,6 +127,10 @@ All notable changes to this project are documented in this file. The format is b
   so a random value never authenticated), and `ENABLE_LOG_FORWARDING=true` no longer requires it.
   The catalogue and `.env.example` document how the per-node value is derived for a Control API that
   checks only the token.
+- **Agent file writes accept `mode`, `owner` and `group`.** A new file was always root-owned `0600`
+  under the unit's `UMask=0077`; `mode` (octal string) now sets its permissions, and `owner`/`group`
+  set its ownership in privileged mode (403 `AGENT_NOT_PRIVILEGED` otherwise). **Upgrade note:** an
+  overwrite now replaces the file (new inode), so hard links to it are not updated.
 - `docs/PUBLISHING.md` now describes how images are built, scanned and tagged (prereleases get their
   `X.Y.Z-<pre>` tag).
 
@@ -134,6 +146,7 @@ All notable changes to this project are documented in this file. The format is b
 
 **New environment variables:** agent `MAGNUS_AGENT_BODY_LIMIT_BYTES`, `HERMES_INSTALL_COMMIT`,
 `HERMES_INSTALL_SCRIPT_SHA256`; server `MAGNUS_API_SECRET_BYPASS` (all optional).
+`HERMES_INSTALL_SCRIPT_SHA256`, `MAGNUS_AGENT_FILE_ROOTS` (all optional).
 
 **Migration impact:** None. A deployment whose `IAM_CORE_URL` uses HTTP to a non-loopback host must switch
 it to HTTPS before upgrading; the server refuses to start otherwise. Hive IAM must issue tokens with `exp`

@@ -124,13 +124,15 @@ export async function main(argv: string[]): Promise<number | null> {
       const runtime = nodeRuntimeCheck();
       if (runtime.status === 'fail') errors.unshift(runtime.message);
       const features = privilegedFeatureStatus();
+      const { fileRoots } = await import('./executors/file-roots.js');
       const report = { ok: errors.length === 0, version: version(), hostFqdn: HOST_FQDN, controlApiUrl: CONTROL_API_URL,
-        privileged: agentPrivileged(), features, errors };
+        privileged: agentPrivileged(), features, fileRoots: fileRoots().roots, errors };
       if (json) console.log(JSON.stringify(report, null, 2));
       else {
         console.log(`magnus-agent ${report.version} on ${report.hostFqdn} -> ${report.controlApiUrl}`);
         console.log(`Privileged mode: ${report.privileged ? 'on' : 'off'}`);
         for (const item of features) console.log(`  ${item.enabled ? 'enabled ' : 'disabled'}  ${item.feature}: ${item.covers}`);
+        console.log(`File API roots: ${report.fileRoots ? report.fileRoots.join(', ') : 'unrestricted (MAGNUS_AGENT_FILE_ROOTS unset)'}`);
         console.log(report.ok ? 'Configuration OK' : errors.map(error => `  - ${error}`).join('\n'));
       }
       return report.ok ? 0 : 1;
