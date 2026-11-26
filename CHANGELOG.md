@@ -230,7 +230,6 @@ All notable changes to this project are documented in this file. The format is b
   side-effect imports, and a test exercises the built module against A2A task and team-claim rows.
 - `docs/PUBLISHING.md` now describes how images are built, scanned and tagged (prereleases get their
   `X.Y.Z-<pre>` tag).
-
 - `x-api-secret` and shared node-secret checks cache the decrypted credential rotation state until the
   state file changes, instead of reading, parsing and decrypting it on every attempt.
 - **`POST /logs/query` pages correctly.** The cursor is now an opaque `(timestamp, id)` keyset that
@@ -253,6 +252,9 @@ All notable changes to this project are documented in this file. The format is b
   a mounted route has no entry or an entry names a route that is not mounted;
   `services/control-api/src/openapi/undocumented-routes.json` lists the 123 routes still without one
   and may only shrink.
+- The server, fleet gateway and Oathweave verifier use `@hivemagnus/hive-common` 0.7.0. For Magnus this
+  means: concurrent `GET /health/ready` requests share one run of the readiness checks, the suite
+  registry client refuses a response over 1 MiB, and the Oathweave userinfo check reads at most 64 KiB.
 
 **New environment variables:** agent `MAGNUS_AGENT_BODY_LIMIT_BYTES`, `HERMES_INSTALL_COMMIT`,
 `HERMES_INSTALL_SCRIPT_SHA256`, `MAGNUS_AGENT_FILE_ROOTS`; server `MAGNUS_API_SECRET_BYPASS`,
