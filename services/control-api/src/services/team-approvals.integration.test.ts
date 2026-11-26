@@ -20,6 +20,7 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('native Telegram decisions on
     if (db) {
       await db.teamApprovalDecision.deleteMany({ where: { proposalId: { startsWith: `remediation:${prefix}` } } });
       await db.executionRun.deleteMany({ where: { id: { startsWith: `remediation_${prefix}` } } });
+      await db.remediationExecution.deleteMany({ where: { ruleId: prefix } });
       await db.remediationRule.delete({ where: { id: prefix } }); await db.node.delete({ where: { id: prefix } });
       await (await import('../db/index.js')).disconnectDb();
     }

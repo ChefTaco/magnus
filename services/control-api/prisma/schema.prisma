@@ -387,6 +387,7 @@ model RemoteCommand {
   result CommandResult?
 
   @@index([nodeId, status])
+  @@index([status, createdAt])
   @@index([idempotencyKey])
   @@index([correlationId])
   @@map("remote_commands")
@@ -1056,7 +1057,7 @@ model RemediationExecution {
   triggeredAt    DateTime  @default(now())
   completedAt    DateTime?
 
-  rule RemediationRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  rule RemediationRule @relation(fields: [ruleId], references: [id], onDelete: Restrict)
 
   @@index([ruleId, triggeredAt])
   @@index([nodeId, triggeredAt])

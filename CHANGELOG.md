@@ -69,6 +69,13 @@ All notable changes to this project are documented in this file. The format is b
   longer run the same operation twice, and a failed run waits for its next occurrence. Scheduled
   operations no longer run tools that need approval (`execCommand`, `writeFile`, `runSkill`, ...)
   unattended: a run that reaches one stops there and records it in `lastError`.
+- **History retention for the tables that only grew.** `MAGNUS_HISTORY_RETENTION_DAYS` (unset by default:
+  nothing changes) deletes, once a day, finished commands and their results, finished webhook
+  deliveries, resolved alert violations, finished cron executions, completed managed cron occurrences,
+  resolved anomaly events (which lets health retention prune the snapshots they held) and AI
+  conversations older than that many days. Commands a rollout, an unsettled resource lease, a managed
+  cron occurrence or an Embermend operation still names are kept, as is every unresolved row and every
+  conversation with a tool call still awaiting approval.
 
 ### Security
 
@@ -323,16 +330,17 @@ All notable changes to this project are documented in this file. The format is b
   running rollouts and a rotating window of 25 paused ones.
 - The command and rollout reconcilers and the agent upgrade audit writer log the failure they hit
   instead of a fixed "reconciliation pending" line.
+- `remote_commands` has an index on `(status, createdAt)` for the 5-second command reconciler, and
+  `remediation_executions` restrict the deletion of their rule in the database as well.
 
 **New environment variables:** agent `MAGNUS_AGENT_BODY_LIMIT_BYTES`, `HERMES_INSTALL_COMMIT`,
 `HERMES_INSTALL_SCRIPT_SHA256`, `MAGNUS_AGENT_FILE_ROOTS`; server `MAGNUS_API_SECRET_BYPASS`,
-`MAGNUS_AI_SCHEDULER_ENABLED` (all optional).
-`HERMES_INSTALL_SCRIPT_SHA256`; server `MAGNUS_API_SECRET_BYPASS` (all optional).
-`HERMES_INSTALL_SCRIPT_SHA256`, `MAGNUS_AGENT_FILE_ROOTS` (all optional).
-`HERMES_INSTALL_SCRIPT_SHA256`; console `DASHBOARD_TRUSTED_PROXIES` (all optional).
+`MAGNUS_AI_SCHEDULER_ENABLED`, `MAGNUS_HISTORY_RETENTION_DAYS`; console `DASHBOARD_TRUSTED_PROXIES` (all optional).
 
-**Migration impact:** None. A deployment whose `IAM_CORE_URL` uses HTTP to a non-loopback host must switch
-it to HTTPS before upgrading; the server refuses to start otherwise. Hive IAM must issue tokens with `exp`
+**Migration impact:** Two fast migrations, so upgrade with `--allow-migrations`:
+`20261126120000_remote_command_status_index` (one index on `remote_commands`; command inserts wait while
+it builds) and `20261126120100_remediation_execution_restrict` (one foreign key replaced). A deployment whose `IAM_CORE_URL` uses HTTP
+to a non-loopback host must switch it to HTTPS before upgrading; the server refuses to start otherwise. Hive IAM must issue tokens with `exp`
 and `iat` and a lifetime of at most 24 hours. Local session tokens issued before the upgrade carry no
 password stamp and stay valid until they expire (`JWT_EXPIRY`); sign in again to get a stamped one.
 Scripts that relied on the text of an unexpected 500 must read the server log instead. Alert rules whose node

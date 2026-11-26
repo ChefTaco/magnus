@@ -87,6 +87,7 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('console API follow-ups', () 
   afterAll(async () => {
     if (db) {
       await db.aiConversation.deleteMany({ where: { title: { startsWith: prefix } } });
+      await db.remediationExecution.deleteMany({ where: { rule: { name: { startsWith: prefix } } } });
       await db.remediationRule.deleteMany({ where: { name: { startsWith: prefix } } });
       await db.node.deleteMany({ where: { id: { in: [nodeId, bareNodeId] } } });
       if (createdSentinel) await db.node.deleteMany({ where: { id: CONTROL_API_NODE_ID } });

@@ -86,6 +86,7 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('Telegram approval through du
     await queue?.closeCommandQueue();
     if (db) {
       await db.commandResourceFence.deleteMany({ where: { resourceKey: `node:${prefix}` } });
+      await db.remediationExecution.deleteMany({ where: { ruleId: prefix } });
       await db.remediationRule.deleteMany({ where: { id: prefix } });
       await db.node.deleteMany({ where: { id: prefix } });
       await (await import('../db/index.js')).disconnectDb();
