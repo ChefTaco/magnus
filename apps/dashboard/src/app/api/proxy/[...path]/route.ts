@@ -8,6 +8,7 @@ import { COOKIE_NAME, getSecretKey, sessionVerificationOptions } from '@/lib/aut
 import { controlApiFetch } from '@/lib/control-api-fetch';
 import { resolveProxyTarget } from '@/lib/proxy-target';
 import { readLimitedRequestBody, RequestBodyTooLarge } from '@/lib/limited-request-body';
+import { proxiedResponseHeaders } from '@/lib/proxy-response-headers';
 import { readDashboardEnvironment } from '../../../../../runtime-environment.mjs';
 
 /**
@@ -174,9 +175,7 @@ async function proxyHandler(
     return new NextResponse(body, {
       status: upstream.status,
       statusText: upstream.statusText,
-      headers: {
-        'content-type': upstream.headers.get('content-type') ?? 'application/json',
-      },
+      headers: proxiedResponseHeaders(upstream.headers),
     });
   } catch (err: unknown) {
     const correlationId = crypto.randomUUID();
