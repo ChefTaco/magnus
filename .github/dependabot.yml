@@ -12,7 +12,13 @@ updates:
       # TypeScript majors change compiler defaults and the JS API (typescript-eslint caps its range); upgrade by hand.
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
+      # Workspace packages built from this repository; their versions move with the release bump.
+      - dependency-name: "@hivemagnus/magnus*"
     groups:
+      # Suite packages first: every @hivemagnus/* update lands in one grouped pull request.
+      hivemagnus:
+        patterns:
+          - "@hivemagnus/*"
       npm-minor-and-patch:
         update-types:
           - minor
