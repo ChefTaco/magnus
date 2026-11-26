@@ -7,32 +7,101 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [3.4.0] - 2026-11-26
+
 ### Upgrade notes
 
-- **Ardent 3.4.0 needs this Magnus on managed hosts.** Ardent 3.4.0 refuses a management token sent
-  without the `Bearer` scheme and stops naming Magnus on its Agent Card. Upgrade Magnus (server, then
-  node agents) together with or after Ardent 3.4.0 on every host where Magnus manages Ardent: the node
-  agent always sends `Authorization: Bearer <token>`, New Agent sets `a2a.provider`, and the Ardent 3.4.0
-  operations below need node agents at `studio` level 5. Upgrade the server before the agents, so a
-  new agent's `capabilities.task_filters` is never reported by a server that drops the filters.
-- **Ardent 3.4.0's 1 MiB management body limit** does not affect Magnus: every action body the node agent
-  sends a profile stays at or under 300 KB (`preview-submit`; 200 KB for the rest, configuration and
-  definition installs included), and a HiveSkills archive is unpacked by the node agent, never sent to
-  Ardent. A test pins the agent's limits below the pinned Ardent's.
-- **`execution.max_parallel_tasks` 5 to 16 now takes effect.** Ardent before 3.4.0 ran at most 4 tasks at
-  once whatever a profile set; 3.4.0 runs what the profile sets (1 to 16). A profile that sets more than
-  4 runs more tasks at once after the Ardent upgrade; set 4 to keep the previous concurrency.
-- **Agent Card provider.** A profile New Agent (or a definition install) creates on Ardent 3.4.0 gets
-  `a2a.provider: { organization: Magnus, url: https://github.com/ChefTaco/magnus }`, as every earlier
-  Ardent reported. Existing profiles are not changed and report Ardent after the Ardent upgrade; set
-  `a2a.provider` in their configuration to keep Magnus.
+Order: Magnus node agents, then the Magnus server and console, then managed Ardent profiles.
+
+- **Upgrade node agents before the control server.** A 3.4.0 server pushes files (file pushes, role
+  applications, library skill deploys) only through the agent's restricted write and refuses an agent
+  that does not advertise `restrictedFileWrite` 2 with 409 `AGENT_FILE_WRITE_UNSUPPORTED`, writing
+  nothing (failing closed is intended). In the other direction a 3.4.0 agent refuses writes to system
+  paths until the server sends `adminWrite`, and an older server ignores the new agent's Ardent task
+  filters (lists come back unfiltered), so finish the server upgrade soon after the agents.
+- **File writes are stricter.** Writing system paths (`/etc`, `/root`, `/var/lib`, `/var/spool`,
+  `/boot`, `/usr`, `/bin`, `/sbin`, `/lib`, `/lib64`, any `.ssh` directory) needs the ADMIN role, on
+  the requested path and on the symlink-resolved destination (403 `SENSITIVE_PATH_ADMIN_ONLY`);
+  OPERATOR accounts that pushed files there need an ADMIN to do it. `/dev` is refused like `/proc` and
+  `/sys`, and paths must be absolute. Writes into a directory owned by an account other than root, the
+  agent or the file's owner, or through a component every account can write without the sticky bit,
+  are refused (409 `PATH_CHANGED`). An overwrite replaces the file (new inode), so hard links to it
+  are not updated.
+- **`IAM_CORE_URL` must be HTTPS** unless its host is loopback (or the development-only
+  `ALLOW_INSECURE_HTTP` is set): the server refuses to start with plain HTTP to any other host, so
+  switch it before upgrading. Hive IAM RS256 tokens must carry `exp` and `iat` and live at most
+  24 hours.
+- **AI tools that need approval pause on every path.** Non-streaming `POST /assistant/chat`, approval
+  continuations, insights and scheduled AI operations save such a call as a pending approval instead of
+  running it, and `POST /assistant/messages/:id/confirm` checks the tool policy again. A scheduled
+  operation that ran `execCommand`, `writeFile`, `runSkill`, `createSkillDraft` or `generateRunbook`
+  unattended now stops there and records it in `lastError`. A stored tool policy is merged with the
+  defaults (fails closed), and disabled tools are refused however a call arrives.
+- **Agent request body limit.** Agents answer 413 `PAYLOAD_TOO_LARGE` for bodies over
+  `MAGNUS_AGENT_BODY_LIMIT_BYTES` (default 16 MiB); raise it on a node only if you push larger files
+  or skill payloads to it.
+- **Pinned Hermes installer.** `POST /hermes/install` runs only the hash-checked `install.sh` of one
+  pinned Hermes Agent commit (v0.23.4) and, as root, runs it as the account that owns the target
+  Hermes home. Set both `HERMES_INSTALL_COMMIT` and `HERMES_INSTALL_SCRIPT_SHA256` to install another
+  commit on one node.
+- **Hermes discovery uses only the configured owner.** Set `HERMES_USER` on a node whose Hermes lives
+  in another account's home; the agent no longer searches `SUDO_USER`, `USER` or `/home`.
+- **Agent command `args` are literal.** Each `args` entry of `POST /api/v1/commands/execute` is quoted
+  as one argument; move shell syntax (pipes, redirects, `&&`) from `args` into `command`.
+- **Re-run `sudo magnus-agent install-service`** on each node to apply the tighter systemd unit
+  (`LockPersonality`, `RestrictRealtime`, `SystemCallArchitectures=native`, `TasksMax=4096`) and the
+  agent's own Node.js binary for supervised commands.
+- **Backup pruning deletes.** `MAGNUS_BACKUP_KEEP` (server and startup auto-migrate) and
+  `keepBackups` (`magnus upgrade`) now delete older dumps; before, one dump per release or upgrade step
+  stayed forever. Copy any old dump you want to keep out of the backup directory first.
+- **Console.** `SESSION_SECRET` is declared required, and the expired `JWT_SECRET` session fallback
+  (`ALLOW_LEGACY_SESSION_SECRET`) and the `DASHBOARD_LOGIN_USERNAME`/`DASHBOARD_LOGIN_PASSWORD` login
+  are removed; delete them from the console environment. Set `DASHBOARD_TRUSTED_PROXIES` when the
+  console runs behind a reverse proxy, so login throttling sees the client. Non-GET `/api/*` requests
+  need a same-origin `Origin` or `Sec-Fetch-Site` (browsers send one; scripts that send neither are
+  unaffected).
+- **Compose.** `docker/compose.yml` runs the server and console read-only with `cap_drop: [ALL]` and a
+  `/tmp` tmpfs, and pins PostgreSQL and Redis by digest. A deployment that adds its own writable paths
+  to either container needs a volume or tmpfs for them; update the digests together with the tag when
+  you move PostgreSQL or Redis.
+- **Alert rule node filters match exactly.** IDs and names match exactly or as a `*` glob; a filter
+  that relied on substring matching (`web` for `web1`) needs `web*`.
+- **Other behaviour changes.** Local session tokens issued before the upgrade stay valid until they
+  expire (`JWT_EXPIRY`); a password change ends the account's other sessions. An unexpected 5xx says
+  only "An unexpected error occurred" (read the server log for details). Without Redis, agent upgrade
+  runs answer 503 `AGENT_UPGRADE_LOCK_UNAVAILABLE`. `DELETE /remediation/rules/:id` answers 409
+  `RULE_HAS_EXECUTIONS` for a rule that ran; disable it instead. TypeScript consumers of the
+  `@hivemagnus/magnus-contracts` root entry point see the single, server-accurate shapes of five
+  shared schemas.
+- **New opt-in settings** (unset keeps the previous behaviour): `MAGNUS_HISTORY_RETENTION_DAYS`
+  (history retention), `MAGNUS_AI_SCHEDULER_ENABLED` (server-side AI scheduler) and
+  `MAGNUS_API_SECRET_BYPASS` (`loopback` or `off` limits the `x-api-secret` ADMIN bypass; use one of
+  them when HiveXUI with Oathweave is the browser client). `MAGNUS_AGENT_FILE_ROOTS` optionally limits
+  the agent file API to listed directories.
+- **Ardent 3.4 and 3.5.** Magnus pins Ardent 3.5.1. Ardent 3.4.0 and later refuse a management token
+  without the `Bearer` scheme, which this node agent always sends: upgrade the Magnus node agents
+  before moving a managed profile to Ardent 3.4 or later. The new Ardent operations (task pages and
+  filters, metrics, peer credential reload, management token rotation) need node agents at `studio`
+  level 5. Ardent 3.4.0's 1 MiB management body limit does not affect Magnus (every body the node
+  agent sends a profile stays at or under 300 KB). Ardent 3.4.0 applies `execution.max_parallel_tasks` above 4 (up to 16); set 4 to keep the
+  previous concurrency. Profiles that New Agent or a definition install creates keep
+  `a2a.provider` Magnus; existing profiles report Ardent after their Ardent upgrade unless you set
+  `a2a.provider`. Ardent 3.5.0 resumes durable Codex threads on Codex CLI 0.172.0
+  (`providers.codex.durable_threads: false` opts a profile out). With Ardent 3.5.1 a task's
+  `task.done` arrives after its last journal event, and can lag by up to about 10 s for direct
+  research tasks. Native snapshots classify journals with the pinned Ardent's own policy; a table,
+  column or state it does not classify still blocks automatic activation.
+- **Two migrations** (see Migration impact below). Hive suite upgrades that manage Magnus need
+  `--allow-migrations`.
 
 ### Changed
 
-- **Ardent 3.5.0.** The pins move to `@hivemagnus/ardent` 3.5.0, which resumes durable Codex threads on
-  Codex CLI 0.172.0 (`providers.codex.durable_threads: false` opts a profile out). Its management API,
-  journal policy (version 1) and Emberfold 0.4.0 are unchanged, so the generated Ardent client types,
-  the journal module's policy and the context overlay are the same.
+- **Ardent 3.5.1.** The pins move to `@hivemagnus/ardent` 3.5.1 (through 3.5.0, which resumes durable
+  Codex threads on Codex CLI 0.172.0; `providers.codex.durable_threads: false` opts a profile out).
+  3.5.1 fixes a task stream race: `task.done` now arrives after the task's last journal event, and can
+  lag by up to about 10 s for direct research tasks. The management API, journal policy (version 1)
+  and Emberfold 0.4.0 are unchanged, so the generated Ardent client types, the journal module's policy
+  and the context overlay are the same.
 - Dependabot now opens one grouped weekly pull request (group `hivemagnus`) for `@hivemagnus/*` package updates, so suite package bumps arrive together. Repository configuration only; nothing to do when upgrading. The repository's own `@hivemagnus/magnus*` workspace packages are ignored; a grouped bump of a server or console dependency still needs `npm run locks:generate` for the shrinkwraps before it merges.
 - **Ardent 3.4.0.** The node agent and New Agent stage `@hivemagnus/ardent` 3.4.0 (pins in the root and
   agent `package.json` and the agent `npm-shrinkwrap.json`), and the generated Ardent client types follow
@@ -150,18 +219,14 @@ All notable changes to this project are documented in this file. The format is b
   authored and audited as the user who approved it rather than `ai-assistant`, and linked to the
   conversation (`correlationId`). The destructive-command check judges command words instead of
   substrings, so `grep halted` is no longer refused while `/sbin/reboot` and `systemctl poweroff` are.
-
 - **Agent command arguments are passed literally.** `POST /api/v1/commands/execute` without the
   execution supervisor, and the supervisor's shell path for unregistered commands, joined `args` onto
   the command with spaces and no quoting, so an argument containing a space, quote or `;` changed
   meaning. `command` stays a shell string; each entry of `args` is now quoted as one argument, the same
   as the supervisor's `shell: false` path for registered commands. Arguments with NUL bytes get 400.
-  **Upgrade note:** a caller that put shell syntax (pipes, redirects, `&&`) in `args` must move it into
-  `command`.
 - **Hermes discovery uses only the configured owner.** The agent no longer looks for a Hermes home
   under `SUDO_USER`, `USER` or every directory in `/home`; it looks under `HERMES_USER` (or the older
-  `HERMES_OWNER`), the agent's own home and the fixed `/opt` paths. **Upgrade note:** set `HERMES_USER`
-  on a node whose Hermes lives in another account's home.
+  `HERMES_OWNER`), the agent's own home and the fixed `/opt` paths.
 - **Atomic, symlink-safe agent file writes.** `POST /api/v1/files/write` truncated the target in
   place after a path check, following symlinks, so a crash could leave a half-written file and a swap
   between check and write was followed. It now writes a temporary file in the same directory
@@ -175,8 +240,7 @@ All notable changes to this project are documented in this file. The format is b
   same directory (exclusive temporary file, fsync, rename; mode, owner and times kept), then the new
   content is written. A failed backup writes nothing, a refused path leaves no file behind, and the
   response carries `backupPath`. The agent advertises this as `features.restrictedFileWrite: 1` on
-  `GET /api/v1/ping`. **Upgrade note:** upgrade agents before the Control API; a Control API that
-  relies on this refuses file writes to older agents (409) until they are upgraded.
+  `GET /api/v1/ping`.
 - **Agent self-upgrades are confirmed only when the agent's own API answers.** A version on trial
   was confirmed by its first accepted heartbeat, which is outbound, so a version with a broken
   listener or TLS setup was kept and could then not be reached. It is now confirmed only after a
@@ -194,7 +258,7 @@ All notable changes to this project are documented in this file. The format is b
   the per-source and per-source-and-username limits still apply before the password is checked.
   `DASHBOARD_TRUSTED_PROXIES` (addresses or CIDR ranges) lets the console attribute requests from a
   listed reverse proxy to the client in its `X-Forwarded-For`, so clients behind a proxy no longer
-  share one source bucket. **Upgrade note:** set it when the console runs behind a reverse proxy.
+  share one source bucket.
 - **Console `/api/health` answers only its status to anonymous callers.** The login source, SSH and
   credential metadata and the session-secret source are returned only to a local administrator session
   (not to viewers, operators or named Hive sessions),
@@ -213,9 +277,7 @@ All notable changes to this project are documented in this file. The format is b
   `cap_drop: [ALL]`, a read-only root filesystem and a `/tmp` tmpfs, pins the PostgreSQL and Redis
   images by digest, and keeps the Redis password off the `redis-server` command line (a private config
   file inside the container, the password quoted so spaces and quotes work; the health check uses
-  `REDISCLI_AUTH`). **Upgrade note:** a
-  deployment that adds its own writable paths to the console or server container needs a volume or
-  tmpfs for them; update the PostgreSQL and Redis digests with the tag when you move either.
+  `REDISCLI_AUTH`).
 - **`POST /files/update` enforces its sensitive-path policy.** The path must be absolute and is
   normalized before any check (`//etc/...` and `/./` no longer slip past a prefix; `..` and NUL are
   refused), and the agent receives the normalized path. Writing system paths (`/etc`, `/root`,
@@ -238,15 +300,13 @@ All notable changes to this project are documented in this file. The format is b
   connections, forms and frames to the console's own origin, forbids plugins and `<base>` changes, and
   refuses framing by other sites. The embedded Hermes and router dashboards may be framed only by the
   console itself.
-
 - **Agent file writes are bound to the directory they were checked against.** `/files/write`
   checked the parent directory by path and then reused the path, so a local account able to swap a
   component between check and write could redirect a privileged write outside the allowed roots.
   The agent now refuses paths through a component owned by another account or writable by every
   account (without the sticky bit), holds the checked directory open, and proves its identity and
   roots immediately before and after the backup and replacement renames; a mismatch gets 409
-  `PATH_CHANGED` and removes only the agent's own file. **Upgrade note:** writes into a directory
-  owned by an account other than root, the agent or the file's owner are now refused.
+  `PATH_CHANGED` and removes only the agent's own file.
 - **The agent applies the ADMIN-only system-path rule to the real destination.** The Control API judged
   the requested path, but the agent resolved symlinks afterwards, so a link under an ordinary path
   could carry an OPERATOR's write into `/etc` or a `.ssh` directory. `/files/write` now takes
@@ -254,7 +314,7 @@ All notable changes to this project are documented in this file. The format is b
   the shared `filePathPolicy` (new in `@hivemagnus/magnus-contracts`) to the request and to the
   verified, symlink-resolved destination, refusing a sensitive one without it (403
   `SENSITIVE_PATH_ADMIN_ONLY`, nothing created). Ping reports `features.restrictedFileWrite: 2`.
-  **Upgrade note:** until the Control API sends `adminWrite`, agents refuse writes to system paths.
+
 ### Fixed
 
 - **Installer backup pruning deletes old dumps.** `magnus upgrade` kept the newest dump of every label,
@@ -287,8 +347,7 @@ All notable changes to this project are documented in this file. The format is b
   checks only the token.
 - **Agent file writes accept `mode`, `owner` and `group`.** A new file was always root-owned `0600`
   under the unit's `UMask=0077`; `mode` (octal string) now sets its permissions, and `owner`/`group`
-  set its ownership in privileged mode (403 `AGENT_NOT_PRIVILEGED` otherwise). **Upgrade note:** an
-  overwrite now replaces the file (new inode), so hard links to it are not updated.
+  set its ownership in privileged mode (403 `AGENT_NOT_PRIVILEGED` otherwise).
 - The console's environment schema and generated README table now list `DASHBOARD_ADMIN_PASSWORD`
   (and `_B64`, which take precedence over the Argon2id hash), `SSH_HOST_KEY_PINNING` (`warn` connects
   despite a changed host key), `SSH_HOST_KEYS_FILE`, `TERMINAL_AUDIT_DIR`,
@@ -299,8 +358,7 @@ All notable changes to this project are documented in this file. The format is b
   `timelineItemSchema` twice, with different shapes. The root entry point now re-exports the browser
   contract's definitions, which match what the server sends: `error.code` is optional and
   `error.details` is kept, `timelineItem.type` is an enum and `node` may be null, and the readiness
-  node and incident summary carry their full fields. **Upgrade note:** TypeScript consumers of the
-  root entry point see the narrower or wider types.
+  node and incident summary carry their full fields.
 - The agent's native systemd, root and Docker tests now run in CI (a dedicated job), and the obsolete
   Emberfold bootstrap workflow is gone: Emberfold publishes from its own repository with provenance,
   so Magnus no longer runs another repository's verify and publish with the long-lived bootstrap token.
@@ -355,14 +413,14 @@ All notable changes to this project are documented in this file. The format is b
   and now shares their rate-limit budget (20 a minute) instead of having its own 30.
 - A route test calls every `user:*` row of the console route inventory with VIEWER, OPERATOR and ADMIN
   sessions and checks each answer against the row's `auth` column.
-
 - **The OpenAPI document covers more of the API and stays honest.** It now describes webhooks, the audit
   exports and chain verification, node account provisioning and password changes, and ten more
   `/ops` reads, and eight integration routes lost a doubled `/api/v1` prefix. A route test fails when
   a mounted route has no entry or an entry names a route that is not mounted;
   `services/control-api/src/openapi/undocumented-routes.json` lists the 123 routes still without one
   and may only shrink.
-- The server, fleet gateway and Oathweave verifier use `@hivemagnus/hive-common` 0.7.0. For Magnus this
+- The server, fleet gateway and Oathweave verifier use `@hivemagnus/hive-common` 0.7.0. The fleet gateway
+  shrinkwrap is regenerated for it. For Magnus this
   means: concurrent `GET /health/ready` requests share one run of the readiness checks, the suite
   registry client refuses a response over 1 MiB, and the Oathweave userinfo check reads at most 64 KiB.
 - **One active alert violation per rule and node.** After the cooldown a rule reminds on its existing
@@ -379,21 +437,30 @@ All notable changes to this project are documented in this file. The format is b
 - `remote_commands` has an index on `(status, createdAt)` for the 5-second command reconciler, and
   `remediation_executions` restrict the deletion of their rule in the database as well.
 
-**New environment variables:** agent `MAGNUS_AGENT_BODY_LIMIT_BYTES`, `HERMES_INSTALL_COMMIT`,
-`HERMES_INSTALL_SCRIPT_SHA256`, `MAGNUS_AGENT_FILE_ROOTS`; server `MAGNUS_API_SECRET_BYPASS`,
-`MAGNUS_AI_SCHEDULER_ENABLED`, `MAGNUS_HISTORY_RETENTION_DAYS`; console `DASHBOARD_TRUSTED_PROXIES` (all optional).
+### New environment variables
 
-**Migration impact:** Two fast migrations, so upgrade with `--allow-migrations`:
-`20261126120000_remote_command_status_index` (one index on `remote_commands`; command inserts wait while
-it builds) and `20261126120100_remediation_execution_restrict` (one foreign key replaced). A deployment whose `IAM_CORE_URL` uses HTTP
-to a non-loopback host must switch it to HTTPS before upgrading; the server refuses to start otherwise. Hive IAM must issue tokens with `exp`
-and `iat` and a lifetime of at most 24 hours. Local session tokens issued before the upgrade carry no
-password stamp and stay valid until they expire (`JWT_EXPIRY`); sign in again to get a stamped one.
-Scripts that relied on the text of an unexpected 500 must read the server log instead. Alert rules whose node
-filter relied on substring matching (`web` for `web1`, `web2`) need a `*` (`web*`). OPERATOR accounts that
-pushed files under the system paths above need an ADMIN to do it. Upgrade agents before the control
-server: until an agent is on a release with the restricted file write (`restrictedFileWrite` 2), file
-pushes to it fail with 409 `AGENT_FILE_WRITE_UNSUPPORTED` (failing closed is intended).
+All optional:
+
+- Server: `MAGNUS_HISTORY_RETENTION_DAYS`, `MAGNUS_AI_SCHEDULER_ENABLED`, `MAGNUS_API_SECRET_BYPASS`.
+- Node agent: `MAGNUS_AGENT_BODY_LIMIT_BYTES`, `HERMES_INSTALL_COMMIT`, `HERMES_INSTALL_SCRIPT_SHA256`,
+  `MAGNUS_AGENT_FILE_ROOTS`.
+- Console: `DASHBOARD_TRUSTED_PROXIES`.
+
+Removed (console): `ALLOW_LEGACY_SESSION_SECRET`, `DASHBOARD_LOGIN_USERNAME`,
+`DASHBOARD_LOGIN_PASSWORD`; `SESSION_SECRET` is now declared required.
+
+### Migration impact
+
+Two fast migrations. `magnus upgrade` and startup auto-migrate back up PostgreSQL and apply them;
+a Hive suite upgrade that manages Magnus needs `--allow-migrations`.
+
+- `20261126120000_remote_command_status_index` builds one index on `remote_commands(status,
+  createdAt)` (seconds for a few million rows; command inserts wait while it builds).
+- `20261126120100_remediation_execution_restrict` replaces one foreign key so that a remediation
+  rule with executions cannot be deleted; no rows change.
+
+Downgrade: both are compatible with 3.3.x code, which ignores the index. A 3.3.x server that tries
+to delete a remediation rule with executions gets a database error instead of erasing that history.
 
 ## [3.3.6] - 2026-11-25
 

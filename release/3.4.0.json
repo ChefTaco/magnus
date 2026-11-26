@@ -1,5 +1,5 @@
 {
-  "summary": "Draft: completed by the 3.4.0 release step. Migrations: an index on remote_commands(status, createdAt) and a restrict on deleting a remediation rule that has executions.",
+  "summary": "Security and hardening release with Ardent 3.5.1 (Ardent 3.4.0 management operations through node agent studio level 5: task pages and filters, metrics, peer credential reload, management token rotation). AI tools that need approval pause on every chat path and the policy fails closed; IAM_CORE_URL must be HTTPS off loopback and Hive IAM tokens need an expiry of at most 24 hours; agent file writes are atomic, symlink-safe and directory-bound, with system paths for ADMIN only (upgrade node agents before the control server); literal agent command arguments; a pinned Hermes installer; node-signed log ingest; console Origin checks, CSP and trusted proxies, with the expired JWT_SECRET session and DASHBOARD_LOGIN_* fallbacks removed; read-only, digest-pinned Compose services; backup pruning that deletes. Opt-in history retention, server-side AI scheduler and API-secret bypass scope. Two fast migrations: an index on remote_commands(status, createdAt) and a restrict on deleting a remediation rule that has executions.",
   "breaking": false,
   "minUpgradeFrom": "2.10.2",
   "newRequiredEnv": [],
@@ -9,9 +9,67 @@
       "component": "server",
       "description": "Days (at least 7) of finished command, webhook, alert, cron, anomaly and AI conversation history to keep; unset keeps everything.",
       "secret": false
+    },
+    {
+      "name": "MAGNUS_AI_SCHEDULER_ENABLED",
+      "component": "server",
+      "secret": false,
+      "description": "Run due AI scheduled operations every minute from the server (default false). Each occurrence is claimed first, so it runs once; tools that need approval pause as in a chat."
+    },
+    {
+      "name": "MAGNUS_API_SECRET_BYPASS",
+      "component": "server",
+      "secret": false,
+      "description": "Where the x-api-secret ADMIN bypass is honoured: on (default, from any peer), loopback (only from a loopback socket peer) or off (ignored; callers need a bearer token)."
+    },
+    {
+      "name": "MAGNUS_AGENT_BODY_LIMIT_BYTES",
+      "component": "agent",
+      "secret": false,
+      "description": "Largest request body the agent API accepts (1024 to 268435456 bytes, default 16777216), enforced before the request signature is verified. Larger bodies get 413 PAYLOAD_TOO_LARGE."
+    },
+    {
+      "name": "HERMES_INSTALL_COMMIT",
+      "component": "agent",
+      "secret": false,
+      "description": "Override the Hermes Agent commit that POST /hermes/install bootstraps (40 hex). Set together with HERMES_INSTALL_SCRIPT_SHA256; unset uses the pin shipped with this agent."
+    },
+    {
+      "name": "HERMES_INSTALL_SCRIPT_SHA256",
+      "component": "agent",
+      "secret": false,
+      "description": "SHA-256 (64 hex) of scripts/install.sh at HERMES_INSTALL_COMMIT. The installer runs only when the download matches."
+    },
+    {
+      "name": "MAGNUS_AGENT_FILE_ROOTS",
+      "component": "agent",
+      "secret": false,
+      "description": "Comma-separated absolute directories the file API may reach, as written and after resolving symlinks. Unset: every path except the denylist. An invalid value disables the file API and fails magnus-agent check."
+    },
+    {
+      "name": "DASHBOARD_TRUSTED_PROXIES",
+      "component": "ui",
+      "secret": false,
+      "description": "Comma-separated reverse-proxy addresses or CIDR ranges whose X-Forwarded-For names the client for console login throttling and audit. Unset: the socket peer."
     }
   ],
-  "removedEnv": [],
+  "removedEnv": [
+    {
+      "name": "ALLOW_LEGACY_SESSION_SECRET",
+      "component": "ui",
+      "note": "the JWT_SECRET session fallback expired on 2026-10-01 and is removed; set SESSION_SECRET (now declared required)"
+    },
+    {
+      "name": "DASHBOARD_LOGIN_USERNAME",
+      "component": "ui",
+      "note": "the legacy console login expired on 2026-10-01 and is removed; use the DASHBOARD_ADMIN_* credential"
+    },
+    {
+      "name": "DASHBOARD_LOGIN_PASSWORD",
+      "component": "ui",
+      "note": "the legacy console login expired on 2026-10-01 and is removed; use the DASHBOARD_ADMIN_* credential"
+    }
+  ],
   "migrations": [
     "20261126120000_remote_command_status_index",
     "20261126120100_remediation_execution_restrict"
