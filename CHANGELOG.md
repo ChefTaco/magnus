@@ -15,6 +15,10 @@ All notable changes to this project are documented in this file. The format is b
   agent always sends `Authorization: Bearer <token>`, New Agent sets `a2a.provider`, and the Ardent 3.4.0
   operations below need node agents at `studio` level 5. Upgrade the server before the agents, so a
   new agent's `capabilities.task_filters` is never reported by a server that drops the filters.
+- **Ardent 3.4.0's 1 MiB management body limit** does not affect Magnus: every action body the node agent
+  sends a profile stays at or under 300 KB (`preview-submit`; 200 KB for the rest, configuration and
+  definition installs included), and a HiveSkills archive is unpacked by the node agent, never sent to
+  Ardent. A test pins the agent's limits below the pinned Ardent's.
 - **`execution.max_parallel_tasks` 5 to 16 now takes effect.** Ardent before 3.4.0 ran at most 4 tasks at
   once whatever a profile set; 3.4.0 runs what the profile sets (1 to 16). A profile that sets more than
   4 runs more tasks at once after the Ardent upgrade; set 4 to keep the previous concurrency.

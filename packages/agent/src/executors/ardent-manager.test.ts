@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { gzipSync } from 'node:zlib';
-import { ardentArtifactMaxBytes, ardentPackageNames, ardentUserUnit, createArdentInstallStage, createArdentRoutes, type OwnerRunner, hermesTrafficConsumersDisabled, installSkill, ownerCommand, packageTreeDigest, promoteArdentPackage, readArdentState, readSkillReceipts, relayBody, SkillInstallRefused, verifiedInstalledArdentPackage, withArdentLifecycle, writeProfileCredential } from './ardent-manager.js';
+import { ARDENT_MANAGEMENT_BODY_LIMIT_BYTES, ardentActionBodyLimit, ardentActionReachesProfile, ardentArtifactMaxBytes, ardentPackageNames, ardentUserUnit, createArdentInstallStage, createArdentRoutes, type OwnerRunner, hermesTrafficConsumersDisabled, installSkill, ownerCommand, packageTreeDigest, promoteArdentPackage, readArdentState, readSkillReceipts, relayBody, SkillInstallRefused, verifiedInstalledArdentPackage, withArdentLifecycle, writeProfileCredential } from './ardent-manager.js';
 
 const dirs: string[] = [];
 const servers: Server[] = [];
@@ -918,6 +918,28 @@ describe('HiveSkills skill installation', () => {
     // A checked archive still needs a root node manager to install as the owner.
     if (process.getuid?.() !== 0) expect(await (await send({ profile: 'example', action: 'skill-install', body: release(bytes) })).json())
       .toEqual({ success: false, error: { code: 'ARDENT_ACTION_FAILED', message: 'Ardent skill installation requires a root node manager' } });
+  });
+});
+
+describe('Ardent management request bodies', () => {
+  it('stay inside the request body limit of the pinned Ardent for every action that reaches the profile', async () => {
+    const { createRequire } = await import('node:module');
+    const { dirname } = await import('node:path');
+    const { pathToFileURL } = await import('node:url');
+    const entry = createRequire(import.meta.url).resolve('@hivemagnus/ardent');
+    const { MANAGEMENT_BODY_LIMIT_BYTES } = await import(pathToFileURL(join(dirname(entry), 'api.js')).href) as { MANAGEMENT_BODY_LIMIT_BYTES: number };
+    expect(ARDENT_MANAGEMENT_BODY_LIMIT_BYTES).toBe(MANAGEMENT_BODY_LIMIT_BYTES);
+    const actions = ['session-open', 'config-validate', 'config-save', 'peer-validate', 'peer-save', 'identity-save', 'identity-restore', 'provider-test',
+      'channel-test', 'peer-test', 'memory-search', 'task-submit', 'task-cancel', 'mission-submit', 'task-pause', 'task-resume', 'preview-submit',
+      'development-note', 'skill-set', 'task-recovery', 'artifact-import', 'hivemem-credential-reload', 'peer-credential-reload'] as const;
+    for (const action of actions) {
+      expect(ardentActionReachesProfile(action), action).toBe(true);
+      expect(ardentActionBodyLimit(action), action).toBeLessThan(MANAGEMENT_BODY_LIMIT_BYTES);
+    }
+    // The skill archive is larger, but the agent unpacks it itself; only the small enable request reaches Ardent.
+    expect(ardentActionBodyLimit('skill-install')).toBeGreaterThan(MANAGEMENT_BODY_LIMIT_BYTES);
+    expect(ardentActionReachesProfile('skill-install')).toBe(false);
+    expect(ardentActionReachesProfile('management-credential-rotate')).toBe(false);
   });
 });
 

@@ -24,7 +24,11 @@ node; an older Ardent answers 404 for their routes. Level 4 features are also ga
 features need Ardent 3.4.0; see [Ardent 3.4.0 operations](#ardent-340-operations-studio-5).
 
 Every request the node agent makes to a profile's management API sends `Authorization: Bearer <token>`,
-which Ardent 3.4.0 requires (it refuses a bare token).
+which Ardent 3.4.0 requires (it refuses a bare token). Ardent 3.4.0 also refuses a management request
+body above 1 MiB (413 `BODY_TOO_LARGE`). Every action body the node agent sends a profile stays under
+it: 300 KB for `preview-submit`, 200 KB for everything else (configuration, identity, missions and the
+definition install steps included). A `skill-install` archive (up to 1 MiB, base64) is unpacked by the
+node agent itself; only the small enable request reaches Ardent. Magnus calls no plugin routes.
 
 ## New Agent
 

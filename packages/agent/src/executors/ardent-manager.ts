@@ -602,6 +602,21 @@ const actionRoutes: Record<z.infer<typeof actionInput>['action'], { method: 'POS
   'management-credential-rotate': { method: 'POST', path: () => '' },
 };
 
+/** Ardent 3.4.0 refuses a management request body above 1 MiB (413 BODY_TOO_LARGE). */
+export const ARDENT_MANAGEMENT_BODY_LIMIT_BYTES = 1_048_576;
+/**
+ * The largest action body the agent accepts. A preview may carry a full soul and identity (128 KiB each);
+ * everything else that reaches Ardent, missions and configuration included, stays under 200 KB, well inside
+ * Ardent's limit. A skill installation's archive (1 MiB, base64) is unpacked by the agent and never sent to Ardent.
+ */
+export function ardentActionBodyLimit(action: z.infer<typeof actionInput>['action']): number {
+  return action === 'preview-submit' ? 300_000 : action === 'skill-install' ? 1_500_000 : 200_000;
+}
+/** Whether an action is a request to the profile's management API (the others are the agent's own work). */
+export function ardentActionReachesProfile(action: z.infer<typeof actionInput>['action']): boolean {
+  return actionRoutes[action].path('00000000-0000-4000-8000-000000000000') !== '';
+}
+
 /**
  * The command that runs `args` as the Ardent owner. It runs in the owner's home: the agent's own
  * working directory is root-only (mode 0700 on suite installs), and Node resolves `node -e`
@@ -1231,9 +1246,7 @@ export function createArdentRoutes(resolveRoot: () => Promise<ArdentRoot> = arde
       if (header) forwarded['x-hive-execution'] = header; else delete forwarded['x-hive-execution'];
     }
     const body = JSON.stringify(execution ? { ...(input.body as object), execution } : input.body ?? {});
-    // A preview may carry a full soul and identity (128 KiB each) and a skill installation its archive (1 MiB, base64);
-    // everything else, missions included, stays under 200 KB.
-    const limit = input.action === 'preview-submit' ? 300_000 : input.action === 'skill-install' ? 1_500_000 : 200_000;
+    const limit = ardentActionBodyLimit(input.action);
     if (Buffer.byteLength(body) > limit) return c.json({ error: 'Ardent action exceeds size limit' }, 413);
     try {
       const root = await resolveRoot();
