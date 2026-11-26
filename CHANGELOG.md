@@ -96,6 +96,13 @@ All notable changes to this project are documented in this file. The format is b
   changes during the operation gets 409 `PATH_CHANGED`.
 - **Optional file API allowlist.** `MAGNUS_AGENT_FILE_ROOTS` (comma-separated absolute directories)
   limits `/api/v1/files/*` to those directories, symlinks resolved; `magnus-agent check` reports it.
+- **Agent-side file backups.** `POST /api/v1/files/write` accepts `backup: true`: only after the path
+  and roots check passes, the existing file is copied to `<file>.magnus-backup.<UTC timestamp>` in the
+  same directory (exclusive temporary file, fsync, rename; mode, owner and times kept), then the new
+  content is written. A failed backup writes nothing, a refused path leaves no file behind, and the
+  response carries `backupPath`. The agent advertises this as `features.restrictedFileWrite: 1` on
+  `GET /api/v1/ping`. **Upgrade note:** upgrade agents before the Control API; a Control API that
+  relies on this refuses file writes to older agents (409) until they are upgraded.
 
 ### Fixed
 

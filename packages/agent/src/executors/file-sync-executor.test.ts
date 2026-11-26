@@ -156,3 +156,55 @@ describe('MAGNUS_AGENT_FILE_ROOTS', () => {
     expect((await read(join(dir, 'public.txt'))).status).toBe(403);
   });
 });
+
+describe('file write backups', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('copies the existing file next to it, keeping mode and times, before the atomic write', async () => {
+    const folder = join(dir, 'backups'); const target = join(folder, 'app.conf');
+    await mkdir(folder); await writeFile(target, 'original'); await chmod(target, 0o640);
+    const before = await stat(target);
+    const response = await write({ filePath: target, content: 'updated', backup: true });
+    expect(response.status).toBe(200);
+    const { data } = await response.json() as { data: { backupPath: string } };
+    expect(data.backupPath).toMatch(new RegExp(`^${folder}/app\\.conf\\.magnus-backup\\.\\d{4}-\\d{2}-\\d{2}T\\d{2}-\\d{2}-\\d{2}-\\d{3}Z$`));
+    expect(await readFile(data.backupPath, 'utf8')).toBe('original');
+    expect(await readFile(target, 'utf8')).toBe('updated');
+    const copy = await stat(data.backupPath);
+    expect(copy.mode & 0o7777).toBe(0o640);
+    expect(Math.abs(copy.mtimeMs - before.mtimeMs)).toBeLessThan(1);
+    expect((await readdir(folder)).filter(name => name.endsWith('.tmp'))).toEqual([]);
+  });
+
+  it('reports no backup for a new file or when none was asked for', async () => {
+    const target = join(dir, 'backups-new', 'fresh.txt');
+    const created = await write({ filePath: target, content: 'x', backup: true });
+    expect((await created.json() as { data: { backupPath: unknown } }).data.backupPath).toBeNull();
+    const plain = await write({ filePath: target, content: 'y' });
+    expect((await plain.json() as { data: { backupPath: unknown } }).data.backupPath).toBeNull();
+    expect(await readdir(join(dir, 'backups-new'))).toEqual(['fresh.txt']);
+  });
+
+  it('leaves no backup, temporary file or directory behind when the path or roots check refuses', async () => {
+    const allowed = join(dir, 'roots-allowed'); const outside = join(dir, 'roots-outside');
+    await mkdir(allowed); await mkdir(outside); await writeFile(join(outside, 'app.conf'), 'keep');
+    vi.stubEnv('MAGNUS_AGENT_FILE_ROOTS', allowed);
+    for (const filePath of [join(outside, 'app.conf'), join(outside, 'new-dir', 'app.conf'), join(agentRoot, '.env'), join(dir, 'link-to-env')]) {
+      const response = await write({ filePath, content: 'x', backup: true });
+      expect(response.status, filePath).toBe(403);
+    }
+    expect(await readdir(outside)).toEqual(['app.conf']);
+    expect(await readFile(join(outside, 'app.conf'), 'utf8')).toBe('keep');
+    expect((await readdir(agentRoot)).filter(name => name.includes('magnus-backup') || name.endsWith('.tmp'))).toEqual([]);
+    expect((await readdir(dir)).filter(name => name.includes('magnus-backup') || name.endsWith('.tmp'))).toEqual([]);
+  });
+
+  it('writes nothing when the backup cannot be made', async () => {
+    const folder = join(dir, 'backup-fails'); const target = join(folder, 'app.conf');
+    await mkdir(folder); await writeFile(target, 'original');
+    // A FIFO is not a regular file: the backup refuses it and the write never starts.
+    const fifo = join(folder, 'pipe'); execFileSync('mkfifo', [fifo]);
+    expect((await write({ filePath: fifo, content: 'x', backup: true })).status).toBe(409);
+    expect((await readdir(folder)).sort()).toEqual(['app.conf', 'pipe']);
+  });
+});

@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { execFile } from 'node:child_process';
 import { constants, realpathSync } from 'node:fs';
 import { lstat, mkdir, open, realpath, rename, rm } from 'node:fs/promises';
@@ -113,12 +113,13 @@ class UnknownAccountError extends Error {}
  * target after the check is replaced rather than followed. The existing
  * file's mode and owner are kept unless the request names new ones.
  */
-async function atomicWrite(target: string, content: string, options: { mode?: number; uid?: number; gid?: number }): Promise<void> {
+async function atomicWrite(target: string, content: string, options: { mode?: number; uid?: number; gid?: number; backup?: boolean }): Promise<{ backupPath: string | null }> {
   const parent = dirname(target);
   // The directory checked must still be the directory written to.
   if (await realpath(parent) !== parent) throw new FileWriteConflictError('Path changed while it was being written');
   const existing = await lstat(target).catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return null; throw error; });
   if (existing && !existing.isFile()) throw new FileWriteConflictError('Target is not a regular file');
+  const backupPath = options.backup && existing ? await backupCopy(target) : null;
   const mode = options.mode ?? (existing ? existing.mode & 0o7777 : 0o600);
   const uid = options.uid ?? existing?.uid; const gid = options.gid ?? existing?.gid;
   const temporary = join(parent, `.${basename(target).slice(0, 200)}.magnus-${randomBytes(6).toString('hex')}.tmp`);
@@ -144,6 +145,56 @@ async function atomicWrite(target: string, content: string, options: { mode?: nu
     try { await directory.sync(); } catch { /* some filesystems refuse directory fsync */ } finally { await directory.close(); }
   } finally {
     if (!renamed) { await handle.close().catch(() => {}); await rm(temporary, { force: true }); }
+  }
+  return { backupPath };
+}
+
+/**
+ * Copy the current target to `<target>.magnus-backup.<timestamp>` in the same
+ * (already checked) directory, keeping mode, owner and times like `cp -p`.
+ * The source is opened without following a symlink, and the copy is written to
+ * an exclusive temporary file, synced and renamed into place, so neither end
+ * can be redirected. A failed backup stops the write.
+ */
+async function backupCopy(target: string): Promise<string> {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const backupPath = join(dirname(target), `${basename(target).slice(0, 180)}.magnus-backup.${stamp}`);
+  const temporary = join(dirname(target), `.${basename(target).slice(0, 180)}.magnus-backup-${randomBytes(6).toString('hex')}.tmp`);
+  const source = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+    .catch((error: NodeJS.ErrnoException) => { throw error.code === 'ELOOP' ? new FileWriteConflictError('Path changed while it was being backed up') : error; });
+  let created = false;
+  try {
+    const info = await source.stat();
+    if (!info.isFile()) throw new FileWriteConflictError('Target is not a regular file');
+    const copy = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+    created = true;
+    try {
+      const buffer = Buffer.alloc(1024 * 1024);
+      for (let position = 0; ;) {
+        const { bytesRead } = await source.read(buffer, 0, buffer.length, position);
+        if (bytesRead === 0) break;
+        await copy.write(buffer, 0, bytesRead);
+        position += bytesRead;
+      }
+      const own = await copy.stat();
+      if (own.uid !== info.uid || own.gid !== info.gid) {
+        await copy.chown(info.uid, info.gid).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === 'EPERM') throw new FileWriteConflictError('The file belongs to another account and this agent cannot keep its owner on the backup; nothing was written');
+          throw error;
+        });
+      }
+      await copy.chmod(info.mode & 0o7777);
+      await copy.utimes(info.atimeMs / 1000, info.mtimeMs / 1000);
+      await copy.sync();
+    } finally { await copy.close(); }
+    await rename(temporary, backupPath);
+    created = false;
+    return backupPath;
+  } catch (error) {
+    if (created) await rm(temporary, { force: true });
+    throw error;
+  } finally {
+    await source.close();
   }
 }
 
@@ -205,18 +256,20 @@ fileRoutes.get('/read', async (c) => {
   }
 });
 
-// ── Write a file to the local filesystem ──
-fileRoutes.post('/write', async (c) => {
-  const raw = await c.req.json().catch(() => null);
-  const parsed = writeBodySchema.safeParse(raw);
-  if (!parsed.success) {
-    return c.json({
-      success: false,
-      error: { code: 'VALIDATION_ERROR', message: parsed.error.issues.map(e => e.message).join('; ') },
-    }, 400);
-  }
+const writeRequestSchema = writeBodySchema.extend({
+  /** Copy the existing file to `<file>.magnus-backup.<timestamp>` (same directory) before replacing it. */
+  backup: z.boolean().default(false),
+});
 
-  const { filePath, content, createIfMissing, mode, owner, group } = parsed.data;
+type WriteRequest = z.infer<typeof writeRequestSchema>;
+
+/**
+ * The path (and the file-root allowlist) is checked before anything is created, then the optional backup is made next to
+ * the target, then the content is written atomically. A refused request leaves
+ * no directory, backup or temporary file behind.
+ */
+async function handleWrite(c: Context, request: WriteRequest) {
+  const { filePath, content, createIfMissing, mode, owner, group, backup } = request;
   if ((owner || group) && !(agentPrivileged() && isRoot())) {
     return c.json({ success: false, error: { code: 'AGENT_NOT_PRIVILEGED', feature: 'file-ownership', message: notPrivilegedMessage('file-ownership') } }, 403);
   }
@@ -226,21 +279,22 @@ fileRoutes.post('/write', async (c) => {
     if (!pathCheck.valid) {
       return c.json({ success: false, error: { code: 'VALIDATION_ERROR', message: pathCheck.reason } }, 403);
     }
+    const ids = {
+      ...(mode ? { mode: parseInt(mode, 8) } : {}),
+      ...(owner ? { uid: await accountId('passwd', owner) } : {}),
+      ...(group ? { gid: await accountId('group', group) } : {}),
+    };
 
     if (createIfMissing) {
       await mkdir(dirname(pathCheck.resolved), { recursive: true });
     }
 
-    await atomicWrite(pathCheck.resolved, content, {
-      ...(mode ? { mode: parseInt(mode, 8) } : {}),
-      ...(owner ? { uid: await accountId('passwd', owner) } : {}),
-      ...(group ? { gid: await accountId('group', group) } : {}),
-    });
+    const { backupPath } = await atomicWrite(pathCheck.resolved, content, { ...ids, backup });
     const checksum = createHash('sha256').update(content).digest('hex');
 
     return c.json({
       success: true,
-      data: { written: true, checksum },
+      data: { written: true, checksum, backupPath },
     });
   } catch (err: unknown) {
     if (err instanceof UnknownAccountError) return c.json({ success: false, error: { code: 'VALIDATION_ERROR', message: err.message } }, 400);
@@ -248,4 +302,20 @@ fileRoutes.post('/write', async (c) => {
     const message = err instanceof Error ? err.message : String(err);
     return c.json({ success: false, error: { code: 'FILE_WRITE_ERROR', message } }, 500);
   }
+}
+
+function validationError(c: Context, error: z.ZodError) {
+  return c.json({
+    success: false,
+    error: { code: 'VALIDATION_ERROR', message: error.issues.map(e => e.message).join('; ') },
+  }, 400);
+}
+
+// ── Write a file to the local filesystem ──
+// Advertised as `features.restrictedFileWrite: 1` on /api/v1/ping: path and
+// MAGNUS_AGENT_FILE_ROOTS check, then the optional backup, then the atomic write.
+fileRoutes.post('/write', async (c) => {
+  const parsed = writeRequestSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return validationError(c, parsed.error);
+  return handleWrite(c, parsed.data);
 });

@@ -265,7 +265,12 @@ A write goes to a temporary file in the same directory, is synced, and is rename
 a crash leaves the old or the new content and a symlink planted at the target is replaced, not
 followed. The file keeps its mode, owner and group; a new file is `0600` and owned by the agent
 unless the request sets `mode` (for example `"0644"`) or, in privileged mode, `owner` and `group`
-(name or id). Reads open the file without following a final symlink and check what they opened.
+(name or id). With `backup: true` the existing file is first copied, after the path and roots
+check, to `<file>.magnus-backup.<UTC timestamp>` in the same directory (mode, owner and times kept);
+the response's `backupPath` names it, and a failed backup writes nothing. `GET /api/v1/ping`
+advertises this as `features.restrictedFileWrite: 1`; a Control API that needs a backup refuses
+agents without it instead of falling back to a shell copy. Reads open the file without following a
+final symlink and check what they opened.
 
 ### HiveMem credential renewal
 

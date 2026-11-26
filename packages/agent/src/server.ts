@@ -111,6 +111,8 @@ export async function createApp(): Promise<Hono> {
           commandReceipts: ENABLE_NODE_MANAGEMENT ? 1 : 0,
           commandFencing: ENABLE_NODE_MANAGEMENT ? 1 : 0,
           managedMutations: ENABLE_NODE_MANAGEMENT ? 1 : 0,
+          // POST /files/write checks the path (and MAGNUS_AGENT_FILE_ROOTS) before its optional backup and atomic write.
+          restrictedFileWrite: ENABLE_NODE_MANAGEMENT ? 1 : 0,
           securityResponse: ENABLE_NODE_MANAGEMENT && process.env["MAGNUS_SECURITY_RESPONSE_ENABLED"] === "true" ? 1 : 0,
           commandReconciliation: commandReconciliationEnabled() ? 1 : 0,
           // Ardent Studio bridge level (ARDENT_AGENT_CAPABILITIES), which the server gates on: 1 sessions,
@@ -196,6 +198,8 @@ export async function createApp(): Promise<Hono> {
           commandReceipts: ENABLE_NODE_MANAGEMENT ? 1 : 0,
           commandFencing: ENABLE_NODE_MANAGEMENT ? 1 : 0,
           managedMutations: ENABLE_NODE_MANAGEMENT ? 1 : 0,
+          // POST /files/write checks the path (and MAGNUS_AGENT_FILE_ROOTS) before its optional backup and atomic write.
+          restrictedFileWrite: ENABLE_NODE_MANAGEMENT ? 1 : 0,
           securityResponse: ENABLE_NODE_MANAGEMENT && process.env["MAGNUS_SECURITY_RESPONSE_ENABLED"] === "true" ? 1 : 0,
           commandReconciliation: commandReconciliationEnabled() ? 1 : 0,
           // Ardent Studio bridge level (ARDENT_AGENT_CAPABILITIES), which the server gates on: 1 sessions,

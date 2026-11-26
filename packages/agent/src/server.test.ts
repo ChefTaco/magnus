@@ -83,6 +83,7 @@ describe('server', () => {
     expect(body.data).not.toHaveProperty('heartbeat');
     expect(body.data).not.toHaveProperty('fingerprints');
     expect(body.data.features.commandReconciliation).toBe(0);
+    expect(body.data.features.restrictedFileWrite).toBe(1);
     expect(body.data.features.commandCompletionRegistry).toEqual({ version: 1,
       sha256: '9a3c624e02974750c5f96821afdc8a5753413d643f91be3d0f197f39abe7ce47', enabled: 1 });
   });
