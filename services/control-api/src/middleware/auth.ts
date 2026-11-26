@@ -12,6 +12,7 @@
  */
 
 import type { Context, Next } from 'hono';
+import { getConnInfo } from '@hono/node-server/conninfo';
 import { createHash } from 'node:crypto';
 import * as jose from 'jose';
 import type { AppVariables, AuthTokenPayload, SecurityPermission, UserRole } from '../types/index.js';
@@ -37,6 +38,7 @@ import { getCurrentUserStatus } from './user-status.js';
 import { matchesSha256Digest, safeEqual } from '../utils/safe-equal.js';
 import { OathweaveAccessDenied, oathweaveAuthentication } from './oathweave.js';
 import { iamCoreUrlProblem } from '../config/iam.js';
+import { normalizeIpAddress } from '../utils/ip.js';
 
 /** Constant-time string comparison (re-exported for existing callers). */
 export { safeEqual };
@@ -239,12 +241,35 @@ function matchingSharedResourceConsumer(token: string): string | null {
 // Core auth middleware
 // ──────────────────────────────────────────────────────────
 
+export type ApiSecretBypass = 'off' | 'loopback' | 'on';
+
+/** MAGNUS_API_SECRET_BYPASS: where the `x-api-secret` ADMIN bypass is honoured. Default `on`. */
+export function apiSecretBypassMode(): ApiSecretBypass {
+  const value = (process.env['MAGNUS_API_SECRET_BYPASS'] ?? '').trim().toLowerCase();
+  return value === 'off' || value === 'loopback' ? value : 'on';
+}
+
+/** True only for a loopback socket peer. Forwarding headers are never consulted. */
+function socketPeerIsLoopback(c: Context): boolean {
+  let address = '';
+  try { address = normalizeIpAddress(getConnInfo(c).remote.address ?? ''); } catch { return false; }
+  return address === '::1' || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(address);
+}
+
+function apiSecretBypassAllowed(c: Context): boolean {
+  const mode = apiSecretBypassMode();
+  return mode === 'on' || (mode === 'loopback' && socketPeerIsLoopback(c));
+}
+
 /** Verify token and attach AuthTokenPayload to context. */
 export async function authMiddleware(c: Context<AppVariables>, next: Next): Promise<void> {
   // API-secret bypass (system calls from the dashboard, etc.)
-  // When IAM Core is configured, this is a bootstrap-only fallback.
+  // When IAM Core is configured, this is a bootstrap-only fallback. MAGNUS_API_SECRET_BYPASS=off
+  // ignores the header everywhere, and `loopback` honours it only from a loopback socket peer;
+  // an ignored header falls through to bearer authentication.
   const apiSecret = c.req.header('x-api-secret');
-  if (apiSecret && configuredApiSecret && verifyWithRotation('API_SECRET', configuredApiSecret, apiSecret)) {
+  if (apiSecret && configuredApiSecret && apiSecretBypassAllowed(c)
+    && verifyWithRotation('API_SECRET', configuredApiSecret, apiSecret)) {
     if (IAM_CORE_URL) {
       console.warn(`[auth] API_SECRET bypass used while IAM is active — path: ${new URL(c.req.url).pathname} (should migrate to IAM tokens)`);
     }
@@ -419,6 +444,12 @@ export async function authMiddleware(c: Context<AppVariables>, next: Next): Prom
     ? await getCurrentUserStatus(claims.userId)
     : null;
   if (!current?.active) {
+    throw new HttpError(401, 'UNAUTHORIZED', 'Invalid or expired token');
+  }
+  // A password change ends the sessions issued for the old password. Tokens issued by an
+  // older server carry no stamp and stay valid until they expire (JWT_EXPIRY).
+  if (claims.sessionStamp !== undefined
+    && (typeof claims.sessionStamp !== 'string' || !current.sessionStamp || !safeEqual(claims.sessionStamp, current.sessionStamp))) {
     throw new HttpError(401, 'UNAUTHORIZED', 'Invalid or expired token');
   }
   c.set('user', { ...claims, role: current.role });

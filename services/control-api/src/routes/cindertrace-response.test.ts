@@ -1,5 +1,6 @@
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
+import { randomBytes } from 'node:crypto';
 import { bridgeSignature } from '../security/cindertrace-response.js';
 const state = vi.hoisted(() => ({ row: null as any, effects: 0, loseReply: false }));
 const db = vi.hoisted(() => ({
@@ -65,11 +66,10 @@ function plan() {
     expiresAt: Date.now() + 60000,
   };
 }
-function request(body: unknown, signature = true) {
+function request(body: unknown, signature = true, nonce = randomBytes(16).toString('hex')) {
   const raw = JSON.stringify(body),
     path = '/api/v1/security-integration/response/execute',
-    time = String(Date.now()),
-    nonce = 'a'.repeat(32);
+    time = String(Date.now());
   return app.request(path, {
     method: 'POST',
     headers: {
@@ -132,4 +132,16 @@ it('admits only one concurrent claim', async () => {
   ]);
   expect(replies.map((x) => x.status).sort()).toEqual([200, 409]);
   expect(state.effects).toBe(1);
+});
+it('accepts each signed request once', async () => {
+  const p = plan();
+  const nonce = 'd'.repeat(32);
+  expect((await request(p, true, nonce)).status).toBe(200);
+  const replay = await request(p, true, nonce);
+  expect(replay.status).toBe(401);
+  expect(state.effects).toBe(1);
+  // An unsigned request with a fresh nonce does not spend it.
+  const unused = 'e'.repeat(32);
+  expect((await request(p, false, unused)).status).toBe(401);
+  expect((await request(p, true, unused)).status).toBe(200);
 });

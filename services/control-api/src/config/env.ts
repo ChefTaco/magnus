@@ -65,6 +65,7 @@ export const envSchema = z.object({
   CONTROL_API_PORT: portSchema.default(4000),
   CONTROL_API_URL: z.string().url().default('https://localhost:4000'),
   API_SECRET: z.string().min(32).optional(),
+  MAGNUS_API_SECRET_BYPASS: z.enum(['off', 'loopback', 'on']).optional(),
   MAGNUS_COLLECTOR_TOKEN_SHA256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
 
   MAGNUS_RESOURCE_LEASES_ENABLED: booleanEnvSchema,

@@ -9,7 +9,10 @@ import { getNodeManagerSecret } from '../utils/env.js';
 import { HttpError } from '../middleware/error-handler.js';
 import { logAuditEvent } from '../services/audit-service.js';
 import type { AppVariables } from '../types/index.js';
+import { NonceCache } from '../security/node-request-auth.js';
 export const cindertraceResponseRouter = new Hono<AppVariables>();
+// The timestamp window is ±60 s; the cache outlives it (120 s), so a signed request is accepted once.
+const bridgeNonces = new NonceCache(120_000, 50_000);
 function secret() {
   const value = process.env['CINDERTRACE_RESPONSE_SECRET'] ?? '';
   if (
@@ -42,6 +45,9 @@ cindertraceResponseRouter.use('*', async (c, next) => {
     )
   )
     throw new HttpError(401, 'UNAUTHORIZED', 'Invalid response request');
+  // Only a verified request spends a nonce, so an unsigned caller cannot fill the cache.
+  if (!bridgeNonces.claim('cindertrace', nonce))
+    throw new HttpError(401, 'REPLAYED_REQUEST', 'This signed response request was already received');
   await next();
   // Sign the exact response body and bind it to this request; no source output or credentials are returned.
   const text = await c.res.clone().text();

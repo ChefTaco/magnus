@@ -14,6 +14,16 @@ import {
   changePasswordSchema,
 } from '../schemas/users.js';
 import { IAM_CORE_URL } from '../utils/env.js';
+import { heartbeatPeerAddress } from '../utils/heartbeat-peer.js';
+import { passwordSessionStamp } from '../middleware/user-status.js';
+
+/**
+ * The audited client address: the socket peer. A forwarding header is client-supplied on the
+ * directly reachable listener, so it is only a fallback where no socket is available.
+ */
+function auditAddress(c: Parameters<typeof heartbeatPeerAddress>[0]): string | null {
+  return heartbeatPeerAddress(c) || null;
+}
 
 export const usersRouter = new Hono<AppVariables>();
 export const authRouter = new Hono<AppVariables>();
@@ -51,6 +61,7 @@ authRouter.post('/login', async (c) => {
     userId: user.id,
     email: user.email,
     role: user.role,
+    sessionStamp: passwordSessionStamp(user.password),
   });
 
   await logAuditEvent({
@@ -60,7 +71,7 @@ authRouter.post('/login', async (c) => {
     targetType: 'user',
     targetId: user.id,
     details: { email: user.email },
-    ipAddress: c.req.header('x-forwarded-for') ?? c.req.header('x-real-ip') ?? null,
+    ipAddress: auditAddress(c),
   });
 
   return c.json({ token, user: { id: user.id, email: user.email, name: user.name, role: user.role } });
@@ -137,7 +148,7 @@ usersRouter.post('/', requireRole('ADMIN'), async (c) => {
     targetType: 'user',
     targetId: user.id,
     details: { email: user.email, role: user.role },
-    ipAddress: c.req.header('x-forwarded-for') ?? null,
+    ipAddress: auditAddress(c),
   });
 
   return c.json(sanitizeUser(user), 201);
@@ -153,9 +164,12 @@ usersRouter.patch('/:id', requireRole('ADMIN'), async (c) => {
     throw new HttpError(400, 'VALIDATION_ERROR', 'Cannot modify the system user');
   }
 
-  // Prevent admin from demoting themselves
+  // Prevent admin from demoting or deactivating themselves (it could leave no admin at all)
   if (userId === caller.userId && body.role && body.role !== 'ADMIN') {
     throw new HttpError(400, 'VALIDATION_ERROR', 'Admins cannot demote their own account');
+  }
+  if (userId === caller.userId && body.active === false) {
+    throw new HttpError(400, 'VALIDATION_ERROR', 'Admins cannot deactivate their own account');
   }
 
   const db = getDb();
@@ -179,7 +193,7 @@ usersRouter.patch('/:id', requireRole('ADMIN'), async (c) => {
     targetType: 'user',
     targetId: user.id,
     details: { changes: body },
-    ipAddress: c.req.header('x-forwarded-for') ?? null,
+    ipAddress: auditAddress(c),
   });
 
   return c.json(sanitizeUser(user));
@@ -211,7 +225,7 @@ usersRouter.delete('/:id', requireRole('ADMIN'), async (c) => {
     targetType: 'user',
     targetId: userId,
     details: { action: 'deleted', email: existing.email },
-    ipAddress: c.req.header('x-forwarded-for') ?? null,
+    ipAddress: auditAddress(c),
   });
 
   return c.json({ success: true });
@@ -237,8 +251,10 @@ usersRouter.put('/:id/password', async (c) => {
   const user = await db.user.findUnique({ where: { id: userId } });
   if (!user) throw new HttpError(404, 'NOT_FOUND', 'User not found');
 
-  // Non-admin users must provide their current password
-  if (isSelf && !isAdmin) {
+  // Changing your own password always needs the current one, admins included: a stolen session
+  // alone must not be enough to take over the account. An admin resetting another user's
+  // password does not know theirs.
+  if (isSelf) {
     if (!body.currentPassword) {
       throw new HttpError(400, 'VALIDATION_ERROR', 'Current password is required');
     }
@@ -250,6 +266,9 @@ usersRouter.put('/:id/password', async (c) => {
 
   const newHash = await hashPassword(body.newPassword);
   await db.user.update({ where: { id: userId }, data: { password: newHash } });
+  // Every session issued for the old password ends: here at once, in any other server process
+  // when its 30 s account-status cache expires.
+  invalidateUserStatus(userId);
 
   await logAuditEvent({
     action: 'user.update',
@@ -258,8 +277,13 @@ usersRouter.put('/:id/password', async (c) => {
     targetType: 'user',
     targetId: userId,
     details: { action: 'password_changed', self: isSelf },
-    ipAddress: c.req.header('x-forwarded-for') ?? null,
+    ipAddress: auditAddress(c),
   });
 
+  // The caller's own session ended with the old password; hand it a fresh one.
+  if (isSelf && !IAM_CORE_URL && caller.sessionStamp !== undefined) {
+    const token = await signUserToken({ userId: user.id, email: user.email, role: user.role, sessionStamp: passwordSessionStamp(newHash) });
+    return c.json({ success: true, token });
+  }
   return c.json({ success: true });
 });

@@ -272,6 +272,11 @@ export interface AuthTokenPayload {
    * Its `role` is VIEWER, and authentication confines it to the Ardent bridge routes.
    */
   service?: { kind: 'ardent'; issuer: string; clientId: string };
+  /**
+   * Local HS256 sessions only: the password stamp the token was issued for
+   * (`passwordSessionStamp`). A password change ends every session that carries an older one.
+   */
+  sessionStamp?: string;
 }
 
 /** Hono env type providing typed Variables across all routes and middleware. */
