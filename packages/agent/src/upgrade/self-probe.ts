@@ -8,6 +8,7 @@
  */
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
+import { readFileSync } from 'node:fs';
 import type { TLSSocket } from 'node:tls';
 import { selfSignedHealthCheckHeaders } from '../acceptance.js';
 import { verifiedTlsOptions } from '../tls.js';
@@ -15,6 +16,8 @@ import { verifiedTlsOptions } from '../tls.js';
 export interface OwnListener {
   /** `https` or `http` (development opt-in). */
   protocol: 'https:' | 'http:';
+  /** The listener's certificate (chain) file; the loopback probe trusts exactly this certificate. */
+  certPath?: string;
   /** The address the listener is bound to; a wildcard is probed through loopback. */
   hostname: string;
   port: number;
@@ -39,19 +42,23 @@ export function selfProbeHeaders(sign: () => Record<string, string> = selfSigned
   return Object.keys(signed).length ? signed : null;
 }
 
-interface ProbeTarget { url: URL; tls: { rejectUnauthorized: boolean; ca?: Buffer; servername?: string } }
+interface ProbeTarget { url: URL; tls: { rejectUnauthorized: true; ca?: Buffer; allowPartialTrustChain?: boolean; checkServerIdentity?: () => undefined } }
 
 function probeTarget(listener: OwnListener, env: NodeJS.ProcessEnv): ProbeTarget {
   // An operator-supplied self URL (also used by `magnus-agent acceptance`) is probed with
-  // full certificate verification. Otherwise the listener is probed on loopback, where the
-  // certificate's names cannot match; the handshake and certificate dates still are checked.
+  // full certificate verification. Otherwise the listener is probed on loopback and must
+  // present the certificate in its own certificate file: that file is the only trust anchor
+  // (a partial chain is allowed), so the chain, dates and key are verified. Only the host
+  // name is not, because loopback is not among the certificate's names.
   const selfUrl = env['MAGNUS_AGENT_SELF_URL']?.trim();
   if (selfUrl && listener.protocol === 'https:') {
     return { url: new URL('/api/v1/health/check', selfUrl), tls: verifiedTlsOptions(env['MAGNUS_AGENT_SELF_CA_PATH']) };
   }
   const host = loopbackFor(listener.hostname);
   const url = new URL(`${listener.protocol}//${host.includes(':') ? `[${host}]` : host}:${listener.port}/api/v1/health/check`);
-  return { url, tls: { rejectUnauthorized: false } };
+  if (listener.protocol === 'http:') return { url, tls: { rejectUnauthorized: true } };
+  if (!listener.certPath) throw new Error('the listener certificate file is unknown');
+  return { url, tls: { rejectUnauthorized: true, ca: readFileSync(listener.certPath), allowPartialTrustChain: true, checkServerIdentity: () => undefined } };
 }
 
 function get(target: ProbeTarget, path: string, headers: Record<string, string>, timeoutMs: number, now: () => number): Promise<SelfProbeResult & { body?: string }> {

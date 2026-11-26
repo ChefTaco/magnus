@@ -67,7 +67,7 @@ if (listener.useTls) {
       },
     },
     (info) => {
-      registerOwnListener({ protocol: 'https:', hostname: listener.hostname, port: info.port });
+      registerOwnListener({ protocol: 'https:', hostname: listener.hostname, port: info.port, certPath: certPath! });
       logger.info(`Magnus Agent listening on https://${listener.hostname}:${info.port}`);
     },
   ) as HttpsServer;

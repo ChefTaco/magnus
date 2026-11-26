@@ -107,7 +107,8 @@ All notable changes to this project are documented in this file. The format is b
   was confirmed by its first accepted heartbeat, which is outbound, so a version with a broken
   listener or TLS setup was kept and could then not be reached. It is now confirmed only after a
   signed probe of its own `GET /api/v1/health/check` over the real listener reports the new version
-  (loopback by default, or `MAGNUS_AGENT_SELF_URL` with full certificate checks). Otherwise the
+  (loopback, trusting only the certificate in `TLS_CERT_PATH`, or `MAGNUS_AGENT_SELF_URL` with full
+  certificate checks). Otherwise the
   launcher reverts it when the confirm window ends.
 
 ### Fixed

@@ -166,7 +166,8 @@ After that, the server can upgrade the agent from the console's **Upgrade agents
 4. The new version is confirmed once a heartbeat is accepted **and** a probe of its own API
    (`GET /api/v1/health/check` over the real listener, signed with the node key, reporting the new
    version) succeeds, so a version whose listener or TLS is broken is not kept. The probe goes to
-   loopback and checks the TLS handshake and certificate dates; with `MAGNUS_AGENT_SELF_URL` set it
+   loopback and accepts only the certificate in `TLS_CERT_PATH` (chain and dates verified; the host
+   name is not, as loopback is not one of its names); with `MAGNUS_AGENT_SELF_URL` set it
    uses that URL with full certificate verification (`MAGNUS_AGENT_SELF_CA_PATH` for a private CA).
    A node without a bound key can only probe `/api/v1/ping`.
 5. If the new version is not confirmed within

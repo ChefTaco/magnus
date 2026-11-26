@@ -51,7 +51,7 @@ describe('self-probe of the agent listener before confirming a trial', () => {
     expect(await probeOwnListener('3.4.0', { listener: null, sign: signed, env: {} })).toMatchObject({ ok: false });
     // An HTTPS listener that speaks plain HTTP is broken TLS.
     const plain = await listen(createHttpServer(handler('3.4.0')));
-    expect((await probeOwnListener('3.4.0', { listener: { protocol: 'https:', hostname: '127.0.0.1', port: plain }, sign: signed, env: {}, timeoutMs: 2000 })).ok).toBe(false);
+    expect((await probeOwnListener('3.4.0', { listener: { protocol: 'https:', hostname: '127.0.0.1', port: plain, certPath: '/nonexistent/cert.pem' }, sign: signed, env: {}, timeoutMs: 2000 })).ok).toBe(false);
   });
 
   it('falls back to the unauthenticated ping when the node has no bound key', async () => {
@@ -63,16 +63,20 @@ describe('self-probe of the agent listener before confirming a trial', () => {
 
   it('checks the TLS handshake and certificate dates over loopback', async (context) => {
     let dir: string;
+    const certificate = (name: string) => execFileSync('openssl', ['req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256', '-nodes', '-days', '2',
+      '-subj', '/CN=node-1.example.com', '-keyout', join(dir, `${name}-key.pem`), '-out', join(dir, `${name}.pem`)], { stdio: 'ignore' });
     try {
       dir = mkdtempSync(join(tmpdir(), 'self-probe-'));
-      execFileSync('openssl', ['req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256', '-nodes', '-days', '2',
-        '-subj', '/CN=node-1.example.com', '-keyout', join(dir, 'key.pem'), '-out', join(dir, 'cert.pem')], { stdio: 'ignore' });
+      certificate('cert'); certificate('other');
     } catch { context.skip(); return; }
     try {
-      const server = createHttpsServer({ key: readFileSync(join(dir, 'key.pem')), cert: readFileSync(join(dir, 'cert.pem')) }, handler('3.4.0'));
+      const server = createHttpsServer({ key: readFileSync(join(dir, 'cert-key.pem')), cert: readFileSync(join(dir, 'cert.pem')) }, handler('3.4.0'));
       const port = await listen(server);
-      const listener = { protocol: 'https:' as const, hostname: '0.0.0.0', port };
+      const listener = { protocol: 'https:' as const, hostname: '0.0.0.0', port, certPath: join(dir, 'cert.pem') };
       expect(await probeOwnListener('3.4.0', { listener, sign: signed, env: {} })).toEqual({ ok: true });
+      // A listener serving some other certificate than its configured file is refused.
+      expect((await probeOwnListener('3.4.0', { listener: { ...listener, certPath: join(dir, 'other.pem') }, sign: signed, env: {} })).ok).toBe(false);
+      expect((await probeOwnListener('3.4.0', { listener: { ...listener, certPath: undefined }, sign: signed, env: {} })).ok).toBe(false);
       const later = vi.fn(() => Date.now() + 10 * 24 * 3600_000);
       expect(await probeOwnListener('3.4.0', { listener, sign: signed, env: {}, now: later }))
         .toMatchObject({ ok: false, reason: expect.stringContaining('expired') });
