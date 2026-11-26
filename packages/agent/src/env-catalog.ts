@@ -75,6 +75,8 @@ export const agentEnvCatalog: EnvVarSpec[] = [
   { name: 'HERMES_USER', required: false, secret: false, group: 'hermes', description: 'Local account that owns Hermes Agent. Enables Hermes inspection and management.' },
   { name: 'HERMES_REGISTRY_TOKEN', required: false, secret: true, group: 'hermes', description: '64-hex token issued by the Control API for magnus-hermes-sync. Without it the sync job does nothing.' },
   { name: 'MAGNUS_HERMES_SYNC_PULL', required: false, secret: false, default: 'false', group: 'hermes', description: 'Allow magnus-hermes-sync to apply desired state from the registry (otherwise use --submit-only).' },
+  { name: 'HERMES_INSTALL_COMMIT', required: false, secret: false, group: 'hermes', description: 'Override the Hermes Agent commit that POST /hermes/install bootstraps (40 hex). Set together with HERMES_INSTALL_SCRIPT_SHA256; unset uses the pin shipped with this agent.' },
+  { name: 'HERMES_INSTALL_SCRIPT_SHA256', required: false, secret: false, group: 'hermes', description: 'SHA-256 (64 hex) of scripts/install.sh at HERMES_INSTALL_COMMIT. The installer runs only when the download matches.' },
   { name: 'CODEX_USER', required: false, secret: false, group: 'codex', description: 'Local account whose Codex CLI and login are managed. Defaults to HERMES_USER, then the invoking user.' },
   { name: 'CODEX_BIN', required: false, secret: false, group: 'codex', description: 'Codex CLI path override.' },
   { name: 'CODEX_HOME', required: false, secret: false, default: '~/.codex', group: 'codex', description: 'Codex state directory override.' },
