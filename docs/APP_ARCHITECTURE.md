@@ -77,7 +77,7 @@ concurrency limit; past the per-username budget only a wrong password is refused
 attempts cannot lock the administrator out. The TLS front end ignores inbound forwarding headers and
 takes the client address from the socket, or, for a reverse proxy listed in
 `DASHBOARD_TRUSTED_PROXIES`, from the right-most untrusted `X-Forwarded-For` hop, so the throttle
-cannot be bypassed with a spoofed header. Non-GET `/api` requests must come from the console's own
+cannot be bypassed with a spoofed header. State-changing API requests must come from the console's own
 origin (`Origin` or `Sec-Fetch-Site`), and every page carries a same-origin Content Security Policy.
 
 Named users can sign in through an OIDC provider such as Oathweave (formerly Hive IAM) when the
