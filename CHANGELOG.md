@@ -25,17 +25,40 @@ All notable changes to this project are documented in this file. The format is b
   `MAGNUS_AGENT_BODY_LIMIT_BYTES` (default 16 MiB), before it verifies the request signature, and
   answers 413 `PAYLOAD_TOO_LARGE` for anything larger, whether declared by `Content-Length` or sent
   chunked. The same limit applies under the deprecated shared secret.
+- **AI tool approval applies on every chat path.** The non-streaming tool loop (`POST /assistant/chat`,
+  the fallback for providers other than Ollama, the continuation after an approval or rejection, and the
+  insights and scheduled-operation services) now pauses on a tool that needs approval and saves it as a
+  pending approval, as the streaming path already did. Tools disabled in the tool config are refused
+  however a call arrives, including calls written as text, on both paths and again when an approval runs.
+- **The AI tool approval policy fails closed.** A stored policy is merged with the defaults: a list it
+  leaves out keeps its default, and `execCommand`, `writeFile`, `runSkill`, `createSkillDraft` and
+  `generateRunbook` always require approval unless the policy denies them.
+- **`GET /profiling/:nodeId` accepts only `type=heap`, `cpu` or `process`** (400 otherwise), refuses
+  agent redirects, and writes a `node.profile` audit event.
+- **Hive IAM key fetch.** `IAM_CORE_URL` must be HTTPS; HTTP is accepted only for a loopback host or with
+  the development-only `ALLOW_INSECURE_HTTP`. The RS256 public key is fetched with a 5 s timeout and
+  without following redirects. A token with several IAM roles gets the highest Magnus role they map to,
+  not the first one listed.
+- **Isolated rehearsals authenticate no agent request.** With `HIVE_REHEARSAL=true`, every server-to-agent
+  request is refused before it is signed, reads included (profiling, storage evidence), not only those
+  sent through the node SDK.
 
 ### Fixed
 
 - **Installer backup pruning deletes old dumps.** `magnus upgrade` kept the newest dump of every label,
   and every upgrade step has its own label, so no dump was ever deleted. It now keeps the newest
   `keepBackups` dumps plus the one the current upgrade's rollback restores.
+- The AI `getHealthHistory` tool caps its window at 168 hours, the dashboard-stats tool reads only the
+  last hour of snapshots, and AI share links (`ttlHours`) and tool-round budgets (`maxToolRounds`) are
+  clamped. Conversation summary failures are logged instead of being swallowed.
+- `docs/PUBLISHING.md` now describes how images are built, scanned and tagged (prereleases get their
+  `X.Y.Z-<pre>` tag).
 
 **New environment variables:** agent `MAGNUS_AGENT_BODY_LIMIT_BYTES`, `HERMES_INSTALL_COMMIT`,
 `HERMES_INSTALL_SCRIPT_SHA256` (all optional).
 
-**Migration impact:** None.
+**Migration impact:** None. A deployment whose `IAM_CORE_URL` uses HTTP to a non-loopback host must switch
+it to HTTPS before upgrading; the server refuses to start otherwise.
 
 ## [3.3.6] - 2026-11-25
 
