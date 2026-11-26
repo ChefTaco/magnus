@@ -77,7 +77,6 @@ All notable changes to this project are documented in this file. The format is b
 - **Anonymous refusals no longer write a log row each.** A 4xx answered to a request with no signed-in
   user and no node credential is counted (`httpUnauthenticatedRejectionsTotal` on `/metrics`) and
   summarized once a minute instead of being stored and streamed one row at a time.
-
 - **Agent command arguments are passed literally.** `POST /api/v1/commands/execute` without the
   execution supervisor, and the supervisor's shell path for unregistered commands, joined `args` onto
   the command with spaces and no quoting, so an argument containing a space, quote or `;` changed
