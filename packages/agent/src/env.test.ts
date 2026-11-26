@@ -15,6 +15,17 @@ describe('env', () => {
     process.env = originalEnv;
   });
 
+  it('log forwarding needs no LOG_INGEST_TOKEN, and a set token must look node-bound', async () => {
+    process.env['ENABLE_LOG_FORWARDING'] = 'true';
+    delete process.env['LOG_INGEST_TOKEN'];
+    let mod = await import('./env.js');
+    expect(mod.configurationErrors().some(error => error.includes('LOG_INGEST_TOKEN'))).toBe(false);
+    vi.resetModules();
+    process.env['LOG_INGEST_TOKEN'] = 'short';
+    mod = await import('./env.js');
+    expect(mod.configurationErrors().some(error => error.includes('LOG_INGEST_TOKEN'))).toBe(true);
+  });
+
   it('ENABLE_NODE_MANAGEMENT defaults to true', async () => {
     delete process.env['ENABLE_NODE_MANAGEMENT'];
     const mod = await import('./env.js');

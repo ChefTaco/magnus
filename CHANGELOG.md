@@ -92,6 +92,12 @@ All notable changes to this project are documented in this file. The format is b
   `RestrictRealtime`, `SystemCallArchitectures=native` and `TasksMax=4096` in privileged mode too. The
   agent README explains which options privileged mode leaves out and that `PrivateTmp` gives commands a
   private `/tmp`. Re-run `sudo magnus-agent install-service` to apply it to an existing node.
+- **Agent log batches are node-signed.** The agent signs each `/logs/ingest` batch with its node key
+  over the exact body, as it signs heartbeats, and sends `LOG_INGEST_TOKEN` only when it is set. The
+  agent catalogue no longer generates a random `LOG_INGEST_TOKEN` (the server expects a per-node HMAC,
+  so a random value never authenticated), and `ENABLE_LOG_FORWARDING=true` no longer requires it.
+  The catalogue and `.env.example` document how the per-node value is derived for a Control API that
+  checks only the token.
 - `docs/PUBLISHING.md` now describes how images are built, scanned and tagged (prereleases get their
   `X.Y.Z-<pre>` tag).
 

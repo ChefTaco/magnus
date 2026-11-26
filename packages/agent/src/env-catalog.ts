@@ -66,7 +66,7 @@ export const agentEnvCatalog: EnvVarSpec[] = [
   { name: 'AGENT_DISCOVERY_SECRET', required: false, secret: true, generate: 'hex32', group: 'discovery', description: 'Dedicated discovery HMAC key. Required when discovery is enabled.' },
   { name: 'AGENT_DISCOVERY_BIND_ADDRESS', required: false, secret: false, group: 'discovery', description: 'Explicit IPv4 interface address for discovery (no wildcard).' },
   { name: 'ENABLE_LOG_FORWARDING', required: false, secret: false, default: 'false', group: 'logging', description: 'Forward journald lines for LOG_UNITS to the Control API.' },
-  { name: 'LOG_INGEST_TOKEN', required: false, secret: true, generate: 'hex32', group: 'logging', description: 'Log ingest credential. Required when log forwarding is enabled.' },
+  { name: 'LOG_INGEST_TOKEN', required: false, secret: true, group: 'logging', description: 'Deprecated, optional. Log batches are signed with the node key like heartbeats. Only a Control API that checks nothing but the per-node token needs it: base64url(HMAC-SHA256(LOG_INGEST_SIGNING_SECRET, "magnus:log-ingest:v1:<node id, lower case>")). A random value never authenticates.' },
   { name: 'LOG_UNITS', required: false, secret: false, group: 'logging', description: 'Comma-separated systemd units whose logs are forwarded.' },
   { name: 'OTEL_ENABLED', required: false, secret: false, default: 'true', group: 'logging', description: 'Set to false to disable trace export. Export runs only when OTEL_EXPORTER_OTLP_ENDPOINT is set.' },
   { name: 'OTEL_EXPORTER_OTLP_ENDPOINT', required: false, secret: false, group: 'logging', description: 'OTLP/HTTP endpoint for traces.' },
