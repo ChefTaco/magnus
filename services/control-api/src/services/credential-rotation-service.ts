@@ -297,27 +297,76 @@ export function rotateCredential(
   };
 }
 
+interface VerifyCacheEntry {
+  stamp: string;
+  loadedAt: number;
+  active: string;
+  previous?: { value: string; expiresAtMs: number };
+}
+
+/** Decrypted secrets per credential, valid while the state file's stamp is unchanged. */
+const verifyCache = new Map<CredentialName, VerifyCacheEntry>();
+/** Bounds how long an edit that keeps the inode and a coarse mtime could stay unnoticed. */
+const VERIFY_CACHE_MAX_AGE_MS = 5_000;
+let storeReads = 0;
+
+/**
+ * Identifies one version of the state file and the key that decrypts it. Every write replaces
+ * the file by rename, so a rotation (here or in another process) always changes the inode.
+ */
+function stateStamp(): string | null {
+  const statePath = getCredentialRotationStatePath();
+  try {
+    const stat = lstatSync(statePath, { bigint: true });
+    const key = createHash('sha256').update(process.env['CREDENTIAL_ROTATION_KEY'] ?? '').digest('hex');
+    return `${statePath}\0${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.mode}\0${key}`;
+  } catch {
+    return null;
+  }
+}
+
+function loadVerifyEntry(name: CredentialName, currentValue: string): VerifyCacheEntry {
+  storeReads += 1;
+  const { record } = ensureRecord(name, currentValue);
+  const entry: VerifyCacheEntry = { stamp: stateStamp() ?? '', loadedAt: Date.now(), active: decryptValidatedSecret(name, record.active) };
+  if (record.previous && !isExpired(record.previous)) {
+    entry.previous = {
+      value: decryptValidatedSecret(name, record.previous, true),
+      expiresAtMs: record.previous.expiresAt ? Date.parse(record.previous.expiresAt) : Number.POSITIVE_INFINITY,
+    };
+  }
+  if (entry.stamp) verifyCache.set(name, entry);
+  else verifyCache.delete(name);
+  return entry;
+}
+
 /**
  * Verify a provided secret against the current value plus any unexpired
  * previous secret. This remains synchronous for auth middleware.
+ *
+ * The decrypted state is cached until the state file changes (one lstat per call), so a flood
+ * of wrong credentials costs no file read, parse or decrypt. An expired previous secret is
+ * pruned from the file on the next call after it expires.
  */
 export function verifyWithRotation(
   name: CredentialName,
   currentValue: string,
   provided: string,
 ): boolean {
-  const { store, record } = ensureRecord(name, currentValue);
-  let changed = false;
-
-  if (safeEqual(provided, decryptValidatedSecret(name, record.active))) return true;
-
-  if (record.previous && isExpired(record.previous)) {
-    delete record.previous;
-    changed = true;
+  assertCredentialSecret(name, currentValue);
+  const now = Date.now();
+  let entry = verifyCache.get(name);
+  if (!entry || now - entry.loadedAt >= VERIFY_CACHE_MAX_AGE_MS || entry.stamp !== stateStamp()
+    || (entry.previous && entry.previous.expiresAtMs <= now)) {
+    entry = loadVerifyEntry(name, currentValue);
   }
+  if (safeEqual(provided, entry.active)) return true;
+  return Boolean(entry.previous && entry.previous.expiresAtMs > now && safeEqual(provided, entry.previous.value));
+}
 
-  if (changed) writeStore(store);
-  return Boolean(record.previous && safeEqual(provided, decryptValidatedSecret(name, record.previous, true)));
+/** For tests: how often verification had to read the state file. */
+export function credentialRotationStoreReads(): number {
+  return storeReads;
 }
 
 export function getCredentialStatus(name: CredentialName, currentValue: string): RotationStatus {

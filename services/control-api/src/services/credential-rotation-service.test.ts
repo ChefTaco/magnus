@@ -1,5 +1,5 @@
 import { createCipheriv, createHash, randomBytes } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -63,6 +63,38 @@ describe('credential rotation service', () => {
 
     const status = getCredentialStatus('NODE_MANAGER_SECRET', oldSecret);
     expect(status.previousFingerprint).toBeNull();
+  });
+
+  it('caches decrypted state between verifications until the state file changes', async () => {
+    const { chmodSync } = await import('node:fs');
+    const { credentialRotationStoreReads, getCredentialRotationStatePath, rotateCredential, verifyWithRotation } =
+      await import('./credential-rotation-service.js');
+    const current = 'api-secret-that-is-at-least-32-characters';
+    expect(verifyWithRotation('API_SECRET', current, current)).toBe(true);
+    const reads = credentialRotationStoreReads();
+    for (let i = 0; i < 50; i += 1) expect(verifyWithRotation('API_SECRET', current, `wrong-${i}`)).toBe(false);
+    expect(verifyWithRotation('API_SECRET', current, current)).toBe(true);
+    expect(credentialRotationStoreReads()).toBe(reads);
+
+    // A rotation replaces the file, so the next verification sees the new secret at once.
+    const rotation = rotateCredential('API_SECRET', current, 60_000);
+    expect(verifyWithRotation('API_SECRET', current, rotation.newSecret)).toBe(true);
+    expect(credentialRotationStoreReads()).toBe(reads + 1);
+    expect(verifyWithRotation('API_SECRET', current, current)).toBe(true);
+
+    // Loosened permissions are noticed on the next call, not hidden by the cache.
+    chmodSync(getCredentialRotationStatePath(), 0o644);
+    expect(() => verifyWithRotation('API_SECRET', current, current)).toThrow(/mode 0600/);
+  });
+
+  it('stops accepting a cached previous secret once its grace window ends', async () => {
+    const { rotateCredential, verifyWithRotation } = await import('./credential-rotation-service.js');
+    const oldSecret = 'old-node-secret-that-is-at-least-32-chars';
+    const rotation = rotateCredential('NODE_MANAGER_SECRET', oldSecret, 200);
+    expect(verifyWithRotation('NODE_MANAGER_SECRET', oldSecret, oldSecret)).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(verifyWithRotation('NODE_MANAGER_SECRET', oldSecret, oldSecret)).toBe(false);
+    expect(verifyWithRotation('NODE_MANAGER_SECRET', oldSecret, rotation.newSecret)).toBe(true);
   });
 
   it('fails closed on corrupt or weakly protected state instead of resetting it', async () => {
@@ -152,7 +184,9 @@ describe('credential rotation service', () => {
 
     const store = JSON.parse(readFileSync(getCredentialRotationStatePath(), 'utf8'));
     store.credentials.API_SECRET.previous.expiresAt = new Date(Date.now() + 61 * 60 * 1_000).toISOString();
-    writeFileSync(getCredentialRotationStatePath(), `${JSON.stringify(store)}\n`, { mode: 0o600 });
+    // Writers replace the file by rename, as the service itself does.
+    writeFileSync(`${getCredentialRotationStatePath()}.tmp`, `${JSON.stringify(store)}\n`, { mode: 0o600 });
+    renameSync(`${getCredentialRotationStatePath()}.tmp`, getCredentialRotationStatePath());
     expect(() => verifyWithRotation(name, active, legacy)).toThrow(/invalid one-time legacy/);
   });
 });

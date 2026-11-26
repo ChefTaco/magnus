@@ -56,6 +56,7 @@ export const ENV_CATALOG: readonly EnvVariable[] = [
 
   // ── Required secrets ──
   secret32('API_SECRET', 'Dashboard-to-server shared secret (x-api-secret).'),
+  { name: 'MAGNUS_API_SECRET_BYPASS', group: 'secrets', default: 'on', description: 'Where the x-api-secret ADMIN bypass is honoured: `on` (from any peer), `loopback` (only from a loopback socket peer, never judged by forwarding headers) or `off` (ignored; callers need a bearer token). Use `off` or `loopback` when HiveXUI with Oathweave, not the standalone console, is the browser client.' },
   { ...secret32('JWT_SECRET', 'HS256 key for locally issued user tokens.'), required: false, requiredWhen: 'IAM_CORE_URL unset' },
   { ...secret32('NODE_MANAGER_SECRET', 'Shared node secret (x-node-token) of agents without their own key. Deprecated: accepted and sent only under an explicit NODE_AUTH_MODE=compat or warn, removed in the next major.'),
     required: false, requiredWhen: 'NODE_AUTH_MODE=compat or warn' },

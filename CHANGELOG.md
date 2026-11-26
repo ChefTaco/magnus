@@ -55,6 +55,21 @@ All notable changes to this project are documented in this file. The format is b
 - **Isolated rehearsals authenticate no agent request.** With `HIVE_REHEARSAL=true`, every server-to-agent
   request is refused before it is signed, reads included (profiling, storage evidence), not only those
   sent through the node SDK.
+- **A password change ends the account's local sessions.** Locally issued tokens now carry a stamp of
+  the password they were issued for; `PUT /users/:id/password` invalidates every session with an older
+  stamp (immediately in the answering process, within 30 s elsewhere) and returns a fresh `token` to a
+  caller who changed their own password. Changing your own password needs the current one for admins
+  too, and an admin can no longer deactivate their own account. User and node-password audit events
+  record the socket peer instead of a client-supplied `x-forwarded-for`.
+- **`MAGNUS_API_SECRET_BYPASS=off|loopback|on`** (default `on`, the previous behaviour) limits where the
+  `x-api-secret` ADMIN bypass is honoured. `loopback` accepts it only from a loopback socket peer, never
+  judged by forwarding headers; `off` ignores the header, so callers need a bearer token.
+- **Hive IAM tokens need an expiry.** RS256 tokens from Hive IAM must carry `exp` and `iat`, and live at
+  most 24 hours (`exp - iat`).
+- **Cindertrace response requests are accepted once.** The bridge records each verified nonce for two
+  minutes, so a captured signed request can no longer be replayed inside the 60 s timestamp window.
+- **Unexpected errors answer with a generic message.** A 5xx that is not an intended `HttpError` keeps its
+  code but says only "An unexpected error occurred"; the full (redacted) text stays in the server log.
 
 - **Agent command arguments are passed literally.** `POST /api/v1/commands/execute` without the
   execution supervisor, and the supervisor's shell path for unregistered commands, joined `args` onto
@@ -101,11 +116,17 @@ All notable changes to this project are documented in this file. The format is b
 - `docs/PUBLISHING.md` now describes how images are built, scanned and tagged (prereleases get their
   `X.Y.Z-<pre>` tag).
 
+- `x-api-secret` and shared node-secret checks cache the decrypted credential rotation state until the
+  state file changes, instead of reading, parsing and decrypting it on every attempt.
+
 **New environment variables:** agent `MAGNUS_AGENT_BODY_LIMIT_BYTES`, `HERMES_INSTALL_COMMIT`,
-`HERMES_INSTALL_SCRIPT_SHA256` (all optional).
+`HERMES_INSTALL_SCRIPT_SHA256`; server `MAGNUS_API_SECRET_BYPASS` (all optional).
 
 **Migration impact:** None. A deployment whose `IAM_CORE_URL` uses HTTP to a non-loopback host must switch
-it to HTTPS before upgrading; the server refuses to start otherwise.
+it to HTTPS before upgrading; the server refuses to start otherwise. Hive IAM must issue tokens with `exp`
+and `iat` and a lifetime of at most 24 hours. Local session tokens issued before the upgrade carry no
+password stamp and stay valid until they expire (`JWT_EXPIRY`); sign in again to get a stamped one.
+Scripts that relied on the text of an unexpected 500 must read the server log instead.
 
 ## [3.3.6] - 2026-11-25
 

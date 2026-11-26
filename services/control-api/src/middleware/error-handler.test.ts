@@ -43,4 +43,30 @@ describe('global error handler', () => {
       body: { success: false, error: { code: 'INVALID_STATE', message: 'The node must be ONLINE' } },
     });
   });
+
+  it('answers an unexpected failure with a generic message and keeps its text in the log', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const error = new Error('EACCES: permission denied, open /opt/magnus/state/credential-rotations.json');
+    const { status, body } = await responseTo(error);
+    expect(status).toBe(500);
+    expect(body.error).toEqual({ code: 'INTERNAL_ERROR', message: 'An unexpected error occurred' });
+    expect(log.mock.calls[0]?.[0]).toContain('/opt/magnus/state');
+  });
+
+  it('keeps the code but not the text of an unexpected error that names one', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const error = Object.assign(new Error('agent at 192.0.2.10:9443 closed the socket'), { code: 'MUTATION_OUTCOME_UNKNOWN' });
+    await expect(responseTo(error)).resolves.toEqual({
+      status: 500,
+      body: { success: false, error: { code: 'MUTATION_OUTCOME_UNKNOWN', message: 'An unexpected error occurred' } },
+    });
+  });
+
+  it('keeps the message of a client error that is not an HttpError', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const error = Object.assign(new Error('Malformed JSON in request body'), { status: 400 });
+    const { status, body } = await responseTo(error);
+    expect(status).toBe(400);
+    expect(body.error.message).toBe('Malformed JSON in request body');
+  });
 });

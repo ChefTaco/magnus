@@ -759,7 +759,7 @@ const paths: Record<string, Record<string, unknown>> = {
     put: {
       tags: ['Users'],
       summary: 'Change password',
-      description: 'Change a user password. ADMINs can change any password (currentPassword optional). Non-admins must provide currentPassword and can only change their own.',
+      description: 'Change a user password. Changing your own password requires currentPassword, admins included; an ADMIN resetting another user\'s password does not give it. Every local session issued for the old password ends. A caller who changed their own password with a local session gets a fresh `token` in the response.',
       security: apiSecretAuth,
       parameters: [pp('id', 'User ID')],
       requestBody: jsonBody('ChangePassword'),

@@ -27,6 +27,7 @@ import { credentialDetail, credentialView, issueEnrollmentToken, NODE_CREDENTIAL
 import { enforceIdempotencyFromHeader } from '../utils/idempotency.js';
 import { nodeCredentialStore } from '../services/node-credential-store.js';
 import { nodeSoftwareRouter } from './nodes-software.js';
+import { heartbeatPeerAddress } from '../utils/heartbeat-peer.js';
 import {
   parseTailscaleNodeKeyPosture,
   summarizeTailscaleNodeKeys,
@@ -1153,7 +1154,7 @@ nodesRouter.post('/:nodeId/provision-user', requireRole('ADMIN', 'OPERATOR'), as
   await logAuditEvent({
     action: 'node.provision_user',
     actorId: user.userId,
-    ipAddress: c.req.header('x-forwarded-for') ?? 'unknown',
+    ipAddress: heartbeatPeerAddress(c) || 'unknown',
     targetType: 'node',
     targetId: nodeId,
     details: { username: body.username, nodeId },
@@ -1186,7 +1187,7 @@ nodesRouter.post('/:nodeId/change-password', requireRole('ADMIN', 'OPERATOR'), a
   await logAuditEvent({
     action: 'node.change_password',
     actorId: user.userId,
-    ipAddress: c.req.header('x-forwarded-for') ?? 'unknown',
+    ipAddress: heartbeatPeerAddress(c) || 'unknown',
     targetType: 'node',
     targetId: nodeId,
     details: { username: body.username, nodeId },

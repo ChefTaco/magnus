@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { getDb } from '../db/index.js';
 import type { UserRole } from '../types/index.js';
 
@@ -5,6 +6,13 @@ import type { UserRole } from '../types/index.js';
 export interface CurrentUserStatus {
   active: boolean;
   role: UserRole;
+  /** Changes whenever the password changes; a session token issued before carries the old value. */
+  sessionStamp?: string;
+}
+
+/** A short, non-reversible stamp of a stored password hash that binds local sessions to it. */
+export function passwordSessionStamp(passwordHash: string): string {
+  return createHash('sha256').update(`magnus:session:v1:${passwordHash}`).digest('base64url').slice(0, 22);
 }
 
 const USER_STATUS_TTL_MS = 30_000;
@@ -12,16 +20,17 @@ const USER_STATUS_CACHE_MAX = 1_000;
 const cache = new Map<string, { status: CurrentUserStatus | null; expiresAt: number }>();
 
 /**
- * Look up whether a local user still exists, is active, and which role it
- * currently holds. Cached briefly (bounded) so deactivation, demotion, and
- * deletion take effect within seconds instead of at token expiry.
+ * Look up whether a local user still exists, is active, which role it
+ * currently holds and its password stamp. Cached briefly (bounded) so
+ * deactivation, demotion, deletion and password changes take effect within
+ * seconds instead of at token expiry.
  */
 export async function getCurrentUserStatus(userId: string): Promise<CurrentUserStatus | null> {
   const now = Date.now();
   const cached = cache.get(userId);
   if (cached && cached.expiresAt > now) return cached.status;
-  const user = await getDb().user.findUnique({ where: { id: userId }, select: { active: true, role: true } });
-  const status = user ? { active: user.active, role: user.role as UserRole } : null;
+  const user = await getDb().user.findUnique({ where: { id: userId }, select: { active: true, role: true, password: true } });
+  const status = user ? { active: user.active, role: user.role as UserRole, sessionStamp: passwordSessionStamp(user.password) } : null;
   cache.delete(userId);
   if (cache.size >= USER_STATUS_CACHE_MAX) {
     const oldest = cache.keys().next().value;

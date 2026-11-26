@@ -3,6 +3,8 @@ import type { ApiError } from '../types/index.js';
 import { redactSecretText } from '../utils/redact.js';
 import { containsDatabaseText, databaseFailure } from '../utils/safe-errors.js';
 
+const GENERIC_MESSAGE = 'An unexpected error occurred';
+
 /** Global error handler for Hono — returns structured ApiError JSON. */
 export function errorHandler(err: Error, c: Context): Response {
   const database = databaseFailure(err);
@@ -14,9 +16,12 @@ export function errorHandler(err: Error, c: Context): Response {
   const loggedCode = 'code' in err ? (err as { code: string }).code : code;
   console.error(`[ERROR] ${c.req.method} ${c.req.url} [${loggedCode}] ${redactSecretText(err.message)}`);
 
-  // Database text quotes queries, arguments and addresses, so it stays in the log.
+  // Only an HttpError or a client error (4xx) carries a message meant for the caller. Any other
+  // failure can quote paths, addresses or internal state, so its text stays in the log.
+  // Database text quotes queries, arguments and addresses, so it never leaves the log either.
+  const intended = err instanceof HttpError || (status >= 400 && status < 500);
   const message = database?.message
-    ?? (containsDatabaseText(err.message) ? 'An unexpected error occurred' : redactSecretText(err.message || 'An unexpected error occurred'));
+    ?? (!intended || containsDatabaseText(err.message) ? GENERIC_MESSAGE : redactSecretText(err.message || GENERIC_MESSAGE));
   const details = err instanceof HttpError ? err.details : undefined;
   const body: ApiError = { success: false, error: { code: String(code), message, ...(details ? { details } : {}) } };
 

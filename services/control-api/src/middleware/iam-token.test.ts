@@ -16,14 +16,16 @@ async function sign(overrides: {
   audience?: string;
   subject?: string | null;
   algorithm?: 'RS256' | 'PS256';
+  expiresIn?: string | null;
+  issuedAt?: number | null;
 } = {}): Promise<string> {
   const algorithm = overrides.algorithm ?? 'RS256';
   let jwt = new jose.SignJWT({ roles: ['VIEWER'] })
     .setProtectedHeader({ alg: algorithm })
     .setIssuer(overrides.issuer ?? issuer)
-    .setAudience(overrides.audience ?? audience)
-    .setIssuedAt()
-    .setExpirationTime('5m');
+    .setAudience(overrides.audience ?? audience);
+  if (overrides.issuedAt !== null) jwt = jwt.setIssuedAt(overrides.issuedAt);
+  if (overrides.expiresIn !== null) jwt = jwt.setExpirationTime(overrides.expiresIn ?? '5m');
   if (overrides.subject !== null) jwt = jwt.setSubject(overrides.subject ?? 'user-1');
   return jwt.sign(privateKey);
 }
@@ -55,6 +57,16 @@ describe('verifyIamAccessToken', () => {
       issuer,
       audience,
     )).rejects.toThrow();
+  });
+
+  it('rejects a token without an expiry or an issue time', async () => {
+    await expect(verifyIamAccessToken(await sign({ expiresIn: null }), publicKey, issuer, audience)).rejects.toThrow(/exp/);
+    await expect(verifyIamAccessToken(await sign({ issuedAt: null }), publicKey, issuer, audience)).rejects.toThrow(/iat/);
+  });
+
+  it('rejects a token minted to live longer than a day', async () => {
+    await expect(verifyIamAccessToken(await sign({ expiresIn: '30d' }), publicKey, issuer, audience)).rejects.toThrow(/lifetime/);
+    await expect(verifyIamAccessToken(await sign({ expiresIn: '23h' }), publicKey, issuer, audience)).resolves.toMatchObject({ sub: 'user-1' });
   });
 
   it('rejects a token without a subject', async () => {

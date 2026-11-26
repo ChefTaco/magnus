@@ -78,6 +78,52 @@ describe('authMiddleware', () => {
     expect(user.userId).toBe('system');
   });
 
+  describe('MAGNUS_API_SECRET_BYPASS', () => {
+    const secret = 'test-api-secret-for-unit-tests-at-least-32';
+    const fromPeer = (address: string, headers: Record<string, string> = {}) => {
+      const c = createMockContext({ 'x-api-secret': secret, ...headers });
+      (c as unknown as { env: unknown }).env = { incoming: { socket: { remoteAddress: address, remotePort: 40000, remoteFamily: address.includes(':') ? 'IPv6' : 'IPv4' } } };
+      return c;
+    };
+
+    it('ignores the header everywhere when off', async () => {
+      vi.stubEnv('MAGNUS_API_SECRET_BYPASS', 'off');
+      try {
+        await expect(authMiddleware(fromPeer('127.0.0.1'), noop)).rejects.toThrow(/Authorization/);
+      } finally { vi.unstubAllEnvs(); }
+    });
+
+    it('honours it only from a loopback socket peer when loopback, whatever the forwarding headers say', async () => {
+      vi.stubEnv('MAGNUS_API_SECRET_BYPASS', 'loopback');
+      try {
+        for (const address of ['127.0.0.1', '::1', '::ffff:127.0.0.1']) {
+          const c = fromPeer(address);
+          await authMiddleware(c, noop);
+          expect(c.get('user')).toMatchObject({ userId: 'system', role: 'ADMIN' });
+        }
+        await expect(authMiddleware(fromPeer('192.0.2.10', { 'x-forwarded-for': '127.0.0.1' }), noop)).rejects.toThrow(/Authorization/);
+        // No socket at all (a request that did not come through the listener) is not loopback.
+        await expect(authMiddleware(createMockContext({ 'x-api-secret': secret }), noop)).rejects.toThrow(/Authorization/);
+      } finally { vi.unstubAllEnvs(); }
+    });
+
+    it('keeps the bypass open from any peer by default', async () => {
+      const c = fromPeer('192.0.2.10');
+      await authMiddleware(c, noop);
+      expect(c.get('user')).toMatchObject({ userId: 'system' });
+    });
+  });
+
+  it('refuses a local session whose password stamp no longer matches', async () => {
+    const token = await signUserToken({ userId: 'user-9', email: 'alice@example.com', role: 'OPERATOR', sessionStamp: 'old-stamp' });
+    userStatus.get.mockResolvedValueOnce({ active: true, role: 'OPERATOR', sessionStamp: 'new-stamp' } as never);
+    await expect(authMiddleware(createMockContext({ authorization: `Bearer ${token}` }), noop)).rejects.toThrow(/Invalid or expired/);
+    userStatus.get.mockResolvedValueOnce({ active: true, role: 'OPERATOR', sessionStamp: 'old-stamp' } as never);
+    const c = createMockContext({ authorization: `Bearer ${token}` });
+    await authMiddleware(c, noop);
+    expect(c.get('user')).toMatchObject({ userId: 'user-9' });
+  });
+
   it('should reject invalid x-api-secret', async () => {
     const c = createMockContext({ 'x-api-secret': 'wrong-secret' });
     // Should fall through to JWT check and fail
