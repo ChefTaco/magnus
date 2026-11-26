@@ -16,7 +16,31 @@ import { heartbeatDrift } from './upgrade/preflight.js';
 import { confirmTrial, controlApiUnreachable, recordTrialAlive, selfUpgradeStatus, trialOf } from './upgrade/self-upgrade.js';
 import { commandLedger } from './executors/command-executor.js';
 import { positiveIntegerEnv } from './utils/env-number.js';
+import { probeOwnListener } from './upgrade/self-probe.js';
 const HEARTBEAT_INTERVAL_MS = 30_000; // 30s
+
+let selfProbeInFlight = false;
+/**
+ * Confirm a trial only after a signed probe of this agent's own listener
+ * succeeds. Failing probes leave the trial open; the next accepted heartbeat
+ * tries again, and the launcher reverts when the confirm window ends.
+ */
+export async function confirmTrialAfterSelfProbe(probe: typeof probeOwnListener = probeOwnListener): Promise<boolean> {
+  if (selfProbeInFlight) return false;
+  selfProbeInFlight = true;
+  try {
+    const result = await probe(AGENT_VERSION);
+    if (!result.ok) {
+      logger.warn(`Self-upgrade to ${AGENT_VERSION} not confirmed yet: the agent's own API probe failed (${result.reason})`);
+      return false;
+    }
+    if (!confirmTrial(AGENT_VERSION)) return false;
+    logger.info(`Self-upgrade to ${AGENT_VERSION} confirmed`);
+    return true;
+  } finally {
+    selfProbeInFlight = false;
+  }
+}
 const HEARTBEAT_BACKOFF_MAX_MS = 5 * 60_000; // 5 min max backoff
 /** On an upgrade trial: retry fast, without backoff, so a short control API outage does not end the trial. */
 export const TRIAL_RETRY_MS = 5_000;
@@ -175,8 +199,9 @@ export function startHeartbeatLoop(): void {
       }).json<unknown>().then((raw) => {
         const resp = parseHeartbeatAcknowledgement(raw);
         onHeartbeatAcknowledged(resp.data.nodeAuth);
-        // The first accepted heartbeat from a version on trial confirms the upgrade.
-        if (resp.data?.accepted && confirmTrial(AGENT_VERSION)) logger.info(`Self-upgrade to ${AGENT_VERSION} confirmed`);
+        // An accepted heartbeat from a version on trial confirms the upgrade once the
+        // agent's own inbound API answers too (a heartbeat is outbound only).
+        if (resp.data?.accepted && trialOf(AGENT_VERSION) !== null) void confirmTrialAfterSelfProbe();
         if (resp.data?.updateAvailable && resp.data.expectedVersion) {
           logger.info(`Agent update available: ${AGENT_VERSION} → ${resp.data.expectedVersion} (upgrade from the console's Nodes page or with \`magnus-server agents upgrade\`)`);
         }

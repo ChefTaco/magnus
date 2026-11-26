@@ -6,6 +6,7 @@ import { createServer, type Server as HttpsServer } from 'node:https';
 
 import { logger } from './utils/logger.js';
 import { resolveListenerSecurity } from './listener-security.js';
+import { registerOwnListener } from './upgrade/self-probe.js';
 
 // TLS is verified per connection. Private Control API CAs are provided through
 // CONTROL_API_CA_PATH; arbitrary downloads use the operating system trust store.
@@ -66,11 +67,13 @@ if (listener.useTls) {
       },
     },
     (info) => {
+      registerOwnListener({ protocol: 'https:', hostname: listener.hostname, port: info.port, certPath: certPath! });
       logger.info(`Magnus Agent listening on https://${listener.hostname}:${info.port}`);
     },
   ) as HttpsServer;
 } else {
   serve({ fetch: app.fetch, port, hostname: listener.hostname }, (info) => {
+    registerOwnListener({ protocol: 'http:', hostname: listener.hostname, port: info.port });
     logger.info(`Magnus Agent listening on http://${listener.hostname}:${info.port} (development opt-in)`);
   });
 }

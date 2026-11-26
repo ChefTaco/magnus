@@ -155,7 +155,7 @@ devices) and `MemoryMax` (it would cap every command); add them in a drop-in if 
 those. Re-run `install-service` to apply a newer unit to an existing node.
 
 After that, the server can upgrade the agent from the console's **Upgrade agents** action or with
-`magnus-server agents upgrade`, in four steps:
+`magnus-server agents upgrade`, in five steps:
 
 1. The agent downloads the exact version the server names and checks its npm `sha512` integrity. It
    also runs `npm audit signatures` (`MAGNUS_AGENT_UPGRADE_REQUIRE_PROVENANCE`).
@@ -163,7 +163,14 @@ After that, the server can upgrade the agent from the console's **Upgrade agents
    (`engines`), works with the installed launcher, and reports the requested version. Then it points
    `./current` at it and exits.
 3. The launcher starts the new version on trial.
-4. If the new version does not report an accepted heartbeat within
+4. The new version is confirmed once a heartbeat is accepted **and** a probe of its own API
+   (`GET /api/v1/health/check` over the real listener, signed with the node key, reporting the new
+   version) succeeds, so a version whose listener or TLS is broken is not kept. The probe goes to
+   loopback and accepts only the certificate in `TLS_CERT_PATH` (chain and dates verified; the host
+   name is not, as loopback is not one of its names); with `MAGNUS_AGENT_SELF_URL` set it
+   uses that URL with full certificate verification (`MAGNUS_AGENT_SELF_CA_PATH` for a private CA).
+   A node without a bound key can only probe `/api/v1/ping`.
+5. If the new version is not confirmed within
    `MAGNUS_AGENT_UPGRADE_CONFIRM_SECONDS` (default 180), or crashes twice, the launcher switches back
    to the previous version. A new version that runs but cannot reach the control API gets up to three
    windows, and the revert reason then says so.
