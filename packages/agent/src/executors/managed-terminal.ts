@@ -15,7 +15,7 @@ import { CONTROL_API_URL, HOST_FQDN, MAGNUS_EXECUTION_SUPERVISOR_ENABLED } from 
 import { nodeApiFetch } from '../node-auth.js';
 import { requirePrivileged } from '../privileged.js';
 import { logger } from '../utils/logger.js';
-import { SystemdSupervisorBackend, type UnitObservation } from './execution-supervisor.js';
+import { SystemdSupervisorBackend, type SupervisorBackend, type UnitObservation } from './execution-supervisor.js';
 import { privateDirectory, readJson, writeJson } from './execution-supervisor-state.js';
 
 const exec = promisify(execFile);
@@ -52,6 +52,29 @@ export function terminalUnitMatches(unit: UnitObservation, intent: Intent): bool
       || (unit['ControlGroup'] === '' && unit['ActiveState'] === 'active' && unit['SubState'] === 'exited'))
     && unit['KillMode'] === 'control-group' && unit['ExitType'] === 'cgroup'
     && unit['RemainAfterExit'] === 'yes' && unit['Restart'] === 'no';
+}
+/**
+ * After `systemctl stop`, wait (bounded) until the terminal's cgroup is really empty: the stop job
+ * can return while cgroup.events still reports populated. If it is still populated after
+ * `graceMs`, SIGKILL the whole group and wait `killMs` more. Only then may a completion receipt
+ * say `groupEmpty`; false means it must not be issued.
+ */
+export async function drainTerminalGroup(backend: Pick<SupervisorBackend, 'empty' | 'signal'>, unit: string, cgroup: string,
+  options: { graceMs?: number; killMs?: number; pollMs?: number; sleep?: (ms: number) => Promise<void>; now?: () => number } = {}): Promise<boolean> {
+  const sleep = options.sleep ?? (ms => new Promise<void>(resolve => setTimeout(resolve, ms)));
+  const now = options.now ?? Date.now; const pollMs = options.pollMs ?? 100;
+  const emptyWithin = async (ms: number) => {
+    const deadline = now() + ms;
+    for (;;) {
+      if (await backend.empty(cgroup)) return true;
+      if (now() >= deadline) return false;
+      await sleep(pollMs);
+    }
+  };
+  if (await emptyWithin(options.graceMs ?? 5_000)) return true;
+  // The unit may already be unloaded while stragglers remain; a failed kill is judged by the wait below.
+  await backend.signal(unit, 'SIGKILL').catch(() => undefined);
+  return emptyWithin(options.killMs ?? 3_000);
 }
 /** systemd clears transient properties while unloading an already stopped unit. */
 export function terminalUnitRetired(unit: UnitObservation | null): boolean {
@@ -165,7 +188,8 @@ export class ManagedTerminals {
         unit = await this.backend.inspect(intent.unit);
       }
       // Stopped transient units can unload. The retained invocation and exact cgroup still bind this observation.
-      if ((!terminalUnitRetired(unit) && (!unit || !terminalUnitMatches(unit, intent))) || !await this.backend.empty(intent.cgroup)) throw new Error('Terminal group still populated');
+      if ((!terminalUnitRetired(unit) && (!unit || !terminalUnitMatches(unit, intent)))
+        || !await drainTerminalGroup(this.backend, intent.unit, intent.cgroup)) throw new Error('Terminal group still populated');
       const unsigned = { ...intent.authority, version: 1 as const, boundary: 'restricted-terminal-process-v1' as const,
         bootId: intent.bootId, unit: intent.unit, invocationId: intent.invocationId, cgroup: intent.cgroup,
         startedAt: intent.startedAt, terminalAt: Date.now(), groupEmpty: true as const };

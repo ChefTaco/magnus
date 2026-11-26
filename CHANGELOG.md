@@ -300,6 +300,11 @@ All notable changes to this project are documented in this file. The format is b
   keys every five minutes.
 - The agent build's review of the bundled Ardent journal module now also sees double-quoted and bare
   side-effect imports, and a test exercises the built module against A2A task and team-claim rows.
+- **Closing a managed terminal waits for its process group to empty.** Right after `systemctl stop`
+  the unit's cgroup could still report populated, and closing a just-opened terminal then failed with
+  `group-populated` and blocked the next terminal. The agent now waits up to 5 s for the group to
+  empty, then SIGKILLs the whole group and waits 3 s more; the completion receipt is still issued
+  only once the group is empty.
 - `docs/PUBLISHING.md` now describes how images are built, scanned and tagged (prereleases get their
   `X.Y.Z-<pre>` tag).
 - `x-api-secret` and shared node-secret checks cache the decrypted credential rotation state until the
