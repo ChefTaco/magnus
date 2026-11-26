@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { streamSSE } from 'hono/streaming';
 import { watchOathweaveStream } from '../middleware/oathweave.js';
@@ -14,6 +14,8 @@ import {
   LOG_INGEST_SIGNING_SECRET,
 } from '../utils/env.js';
 import { HttpError } from '../middleware/error-handler.js';
+import { assertNodeClaims, authenticateNode, nodeAuthOf } from '../middleware/node-auth.js';
+import { readNodeAuthHeaders } from '../security/node-request-auth.js';
 
 export const logsRouter = new Hono<AppVariables>();
 logsRouter.use('/query', authMiddleware);
@@ -42,6 +44,22 @@ function verifyLogToken(nodeIdentity: string, provided: string): boolean {
 }
 
 // ── Query logs ──
+
+interface LogCursor { timestamp: Date; id: string }
+
+/** An opaque keyset cursor: the (timestamp, id) of the last row of the previous page. */
+export function encodeLogCursor(row: LogCursor): string {
+  return Buffer.from(`v1|${row.timestamp.toISOString()}|${row.id}`, 'utf8').toString('base64url');
+}
+
+export function decodeLogCursor(cursor: string): LogCursor | null {
+  const text = Buffer.from(cursor, 'base64url').toString('utf8');
+  const match = /^v1\|([^|]+)\|([^|]+)$/.exec(text);
+  if (!match) return null;
+  const timestamp = new Date(match[1]!);
+  return Number.isNaN(timestamp.getTime()) ? null : { timestamp, id: match[2]! };
+}
+
 logsRouter.post('/query', async (c) => {
   const db = getDb();
   const body = await parseBody(c, logQuerySchema);
@@ -63,29 +81,40 @@ logsRouter.post('/query', async (c) => {
   const limit = Math.min(body.limit ?? 100, 1000);
   const offset = body.offset ?? 0;
 
-  // Cursor-based pagination: if cursor is provided, use it instead of offset
+  // Keyset pagination on (timestamp, id), the order the rows are returned in. A cursor from an
+  // older server is a bare row id: its row supplies the timestamp.
+  let after: LogCursor | null = null;
   if (body.cursor) {
-    where['id'] = { lt: body.cursor };
+    after = decodeLogCursor(body.cursor);
+    if (!after) {
+      const row = await db.logEntry.findUnique({ where: { id: body.cursor }, select: { id: true, timestamp: true } });
+      if (!row) throw new HttpError(400, 'INVALID_CURSOR', 'cursor does not name a log page');
+      after = row;
+    }
   }
+  const pageWhere = after
+    ? { AND: [where, { OR: [{ timestamp: { lt: after.timestamp } }, { timestamp: after.timestamp, id: { lt: after.id } }] }] }
+    : where;
 
   const [logs, total] = await Promise.all([
     db.logEntry.findMany({
-      where,
-      orderBy: { timestamp: 'desc' },
+      where: pageWhere,
+      orderBy: [{ timestamp: 'desc' }, { id: 'desc' }],
       take: limit,
-      ...(body.cursor ? {} : { skip: offset }),
+      ...(after ? {} : { skip: offset }),
     }),
-    db.logEntry.count({ where: { ...where, ...(body.cursor ? {} : {}) } }),
+    db.logEntry.count({ where }),
   ]);
 
-  const nextCursor = logs.length === limit ? logs[logs.length - 1]?.id : undefined;
+  const last = logs[logs.length - 1];
+  const nextCursor = logs.length === limit && last ? encodeLogCursor(last) : undefined;
 
   return c.json({
     success: true,
     data: {
       logs,
       total,
-      hasMore: body.cursor ? logs.length === limit : offset + limit < total,
+      hasMore: after ? logs.length === limit : offset + limit < total,
       nextCursor,
     },
   });
@@ -102,7 +131,20 @@ logsRouter.post('/ingest', async (c) => {
     throw new HttpError(400, 'NODE_IDENTITY_MISMATCH', 'A log batch must contain exactly one node identity');
   }
   const nodeIdentity = identities[0]!;
-  if (!verifyLogToken(nodeIdentity, c.req.header('x-log-token') ?? '')) {
+
+  // A node signature (or, outside enforce mode, the shared node secret) authenticates the batch
+  // like any agent request; the per-node HMAC `x-log-token` stays accepted for older agents.
+  const signed = readNodeAuthHeaders((name) => c.req.header(name)) !== null;
+  const legacyToken = c.req.header('x-log-token') ?? '';
+  if (signed || !legacyToken) {
+    await authenticateNode(c, { legacyErrorCode: 'INVALID_CREDENTIALS' });
+    const auth = nodeAuthOf(c);
+    if (auth.method === 'signature') {
+      // The batch names the node by its ID or host name; either must be the key's node.
+      await assertNodeClaims(c, nodeIdentity === auth.node.id.toLowerCase() ? { nodeId: auth.node.id } : { fqdn: nodeIdentity });
+      return storeLogBatch(c, auth.node.id, entries);
+    }
+  } else if (!verifyLogToken(nodeIdentity, legacyToken)) {
     throw new HttpError(401, 'INVALID_CREDENTIALS', 'Invalid node-bound log credential');
   }
   const node = await db.node.findFirst({
@@ -117,7 +159,16 @@ logsRouter.post('/ingest', async (c) => {
     select: { id: true },
   });
   if (!node) throw new HttpError(401, 'INVALID_CREDENTIALS', 'Unknown node identity');
+  // The shared node secret may not speak for a node that has its own key.
+  if (!legacyToken || signed) await assertNodeClaims(c, { nodeId: node.id });
+  return storeLogBatch(c, node.id, entries);
+});
 
+type LogBatch = Array<{ source?: string | undefined; level?: string | undefined; message: string; metadata?: Record<string, unknown> | undefined; timestamp?: string | undefined }>;
+
+async function storeLogBatch(c: Context, nodeId: string, entries: LogBatch): Promise<Response> {
+  const db = getDb();
+  const node = { id: nodeId };
   await db.logEntry.createMany({
     data: entries.map((e) => ({
       nodeId: node.id,
@@ -143,7 +194,7 @@ logsRouter.post('/ingest', async (c) => {
   }
 
   return c.json({ success: true, data: { ingested: entries.length } }, 201);
-});
+}
 
 // ── SSE log stream (live tail) ──
 logsRouter.get('/stream', (c) => {

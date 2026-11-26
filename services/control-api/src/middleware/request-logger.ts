@@ -5,6 +5,7 @@ import type { AppVariables, LogLevel } from '../types/index.js';
 import { emitLog } from '../services/log-emitter.js';
 import { incMetric, observeLatency } from '../routes/metrics.js';
 import { redactUnknown } from '../utils/redact.js';
+import { isNodeAuthenticated } from './node-auth.js';
 
 // ─── Request Logger — logs Control API HTTP requests to logEntry table ───
 
@@ -61,11 +62,52 @@ export async function requestLogger(c: Context<AppVariables>, next: Next): Promi
   const user = c.var.user;
   if (user?.email) userEmail = user.email;
 
+  const now = new Date();
+  // A refused request from nobody in particular (no user, no node) is counted, not stored one row
+  // each: anyone who can reach the listener could otherwise flood the table and the live log.
+  // One summary row per minute says how many there were.
+  if (status >= 400 && status < 500 && !user && !isNodeAuthenticated(c)) {
+    incMetric('httpUnauthenticatedRejectionsTotal');
+    const summary = noteUnauthenticatedRejection(now.getTime());
+    if (summary) writeEntry('info', summary.message, summary.metadata, now);
+    return;
+  }
+
   const message = `${method} ${path} ${status} ${durationMs}ms`;
   const traceId = c.get('traceId') as string | undefined;
   const metadata = redactUnknown({ method, path, status, durationMs, userEmail, traceId }) as Record<string, unknown>;
-  const now = new Date();
+  writeEntry(level, message, metadata, now);
+}
 
+const SUMMARY_WINDOW_MS = 60_000;
+let rejectedInWindow = 0;
+let windowStartedAt = 0;
+
+/**
+ * Count one unauthenticated rejection. Returns the summary to write when a window closes: the
+ * first rejection after a quiet period opens a window, and the first one after it ends reports it.
+ */
+export function noteUnauthenticatedRejection(now: number): { message: string; metadata: Record<string, unknown> } | null {
+  if (windowStartedAt === 0) windowStartedAt = now;
+  rejectedInWindow += 1;
+  if (now - windowStartedAt < SUMMARY_WINDOW_MS) return null;
+  const count = rejectedInWindow;
+  const since = new Date(windowStartedAt).toISOString();
+  rejectedInWindow = 0;
+  windowStartedAt = now;
+  return {
+    message: `${count} unauthenticated request(s) refused with 4xx since ${since}`,
+    metadata: { unauthenticatedRejections: count, since },
+  };
+}
+
+/** For tests. */
+export function resetRequestLoggerState(): void {
+  rejectedInWindow = 0;
+  windowStartedAt = 0;
+}
+
+function writeEntry(level: LogLevel, message: string, metadata: Record<string, unknown>, now: Date): void {
   // Write to DB (fire-and-forget — don't block the response)
   const db = getDb();
   void db.logEntry.create({

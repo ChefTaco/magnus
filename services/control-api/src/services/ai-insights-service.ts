@@ -236,11 +236,12 @@ export async function listPinnedInsights(): Promise<PinnedAiInsight[]> {
 
 export async function pinInsight(insight: AiInsight & { generatedAt?: string }): Promise<PinnedAiInsight> {
   const db = getDb();
+  // Server-owned fields come last, so nothing in the insight can replace them.
   const pinned: PinnedAiInsight = {
+    ...insight,
+    ...optional("generatedAt", insight.generatedAt),
     id: nanoid(),
     pinnedAt: new Date().toISOString(),
-    ...optional("generatedAt", insight.generatedAt),
-    ...insight,
   };
 
   await db.aiMemory.create({

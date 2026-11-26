@@ -63,6 +63,8 @@ import { logAuditEvent } from '../services/audit-service.js';
 import { generateInsights, listPinnedInsights, pinInsight, unpinInsight } from '../services/ai-insights-service.js';
 import { exportConversation } from '../services/ai-export-service.js';
 import { clearScratchpad, listScratchpadEntries } from '../services/ai-scratchpad-service.js';
+import { z } from 'zod';
+import { parseBody } from '../utils/validate.js';
 
 export const assistantRouter = new Hono<AppVariables>();
 
@@ -495,20 +497,19 @@ assistantRouter.get('/insights/pins', async (c) => {
 });
 
 assistantRouter.post('/insights/pins', requireRole('ADMIN', 'OPERATOR'), async (c) => {
-  const body = await c.req.json<{
-    title: string;
-    body: string;
-    severity: 'critical' | 'warning' | 'info' | 'success';
-    category: string;
-    nodeId?: string;
-    generatedAt?: string;
-  }>();
+  const body = await parseBody(c, z.object({
+    title: z.string().trim().min(1, 'title is required').max(500),
+    body: z.string().trim().min(1, 'body is required').max(20_000),
+    severity: z.enum(['critical', 'warning', 'info', 'success']),
+    category: z.string().min(1).max(100),
+    nodeId: z.string().min(1).max(128).optional(),
+    generatedAt: z.iso.datetime({ offset: true }).optional(),
+  }));
 
-  if (!body.title?.trim() || !body.body?.trim()) {
-    throw new HttpError(400, 'VALIDATION_ERROR', 'title and body are required');
-  }
-
-  const pin = await pinInsight(body);
+  const pin = await pinInsight({
+    title: body.title, body: body.body, severity: body.severity, category: body.category,
+    ...optional('nodeId', body.nodeId), ...optional('generatedAt', body.generatedAt),
+  });
   return c.json({ success: true, data: pin });
 });
 

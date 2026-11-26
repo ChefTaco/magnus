@@ -10,11 +10,11 @@ export const logQuerySchema = z.object({
   source: z.string().optional(),
   level: z.string().optional(),
   search: z.string().optional(),
-  since: z.string().optional(),
-  until: z.string().optional(),
+  since: z.iso.datetime({ offset: true }).optional(),
+  until: z.iso.datetime({ offset: true }).optional(),
   limit: z.number().int().min(1).max(1000).optional().default(100),
   offset: z.number().int().min(0).optional().default(0),
-  cursor: z.string().optional(),
+  cursor: z.string().min(1).max(512).optional(),
 });
 
 // ── POST /logs/ingest (single entry) ──
@@ -24,13 +24,13 @@ const logEntrySchema = z.object({
   level: z.string().optional().default('info'),
   message: z.string().min(1),
   metadata: z.record(z.string(), z.unknown()).optional(),
-  timestamp: z.string().optional(),
+  timestamp: z.iso.datetime({ offset: true }).optional(),
 });
 
 // ── POST /logs/ingest (single or array) ──
 export const logIngestSchema = z.union([
   logEntrySchema,
-  z.array(logEntrySchema).min(1),
+  z.array(logEntrySchema).min(1).max(1000),
 ]);
 
 // ── POST /notifications/read ──

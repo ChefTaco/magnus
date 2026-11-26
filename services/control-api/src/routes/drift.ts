@@ -8,15 +8,20 @@ import { HttpError } from '../middleware/error-handler.js';
 import { agentAuthHeaders } from '../services/node-agent-auth.js';
 import { getNodeBaseUrl } from '../utils/node-url.js';
 import { logAuditEvent } from '../services/audit-service.js';
+import { z } from 'zod';
+import { parseBody } from '../utils/validate.js';
 
 export const driftRouter = new Hono<AppVariables>();
 driftRouter.use('*', authMiddleware);
 
-interface DriftCheckDef {
-  type: 'package' | 'file' | 'service' | 'sysctl' | 'user';
-  name: string;
-  expected: string;
-}
+const driftScanSchema = z.object({
+  nodeId: z.string().min(1, 'nodeId is required').max(128),
+  checks: z.array(z.object({
+    type: z.enum(['package', 'file', 'service', 'sysctl', 'user']),
+    name: z.string().min(1).max(512),
+    expected: z.string().max(4096),
+  })).min(1, 'checks array is required').max(200),
+});
 
 /**
  * POST /drift/scan
@@ -25,10 +30,7 @@ interface DriftCheckDef {
  */
 driftRouter.post('/scan', requireRole('ADMIN', 'OPERATOR'), async (c) => {
   const user = getUser(c);
-  const body = await c.req.json() as { nodeId: string; checks: DriftCheckDef[] };
-
-  if (!body.nodeId) throw new HttpError(400, 'VALIDATION_ERROR', 'nodeId is required');
-  if (!body.checks?.length) throw new HttpError(400, 'VALIDATION_ERROR', 'checks array is required');
+  const body = await parseBody(c, driftScanSchema);
 
   const db = getDb();
   const node = await db.node.findUnique({ where: { id: body.nodeId } });

@@ -70,6 +70,13 @@ All notable changes to this project are documented in this file. The format is b
   minutes, so a captured signed request can no longer be replayed inside the 60 s timestamp window.
 - **Unexpected errors answer with a generic message.** A 5xx that is not an intended `HttpError` keeps its
   code but says only "An unexpected error occurred"; the full (redacted) text stays in the server log.
+- **Log forwarding authenticates with the node key.** `POST /logs/ingest` accepts a batch signed with
+  the node's key (or, outside enforce mode, the shared node secret), and the batch must name that node
+  (403 `NODE_IDENTITY_MISMATCH` otherwise). The per-node HMAC `x-log-token` stays accepted from agents
+  that do not sign their batches.
+- **Anonymous refusals no longer write a log row each.** A 4xx answered to a request with no signed-in
+  user and no node credential is counted (`httpUnauthenticatedRejectionsTotal` on `/metrics`) and
+  summarized once a minute instead of being stored and streamed one row at a time.
 
 - **Agent command arguments are passed literally.** `POST /api/v1/commands/execute` without the
   execution supervisor, and the supervisor's shell path for unregistered commands, joined `args` onto
@@ -118,6 +125,13 @@ All notable changes to this project are documented in this file. The format is b
 
 - `x-api-secret` and shared node-secret checks cache the decrypted credential rotation state until the
   state file changes, instead of reading, parsing and decrypting it on every attempt.
+- **`POST /logs/query` pages correctly.** The cursor is now an opaque `(timestamp, id)` keyset that
+  matches the result order, so pages no longer skip or repeat rows; a bare row id from an older client
+  still works. `since` and `until` must be ISO 8601 date-times (400 otherwise, not a 500), as must
+  ingested `timestamp`s, and an ingest batch holds at most 1000 entries.
+- Webhook create/update/dispatch, alert rule create/update, `POST /topology/scan` (probe timeout
+  at most 15000 ms), `POST /drift/scan` and `POST /assistant/insights/pins` validate their bodies: bad
+  values answer 400 instead of 500, and a pinned insight can no longer replace its generated `id`.
 
 **New environment variables:** agent `MAGNUS_AGENT_BODY_LIMIT_BYTES`, `HERMES_INSTALL_COMMIT`,
 `HERMES_INSTALL_SCRIPT_SHA256`; server `MAGNUS_API_SECRET_BYPASS` (all optional).
