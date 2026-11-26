@@ -94,10 +94,9 @@ evidence. An unsupported installation stays visible for onboarding. See the
 
 ## Child roles
 
-`GET /api/v1/orchestra/roles/:id/child-preview?installationId=...&profileId=...&platform=cli`
-returns a role's assigned skill revisions, observed skill loading, required toolsets, the platform
-tools a child actually inherits, and a briefing. Hermes's `delegate_task` inherits the parent's
-tool access, so a role briefing is guidance and does not restrict permissions. See
+The role child preview (`GET /api/v1/orchestra/roles/:id/child-preview`) was part of the retired
+SSH-backed Hermes operations and answers 410. Hermes's `delegate_task` inherits the parent's tool
+access, so a role briefing is guidance and does not restrict permissions. See
 [Hermes delegation](https://hermes-agent.nousresearch.com/docs/user-guide/features/delegation).
 
 ## Troubleshooting

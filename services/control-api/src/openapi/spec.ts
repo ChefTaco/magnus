@@ -217,12 +217,9 @@ const tags = [
   {
     name: 'Hermes Agent',
     description:
-      'Hermes Agent fleet management. Resources are mounted under both ' +
-      '`/hermes/*` (legacy alias) and `/orchestra/*`. Covers installations, ' +
-      'profiles, skill assignments, toolset policies, roles, providers, ' +
-      'credential pools, MCP servers, messaging bindings, cron jobs, ' +
-      'plugin installs, and event hooks. Most resources accept an optional ' +
-      '`profileId` to scope a configuration to a single profile (empty = installation-wide).',
+      'Hermes Agent inventory reads under `/hermes/*`: installations, profiles, API server status and ' +
+      'operation jobs. `/orchestra/*` is a deprecated alias of the same reads. SSH-backed Hermes ' +
+      'operations (deploy, configuration, skills, providers, cron, plugins) are retired and answer 410.',
   },
   { name: 'Codex Agent', description: 'Fleet Codex CLI version and ChatGPT OAuth lifecycle management' },
   { name: 'Magnus Ardent', description: 'Node-scoped Ardent profile inventory and managed actions' },
@@ -2783,14 +2780,16 @@ const paths: Record<string, Record<string, unknown>> = {
     },
   },
 
-  // ─── Hermes / Orchestra ─────────────────────────────────────────
-  '/orchestra/jobs': {
+  // ─── Hermes ─────────────────────────────────────────────────────
+  // `/orchestra/*` is a deprecated alias of these `/hermes/*` reads (same handlers, same rate-limit
+  // budget); every other `/orchestra` and `/hermes` path answers 410 HERMES_SSH_OPERATION_RETIRED.
+  '/hermes/jobs': {
     get: {
       tags: ['Hermes Agent'],
       summary: 'List Hermes operation jobs',
       description:
         'Filter by `status`, `type`, `category` (prefix-match on type — e.g. `install`, `skill`, `provider`, `cron`), `installationId`, or `profileId`. ' +
-        'Mounted under both `/hermes/jobs` and `/orchestra/jobs`.',
+        'Also served at the deprecated alias `/orchestra/jobs`.',
       security: apiSecretAuth,
       parameters: [
         { name: 'status', in: 'query', schema: { type: 'string' } },
@@ -2806,7 +2805,7 @@ const paths: Record<string, Record<string, unknown>> = {
       },
     },
   },
-  '/orchestra/profiles/{id}/api-server/status': {
+  '/hermes/profiles/{id}/api-server/status': {
     get: {
       tags: ['Hermes Agent'],
       summary: 'Get API Server status for a profile',
@@ -2829,155 +2828,6 @@ const paths: Record<string, Record<string, unknown>> = {
         401: err401,
         404: err404,
       },
-    },
-  },
-  '/orchestra/profiles/{id}/api-server/rotate-key': {
-    post: {
-      tags: ['Hermes Agent'],
-      summary: 'Rotate the Hermes API Server key for a profile (ADMIN)',
-      description: 'Re-enables the API Server with a fresh API key on the same host/port. If `apiKey` is omitted, a new 32-byte key is generated.',
-      security: apiSecretAuth,
-      parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
-      requestBody: {
-        required: false,
-        content: {
-          'application/json': {
-            schema: {
-              type: 'object',
-              properties: { apiKey: { type: 'string', minLength: 16, maxLength: 4096 } },
-            },
-          },
-        },
-      },
-      responses: {
-        202: success('Job queued', { type: 'object' }),
-        401: err401,
-        403: err403,
-        404: err404,
-      },
-    },
-  },
-  '/orchestra/skill-assignments': {
-    get: {
-      tags: ['Hermes Agent'],
-      summary: 'List skill assignments for an installation/profile',
-      security: apiSecretAuth,
-      parameters: [
-        { name: 'installationId', in: 'query', required: true, schema: { type: 'string' } },
-        { name: 'profileId', in: 'query', schema: { type: 'string' } },
-      ],
-      responses: { 200: success('Skill assignments', { type: 'array', items: { type: 'object' } }), 401: err401 },
-    },
-    post: {
-      tags: ['Hermes Agent'],
-      summary: 'Create a skill assignment (ADMIN/OPERATOR)',
-      description:
-        'Creates a Hermes skill assignment. See `src/schemas/orchestra.ts` for the full request body; ' +
-        'this OpenAPI doc covers the path/auth shape only.',
-      security: apiSecretAuth,
-      responses: { 201: success('Skill assignment created', { type: 'object' }), 401: err401, 403: err403 },
-    },
-  },
-  '/orchestra/toolset-policies': {
-    get: {
-      tags: ['Hermes Agent'],
-      summary: 'List toolset policies for an installation/profile',
-      security: apiSecretAuth,
-      parameters: [
-        { name: 'installationId', in: 'query', required: true, schema: { type: 'string' } },
-        { name: 'profileId', in: 'query', schema: { type: 'string' } },
-      ],
-      responses: { 200: success('Toolset policies', { type: 'array', items: { type: 'object' } }), 401: err401 },
-    },
-  },
-  '/orchestra/roles': {
-    get: {
-      tags: ['Hermes Agent'],
-      summary: 'List Hermes roles',
-      security: apiSecretAuth,
-      responses: { 200: success('Roles', { type: 'array', items: { type: 'object' } }), 401: err401 },
-    },
-  },
-  '/orchestra/roles/{id}/child-preview': { get: { tags: ['Hermes Agent'], summary: 'Preview role skill revisions and actual inherited native subagent tools',
-    security: apiSecretAuth, parameters: [pp('id', 'Role ID'),
-      { name: 'installationId', in: 'query', required: true, schema: { type: 'string' } },
-      { name: 'profileId', in: 'query', schema: { type: 'string' } },
-      { name: 'platform', in: 'query', schema: { type: 'string', default: 'cli' } }],
-    responses: { 200: success('Role briefing and observed tool surface'), 400: err400, 404: err404 } } },
-  '/orchestra/provider-configs': {
-    get: {
-      tags: ['Hermes Agent'],
-      summary: 'Get the provider routing config for an installation/profile',
-      security: apiSecretAuth,
-      parameters: [
-        { name: 'installationId', in: 'query', required: true, schema: { type: 'string' } },
-        { name: 'profileId', in: 'query', schema: { type: 'string' } },
-      ],
-      responses: { 200: success('Provider config', { type: 'object' }), 401: err401 },
-    },
-  },
-  '/orchestra/credential-pools': {
-    get: {
-      tags: ['Hermes Agent'],
-      summary: 'List Hermes credential pools (ADMIN-only mutations)',
-      security: apiSecretAuth,
-      responses: { 200: success('Credential pools', { type: 'array', items: { type: 'object' } }), 401: err401 },
-    },
-  },
-  '/orchestra/mcp-servers': {
-    get: {
-      tags: ['Hermes Agent'],
-      summary: 'List Hermes MCP server definitions',
-      security: apiSecretAuth,
-      responses: { 200: success('MCP servers', { type: 'array', items: { type: 'object' } }), 401: err401 },
-    },
-  },
-  '/orchestra/messaging-bindings': {
-    get: {
-      tags: ['Hermes Agent'],
-      summary: 'List Hermes messaging bindings',
-      security: apiSecretAuth,
-      parameters: [
-        { name: 'installationId', in: 'query', required: true, schema: { type: 'string' } },
-        { name: 'profileId', in: 'query', schema: { type: 'string' } },
-      ],
-      responses: { 200: success('Messaging bindings', { type: 'array', items: { type: 'object' } }), 401: err401 },
-    },
-  },
-  '/orchestra/cron-jobs': {
-    get: {
-      tags: ['Hermes Agent'],
-      summary: 'List Hermes cron jobs',
-      security: apiSecretAuth,
-      parameters: [
-        { name: 'installationId', in: 'query', required: true, schema: { type: 'string' } },
-        { name: 'profileId', in: 'query', schema: { type: 'string' } },
-      ],
-      responses: { 200: success('Cron jobs', { type: 'array', items: { type: 'object' } }), 401: err401 },
-    },
-  },
-  '/orchestra/plugins': {
-    get: {
-      tags: ['Hermes Agent'],
-      summary: 'List installed Hermes plugins',
-      security: apiSecretAuth,
-      parameters: [
-        { name: 'installationId', in: 'query', required: true, schema: { type: 'string' } },
-        { name: 'profileId', in: 'query', schema: { type: 'string' } },
-      ],
-      responses: { 200: success('Plugin installs', { type: 'array', items: { type: 'object' } }), 401: err401 },
-    },
-  },
-  '/orchestra/hooks': {
-    get: {
-      tags: ['Hermes Agent'],
-      summary: 'List Hermes event hooks',
-      security: apiSecretAuth,
-      parameters: [
-        { name: 'installationId', in: 'query', required: true, schema: { type: 'string' } },
-        { name: 'profileId', in: 'query', schema: { type: 'string' } },
-      ],
-      responses: { 200: success('Hooks', { type: 'array', items: { type: 'object' } }), 401: err401 },
     },
   },
   '/ardent/installations': {

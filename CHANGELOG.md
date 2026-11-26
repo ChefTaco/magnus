@@ -205,6 +205,12 @@ All notable changes to this project are documented in this file. The format is b
 - Webhook create/update/dispatch, alert rule create/update, `POST /topology/scan` (probe timeout
   at most 15000 ms), `POST /drift/scan` and `POST /assistant/insights/pins` validate their bodies: bad
   values answer 400 instead of 500, and a pinned insight can no longer replace its generated `id`.
+- **The unreachable Orchestra router is gone.** Its 55 routes were shadowed by the Hermes catch-all
+  and always answered 410; the code, its schemas, its OpenAPI entries and its inventory rows are
+  removed. `/orchestra/*` stays a deprecated alias of the Hermes reads (installations, profiles, jobs)
+  and now shares their rate-limit budget (20 a minute) instead of having its own 30.
+- A route test calls every `user:*` row of the console route inventory with VIEWER, OPERATOR and ADMIN
+  sessions and checks each answer against the row's `auth` column.
 
 **New environment variables:** agent `MAGNUS_AGENT_BODY_LIMIT_BYTES`, `HERMES_INSTALL_COMMIT`,
 `HERMES_INSTALL_SCRIPT_SHA256`, `MAGNUS_AGENT_FILE_ROOTS`; server `MAGNUS_API_SECRET_BYPASS`,
