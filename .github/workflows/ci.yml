@@ -194,6 +194,47 @@ jobs:
         if: failure()
         run: sudo journalctl -u magnus-server -u magnus-ui -u magnus-agent-e2e -n 300 --no-pager || true
 
+  native:
+    # The agent's opt-in native tests: real transient systemd units (user manager), a root-run
+    # restricted terminal for a throwaway account, and Docker health metadata. Ubuntu runners
+    # have systemd, Docker and passwordless sudo.
+    name: Native systemd, root and Docker tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.13.1
+          cache: npm
+      - run: npm ci
+      - name: Build the contracts and the agent
+        run: |
+          npm --workspace @hivemagnus/magnus-contracts run build
+          npm --workspace @hivemagnus/magnus-agent run build
+      - name: Execution supervisor in transient user units
+        working-directory: packages/agent
+        run: |
+          sudo loginctl enable-linger "$USER"
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          for _ in $(seq 1 30); do [ -S "$XDG_RUNTIME_DIR/bus" ] && break; sleep 1; done
+          systemctl --user is-system-running --wait || true
+          SUPERVISOR_NATIVE_TESTS=1 npx vitest run src/executors/execution-supervisor.native.test.ts
+      - name: Restricted managed terminal as root, for a throwaway account
+        working-directory: packages/agent
+        run: |
+          sudo useradd --create-home --shell /bin/bash magnus-terminal-ci
+          sudo env "PATH=$PATH" MAGNUS_NATIVE_TERMINAL_TEST_USER=magnus-terminal-ci \
+            "$(command -v node)" ../../node_modules/vitest/vitest.mjs run src/executors/managed-terminal.native.test.ts
+      - name: Embermend Compose inventory against real Docker containers
+        working-directory: packages/agent
+        env:
+          FIXTURE_IMAGE: node:24.22.3-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54
+        run: |
+          docker pull "$FIXTURE_IMAGE"
+          MAGNUS_EMBERMEND_DOCKER_TEST_IMAGE="$(docker image inspect --format '{{.Id}}' "$FIXTURE_IMAGE")" \
+            npx vitest run src/executors/embermend-compose.native.test.ts
+
   images:
     # The container images build, and the Compose upgrade path works with them:
     # `docker compose pull && up -d` replaced by local tags of this commit.
