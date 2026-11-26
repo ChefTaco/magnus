@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { getDb } from '../db/index.js';
 import type { UserRole } from '../types/index.js';
 
@@ -10,9 +9,15 @@ export interface CurrentUserStatus {
   sessionStamp?: string;
 }
 
-/** A short, non-reversible stamp of a stored password hash that binds local sessions to it. */
-export function passwordSessionStamp(passwordHash: string): string {
-  return createHash('sha256').update(`magnus:session:v1:${passwordHash}`).digest('base64url').slice(0, 22);
+/**
+ * The stamp that binds local sessions to one stored password: the random salt of its Argon2
+ * encoding (`$argon2id$v=19$m=…,t=…,p=…$<salt>$<digest>`). Every password change hashes with a
+ * new salt, so the stamp changes; the salt is not secret and says nothing about the password.
+ */
+export function passwordSessionStamp(storedHash: string): string {
+  const parts = storedHash.split('$');
+  const salt = storedHash.startsWith('$argon2') && parts.length >= 6 ? parts[parts.length - 2] : undefined;
+  return salt && salt.length >= 16 ? salt : `len${storedHash.length}:${storedHash.slice(-12)}`;
 }
 
 const USER_STATUS_TTL_MS = 30_000;
