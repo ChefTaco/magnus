@@ -10,10 +10,14 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { verifySessionToken, COOKIE_NAME } from '@/lib/auth';
 import { hiveRouterFetch } from '@/lib/hive-router-fetch';
+import { readLimitedBytes, RequestBodyTooLarge } from '@/lib/limited-request-body';
+import { readDashboardEnvironment } from '../../../../../../runtime-environment.mjs';
 import { hiveRouterAdminUrl } from '../../../../../../runtime-integrations.mjs';
 
 const PROXY_BASE = '/api/hive-router/dashboard';
 const ROUTER_SESSION_COOKIE = 'hive_router_admin';
+/** Largest router response the proxy reads (the admin UI's bundles are well below it). */
+const MAX_ROUTER_RESPONSE_BYTES = 16 * 1024 * 1024;
 
 async function assertDashboardSession(req: NextRequest): Promise<NextResponse | null> {
   const sessionToken = req.cookies.get(COOKIE_NAME)?.value;
@@ -99,8 +103,13 @@ async function proxyHandler(
   };
 
   if (req.method !== 'GET' && req.method !== 'HEAD') {
-    const body = await req.text();
-    if (body) init.body = body;
+    try {
+      const body = await readLimitedBytes(req, Number(readDashboardEnvironment('DASHBOARD_PROXY_BODY_LIMIT_BYTES')));
+      if (body.byteLength) init.body = body as BodyInit;
+    } catch (error) {
+      if (error instanceof RequestBodyTooLarge) return NextResponse.json({ error: 'Request body too large' }, { status: 413 });
+      throw error;
+    }
   }
 
   try {
@@ -114,23 +123,25 @@ async function proxyHandler(
     responseHeaders.set('Content-Type', contentType);
     responseHeaders.set('Cache-Control', 'no-cache, no-store');
 
-    const setCookie = upstream.headers.get('set-cookie');
-    if (setCookie) responseHeaders.set('Set-Cookie', rewriteSetCookiePath(setCookie));
+    // Every cookie the router sets, each scoped to the proxy path (get() would join them into one).
+    for (const cookie of upstream.headers.getSetCookie()) responseHeaders.append('Set-Cookie', rewriteSetCookiePath(cookie));
 
+    const body = await readLimitedBytes(upstream, MAX_ROUTER_RESPONSE_BYTES);
     if (shouldRewrite(contentType)) {
-      return new NextResponse(rewriteTextAsset(await upstream.text()), {
+      return new NextResponse(rewriteTextAsset(new TextDecoder().decode(body)), {
         status: upstream.status,
         statusText: upstream.statusText,
         headers: responseHeaders,
       });
     }
 
-    return new NextResponse(await upstream.arrayBuffer(), {
+    return new NextResponse(body as BodyInit, {
       status: upstream.status,
       statusText: upstream.statusText,
       headers: responseHeaders,
     });
   } catch (err: unknown) {
+    if (err instanceof RequestBodyTooLarge) return NextResponse.json({ error: 'Router response too large' }, { status: 502 });
     const message = err instanceof Error ? err.message : 'Unknown error';
     return NextResponse.json(
       { error: `Hive Router unreachable: ${message}` },

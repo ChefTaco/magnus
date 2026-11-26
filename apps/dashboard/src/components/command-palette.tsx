@@ -228,13 +228,14 @@ export function CommandPalette() {
       {open && (
         <div className="fixed inset-0 z-(--z-modal) flex items-start justify-center pt-[15vh]" data-testid="command-palette">
           <div className="fixed inset-0 bg-black/70 backdrop-blur-[2px]" onClick={() => { setOpen(false); setQuery(''); }} />
-          <div className="relative z-10 w-full max-w-lg panel-corners rounded-panel border border-primary/30 bg-surface/95 shadow-[0_0_40px_var(--color-glow)]">
+          <div role="dialog" aria-modal="true" aria-label="Command palette" className="relative z-10 w-full max-w-lg panel-corners rounded-panel border border-primary/30 bg-surface/95 shadow-[0_0_40px_var(--color-glow)]">
             {/* Search Input */}
             <div className="flex items-center gap-3 border-b border-border px-4 py-3">
               <Search className="h-5 w-5 text-primary" />
               <input
                 ref={inputRef}
                 type="text"
+                aria-label="Search the console"
                 placeholder="Search nodes, agents, runs, users, commands..."
                 className="flex-1 bg-transparent text-sm text-text placeholder:text-text-muted/70 caret-primary outline-none"
                 value={query}
@@ -332,11 +333,11 @@ export function CommandPalette() {
       {showShortcuts && (
         <div className="fixed inset-0 z-(--z-modal) flex items-center justify-center">
           <div className="fixed inset-0 bg-black/70 backdrop-blur-[2px]" onClick={() => setShowShortcuts(false)} />
-          <div className="relative z-10 w-full max-w-md panel-corners rounded-panel border border-primary/30 bg-surface/95 p-6 shadow-[0_0_40px_var(--color-glow)]">
+          <div role="dialog" aria-modal="true" aria-labelledby="keyboard-shortcuts-title" className="relative z-10 w-full max-w-md panel-corners rounded-panel border border-primary/30 bg-surface/95 p-6 shadow-[0_0_40px_var(--color-glow)]">
             <div className="mb-4 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Keyboard className="h-5 w-5 text-primary" />
-                <h2 className="text-sm font-bold uppercase tracking-wider text-primary glow-text-primary">Keyboard Shortcuts</h2>
+                <h2 id="keyboard-shortcuts-title" className="text-sm font-bold uppercase tracking-wider text-primary glow-text-primary">Keyboard Shortcuts</h2>
               </div>
               <button onClick={() => setShowShortcuts(false)} className="text-text-muted hover:text-text">
                 <X className="h-5 w-5" />

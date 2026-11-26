@@ -155,8 +155,8 @@ Every variable the runtime configuration accepts. `magnus-ui env-schema` prints 
 | `HIVE_OAUTH_ISSUER` | Optional | None | Exact trusted Hive access-token issuer. |
 | `HIVE_OAUTH_API_AUDIENCE` | Optional | None | Exact access-token audience accepted by the Control API. |
 | `HIVE_OAUTH_SCOPE` | Optional | `openid profile email` | Registered named-user OAuth scopes. |
-| `HIVE_ROUTER_ADMIN_URL` | Optional | None | Optional Hive Router admin plane; enables the embedded router dashboard proxy. |
-| `HIVE_ROUTER_CA_PATH` | Optional | None | Optional private CA bundle for hostname-verified Hive Router TLS. |
+| `HIVE_ROUTER_ADMIN_URL` | Optional | None | Deprecated: admin plane of an Emberpath (formerly Hive Router) release that still bundles an admin UI; enables the embedded router dashboard proxy. |
+| `HIVE_ROUTER_CA_PATH` | Optional | None | Optional private CA bundle for hostname-verified TLS to HIVE_ROUTER_ADMIN_URL. |
 | `MAGNUS_SECURITY_CONSOLE_URL` | Optional | None | Optional external security console; enables the Security pages and nav entry. |
 | `MAGNUS_HERMES_ENABLED` | Optional | `false` | Enables the optional Hermes Agent pages, dashboard proxy and WebSocket bridge. |
 | `PORT` | Optional | `3000` | Listen port for magnus-ui start. |

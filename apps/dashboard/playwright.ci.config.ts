@@ -1,7 +1,7 @@
 import { defineConfig } from '@playwright/test';
 export default defineConfig({
   testDir: './tests',
-  testMatch: ['ci-workflows.spec.ts', 'ardent.spec.ts'],
+  testMatch: ['ci-workflows.spec.ts', 'ardent.spec.ts', 'console-security.spec.ts'],
   workers: 1,
   forbidOnly: true,
   retries: 0,

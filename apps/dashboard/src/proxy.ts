@@ -65,7 +65,6 @@ export default async function proxy(req: NextRequest): Promise<NextResponse> {
   // Allow public paths and static assets
   if (
     PUBLIC_PATHS.some((p) => pathname === p) ||
-    pathname.startsWith('/governor/share/') ||
     pathname.startsWith('/_next') ||
     pathname.startsWith('/favicon') ||
     pathname === '/icon.svg'
