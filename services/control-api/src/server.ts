@@ -62,7 +62,6 @@ import { profilingRouter } from './routes/profiling.js';
 import { predictionsRouter } from './routes/predictions.js';
 import { hermesRouter } from './routes/hermes.js';
 import { hermesRegistryRouter } from './routes/hermes-registry.js';
-import { orchestraRouter } from './routes/orchestra.js';
 import { codexRouter } from './routes/codex.js';
 import { ardentRouter } from './routes/ardent.js';
 import { agentIdentityRouter } from './routes/agent-identity.js';
@@ -139,7 +138,8 @@ v1.use('/node-enrollment/*', rateLimitMiddleware({ windowMs: 60_000, max: 60, ke
 v1.use('/terminal/*', rateLimitMiddleware({ windowMs: 60_000, max: 20, keyPrefix: 'rl:terminal', failClosed: true }));
 v1.use('/hermes/*', rateLimitMiddleware({ windowMs: 60_000, max: 20, keyPrefix: 'rl:hermes' }));
 v1.use('/hermes-registry/*', rateLimitMiddleware({ windowMs: 60_000, max: 120, keyPrefix: 'rl:hermes-registry', failClosed: true }));
-v1.use('/orchestra/*', rateLimitMiddleware({ windowMs: 60_000, max: 30, keyPrefix: 'rl:orchestra' }));
+// `/orchestra` is a deprecated alias of the Hermes reads and shares their budget.
+v1.use('/orchestra/*', rateLimitMiddleware({ windowMs: 60_000, max: 20, keyPrefix: 'rl:hermes' }));
 v1.use('/codex/*', rateLimitMiddleware({ windowMs: 60_000, max: 60, keyPrefix: 'rl:codex' }));
 // Ardent reads (600 a minute per person) and actions (60) have separate budgets; see ARDENT_RATE_LIMITS.
 v1.use('/ardent/*', ardentRateLimitMiddleware());
@@ -188,7 +188,6 @@ v1.route('/fleet-checks', fleetChecksRouter);
 v1.route('/hermes', hermesRouter);
 v1.route('/hermes-registry', hermesRegistryRouter);
 v1.route('/orchestra', hermesRouter);
-v1.route('/orchestra', orchestraRouter);
 v1.route('/codex', codexRouter);
 v1.route('/ardent', ardentRouter);
 v1.route('/remediation', remediationRouter);

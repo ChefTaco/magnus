@@ -13,7 +13,7 @@ moved without updating it.
 | `browser` | A person's console drives it with a user token | 162 | Allow the exact method and path |
 | `machine` | Agents, services and integrations, with their own credentials | 86 | Deny |
 | `exclude` | Reachable with a user token, but no console needs it, or it was written for a server-side caller | 149 | Deny until a feature needs it and it is reviewed |
-| `retired` | Always answers 404 or 410 | 64 | Deny |
+| `retired` | Always answers 404 or 410 | 10 | Deny |
 
 The `Wave 1` column marks routes whose request and response shapes are published in
 `packages/contracts/src/browser.ts`. Allow those first. Other `browser` rows are what the existing
@@ -51,8 +51,8 @@ this exact mapping, with no prefix rule: `GET /api/magnus/docs/openapi.json` to
   ends after 60 seconds: reconnect with `after` or `Last-Event-ID`, which the ingress must forward.
 
 Rate limits key on the verified Oathweave subject, so browsers behind one ingress do not share a
-bucket. Each subject still has one budget per prefix: `/hermes/*` allows 20 requests a minute and
-`/orchestra/*` allows 30, so poll those installation reads sparingly. `/ardent/*` has two budgets in
+bucket. Each subject still has one budget per prefix: `/hermes/*` and its deprecated alias
+`/orchestra/*` share 20 requests a minute, so poll those installation reads sparingly. `/ardent/*` has two budgets in
 separate buckets: reads (`GET` and `HEAD`, streams included) allow 600 a minute, and actions (every
 other method) allow 60. A linked Ardent service identity gets 3,000 reads and 1,200 actions.
 
@@ -810,60 +810,6 @@ Each row is a non-browser route that a broader `browser` pattern also matches. D
 | POST | `/api/v1/heartbeat/stream` | retired | `retired-410` | Permanent 410 stub, reachable without credentials. |
 | ALL | `/api/v1/hermes/*` | retired | `retired-410` | Permanent 410 catch-all for retired SSH-backed operations. |
 | POST | `/api/v1/nodes/:nodeId/migrate` | retired | `retired-410` | Permanent 410 stub. |
-| ALL | `/api/v1/orchestra/*` | retired | `retired-410` | Permanent 410 catch-all; shadows the whole orchestra router. |
-| GET | `/api/v1/orchestra/capabilities` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| GET | `/api/v1/orchestra/credential-pools` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| POST | `/api/v1/orchestra/credential-pools` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| DELETE | `/api/v1/orchestra/credential-pools/:id` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| PATCH | `/api/v1/orchestra/credential-pools/:id` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| POST | `/api/v1/orchestra/credential-pools/:id/attach` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| DELETE | `/api/v1/orchestra/credential-pools/attachments/:attachmentId` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| GET | `/api/v1/orchestra/cron-jobs` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| POST | `/api/v1/orchestra/cron-jobs` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| DELETE | `/api/v1/orchestra/cron-jobs/:id` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| PATCH | `/api/v1/orchestra/cron-jobs/:id` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| GET | `/api/v1/orchestra/hooks` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| POST | `/api/v1/orchestra/hooks` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| DELETE | `/api/v1/orchestra/hooks/:id` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| PATCH | `/api/v1/orchestra/hooks/:id` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| POST | `/api/v1/orchestra/jobs/:id/cancel` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| GET | `/api/v1/orchestra/mcp-servers` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| POST | `/api/v1/orchestra/mcp-servers` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| DELETE | `/api/v1/orchestra/mcp-servers/:id` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| PATCH | `/api/v1/orchestra/mcp-servers/:id` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| POST | `/api/v1/orchestra/mcp-servers/:id/attach` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| DELETE | `/api/v1/orchestra/mcp-servers/attachments/:attachmentId` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| GET | `/api/v1/orchestra/messaging-bindings` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| POST | `/api/v1/orchestra/messaging-bindings` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| DELETE | `/api/v1/orchestra/messaging-bindings/:id` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| PATCH | `/api/v1/orchestra/messaging-bindings/:id` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| GET | `/api/v1/orchestra/overview` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| GET | `/api/v1/orchestra/plugins` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| POST | `/api/v1/orchestra/plugins` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| DELETE | `/api/v1/orchestra/plugins/:id` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| GET | `/api/v1/orchestra/providers` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| PUT | `/api/v1/orchestra/providers` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| POST | `/api/v1/orchestra/providers/test` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| GET | `/api/v1/orchestra/roles` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| POST | `/api/v1/orchestra/roles` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| DELETE | `/api/v1/orchestra/roles/:id` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| GET | `/api/v1/orchestra/roles/:id` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| PATCH | `/api/v1/orchestra/roles/:id` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| POST | `/api/v1/orchestra/roles/:id/apply` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| GET | `/api/v1/orchestra/roles/:id/child-preview` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| GET | `/api/v1/orchestra/skill-assignments` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| POST | `/api/v1/orchestra/skill-assignments` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| DELETE | `/api/v1/orchestra/skill-assignments/:id` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| PATCH | `/api/v1/orchestra/skill-assignments/:id` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| POST | `/api/v1/orchestra/skill-bundles/apply` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| POST | `/api/v1/orchestra/skill-bundles/preview` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| GET | `/api/v1/orchestra/skill-catalog` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| GET | `/api/v1/orchestra/skill-catalog/:slug/audit` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| POST | `/api/v1/orchestra/skill-catalog/:slug/quarantine` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| POST | `/api/v1/orchestra/skill-catalog/install` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| GET | `/api/v1/orchestra/toolset-policies` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| PUT | `/api/v1/orchestra/toolset-policies` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| DELETE | `/api/v1/orchestra/toolset-policies/:id` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
-| PATCH | `/api/v1/orchestra/toolset-policies/:id` | retired | `retired-410` | Shadowed: the hermes catch-all is mounted first on this prefix, so this always returns 410. |
+| ALL | `/api/v1/orchestra/*` | retired | `retired-410` | Permanent 410 catch-all of the deprecated alias of the Hermes reads. |
 | ALL | `/api/v1/security-fusion/*` | retired | `retired-410` | Permanent 410 stub, or 404 when the mode is off; moved to the security console. |
 | POST | `/api/v1/terminal/ticket` | retired | `retired-410` | Permanent 410 stub after authentication; the fleet gateway carries the terminal. |
