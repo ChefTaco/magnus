@@ -114,7 +114,7 @@ if $OLLAMA_UP; then
   if [[ -n "$RUNNING_JSON" ]]; then
     RUNNING=$(echo "$RUNNING_JSON" | grep -oP '"name"\s*:\s*"\K[^"]+' || true)
     if [[ -n "$RUNNING" ]]; then
-      echo "$RUNNING" | sed 's/^/  ✓ /'
+      echo "$RUNNING" | sed 's/^/  ✓ /' || true
     else
       echo "  No models currently loaded in memory"
     fi
@@ -128,7 +128,7 @@ if $VLLM_UP; then
   echo "--- vLLM Models ---"
   VLLM_MODELS=$(curl -sf --connect-timeout 5 "${VLLM_HOST}/v1/models" 2>/dev/null || echo "")
   if [[ -n "$VLLM_MODELS" ]]; then
-    echo "$VLLM_MODELS" | grep -oP '"id"\s*:\s*"\K[^"]+' | sed 's/^/  /'
+    echo "$VLLM_MODELS" | grep -oP '"id"\s*:\s*"\K[^"]+' | sed 's/^/  /' || true
   else
     echo "  Could not query models"
   fi
@@ -147,7 +147,7 @@ if command -v nvidia-smi &>/dev/null; then
     echo "  GPU $idx ($name): ${mem_used}/${mem_total} MiB (${MEM_PCT}%), util: ${util}%, temp: ${temp}°C $STATUS"
   done
 elif command -v rocm-smi &>/dev/null; then
-  rocm-smi --showuse --showtemp 2>/dev/null | head -20 | sed 's/^/  /'
+  rocm-smi --showuse --showtemp 2>/dev/null | head -20 | sed 's/^/  /' || true
 else
   echo "  No GPU tools found (nvidia-smi / rocm-smi)"
 fi

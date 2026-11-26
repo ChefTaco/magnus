@@ -61,14 +61,14 @@ echo "--- Upgradable Packages ---"
 UPGRADABLE=$(apt list --upgradable 2>/dev/null | grep -c 'upgradable' || echo 0)
 echo "  Upgradable: $UPGRADABLE"
 if [[ $UPGRADABLE -gt 0 ]]; then
-  apt list --upgradable 2>/dev/null | tail -30
+  apt list --upgradable 2>/dev/null | tail -30 || true
 fi
 
 echo "--- Security Updates ---"
 SECURITY=$(apt list --upgradable 2>/dev/null | grep -ci security || echo 0)
 if [[ $SECURITY -gt 0 ]]; then
   echo "  ⚠ $SECURITY security update(s):"
-  apt list --upgradable 2>/dev/null | grep -i security | head -20 | sed 's/^/    /'
+  apt list --upgradable 2>/dev/null | grep -i security | head -20 | sed 's/^/    /' || true
 else
   echo "  ✓ No pending security updates"
 fi
@@ -76,7 +76,7 @@ fi
 echo "--- Held Packages ---"
 HELD=$(apt-mark showhold 2>/dev/null)
 if [[ -n "$HELD" ]]; then
-  echo "$HELD" | sed 's/^/  /'
+  echo "$HELD" | sed 's/^/  /' || true
 else
   echo "  ✓ No held packages"
 fi
@@ -96,7 +96,7 @@ if [[ $VERBOSE -ge 1 ]]; then
   if command -v snap &>/dev/null; then
     SNAP_COUNT=$(snap list 2>/dev/null | tail -n +2 | wc -l || true)
     echo "  Installed snaps: $SNAP_COUNT"
-    snap list 2>/dev/null | head -15 | sed 's/^/  /'
+    snap list 2>/dev/null | head -15 | sed 's/^/  /' || true
     # Check for refreshable snaps
     REFRESH=$(snap refresh --list 2>/dev/null | tail -n +2 | wc -l || true)
     if [[ $REFRESH -gt 0 ]]; then
@@ -126,7 +126,7 @@ if [[ $VERBOSE -ge 2 ]]; then
   BROKEN=$(dpkg --audit 2>/dev/null | wc -l || true)
   if [[ $BROKEN -gt 0 ]]; then
     echo "  ⚠ $BROKEN issue(s):"
-    dpkg --audit 2>/dev/null | head -10 | sed 's/^/    /'
+    dpkg --audit 2>/dev/null | head -10 | sed 's/^/    /' || true
   else
     echo "  ✓ No broken packages"
   fi
@@ -135,5 +135,5 @@ fi
 # ── Full policy (verbose 3) ──
 if [[ $VERBOSE -ge 3 ]]; then
   echo "--- APT Policy ---"
-  apt-cache policy 2>/dev/null | head -40 | sed 's/^/  /'
+  apt-cache policy 2>/dev/null | head -40 | sed 's/^/  /' || true
 fi

@@ -100,7 +100,7 @@ if [[ $VERBOSE -ge 1 ]]; then
     GIT_SIZE=$(du -sh "$repo/.git" 2>/dev/null | awk '{print $1}' || true)
     WORK_SIZE=$(du -sh "$repo" 2>/dev/null | awk '{print $1}' || true)
     echo "  $repo — working: $WORK_SIZE, .git: $GIT_SIZE"
-  done | sort -t':' -k2 -rh | head -20
+  done | sort -t':' -k2 -rh | head -20 || true
 
   echo "--- Remote Origins ---"
   for repo in "${REPOS[@]}"; do
@@ -137,7 +137,7 @@ if [[ $VERBOSE -ge 1 ]]; then
         echo "  $repo ← $branch (${AGE}d old)"
       fi
     done
-  done | head -20
+  done | head -20 || true
 fi
 
 # ── Secrets and large files (verbose 2+) ──
@@ -148,7 +148,7 @@ if [[ $VERBOSE -ge 2 ]]; then
     HITS=$(grep -rl --include='*.env' --include='*.yml' --include='*.yaml' --include='*.json' --include='*.conf' -E "$SECRET_PATTERNS" "$repo" 2>/dev/null | head -5 || true)
     if [[ -n "$HITS" ]]; then
       echo "  ⚠ $repo:"
-      echo "$HITS" | sed 's/^/    /'
+      echo "$HITS" | sed 's/^/    /' || true
     fi
   done
 
@@ -182,11 +182,11 @@ if [[ $VERBOSE -ge 3 ]]; then
   for repo in "${REPOS[@]}"; do
     cd "$repo" 2>/dev/null || continue
     echo "  ── $repo ──"
-    git status --short 2>/dev/null | head -20 | sed 's/^/    /'
+    git status --short 2>/dev/null | head -20 | sed 's/^/    /' || true
     echo "    Recent commits:"
-    git log --oneline -5 2>/dev/null | sed 's/^/      /'
+    git log --oneline -5 2>/dev/null | sed 's/^/      /' || true
     echo "    Branches:"
-    git branch -a 2>/dev/null | sed 's/^/      /'
+    git branch -a 2>/dev/null | sed 's/^/      /' || true
   done
 
   echo "--- .gitignore Coverage ---"

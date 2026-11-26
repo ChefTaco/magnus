@@ -73,7 +73,7 @@ MANAGERS=()
 if [[ -r "$CONFIG" ]]; then
   while IFS= read -r manager; do
     [[ -n "$manager" ]] && MANAGERS+=("$manager")
-  done < <(sed -n 's|.*<address>[[:space:]]*\([^<[:space:]]*\)[[:space:]]*</address>.*|\1|p' "$CONFIG" | sort -u)
+  done < <(sed -n 's|.*<address>[[:space:]]*\([^<[:space:]]*\)[[:space:]]*</address>.*|\1|p' "$CONFIG" | sort -u) || true
 fi
 echo "Managers: ${MANAGERS[*]:-none configured}"
 

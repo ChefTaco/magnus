@@ -189,13 +189,13 @@ if [[ $VERBOSE -ge 2 ]]; then
     CPU=$(echo "$freq_file" | grep -oP 'cpu\K\d+' || true)
     FREQ=$(($(cat "$freq_file") / 1000))
     echo "  cpu$CPU: ${FREQ} MHz"
-  done | head -32
+  done | head -32 || true
 fi
 
 # ── Full dump (verbose 3) ──
 if [[ $VERBOSE -ge 3 ]]; then
   echo "--- /proc/cpuinfo (freq fields) ---"
-  grep -i "model name\|cpu mhz\|bogomips" /proc/cpuinfo 2>/dev/null | sort -u | sed 's/^/  /'
+  grep -i "model name\|cpu mhz\|bogomips" /proc/cpuinfo 2>/dev/null | sort -u | sed 's/^/  /' || true
 
   echo "--- Runtime PM Stats ---"
   for dev in /sys/bus/pci/devices/*/power/runtime_status; do
@@ -203,7 +203,7 @@ if [[ $VERBOSE -ge 3 ]]; then
     DEVID=$(echo "$dev" | grep -oP '/\K[^/]+(?=/power)' || true)
     STATUS=$(cat "$dev" 2>/dev/null)
     echo "  $DEVID: $STATUS"
-  done 2>/dev/null | head -20
+  done 2>/dev/null | head -20 || true
 
   echo "--- Kernel Power Parameters ---"
   cat /sys/module/*/parameters/*power* 2>/dev/null | head -10 | sed 's/^/  /' || echo "  none"

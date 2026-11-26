@@ -81,7 +81,7 @@ if [[ $VERBOSE -ge 1 ]]; then
 
   echo "--- APT History ---"
   if [[ -f /var/log/apt/history.log ]]; then
-    tail -20 /var/log/apt/history.log | sed 's/^/  /'
+    tail -20 /var/log/apt/history.log | sed 's/^/  /' || true
   else
     echo "  No APT history"
   fi

@@ -65,7 +65,7 @@ if command -v ufw &>/dev/null; then
   if [[ $VERBOSE -ge 1 ]]; then
     echo "--- UFW App Profiles ---"
     ufw app list 2>/dev/null | sed 's/^/  /' || true
-    log_v1 "Default incoming: $(ufw status verbose 2>/dev/null | grep 'Default:' | head -1)"
+    log_v1 "Default incoming: $(ufw status verbose 2>/dev/null | grep 'Default:' | head -1)" || true
   fi
 
   if [[ $VERBOSE -ge 2 ]]; then
@@ -88,7 +88,7 @@ fi
 
 echo "--- Open Ports (no firewall rule) ---"
 LISTENING=$(ss -tlnp 2>/dev/null | awk 'NR>1 {print $4}' | grep -oP ':\K\d+' | sort -un || true)
-echo "  Listening: $(echo "$LISTENING" | tr '\n' ' ')"
+echo "  Listening: $(echo "$LISTENING" | tr '\n' ' ')" || true
 
 if [[ $VERBOSE -ge 2 ]]; then
   echo "--- Port Details ---"

@@ -130,7 +130,7 @@ if [[ $VERBOSE -ge 2 ]]; then
     LINES=$(grep -cEv '^\s*#|^\s*$' "$f" 2>/dev/null || echo 0)
     if [[ $LINES -gt 0 ]]; then
       echo "  $f ($LINES settings):"
-      grep -Ev '^\s*#|^\s*$' "$f" 2>/dev/null | sed 's/^/    /'
+      grep -Ev '^\s*#|^\s*$' "$f" 2>/dev/null | sed 's/^/    /' || true
     fi
   done
 fi
@@ -138,6 +138,6 @@ fi
 # ── Full dump (verbose 3) ──
 if [[ $VERBOSE -ge 3 ]]; then
   echo "--- Full Sysctl Dump ---"
-  sysctl -a 2>/dev/null | sort | head -200
+  sysctl -a 2>/dev/null | sort | head -200 || true
   echo "  ... (truncated at 200 lines)"
 fi

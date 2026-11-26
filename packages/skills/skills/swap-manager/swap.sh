@@ -52,7 +52,7 @@ free -h 2>/dev/null || free -m 2>/dev/null
 
 echo "--- Swap Devices ---"
 if swapon --show 2>/dev/null | grep -q .; then
-  swapon --show 2>/dev/null | sed 's/^/  /'
+  swapon --show 2>/dev/null | sed 's/^/  /' || true
 else
   echo "  No swap devices active"
 fi
@@ -96,7 +96,7 @@ if [[ $VERBOSE -ge 1 ]]; then
   if [[ -d /sys/block/zram0 ]]; then
     echo "  ✓ zram0 detected"
     echo "  Algorithm: $(cat /sys/block/zram0/comp_algorithm 2>/dev/null | grep -oP '\[\K[^\]]+' || echo 'unknown')"
-    echo "  Disk size: $(cat /sys/block/zram0/disksize 2>/dev/null | awk '{printf "%.0f MB", $1/1024/1024}')"
+    echo "  Disk size: $(cat /sys/block/zram0/disksize 2>/dev/null | awk '{printf "%.0f MB", $1/1024/1024}')" || true
     ORIG=$(cat /sys/block/zram0/mm_stat 2>/dev/null | awk '{print $1}' || echo 0)
     COMPR=$(cat /sys/block/zram0/mm_stat 2>/dev/null | awk '{print $2}' || echo 0)
     if [[ $ORIG -gt 0 && $COMPR -gt 0 ]]; then
@@ -125,12 +125,12 @@ if [[ $VERBOSE -ge 1 ]]; then
   echo "  Total OOM events in journal: $OOM_COUNT"
   if [[ "$OOM_COUNT" -gt 0 ]]; then
     echo "  Recent OOM kills:"
-    journalctl --no-pager -k 2>/dev/null | grep -i "out of memory\|oom-kill\|killed process" | tail -5 | sed 's/^/    /'
+    journalctl --no-pager -k 2>/dev/null | grep -i "out of memory\|oom-kill\|killed process" | tail -5 | sed 's/^/    /' || true
   fi
 
   echo "--- Memory Pressure (PSI) ---"
   if [[ -f /proc/pressure/memory ]]; then
-    cat /proc/pressure/memory | sed 's/^/  /'
+    cat /proc/pressure/memory | sed 's/^/  /' || true
   else
     echo "  PSI not available (kernel < 4.20 or CONFIG_PSI=n)"
   fi
@@ -147,7 +147,7 @@ if [[ $VERBOSE -ge 2 ]]; then
       COMM=$(cat "$pid/comm" 2>/dev/null || echo "?")
       echo "  $(basename "$pid")  ${SWAP_KB}  $COMM"
     fi
-  done 2>/dev/null | sort -t' ' -k2 -rn | head -15
+  done 2>/dev/null | sort -t' ' -k2 -rn | head -15 || true
 
   echo "--- Recommendations ---"
   if [[ $SWAP_TOTAL -eq 0 ]]; then
@@ -169,7 +169,7 @@ fi
 # ── Full dump (verbose 3) ──
 if [[ $VERBOSE -ge 3 ]]; then
   echo "--- /proc/meminfo ---"
-  cat /proc/meminfo | sed 's/^/  /'
+  cat /proc/meminfo | sed 's/^/  /' || true
 
   echo "--- Swap fstab entries ---"
   grep -i swap /etc/fstab 2>/dev/null | sed 's/^/  /' || echo "  No swap in fstab"

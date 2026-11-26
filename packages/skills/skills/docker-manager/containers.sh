@@ -72,12 +72,12 @@ STOPPED=$((TOTAL - RUNNING))
 echo "  Running: $RUNNING | Stopped: $STOPPED | Total: $TOTAL"
 
 if [[ $RUNNING -gt 0 ]]; then
-  docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Image}}\t{{.Ports}}" 2>/dev/null | head -20
+  docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Image}}\t{{.Ports}}" 2>/dev/null | head -20 || true
 fi
 
 if [[ $STOPPED -gt 0 ]]; then
   echo "  Stopped containers:"
-  docker ps -a --filter "status=exited" --format "  {{.Names}} ({{.Status}})" 2>/dev/null | head -10
+  docker ps -a --filter "status=exited" --format "  {{.Names}} ({{.Status}})" 2>/dev/null | head -10 || true
 fi
 
 # ── Container stats (verbose 1+) ──
@@ -93,7 +93,7 @@ DANGLING=$(docker images -f "dangling=true" -q 2>/dev/null | wc -l || true)
 echo "  Total: $IMAGE_COUNT | Dangling: $DANGLING"
 
 if [[ $VERBOSE -ge 1 ]]; then
-  docker images --format "  {{.Repository}}:{{.Tag}} ({{.Size}}, {{.CreatedSince}})" 2>/dev/null | head -15
+  docker images --format "  {{.Repository}}:{{.Tag}} ({{.Size}}, {{.CreatedSince}})" 2>/dev/null | head -15 || true
 fi
 
 if [[ $DANGLING -gt 0 ]]; then
@@ -108,7 +108,7 @@ DANGLING_VOLS=$(docker volume ls -f "dangling=true" -q 2>/dev/null | wc -l || tr
 echo "  Total: $VOL_COUNT | Unused: $DANGLING_VOLS"
 
 if [[ $VERBOSE -ge 2 ]]; then
-  docker volume ls --format "  {{.Name}} ({{.Driver}})" 2>/dev/null | head -15
+  docker volume ls --format "  {{.Name}} ({{.Driver}})" 2>/dev/null | head -15 || true
 fi
 
 if [[ $DANGLING_VOLS -gt 0 ]]; then

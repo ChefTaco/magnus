@@ -49,7 +49,7 @@ done
 echo "=== Mount Inspector ==="
 
 echo "--- Mount Summary ---"
-echo "  Total mounts: $(findmnt --noheadings 2>/dev/null | wc -l)"
+echo "  Total mounts: $(findmnt --noheadings 2>/dev/null | wc -l)" || true
 echo "  Filesystem types:"
 findmnt --noheadings -o FSTYPE 2>/dev/null | sort | uniq -c | sort -rn | sed 's/^/    /' || mount | awk '{print $5}' | sort | uniq -c | sort -rn | sed 's/^/    /'
 
@@ -156,7 +156,7 @@ if [[ $VERBOSE -ge 2 ]]; then
   echo "--- Overlay Mounts ---"
   OVERLAYS=$(findmnt -t overlay --noheadings -o TARGET,SOURCE,OPTIONS 2>/dev/null || true)
   if [[ -n "$OVERLAYS" ]]; then
-    echo "$OVERLAYS" | head -10 | sed 's/^/  /'
+    echo "$OVERLAYS" | head -10 | sed 's/^/  /' || true
   else
     echo "  none"
   fi
@@ -168,7 +168,7 @@ if [[ $VERBOSE -ge 3 ]]; then
   findmnt --output TARGET,SOURCE,FSTYPE,OPTIONS 2>/dev/null | sed 's/^/  /' || mount | sed 's/^/  /'
 
   echo "--- /etc/fstab ---"
-  cat /etc/fstab 2>/dev/null | sed 's/^/  /'
+  cat /etc/fstab 2>/dev/null | sed 's/^/  /' || true
 
   echo "--- Mount Namespace Info ---"
   ls -la /proc/self/ns/mnt 2>/dev/null | sed 's/^/  /' || true

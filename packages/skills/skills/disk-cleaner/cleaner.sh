@@ -57,9 +57,9 @@ echo "=== Disk Cleaner ==="
 echo "Critical threshold: ${THRESHOLD}%"
 
 echo "--- Current Usage ---"
-df -h --output=target,pcent,avail,size | head -15
+df -h --output=target,pcent,avail,size | head -15 || true
 # Flag any partition over threshold
-df --output=target,pcent 2>/dev/null | awk -v thresh="$THRESHOLD" 'NR>1 {gsub(/%/,"",$2); if ($2+0 >= thresh+0) print "  ⚠ " $1 " at " $2 "%"}'
+df --output=target,pcent 2>/dev/null | awk -v thresh="$THRESHOLD" 'NR>1 {gsub(/%/,"",$2); if ($2+0 >= thresh+0) print "  ⚠ " $1 " at " $2 "%"}' || true
 
 echo "--- Temp Files (> 7 days) ---"
 COUNT=$(find /tmp /var/tmp -type f -mtime +7 2>/dev/null | wc -l || true)
@@ -99,7 +99,7 @@ if command -v snap &>/dev/null; then
   if [[ $DISABLED -gt 0 ]]; then
     echo "  ⚠ $DISABLED disabled snap revision(s) can be removed"
     if [[ $VERBOSE -ge 1 ]]; then
-      snap list --all 2>/dev/null | awk '/disabled/ {print "    " $1, "rev", $3}'
+      snap list --all 2>/dev/null | awk '/disabled/ {print "    " $1, "rev", $3}' || true
     fi
   fi
 fi

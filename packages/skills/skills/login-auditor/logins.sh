@@ -61,9 +61,9 @@ FAILED_COUNT=$(journalctl --no-pager --since "24h ago" 2>/dev/null | grep -ci "f
 echo "  Count: $FAILED_COUNT"
 if [[ "$FAILED_COUNT" -gt 0 ]]; then
   echo "  Top source IPs:"
-  journalctl --no-pager --since "24h ago" 2>/dev/null | grep -i "failed password" | grep -oP 'from \K[\d.]+' | sort | uniq -c | sort -rn | head -10 | sed 's/^/    /'
+  journalctl --no-pager --since "24h ago" 2>/dev/null | grep -i "failed password" | grep -oP 'from \K[\d.]+' | sort | uniq -c | sort -rn | head -10 | sed 's/^/    /' || true
   echo "  Top targeted users:"
-  journalctl --no-pager --since "24h ago" 2>/dev/null | grep -i "failed password\|invalid user" | grep -oP '(user |for )\K\S+' | sort | uniq -c | sort -rn | head -10 | sed 's/^/    /'
+  journalctl --no-pager --since "24h ago" 2>/dev/null | grep -i "failed password\|invalid user" | grep -oP '(user |for )\K\S+' | sort | uniq -c | sort -rn | head -10 | sed 's/^/    /' || true
 fi
 
 echo "--- Last Login Per User ---"
@@ -85,9 +85,9 @@ if [[ $VERBOSE -ge 1 ]]; then
   echo "  Total sudo invocations: $SUDO_COUNT"
   if [[ "$SUDO_COUNT" -gt 0 ]]; then
     echo "  By user:"
-    journalctl --no-pager --since "24h ago" 2>/dev/null | grep "sudo:" | grep -oP '^\S+ \S+ \S+ \S+ sudo:\s+\K\S+' | sort | uniq -c | sort -rn | head -10 | sed 's/^/    /'
+    journalctl --no-pager --since "24h ago" 2>/dev/null | grep "sudo:" | grep -oP '^\S+ \S+ \S+ \S+ sudo:\s+\K\S+' | sort | uniq -c | sort -rn | head -10 | sed 's/^/    /' || true
     echo "  Recent commands:"
-    journalctl --no-pager --since "24h ago" 2>/dev/null | grep "sudo:" | grep "COMMAND=" | tail -10 | sed 's/^/    /'
+    journalctl --no-pager --since "24h ago" 2>/dev/null | grep "sudo:" | grep "COMMAND=" | tail -10 | sed 's/^/    /' || true
   fi
 
   echo "--- SSH Key Authentication ---"

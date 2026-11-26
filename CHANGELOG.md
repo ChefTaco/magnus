@@ -310,7 +310,8 @@ All notable changes to this project are documented in this file. The format is b
 - **Skill scripts no longer abort when not run as root.** Under `set -euo pipefail`, an assignment
   such as `COUNT=$(find … | wc -l)` stopped the whole script when `find`, `du`, `findmnt` or `grep`
   hit a directory it could not read or found nothing (disk-cleaner, security-auditor, cron-manager,
-  package-manager, update-manager, mount-inspector and others). Report-only probes now tolerate that;
+  package-manager, update-manager, mount-inspector and others), and so did a report pipeline whose
+  `grep` matched nothing or whose `head` closed it early. Report-only probes now tolerate that;
   backup checksums and the news-reporter prompt filter still fail closed.
 - **Skill entry points exit 2 on an unknown flag** (usage on stderr) instead of printing usage and
   exiting 0. The disk-cleaner manifest now says it reports and deletes nothing.

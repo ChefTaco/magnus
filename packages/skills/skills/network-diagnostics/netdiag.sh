@@ -80,7 +80,7 @@ if [[ $VERBOSE -ge 1 ]]; then
   if command -v resolvectl &>/dev/null; then
     resolvectl status 2>/dev/null | grep -E 'DNS Servers|DNS Domain|DNSSEC|Current' | head -10 | sed 's/^/  /' || true
   elif [[ -f /etc/resolv.conf ]]; then
-    grep nameserver /etc/resolv.conf | sed 's/^/  /'
+    grep nameserver /etc/resolv.conf | sed 's/^/  /' || true
   fi
 fi
 

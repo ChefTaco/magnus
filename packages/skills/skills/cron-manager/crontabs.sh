@@ -110,7 +110,7 @@ if command -v atq &>/dev/null; then
   AT_JOBS=$(atq 2>/dev/null | wc -l || true)
   echo "  Pending at jobs: $AT_JOBS"
   if [[ $VERBOSE -ge 1 && $AT_JOBS -gt 0 ]]; then
-    atq 2>/dev/null | head -10 | sed 's/^/    /'
+    atq 2>/dev/null | head -10 | sed 's/^/    /' || true
   fi
 else
   echo "  at not installed"

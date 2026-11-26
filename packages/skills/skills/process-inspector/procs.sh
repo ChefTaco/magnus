@@ -49,32 +49,32 @@ done
 echo "=== Process Inspector ==="
 
 echo "--- Top CPU Consumers ---"
-ps aux --sort=-%cpu | head -11
+ps aux --sort=-%cpu | head -11 || true
 
 echo "--- Top Memory Consumers ---"
-ps aux --sort=-%mem | head -11
+ps aux --sort=-%mem | head -11 || true
 
 echo "--- Zombie Processes ---"
 ZOMBIES=$(ps aux | awk '$8 ~ /Z/ {print $2, $11}' || true)
 if [[ -n "$ZOMBIES" ]]; then
-  echo "$ZOMBIES" | sed 's/^/  /'
+  echo "$ZOMBIES" | sed 's/^/  /' || true
 else
   echo "  None"
 fi
 
 echo "--- Process Count ---"
-echo "  Total: $(ps aux | wc -l)"
-echo "  Unique: $(ps -eo comm --no-headers | sort -u | wc -l)"
+echo "  Total: $(ps aux | wc -l)" || true
+echo "  Unique: $(ps -eo comm --no-headers | sort -u | wc -l)" || true
 
 echo "--- Open File Descriptors (top 10) ---"
 if command -v lsof &>/dev/null; then
-  lsof 2>/dev/null | awk '{print $1}' | sort | uniq -c | sort -rn | head -10 | sed 's/^/  /'
+  lsof 2>/dev/null | awk '{print $1}' | sort | uniq -c | sort -rn | head -10 | sed 's/^/  /' || true
 else
   for pid in /proc/[0-9]*; do
     name=$(cat "$pid/comm" 2>/dev/null) || continue
     count=$(ls "$pid/fd" 2>/dev/null | wc -l) || continue
     echo "$count $name"
-  done | sort -rn | head -10 | sed 's/^/  /'
+  done | sort -rn | head -10 | sed 's/^/  /' || true
 fi
 
 # ── Systemd slices (verbose 1+) ──
@@ -83,7 +83,7 @@ if [[ $VERBOSE -ge 1 ]]; then
   systemd-cgtop -n 1 --batch 2>/dev/null | head -15 | sed 's/^/  /' || echo "  systemd-cgtop unavailable"
 
   echo "--- Long-Running Processes (> 24h) ---"
-  ps -eo pid,etime,comm --sort=-etime 2>/dev/null | head -11 | sed 's/^/  /'
+  ps -eo pid,etime,comm --sort=-etime 2>/dev/null | head -11 | sed 's/^/  /' || true
 fi
 
 # ── Cgroup details (verbose 2+) ──
@@ -98,5 +98,5 @@ fi
 # ── Full listing (verbose 3) ──
 if [[ $VERBOSE -ge 3 ]]; then
   echo "--- Full Process List ---"
-  ps auxf 2>/dev/null | head -60 | sed 's/^/  /'
+  ps auxf 2>/dev/null | head -60 | sed 's/^/  /' || true
 fi

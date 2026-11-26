@@ -90,7 +90,7 @@ for dir in "${CERT_DIRS[@]}"; do
       openssl verify "$cert" 2>/dev/null | sed 's/^/      /' || true
     fi
     if [[ $VERBOSE -ge 3 ]]; then
-      openssl x509 -text -noout -in "$cert" 2>/dev/null | sed 's/^/      /'
+      openssl x509 -text -noout -in "$cert" 2>/dev/null | sed 's/^/      /' || true
     fi
   done || true
 done
