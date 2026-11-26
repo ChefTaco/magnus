@@ -50,7 +50,7 @@
     "@hivemagnus/hive-common": "^0.7.0",
     "@hivemagnus/magnus-oathweave": "3.4.1",
     "@hono/node-server": "^2.1.11",
-    "hono": "4.13.19",
+    "hono": "4.13.21",
     "jose": "^6.2.18",
     "ssh2": "^1.17.0",
     "zod": "^4.6.7"
