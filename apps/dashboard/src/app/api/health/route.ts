@@ -8,11 +8,16 @@ import { dashboardCredentialDiagnostics } from '../../../../runtime-dashboard-cr
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-/** A signed-in administrator, or null. Errors count as signed out. */
-async function signedIn(): Promise<boolean> {
+/**
+ * A local console administrator. Named (Hive) sessions, whatever their role, and viewers or
+ * operators do not get the configuration details: the same rule `src/proxy.ts` applies to the
+ * console's own host-administration routes. Errors count as signed out.
+ */
+async function localAdministrator(): Promise<boolean> {
   try {
     const token = (await cookies()).get(COOKIE_NAME)?.value;
-    return token ? Boolean(await verifySessionToken(token)) : false;
+    const session = token ? await verifySessionToken(token) : null;
+    return Boolean(session && session.provider !== 'hive' && (session.role ?? 'ADMIN') === 'ADMIN');
   } catch {
     return false;
   }
@@ -21,7 +26,7 @@ async function signedIn(): Promise<boolean> {
 /**
  * GET /api/health is public (load balancers, the container health check), so it answers only
  * `status`. How the console is configured (login source, SSH, credential metadata, the session
- * secret source) goes only to a signed-in administrator. A credential misconfiguration is
+ * secret source) goes only to a local administrator session. A credential misconfiguration is
  * `unhealthy` with 503, never an unhandled 500.
  */
 export async function GET(): Promise<NextResponse> {
@@ -38,7 +43,7 @@ export async function GET(): Promise<NextResponse> {
   const healthy = session.configured && credentialsValid;
   const degraded = session.legacyFallbackActive || securityEvents.droppedEvents > 0;
   const status = healthy ? (degraded ? 'degraded' : 'healthy') : 'unhealthy';
-  const body = await signedIn()
+  const body = await localAdministrator()
     ? { status, diagnostics: { sessionSecret: session, dashboardCredentials, hermesSecurityEvents: securityEvents } }
     : { status };
   return NextResponse.json(body, { status: healthy ? 200 : 503, headers: { 'Cache-Control': 'no-store' } });

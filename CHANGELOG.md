@@ -143,7 +143,8 @@ All notable changes to this project are documented in this file. The format is b
   listed reverse proxy to the client in its `X-Forwarded-For`, so clients behind a proxy no longer
   share one source bucket. **Upgrade note:** set it when the console runs behind a reverse proxy.
 - **Console `/api/health` answers only its status to anonymous callers.** The login source, SSH and
-  credential metadata and the session-secret source are returned only to a signed-in administrator,
+  credential metadata and the session-secret source are returned only to a local administrator session
+  (not to viewers, operators or named Hive sessions),
   and misconfigured credentials give `unhealthy` (503) instead of an unhandled 500.
 
 ### Fixed

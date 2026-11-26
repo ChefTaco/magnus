@@ -30,12 +30,21 @@ describe('GET /api/health', () => {
     expect(await response.json()).toEqual({ status: 'healthy' });
   });
 
-  it('adds the diagnostics for a signed-in administrator', async () => {
+  it('adds the diagnostics for a local administrator session', async () => {
     mocks.cookie = 'signed-session';
     mocks.verifySessionToken.mockResolvedValue({ username: 'admin' });
     const body = await (await GET()).json();
     expect(body.diagnostics.dashboardCredentials).toMatchObject({ loginSource: 'dashboard-admin-password', sshConfigured: true });
     expect(body.diagnostics.sessionSecret).toMatchObject({ source: 'SESSION_SECRET' });
+  });
+
+  it('answers only the status to viewers, operators and named (Hive) sessions', async () => {
+    mocks.cookie = 'signed-session';
+    for (const session of [{ username: 'viewer', role: 'VIEWER' }, { username: 'operator', role: 'OPERATOR' },
+      { username: 'alice', role: 'VIEWER', provider: 'hive' }, { username: 'bob', role: 'ADMIN', provider: 'hive' }]) {
+      mocks.verifySessionToken.mockResolvedValue(session);
+      expect(await (await GET()).json(), session.username).toEqual({ status: 'healthy' });
+    }
   });
 
   it('reports misconfigured credentials as unhealthy 503 instead of throwing', async () => {
