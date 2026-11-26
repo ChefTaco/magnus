@@ -7,6 +7,11 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Fixed
+
+- Magnus reports the manager address for Wazuh 5 agents configured with an endpoint. Legacy Wazuh
+  agent configurations still report their server addresses.
+
 ## [3.4.1] - 2026-11-26
 
 The code of 3.4.0, published with container images. The 3.4.0 npm packages are on npm, but its
