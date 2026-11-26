@@ -86,6 +86,7 @@ export type AuditAction =
   | 'agent.lease.recovered'
   | 'application.canary'
   | 'storage.investigate'
+  | 'node.profile'
   | 'maintenance.create'
   | 'maintenance.cancel'
   | 'incident.lesson.publish'

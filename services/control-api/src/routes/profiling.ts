@@ -1,11 +1,15 @@
 import { z } from 'zod';
 import { Hono } from 'hono'
 import type { AppVariables } from '../types/index.js'
-import { authMiddleware, requireRole } from '../middleware/auth.js'
+import { authMiddleware, getUser, requireRole } from '../middleware/auth.js'
 import { getDb } from '../db/index.js'
 import { HttpError } from '../middleware/error-handler.js'
 import { agentFetch } from '../services/node-agent-auth.js'
 import { SENTINEL_NODE_IDS } from '../utils/sentinel-nodes.js'
+import { logAuditEvent } from '../services/audit-service.js'
+
+/** The agent's profiling endpoints. `type` selects one; without it the agent returns all of them. */
+const profileTypeSchema = z.enum(['heap', 'cpu', 'process'])
 
 export const profilingRouter = new Hono<AppVariables>()
 profilingRouter.use('*', authMiddleware)
@@ -19,14 +23,19 @@ profilingRouter.get('/:nodeId', requireRole('ADMIN', 'OPERATOR'), async (c) => {
   const node = await db.node.findUnique({ where: { id: z.string().min(1).parse(c.req.param('nodeId')) } })
   if (!node) throw new HttpError(404, 'NOT_FOUND', 'Node not found')
 
-  const type = c.req.query('type') // heap, cpu, process, or undefined for full
+  const rawType = c.req.query('type')
+  const parsedType = rawType === undefined || rawType === '' ? undefined : profileTypeSchema.safeParse(rawType)
+  if (parsedType && !parsedType.success) throw new HttpError(400, 'VALIDATION_ERROR', 'type must be heap, cpu or process')
+  const type = parsedType?.data
   const path = type ? `/api/v1/profiling/${type}` : '/api/v1/profiling'
 
   const agentUrl = `https://${node.ipAddress}:${node.port}${path}`
+  await logAuditEvent({ action: 'node.profile', actorId: getUser(c).userId, targetType: 'node', targetId: node.id, details: { type: type ?? 'full', readOnly: true } })
 
   try {
     const res = await agentFetch({ nodeId: node.id }, agentUrl, {
       signal: AbortSignal.timeout(10_000),
+      redirect: 'error',
     })
 
     if (!res.ok) {
@@ -64,6 +73,7 @@ profilingRouter.get('/', requireRole('ADMIN', 'OPERATOR'), async (c) => {
     nodes.map(async (node) => {
       const res = await agentFetch({ nodeId: node.id }, `https://${node.ipAddress}:${node.port}/api/v1/profiling`, {
         signal: AbortSignal.timeout(10_000),
+        redirect: 'error',
       })
 
       if (!res.ok) return { nodeId: node.id, nodeName: node.name, error: `Agent returned ${res.status}` }
