@@ -37,7 +37,13 @@ export interface AuthRateLimitStore {
 }
 
 export interface AuthPermit {
+  /** False when the source or source+username budget is spent: refuse before checking the password. */
   allowed: boolean;
+  /**
+   * The username's budget across all sources is spent. Only a wrong password is refused then, so
+   * anonymous attempts from elsewhere cannot lock the administrator out.
+   */
+  usernameLimited: boolean;
   retryAfterSeconds: number;
   sourceLabel: string;
   usernameLabel: string;
@@ -77,7 +83,7 @@ export function createAuthProtection(
     try {
       const slot = Number(await store.eval(ACQUIRE_SCRIPT, 1, concurrencyKey, MAX_CONCURRENT_AUTH, 30_000));
       if (slot <= 0) {
-        return permit(false, 1);
+        return permit(false, 1, false);
       }
       acquired = true;
       const rawCounts = await store.eval(ATTEMPT_SCRIPT, 3, sourceKey, usernameKey, pairKey, WINDOW_MS);
@@ -86,18 +92,20 @@ export function createAuthProtection(
       const [sourceCount, usernameCount, pairCount] = counts as [number, number, number];
       const delayMs = pairCount <= 1 ? 0 : Math.min(MAX_DELAY_MS, 250 * (2 ** (pairCount - 2)));
       if (delayMs > 0) await sleep(delayMs);
-      const allowed = sourceCount <= SOURCE_LIMIT && usernameCount <= USERNAME_LIMIT && pairCount <= PAIR_LIMIT;
-      return permit(allowed, allowed ? 0 : Math.ceil(WINDOW_MS / 1000));
+      const allowed = sourceCount <= SOURCE_LIMIT && pairCount <= PAIR_LIMIT;
+      const usernameLimited = usernameCount > USERNAME_LIMIT;
+      return permit(allowed, allowed && !usernameLimited ? 0 : Math.ceil(WINDOW_MS / 1000), usernameLimited);
     } catch (error) {
       if (acquired) await store.eval(RELEASE_SCRIPT, 1, concurrencyKey).catch(() => undefined);
       console.error('[dashboard-auth] durable admission control unavailable');
       throw error;
     }
 
-    function permit(allowed: boolean, retryAfterSeconds: number): AuthPermit {
+    function permit(allowed: boolean, retryAfterSeconds: number, usernameLimited: boolean): AuthPermit {
       let released = !acquired;
       return {
         allowed,
+        usernameLimited,
         retryAfterSeconds,
         sourceLabel,
         usernameLabel,

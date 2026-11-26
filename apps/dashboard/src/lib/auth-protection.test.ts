@@ -48,6 +48,20 @@ describe('dashboard authentication protection', () => {
     expect(store.concurrency).toBe(0);
   });
 
+  it('marks the username budget spent without refusing the attempt outright', async () => {
+    const store = new FakeStore();
+    const begin = createAuthProtection(store, async () => undefined);
+    // Eleven different sources each try the administrator once: the 11th exceeds the username budget.
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const permit = await begin(`198.51.100.${attempt + 1}`, 'admin');
+      expect(permit).toMatchObject({ allowed: true, usernameLimited: false });
+      await permit.release();
+    }
+    const limited = await begin('203.0.113.50', 'admin');
+    expect(limited).toMatchObject({ allowed: true, usernameLimited: true, retryAfterSeconds: 900 });
+    await limited.release();
+  });
+
   it('clears only pair and username state after success, preserving source pressure', async () => {
     const store = new FakeStore();
     const permit = await createAuthProtection(store, async () => undefined)('198.51.100.8', 'admin');

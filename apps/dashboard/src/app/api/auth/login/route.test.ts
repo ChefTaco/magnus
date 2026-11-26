@@ -41,6 +41,7 @@ describe('POST /api/auth/login', () => {
     mocks.createSessionToken.mockResolvedValue('signed-session');
     mocks.beginAuthentication.mockResolvedValue({
       allowed: true,
+      usernameLimited: false,
       retryAfterSeconds: 0,
       clearSuccessfulPair: mocks.clearSuccessfulPair,
       release: mocks.release,
@@ -72,6 +73,18 @@ describe('POST /api/auth/login', () => {
     expect(response.status).toBe(429);
     expect(response.headers.get('retry-after')).toBe('900');
     expect(mocks.validateCredentials).not.toHaveBeenCalled();
+  });
+
+  it('lets the correct password through a spent username budget but throttles a wrong one', async () => {
+    const limited = { allowed: true, usernameLimited: true, retryAfterSeconds: 900, release: mocks.release, clearSuccessfulPair: mocks.clearSuccessfulPair };
+    mocks.beginAuthentication.mockResolvedValue(limited);
+    const wrong = await POST(request({ username: 'admin', password: 'wrong' }));
+    expect(wrong.status).toBe(429);
+    expect(wrong.headers.get('retry-after')).toBe('900');
+    mocks.validateCredentials.mockResolvedValue(true);
+    const right = await POST(request({ username: 'admin', password: 'correct' }));
+    expect(right.status).toBe(200);
+    expect(mocks.clearSuccessfulPair).toHaveBeenCalledOnce();
   });
 
   it('fails closed when Redis admission is unavailable', async () => {

@@ -57,6 +57,14 @@ export async function POST(req: Request): Promise<NextResponse> {
     }
 
     if (!(await validateCredentials(username, password))) {
+      // Past the username's cross-source budget a wrong password is throttled; a correct one
+      // still signs in, so anonymous attempts cannot keep the administrator locked out.
+      if (permit.usernameLimited) {
+        return await respond(NextResponse.json(
+          { error: 'Too many login attempts. Try again later.' },
+          { status: 429, headers: { 'Retry-After': String(permit.retryAfterSeconds) } },
+        ));
+      }
       return await respond(NextResponse.json({ error: 'Invalid credentials' }, { status: 401 }));
     }
 

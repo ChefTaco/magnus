@@ -40,6 +40,7 @@ import {
   websocketOriginAllowed,
 } from './runtime-hermes-security.mjs';
 import { readDashboardEnvironment, validateDashboardEnvironment } from './runtime-environment.mjs';
+import { parseTrustedProxies, resolveClientAddress } from './runtime-client-address.mjs';
 import { recordHermesSecurityEvent } from './runtime-hermes-security-events.mjs';
 import { resolveSessionSecret, sessionSecretDiagnostics } from './runtime-session-secret.mjs';
 import { dashboardCredentialDiagnostics, resolveDashboardSshCredentials } from './runtime-dashboard-credentials.mjs';
@@ -449,14 +450,19 @@ function attachHermesWebSocketBridge(server) {
   });
 }
 
+// Reverse proxies whose X-Forwarded-For is believed (DASHBOARD_TRUSTED_PROXIES); fail fast on a typo.
+const trustedProxies = parseTrustedProxies(process.env.DASHBOARD_TRUSTED_PROXIES);
+if (trustedProxies.errors.length) throw new Error(trustedProxies.errors.join('; '));
+
 // Patch http.createServer — Next.js standalone calls this to start listening
 const _orig = http.createServer.bind(http);
 http.createServer = (optOrHandler, maybeHandler) => {
   const handler = typeof optOrHandler === 'function' ? optOrHandler : maybeHandler;
   const normalizedHandler = (req, res) => {
     // This is the trusted edge for the standalone dashboard. Discard any
-    // caller-provided forwarding chain and rebuild it from the peer socket.
-    const address = req.socket?.remoteAddress ?? 'unverified';
+    // caller-provided forwarding chain and rebuild it from the peer socket,
+    // or from a listed trusted proxy's X-Forwarded-For.
+    const address = resolveClientAddress(req.socket?.remoteAddress, req.headers['x-forwarded-for'], trustedProxies.list);
     delete req.headers['forwarded'];
     delete req.headers['x-forwarded-for'];
     delete req.headers['x-real-ip'];
