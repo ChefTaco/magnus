@@ -9,6 +9,11 @@ import { Hono } from 'hono';
 import type { AppVariables } from '../types/index.js';
 import { authMiddleware, requireRole } from '../middleware/auth.js';
 import { scanTopology, type TopologyMap } from '../services/topology-service.js';
+import { z } from 'zod';
+import { HttpError } from '../middleware/error-handler.js';
+import { parseInput } from '../utils/validate.js';
+
+const topologyScanSchema = z.object({ probeTimeoutMs: z.number().int().min(1).max(15_000).optional() });
 
 export const topologyRouter = new Hono<AppVariables>();
 
@@ -36,7 +41,11 @@ topologyRouter.get('/', async (c) => {
  * Force a fresh topology scan (invalidates cache).
  */
 topologyRouter.post('/scan', requireRole('ADMIN', 'OPERATOR'), async (c) => {
-  const body = await c.req.json<{ probeTimeoutMs?: number }>().catch(() => ({} as { probeTimeoutMs?: number }));
+  // An empty body keeps the default; a probe timeout is bounded so one scan cannot hang for minutes.
+  const raw = await c.req.text();
+  let parsed: unknown = {};
+  try { if (raw.trim()) parsed = JSON.parse(raw); } catch { throw new HttpError(400, 'VALIDATION_ERROR', 'Request body must be valid JSON'); }
+  const body = parseInput(parsed, topologyScanSchema);
   cachedTopology = await scanTopology(body.probeTimeoutMs ?? 3000);
   cacheExpiry = Date.now() + CACHE_TTL_MS;
   return c.json({ success: true, data: cachedTopology });

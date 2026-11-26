@@ -13,6 +13,39 @@ import {
   deleteAlertRule,
   listAlertViolations,
 } from '../services/alert-service.js';
+import { z } from 'zod';
+import { parseBody } from '../utils/validate.js';
+
+const alertRuleFields = {
+  name: z.string().trim().min(1, 'name is required').max(200),
+  metric: z.enum(['cpu', 'memory', 'disk', 'swap', 'gpu_fan']),
+  operator: z.enum(['gt', 'gte', 'lt', 'lte', 'eq']),
+  threshold: z.number().finite(),
+  durationSeconds: z.number().int().min(0).max(7 * 24 * 3600),
+  severity: z.enum(['info', 'warning', 'critical']),
+  nodeFilter: z.string().trim().min(1).max(1000),
+  cooldownMinutes: z.number().int().min(0).max(7 * 24 * 60),
+};
+const alertRuleCreateSchema = z.object({
+  ...alertRuleFields,
+  durationSeconds: alertRuleFields.durationSeconds.optional(),
+  severity: alertRuleFields.severity.optional(),
+  nodeFilter: alertRuleFields.nodeFilter.optional(),
+  cooldownMinutes: alertRuleFields.cooldownMinutes.optional(),
+});
+const alertRuleUpdateSchema = z.object({
+  name: alertRuleFields.name.optional(), metric: alertRuleFields.metric.optional(), operator: alertRuleFields.operator.optional(),
+  threshold: alertRuleFields.threshold.optional(), durationSeconds: alertRuleFields.durationSeconds.optional(),
+  severity: alertRuleFields.severity.optional(), nodeFilter: alertRuleFields.nodeFilter.optional(),
+  active: z.boolean().optional(), cooldownMinutes: alertRuleFields.cooldownMinutes.optional(),
+});
+
+/** Drop keys a client left out, so `Object.keys(body)` lists only the fields it changed. */
+type Defined<T> = { [K in keyof T as undefined extends T[K] ? never : K]: T[K] }
+  & { [K in keyof T as undefined extends T[K] ? K : never]?: Exclude<T[K], undefined> };
+function stripUndefined<T extends Record<string, unknown>>(value: T): Defined<T> {
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as Defined<T>;
+}
 
 export const alertsRouter = new Hono<AppVariables>();
 
@@ -33,30 +66,7 @@ alertsRouter.get('/rules/:id', async (c) => {
 
 // ── Create an alert rule (ADMIN only) ──
 alertsRouter.post('/rules', requireRole('ADMIN'), async (c) => {
-  const body = await c.req.json<{
-    name: string;
-    metric: string;
-    operator: string;
-    threshold: number;
-    durationSeconds?: number;
-    severity?: string;
-    nodeFilter?: string;
-    cooldownMinutes?: number;
-  }>();
-
-  if (!body.name || !body.metric || !body.operator || body.threshold === undefined) {
-    throw new HttpError(400, 'VALIDATION_ERROR', 'name, metric, operator, and threshold are required');
-  }
-
-  const validMetrics = ['cpu', 'memory', 'disk', 'swap', 'gpu_fan'];
-  if (!validMetrics.includes(body.metric)) {
-    throw new HttpError(400, 'VALIDATION_ERROR', `metric must be one of: ${validMetrics.join(', ')}`);
-  }
-
-  const validOperators = ['gt', 'gte', 'lt', 'lte', 'eq'];
-  if (!validOperators.includes(body.operator)) {
-    throw new HttpError(400, 'VALIDATION_ERROR', `operator must be one of: ${validOperators.join(', ')}`);
-  }
+  const body = stripUndefined(await parseBody(c, alertRuleCreateSchema));
 
   const user = c.get('user');
   const rule = await createAlertRule({
@@ -75,17 +85,7 @@ alertsRouter.patch('/rules/:id', requireRole('ADMIN'), async (c) => {
   const existing = await getAlertRule(id);
   if (!existing) throw new HttpError(404, 'NOT_FOUND', 'Alert rule not found');
 
-  const body = await c.req.json<Partial<{
-    name: string;
-    metric: string;
-    operator: string;
-    threshold: number;
-    durationSeconds: number;
-    severity: string;
-    nodeFilter: string;
-    active: boolean;
-    cooldownMinutes: number;
-  }>>();
+  const body = stripUndefined(await parseBody(c, alertRuleUpdateSchema));
 
   const rule = await updateAlertRule(id, body);
   await logAuditEvent({ action: 'alert.rule.update', actorId: getUser(c).userId, targetType: 'alert-rule',

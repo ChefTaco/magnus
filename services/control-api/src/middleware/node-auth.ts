@@ -40,6 +40,11 @@ export function nodeAuthOf(c: Context): NodeAuthContext {
   return context;
 }
 
+/** True when this request passed node authentication (signature or shared secret). */
+export function isNodeAuthenticated(c: Context): boolean {
+  return contexts.has(c.req.raw);
+}
+
 function refuse(code: string, message: string, status = 401): never {
   throw new HttpError(status, code, message);
 }

@@ -13,6 +13,7 @@ const counters = {
   securityExportFailures: 0,
   httpRequestsTotal: 0,
   httpErrorsTotal: 0,
+  httpUnauthenticatedRejectionsTotal: 0,
   commandsDispatched: 0,
   commandsCompleted: 0,
   commandsFailed: 0,
