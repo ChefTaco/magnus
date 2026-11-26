@@ -580,8 +580,9 @@ On each node, the upgrade goes like this:
 2. The agent downloads that tarball and refuses it if the integrity differs. It then installs it into
    `versions/<X>` and runs `npm audit signatures` (`MAGNUS_AGENT_UPGRADE_REQUIRE_PROVENANCE`).
 3. The agent checks that the new version starts, points `./current` at it, and exits.
-4. The launcher starts the new version on trial. The trial passes when the new version reports one
-   accepted heartbeat within `MAGNUS_AGENT_UPGRADE_CONFIRM_SECONDS` (default 180).
+4. The launcher starts the new version on trial. The trial passes when, within
+   `MAGNUS_AGENT_UPGRADE_CONFIRM_SECONDS` (default 180), the new version reports an accepted heartbeat
+   and a signed probe of its own `GET /api/v1/health/check` over its listener reports the new version.
 5. If the new version crashes twice or stays silent past the deadline, the launcher points `./current`
    back at the previous version and restarts it. The node then shows **Upgrade reverted**, with the
    reason.

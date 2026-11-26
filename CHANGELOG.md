@@ -103,6 +103,12 @@ All notable changes to this project are documented in this file. The format is b
   response carries `backupPath`. The agent advertises this as `features.restrictedFileWrite: 1` on
   `GET /api/v1/ping`. **Upgrade note:** upgrade agents before the Control API; a Control API that
   relies on this refuses file writes to older agents (409) until they are upgraded.
+- **Agent self-upgrades are confirmed only when the agent's own API answers.** A version on trial
+  was confirmed by its first accepted heartbeat, which is outbound, so a version with a broken
+  listener or TLS setup was kept and could then not be reached. It is now confirmed only after a
+  signed probe of its own `GET /api/v1/health/check` over the real listener reports the new version
+  (loopback by default, or `MAGNUS_AGENT_SELF_URL` with full certificate checks). Otherwise the
+  launcher reverts it when the confirm window ends.
 
 ### Fixed
 

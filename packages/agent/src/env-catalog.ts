@@ -31,8 +31,8 @@ export const DEFAULT_PORT = 4100;
 export const agentEnvCatalog: EnvVarSpec[] = [
   { name: 'MAGNUS_EMBERMEND_CONFIG', required: false, secret: false, group: 'runtime', description: 'Absolute root-controlled mode-0600 Embermend resource and security-package allowlist. Unconfigured nodes advertise no actions.' },
   { name: 'MAGNUS_AGENT_HIVESKILLS_TARGETS_JSON', required: false, secret: false, group: 'skills', description: 'Optional target -> exact registryId, owner, home, hermesHome, envFile, syncScript, nodeBinary and optional caFile mapping for native HiveSkills jobs; protected credentials stay on the host.' },
-  { name: 'MAGNUS_AGENT_SELF_URL', required: false, secret: false, group: 'runtime', description: 'Verified HTTPS origin of this running agent for the acceptance command. No credentials, path or query.' },
-  { name: 'MAGNUS_AGENT_SELF_CA_PATH', required: false, secret: false, group: 'tls', description: 'Optional private CA bundle for the agent acceptance endpoint. Certificate verification remains mandatory.' },
+  { name: 'MAGNUS_AGENT_SELF_URL', required: false, secret: false, group: 'runtime', description: 'Verified HTTPS origin of this running agent for the acceptance command and the self-upgrade self-probe (which otherwise uses loopback). No credentials, path or query.' },
+  { name: 'MAGNUS_AGENT_SELF_CA_PATH', required: false, secret: false, group: 'tls', description: 'Optional private CA bundle for MAGNUS_AGENT_SELF_URL (acceptance and the self-upgrade self-probe). Certificate verification remains mandatory.' },
   { name: 'MAGNUS_SECURITY_RESPONSE_ENABLED', required: false, secret: false, default: 'false', group: 'runtime', description: 'Opt in to the narrowly registered managed Cindertrace response endpoint.' },
   { name: 'MAGNUS_SECURITY_CONTAINMENT_COMMAND', required: false, secret: false, group: 'runtime', description: 'Absolute path of a root-owned, non-writable containment helper; no default.' },
   { name: 'CONTROL_API_URL', required: true, secret: false, group: 'core', description: 'Base URL of the magnus-server Control API this node enrolls with, for example https://magnus.example.com:4000.' },
