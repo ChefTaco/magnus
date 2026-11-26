@@ -157,7 +157,7 @@ Each upgrade goes through these steps:
    **before** the database is touched. A failing or crashing check stops the upgrade here.
 8. If the database has pending migrations, dumps it into `backups/` with `pg_dump -Fc`, checks the
    dump with `pg_restore --list`, and migrates. Old dumps are pruned to the newest five
-   (`keepBackups` in `magnus-project.json`); the newest dump of each upgrade step always stays.
+   (`keepBackups` in `magnus-project.json`); the dump this upgrade's rollback restores always stays.
 9. Switches `./current`, restarts the services and waits until the new version answers health
    checks and reports itself as running. Health checks verify the certificate in each component's
    `TLS_CERT_PATH`; on an address of this machine, a missing or non-matching certificate does not
