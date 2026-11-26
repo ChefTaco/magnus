@@ -186,6 +186,13 @@ All notable changes to this project are documented in this file. The format is b
   despite a changed host key), `SSH_HOST_KEYS_FILE`, `TERMINAL_AUDIT_DIR`,
   `DASHBOARD_DEPENDENCY_TIMEOUT_MS`, `LOCAL_SESSION_GENERATION` and the test-only
   `MAGNUS_CONTROL_NODES_CONFIG_DIR`.
+- **One definition of the shared contract shapes.** `@hivemagnus/magnus-contracts` exported
+  `apiErrorSchema`, `dependencyHealthSchema`, `fleetReadinessNodeSchema`, `incidentSummarySchema` and
+  `timelineItemSchema` twice, with different shapes. The root entry point now re-exports the browser
+  contract's definitions, which match what the server sends: `error.code` is optional and
+  `error.details` is kept, `timelineItem.type` is an enum and `node` may be null, and the readiness
+  node and incident summary carry their full fields. **Upgrade note:** TypeScript consumers of the
+  root entry point see the narrower or wider types.
 - `docs/PUBLISHING.md` now describes how images are built, scanned and tagged (prereleases get their
   `X.Y.Z-<pre>` tag).
 
