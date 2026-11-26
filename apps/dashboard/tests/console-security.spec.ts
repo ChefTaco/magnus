@@ -16,7 +16,8 @@ test('the console refuses cross-site state changes and announces login errors', 
   await page.getByLabel('Username').fill('ci-admin');
   await page.getByLabel('Password', { exact: true }).fill('not-the-password');
   await page.getByRole('button', { name: 'Sign In', exact: true }).click();
-  await expect(page.getByRole('alert')).toContainText('Invalid credentials');
+  // Next.js adds its own (empty) route-announcer alert; pick the login error by its text.
+  await expect(page.getByRole('alert').filter({ hasText: 'Invalid credentials' })).toBeVisible();
 
   await page.getByLabel('Password', { exact: true }).fill('ci-only-browser-password');
   await page.getByRole('button', { name: 'Sign In', exact: true }).click();
