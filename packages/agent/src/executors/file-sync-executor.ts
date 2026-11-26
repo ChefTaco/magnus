@@ -1,7 +1,7 @@
 import { Hono, type Context } from 'hono';
 import { execFile } from 'node:child_process';
 import { constants, realpathSync } from 'node:fs';
-import { lstat, mkdir, open, realpath, rename, rm } from 'node:fs/promises';
+import { lstat, mkdir, open, realpath, rename, rm, type FileHandle } from 'node:fs/promises';
 import { basename, dirname, join, resolve, normalize, sep } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import { promisify } from 'node:util';
@@ -106,69 +106,155 @@ async function accountId(kind: 'passwd' | 'group', value: string): Promise<numbe
 }
 class UnknownAccountError extends Error {}
 
+/** Test hooks: run at the two race windows of a write, so a test can swap the directory there. */
+export const fileWriteRaceHooks: { afterCheck?: () => Promise<void>; beforeRename?: () => Promise<void> } = {};
+
+/** A path component another account could replace: a write through it is refused, nothing written. */
+class UnsafePathError extends FileWriteConflictError {}
+
+interface DirectoryIdentity { dev: number; ino: number }
+
 /**
- * Replace `target` atomically: write a temporary file in the same directory
- * (O_EXCL|O_NOFOLLOW), fsync it, then rename it over the target. A crash
- * leaves either the old or the new content, and a symlink planted at the
- * target after the check is replaced rather than followed. The existing
- * file's mode and owner are kept unless the request names new ones.
+ * Walks `directory` from / with lstat: every component must be a real directory (no symlink),
+ * owned by a trusted account (root, this agent, or the account that owns or will own the file),
+ * and not writable by every account unless sticky (like /tmp). Group write is not judged (Debian's
+ * /usr/local is group-writable by staff). No untrusted account can then swap a component between
+ * the check and the write. Returns the directory's identity.
  */
-async function atomicWrite(target: string, content: string, options: { mode?: number; uid?: number; gid?: number; backup?: boolean }): Promise<{ backupPath: string | null }> {
-  const parent = dirname(target);
-  // The directory checked must still be the directory written to.
-  if (await realpath(parent) !== parent) throw new FileWriteConflictError('Path changed while it was being written');
-  const existing = await lstat(target).catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return null; throw error; });
-  if (existing && !existing.isFile()) throw new FileWriteConflictError('Target is not a regular file');
-  const backupPath = options.backup && existing ? await backupCopy(target) : null;
-  const mode = options.mode ?? (existing ? existing.mode & 0o7777 : 0o600);
-  const uid = options.uid ?? existing?.uid; const gid = options.gid ?? existing?.gid;
-  const temporary = join(parent, `.${basename(target).slice(0, 200)}.magnus-${randomBytes(6).toString('hex')}.tmp`);
-  const handle = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-  let renamed = false;
-  try {
-    await handle.writeFile(content, 'utf-8');
-    if (uid !== undefined || gid !== undefined) {
-      const own = await handle.stat();
-      if ((uid ?? own.uid) !== own.uid || (gid ?? own.gid) !== own.gid) {
-        await handle.chown(uid ?? own.uid, gid ?? own.gid).catch((error: NodeJS.ErrnoException) => {
-          if (error.code === 'EPERM') throw new FileWriteConflictError('The file belongs to another account and this agent cannot keep its owner; nothing was written');
-          throw error;
-        });
-      }
-    }
-    await handle.chmod(mode);
-    await handle.sync();
-    await handle.close();
-    await rename(temporary, target);
-    renamed = true;
-    const directory = await open(parent, constants.O_RDONLY | constants.O_DIRECTORY);
-    try { await directory.sync(); } catch { /* some filesystems refuse directory fsync */ } finally { await directory.close(); }
-  } finally {
-    if (!renamed) { await handle.close().catch(() => {}); await rm(temporary, { force: true }); }
+async function verifyDirectory(directory: string, trusted: ReadonlySet<number>): Promise<DirectoryIdentity> {
+  let current: string = sep;
+  let info = await lstat(current);
+  for (const part of ['', ...directory.split(sep).filter(Boolean)]) {
+    if (part) { current = join(current, part); info = await lstat(current); }
+    if (info.isSymbolicLink() || !info.isDirectory()) throw new FileWriteConflictError(`Path component ${current} is not a plain directory`);
+    if (!trusted.has(info.uid)) throw new UnsafePathError(`${current} belongs to another account; nothing was written`);
+    if ((info.mode & 0o002) && !(info.mode & 0o1000)) throw new UnsafePathError(`${current} is writable by every account; nothing was written`);
   }
-  return { backupPath };
+  return { dev: info.dev, ino: info.ino };
 }
 
 /**
- * Copy the current target to `<target>.magnus-backup.<timestamp>` in the same
- * (already checked) directory, keeping mode, owner and times like `cp -p`.
- * The source is opened without following a symlink, and the copy is written to
- * an exclusive temporary file, synced and renamed into place, so neither end
- * can be redirected. A failed backup stops the write.
+ * The directory a write was checked against, held open. `confirm()` proves, immediately before
+ * and after each rename, that the path still names that same directory, through trusted
+ * components and inside the allowed roots. Node has no openat/renameat, so the renames still go
+ * by path; these checks (and the ownership rule above) make a swap fail instead of redirecting.
  */
-async function backupCopy(target: string): Promise<string> {
+class VerifiedDirectory {
+  private constructor(readonly path: string, private readonly identity: DirectoryIdentity,
+    private readonly handle: FileHandle, private readonly trusted: ReadonlySet<number>) {}
+
+  static async open(path: string, trusted: ReadonlySet<number>): Promise<VerifiedDirectory> {
+    const identity = await verifyDirectory(path, trusted);
+    const handle = await open(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW)
+      .catch((error: NodeJS.ErrnoException) => { throw ['ELOOP', 'ENOTDIR', 'ENOENT'].includes(error.code ?? '') ? new FileWriteConflictError('Path changed while it was being written') : error; });
+    const directory = new VerifiedDirectory(path, identity, handle, trusted);
+    try { await directory.confirm(); } catch (error) { await handle.close(); throw error; }
+    return directory;
+  }
+
+  async confirm(): Promise<void> {
+    const opened = await this.handle.stat();
+    const now = await verifyDirectory(this.path, this.trusted).catch((error: unknown) => {
+      if (error instanceof FileWriteConflictError) throw error;
+      throw new FileWriteConflictError('Path changed while it was being written');
+    });
+    const real = await realpath(this.path).catch(() => '');
+    if (opened.dev !== this.identity.dev || opened.ino !== this.identity.ino || now.dev !== this.identity.dev
+      || now.ino !== this.identity.ino || real !== this.path || blockedReason(real) !== null)
+      throw new FileWriteConflictError('Path changed while it was being written');
+  }
+
+  /** Same inode as `expected` at `name` in this directory, right now. */
+  async holds(name: string, expected: DirectoryIdentity): Promise<boolean> {
+    const info = await lstat(join(this.path, name)).catch(() => null);
+    return Boolean(info && info.dev === expected.dev && info.ino === expected.ino);
+  }
+
+  async sync(): Promise<void> { try { await this.handle.sync(); } catch { /* some filesystems refuse directory fsync */ } }
+  async close(): Promise<void> { await this.handle.close().catch(() => {}); }
+}
+
+/** Write `content` to a new exclusive file in `directory`, then rename it to `name`, verified on both sides. */
+async function exclusiveReplace(directory: VerifiedDirectory, name: string, temporaryName: string,
+  fill: (handle: FileHandle) => Promise<void>): Promise<void> {
+  const temporary = join(directory.path, temporaryName);
+  const handle = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+  const created = await handle.stat();
+  let renamed = false;
+  try {
+    await fill(handle);
+    await handle.sync();
+    await handle.close();
+    await fileWriteRaceHooks.beforeRename?.();
+    await directory.confirm();
+    await rename(temporary, join(directory.path, name));
+    renamed = true;
+    if (!(await directory.holds(name, created))) throw new FileWriteConflictError('Path changed while it was being written');
+    await directory.confirm();
+    await directory.sync();
+  } catch (error) {
+    // Remove only our own file, wherever the path now leads.
+    if (renamed && await directory.holds(name, created)) await rm(join(directory.path, name), { force: true });
+    if (!renamed && await directory.holds(temporaryName, created)) await rm(temporary, { force: true });
+    throw error;
+  } finally {
+    await handle.close().catch(() => {});
+  }
+}
+
+/**
+ * Replace `target` atomically: write an exclusive temporary file (O_EXCL|O_NOFOLLOW) in the
+ * verified directory, fsync it, then rename it over the target. A crash leaves either the old or
+ * the new content, a symlink planted at the target is replaced rather than followed, and a swap
+ * of the directory or any component refuses the write. The existing file's mode and owner are
+ * kept unless the request names new ones.
+ */
+async function atomicWrite(target: string, content: string, options: { mode?: number; uid?: number; gid?: number; backup?: boolean }): Promise<{ backupPath: string | null }> {
+  const parent = dirname(target); const name = basename(target);
+  const existing = await lstat(target).catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return null; throw error; });
+  if (existing && !existing.isFile()) throw new FileWriteConflictError('Target is not a regular file');
+  const trusted = new Set([0, process.geteuid?.() ?? 0, ...(existing ? [existing.uid] : []), ...(options.uid !== undefined ? [options.uid] : [])]);
+  const directory = await VerifiedDirectory.open(parent, trusted);
+  try {
+    await fileWriteRaceHooks.afterCheck?.();
+    await directory.confirm();
+    const backupPath = options.backup && existing ? await backupCopy(directory, name) : null;
+    const mode = options.mode ?? (existing ? existing.mode & 0o7777 : 0o600);
+    const uid = options.uid ?? existing?.uid; const gid = options.gid ?? existing?.gid;
+    await exclusiveReplace(directory, name, `.${name.slice(0, 200)}.magnus-${randomBytes(6).toString('hex')}.tmp`, async (handle) => {
+      await handle.writeFile(content, 'utf-8');
+      if (uid !== undefined || gid !== undefined) {
+        const own = await handle.stat();
+        if ((uid ?? own.uid) !== own.uid || (gid ?? own.gid) !== own.gid) {
+          await handle.chown(uid ?? own.uid, gid ?? own.gid).catch((error: NodeJS.ErrnoException) => {
+            if (error.code === 'EPERM') throw new FileWriteConflictError('The file belongs to another account and this agent cannot keep its owner; nothing was written');
+            throw error;
+          });
+        }
+      }
+      await handle.chmod(mode);
+    });
+    return { backupPath };
+  } finally {
+    await directory.close();
+  }
+}
+
+/**
+ * Copy the current target to `<target>.magnus-backup.<timestamp>` in the same verified
+ * directory, keeping mode, owner and times like `cp -p`. The source is opened without following a
+ * symlink and must still be the file in that directory; the copy goes through the same verified
+ * exclusive-replace as the write. A failed backup stops the write.
+ */
+async function backupCopy(directory: VerifiedDirectory, name: string): Promise<string> {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const backupPath = join(dirname(target), `${basename(target).slice(0, 180)}.magnus-backup.${stamp}`);
-  const temporary = join(dirname(target), `.${basename(target).slice(0, 180)}.magnus-backup-${randomBytes(6).toString('hex')}.tmp`);
-  const source = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+  const backupName = `${name.slice(0, 180)}.magnus-backup.${stamp}`;
+  const source = await open(join(directory.path, name), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
     .catch((error: NodeJS.ErrnoException) => { throw error.code === 'ELOOP' ? new FileWriteConflictError('Path changed while it was being backed up') : error; });
-  let created = false;
   try {
     const info = await source.stat();
-    if (!info.isFile()) throw new FileWriteConflictError('Target is not a regular file');
-    const copy = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-    created = true;
-    try {
+    if (!info.isFile() || !(await directory.holds(name, info))) throw new FileWriteConflictError('Path changed while it was being backed up');
+    await exclusiveReplace(directory, backupName, `.${name.slice(0, 180)}.magnus-backup-${randomBytes(6).toString('hex')}.tmp`, async (copy) => {
       const buffer = Buffer.alloc(1024 * 1024);
       for (let position = 0; ;) {
         const { bytesRead } = await source.read(buffer, 0, buffer.length, position);
@@ -185,14 +271,8 @@ async function backupCopy(target: string): Promise<string> {
       }
       await copy.chmod(info.mode & 0o7777);
       await copy.utimes(info.atimeMs / 1000, info.mtimeMs / 1000);
-      await copy.sync();
-    } finally { await copy.close(); }
-    await rename(temporary, backupPath);
-    created = false;
-    return backupPath;
-  } catch (error) {
-    if (created) await rm(temporary, { force: true });
-    throw error;
+    });
+    return join(directory.path, backupName);
   } finally {
     await source.close();
   }
