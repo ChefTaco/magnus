@@ -42,14 +42,23 @@ test('rejects a service actor', async () => {
   await assert.rejects(verifier()(await mint({ actorType: 'SERVICE_ACCOUNT' })), refused('invalid_claims'));
 });
 
+// The skew tests pin the verifier's clock: a token minted against the wall clock could flip
+// once a second boundary passed between minting and verifying.
+const pinnedClock = (seconds) => ({ now: () => seconds * 1000 });
+
 test('allows no clock skew: a token expired one second ago is refused', async () => {
   const now = Math.floor(Date.now() / 1000);
-  await assert.rejects(verifier()(await mint({}, { issuedAt: now - 601, lifetime: 600 })), refused('expired'));
+  await assert.rejects(verifier(pinnedClock(now))(await mint({}, { issuedAt: now - 601, lifetime: 600 })), refused('expired'));
 });
 
 test('allows no clock skew: a token issued one second ahead is refused', async () => {
   const now = Math.floor(Date.now() / 1000);
-  await assert.rejects(verifier()(await mint({}, { issuedAt: now + 1, lifetime: 600 })), refused('not_yet_valid'));
+  await assert.rejects(verifier(pinnedClock(now))(await mint({}, { issuedAt: now + 1, lifetime: 600 })), refused('not_yet_valid'));
+});
+
+test('allows no clock skew: a token issued exactly now and expiring a second later is accepted', async () => {
+  const now = Math.floor(Date.now() / 1000);
+  assert.equal((await verifier(pinnedClock(now))(await mint({}, { issuedAt: now, lifetime: 1 }))).subject, 'alice-subject');
 });
 
 test('refuses a token living longer than fifteen minutes', async () => {
