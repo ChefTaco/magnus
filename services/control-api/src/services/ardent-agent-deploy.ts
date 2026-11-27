@@ -10,7 +10,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import YAML from 'yaml';
-import { agentPersonaSha256, ARDENT_INSTANCE_REF_ENV, ARDENT_MODEL_API_KEY_ENV, ardentAgentModelCredentialRequestSchema, ardentAgentOperationResumeRequestSchema, ARDENT_STUDIO_CAPABILITY, ardentInstanceRef, ardentAgentDeployRequestSchema, type ArdentCommandOwner, type ArdentFleetInstallation,
+import { agentPersonaSha256, ARDENT_INSTANCE_REF_ENV, ARDENT_MODEL_API_KEY_ENV, ardentAgentModelCredentialRequestSchema, ardentAgentOperationResumeRequestSchema, ardentAgentOperationSchema, ARDENT_STUDIO_CAPABILITY, ardentInstanceRef, ardentAgentDeployRequestSchema, type ArdentCommandOwner, type ArdentFleetInstallation,
   type ArdentSkillInstall, type ArdentSkillInstallResult, type ArdentSkillReceipts } from '@hivemagnus/magnus-contracts';
 import { getDb } from '../db/index.js';
 import { HttpError } from '../middleware/error-handler.js';
@@ -36,7 +36,8 @@ type StepName = 'profile-check' | 'profile-create' | 'service-start' | 'identity
   | 'hivemem-enroll' | 'extensions-install' | 'config-save' | 'skill-set' | 'skill-install' | 'service-restart' | 'ready-probe';
 type StepStatus = 'pending' | 'running' | 'succeeded' | 'skipped' | 'failed';
 interface Step { name: StepName; status: StepStatus; startedAt: string | null; finishedAt: string | null; receipt: Record<string, unknown> | null; error: string | null }
-type Kind = 'deploy' | 'hivemem' | 'definition' | 'model-credential';
+/** The operation kinds; the ardent_agent_operations kind check must allow every one (see its migrations). */
+type Kind = z.infer<typeof ardentAgentOperationSchema>['kind'];
 /**
  * What a definition install adds to New Agent: the definition's identity and digests, the runtime settings
  * New Agent does not set, the reviewed extensions and plugin specifiers, and the pinned skills. Persona texts

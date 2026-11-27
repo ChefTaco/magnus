@@ -1,0 +1,11 @@
+{
+  "summary": "New Agent and agent definition installs deliver the Emberpath client key an Emberpath alias model needs (emberpath_client_key, checked against Emberpath's model list, sent only to an explicit MAGNUS_ARDENT_EMBERPATH_URL, never stored), and POST /ardent/installations/:nodeId/profiles/:name/model-credential sets or rotates it on an existing agent. Both need node agents at studio level 6 (upgrade agents first) and a HiveXUI release after 0.14.0 for the key field. Wazuh 5 manager endpoint reporting. Ardent stays 3.5.1. One fast migration widens the Ardent operation kind check to model-credential.",
+  "breaking": false,
+  "minUpgradeFrom": "2.10.2",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": [
+    "20261127120000_ardent_agent_operation_model_credential_kind"
+  ]
+}
