@@ -7,6 +7,22 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Added
+
+- **Set Emberpath key on an existing agent.** `POST
+  /api/v1/ardent/installations/:nodeId/profiles/:name/model-credential` takes `{"emberpath_client_key":
+  "…"}` and sets or rotates the Emberpath client key of a running agent whose model is an Emberpath
+  alias at `MAGNUS_ARDENT_EMBERPATH_URL`, so agents created before New Agent delivered keys can be
+  repaired without editing their `.env` by hand. ADMIN, or a linked service identity acting for an
+  ADMIN. It checks the key as New Agent does (400 `EMBERPATH_KEY_REQUIRED`, 409
+  `EMBERPATH_NOT_EXPLICIT`, 409 `AGENT_UPGRADE_REQUIRED` below studio level 6, 422
+  `EMBERPATH_KEY_INVALID`, `EMBERPATH_KEY_FORBIDDEN` or `EMBERPATH_ALIAS_UNAVAILABLE`), refuses a
+  profile whose model is not such an alias (409 `MODEL_NOT_EMBERPATH`) or that is stopped (409
+  `PROFILE_NOT_RUNNING`), then runs an operation of the new kind `model-credential` that writes the key
+  through `model-credential-set`, sets `providers.llamacpp.api_key_env` and restarts the profile. The
+  start is audited as `ardent.agent.model-credential` without the key, which is never stored, logged
+  or returned.
+
 ### Fixed
 
 - **New Agent delivers the Emberpath client key an alias model needs.** An agent created with an
@@ -31,6 +47,8 @@ All notable changes to this project are documented in this file. The format is b
 - Clients of New Agent with an Emberpath alias (HiveXUI's New Agent wizard, definition installs) must
   send `emberpath_client_key`; requests without one are refused instead of creating an agent that
   cannot reach its model. Upgrade the node agents before creating such agents (studio level 6).
+- `ardentAgentOperationSchema.kind` gains `model-credential`; clients that list or show operations
+  should accept it.
 
 ## [3.4.1] - 2026-11-26
 

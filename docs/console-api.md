@@ -10,7 +10,7 @@ moved without updating it.
 
 | Class | Meaning | Rows | At the ingress |
 |---|---|---|---|
-| `browser` | A person's console drives it with a user token | 162 | Allow the exact method and path |
+| `browser` | A person's console drives it with a user token | 163 | Allow the exact method and path |
 | `machine` | Agents, services and integrations, with their own credentials | 86 | Deny |
 | `exclude` | Reachable with a user token, but no console needs it, or it was written for a server-side caller | 149 | Deny until a feature needs it and it is reviewed |
 | `retired` | Always answers 404 or 410 | 10 | Deny |
@@ -109,7 +109,8 @@ resources `status`, `profile`, `skills`, `memory/status`, `sessions`, `sessions/
 and `artifacts/imports/:id`, task streams, artifacts (also `artifacts/:sha256/content`) and agent operations, the dependency
 report `GET /api/v1/ardent/dependencies`, and, for an acting ADMIN, `config` and a profile's `definition`.
 For an acting ADMIN it may also validate and install agent definitions
-(`POST /api/v1/ardent/agent-definitions/validate` and `/install`). Of the profile actions it may run `session-open`, `task-submit`, `task-cancel`,
+(`POST /api/v1/ardent/agent-definitions/validate` and `/install`) and set an agent's Emberpath key
+(`POST …/profiles/:name/model-credential`). Of the profile actions it may run `session-open`, `task-submit`, `task-cancel`,
 `mission-submit`, `task-pause`, `task-resume`, `preview-submit`, `development-note`, `task-recovery` and `artifact-import`, and, for an
 acting ADMIN, `identity-save`, `skill-set`, `config-save` and `skill-install`. Everything else answers 403.
 `packages/contracts/src/ardent-service.ts` publishes these shapes.
@@ -117,7 +118,7 @@ acting ADMIN, `identity-save`, `skill-set`, `config-save` and `skill-install`. E
 The service names the person it acts for in `x-acting-subject`, their Oathweave subject. That subject
 must have exactly one person link on the service's issuer; the audit then names that person and
 records the service, client and subject in its details. `POST /api/v1/ardent/agents`,
-`POST /api/v1/ardent/agents/operations/:id/resume` and `POST …/profiles/:name/hivemem` need it, and
+`POST /api/v1/ardent/agents/operations/:id/resume`, `POST …/profiles/:name/hivemem` and `POST …/profiles/:name/model-credential` need it, and
 need that link's role to be `ADMIN`; otherwise they answer 403 `ACTING_ADMIN_REQUIRED`. The
 `preview-submit` and `development-note` actions need a linked subject of any role, or answer 403
 `ACTING_SUBJECT_REQUIRED`. An unlinked subject answers 403 `ACTING_SUBJECT_UNLINKED`. The ingress must forward `x-acting-subject` only from
@@ -403,6 +404,7 @@ unless these rows change. `POST /api/v1/hermes/deploy` is retired and always ans
 | GET | `/api/v1/ardent/installations/:nodeId/profiles/:name/artifacts/:artifactId` | browser | `user:ADMIN` |  |
 | GET | `/api/v1/ardent/installations/:nodeId/profiles/:name/artifacts/:artifactId/content` | browser | `user:ADMIN` |  |
 | POST | `/api/v1/ardent/installations/:nodeId/profiles/:name/hivemem` | browser | `user:ADMIN` | yes |
+| POST | `/api/v1/ardent/installations/:nodeId/profiles/:name/model-credential` | browser | `user:ADMIN` | yes |
 | GET | `/api/v1/ardent/installations/:nodeId/profiles/:name/tasks/:taskId/stream` | browser | `user:ADMIN` | yes Stream |
 | GET | `/api/v1/ardent/profiles` | browser | `user:ADMIN` |  |
 | GET | `/api/v1/assistant/conversations` | browser | `user:any` | yes |

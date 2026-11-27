@@ -16,7 +16,7 @@ import {
 } from '../schemas/shared-resource-lease.js';
 import { managedCronRegistrationSchema, schedulerSourceSettlementSchema } from '../schemas/managed-cron.js';
 import { legacyAdmissionRequestSchema, resourceClaimSchema } from '../security/managed-http.js';
-import { agentDefinitionExportSchema, agentDefinitionInstallRequestSchema, agentDefinitionPreflightSchema, agentDefinitionValidateRequestSchema, ardentAgentDeployRequestSchema, ardentAgentOperationResumeRequestSchema, ardentAgentOperationSchema, magnusObservationSchema, responseRequestSchema } from '@hivemagnus/magnus-contracts';
+import { agentDefinitionExportSchema, agentDefinitionInstallRequestSchema, agentDefinitionPreflightSchema, agentDefinitionValidateRequestSchema, ardentAgentDeployRequestSchema, ardentAgentModelCredentialRequestSchema, ardentAgentOperationResumeRequestSchema, ardentAgentOperationSchema, magnusObservationSchema, responseRequestSchema } from '@hivemagnus/magnus-contracts';
 import { ardentDependencySchema } from '@hivemagnus/magnus-contracts/browser';
 import { maintenanceSchema } from '../services/maintenance-service.js';
 import { rolloutInputSchema } from '../services/rollout-service.js';
@@ -3044,6 +3044,18 @@ const paths: Record<string, Record<string, unknown>> = {
       security: apiSecretAuth, parameters: [pp('nodeId', 'Managed node ID'), pp('name', 'Profile name')],
       responses: { 202: success('Operation started', { type: 'object', properties: { operationId: { type: 'string', format: 'uuid' } } }), 400: err400, 401: err401, 403: err403,
         409: { description: 'Another operation running, or the node agent must be upgraded' }, 503: { description: 'HiveMem enrollment not configured' } } },
+  },
+  '/ardent/installations/{nodeId}/profiles/{name}/model-credential': {
+    post: { tags: ['Magnus Ardent'], summary: 'Set or rotate the Emberpath client key of an existing Ardent profile',
+      description: 'Set Emberpath key. The profile must be running, and its model an Emberpath alias served by MAGNUS_ARDENT_EMBERPATH_URL (execution.backend llamacpp, providers.llamacpp.base_url that URL; the alias is providers.llamacpp.model). Magnus checks the key as New Agent does (GET <MAGNUS_ARDENT_EMBERPATH_URL>/models), then starts an operation (kind model-credential): profile-check, config-save (writes the key to the profile .env as ARDENT_LLAMA_API_KEY through the node agent action model-credential-set, studio level 6, and sets providers.llamacpp.api_key_env), service-restart (skipped when neither the key nor the configuration changed) and ready-probe. The key is held in server memory only until config-save, and never stored, audited, logged or returned; resume takes it again (409 EMBERPATH_KEY_REQUIRED) when it never reached the profile. ADMIN, or a service identity acting for an ADMIN.',
+      security: apiSecretAuth, parameters: [pp('nodeId', 'Managed node ID'), pp('name', 'Profile name')],
+      requestBody: { required: true, content: { 'application/json': { schema: zod(ardentAgentModelCredentialRequestSchema) } } },
+      responses: { 202: success('Operation started', { type: 'object', properties: { operationId: { type: 'string', format: 'uuid' } } }),
+        400: { description: 'Invalid request; EMBERPATH_KEY_REQUIRED (Emberpath key missing) without emberpath_client_key' }, 401: err401, 403: err403,
+        404: { description: 'Ardent profile not found' },
+        409: { description: 'EMBERPATH_NOT_EXPLICIT (MAGNUS_ARDENT_EMBERPATH_URL unset), MODEL_NOT_EMBERPATH (the model is not an Emberpath alias), PROFILE_NOT_RUNNING, AGENT_UPGRADE_REQUIRED (node agent below studio level 6), ARDENT_NOT_INSTALLED or OPERATION_RUNNING' },
+        422: { description: 'Emberpath refused the client key: EMBERPATH_KEY_INVALID (401), EMBERPATH_KEY_FORBIDDEN (403) or EMBERPATH_ALIAS_UNAVAILABLE (the key may not use the alias)' },
+        503: { description: 'EMBERPATH_UNAVAILABLE, or the node or its configuration could not be read' } } },
   },
   '/ardent/dependencies': {
     get: { tags: ['Magnus Ardent'], summary: 'Report how Magnus resolved the dependencies of its Ardent agents',

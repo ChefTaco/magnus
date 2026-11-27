@@ -1,5 +1,5 @@
 /**
- * New Agent and Enable HiveMem: durable, resumable operations that compose the
+ * New Agent, Enable HiveMem and Set Emberpath key: durable, resumable operations that compose the
  * node agent's existing Ardent actions. Each step is audited and leaves a
  * receipt; a failure stops the operation with every receipt kept, and resume
  * reruns only the steps that did not finish.
@@ -10,7 +10,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import YAML from 'yaml';
-import { agentPersonaSha256, ARDENT_INSTANCE_REF_ENV, ARDENT_MODEL_API_KEY_ENV, ardentAgentOperationResumeRequestSchema, ARDENT_STUDIO_CAPABILITY, ardentInstanceRef, ardentAgentDeployRequestSchema, type ArdentCommandOwner, type ArdentFleetInstallation,
+import { agentPersonaSha256, ARDENT_INSTANCE_REF_ENV, ARDENT_MODEL_API_KEY_ENV, ardentAgentModelCredentialRequestSchema, ardentAgentOperationResumeRequestSchema, ARDENT_STUDIO_CAPABILITY, ardentInstanceRef, ardentAgentDeployRequestSchema, type ArdentCommandOwner, type ArdentFleetInstallation,
   type ArdentSkillInstall, type ArdentSkillInstallResult, type ArdentSkillReceipts } from '@hivemagnus/magnus-contracts';
 import { getDb } from '../db/index.js';
 import { HttpError } from '../middleware/error-handler.js';
@@ -36,7 +36,7 @@ type StepName = 'profile-check' | 'profile-create' | 'service-start' | 'identity
   | 'hivemem-enroll' | 'extensions-install' | 'config-save' | 'skill-set' | 'skill-install' | 'service-restart' | 'ready-probe';
 type StepStatus = 'pending' | 'running' | 'succeeded' | 'skipped' | 'failed';
 interface Step { name: StepName; status: StepStatus; startedAt: string | null; finishedAt: string | null; receipt: Record<string, unknown> | null; error: string | null }
-type Kind = 'deploy' | 'hivemem' | 'definition';
+type Kind = 'deploy' | 'hivemem' | 'definition' | 'model-credential';
 /**
  * What a definition install adds to New Agent: the definition's identity and digests, the runtime settings
  * New Agent does not set, the reviewed extensions and plugin specifiers, and the pinned skills. Persona texts
@@ -51,12 +51,16 @@ export interface ArdentStoredDefinition {
 }
 /** The stored deploy input: never the Emberpath client key, which only this process's memory holds until it is delivered. */
 type DeployRequest = Omit<ArdentAgentDeployInput, 'apiPort' | 'emberpath_client_key'> & { apiPort: number; definition?: ArdentStoredDefinition };
-/** The stored request: the deploy input with its port resolved, or the profile for a backfill. */
-type StoredRequest = DeployRequest | { nodeId: string; profile: string; hivemem: true };
+/** Set Emberpath key on an existing agent: the profile and the alias its configuration names, never the key. */
+type ModelCredentialRequest = { nodeId: string; profile: string; modelCredential: { emberpath_alias: string } };
+/** The stored request: the deploy input with its port resolved, the profile for a backfill, or a key to set. */
+type StoredRequest = DeployRequest | { nodeId: string; profile: string; hivemem: true } | ModelCredentialRequest;
 
 export const ARDENT_DEPLOY_STEPS: readonly StepName[] = ['profile-create', 'service-start', 'identity-soul', 'identity-identity',
   'hivemem-enroll', 'config-save', 'skill-set', 'service-restart', 'ready-probe'];
 export const ARDENT_HIVEMEM_STEPS: readonly StepName[] = ['profile-check', 'hivemem-enroll', 'config-save', 'service-restart', 'ready-probe'];
+/** Set Emberpath key: config-save writes the key to the profile's .env and names it in the configuration; the restart activates it. */
+export const ARDENT_MODEL_CREDENTIAL_STEPS: readonly StepName[] = ['profile-check', 'config-save', 'service-restart', 'ready-probe'];
 /** New Agent for a definition: its reviewed extensions are checked before the configuration names them, and its skills install pinned. */
 export const ARDENT_DEFINITION_STEPS: readonly StepName[] = ['profile-create', 'service-start', 'identity-soul', 'identity-identity',
   'hivemem-enroll', 'extensions-install', 'config-save', 'skill-install', 'service-restart', 'ready-probe'];
@@ -160,12 +164,12 @@ interface Row { id: string; kind: string; nodeId: string; profile: string; statu
 
 /** The public view: steps and receipts, the request without its identity texts. */
 export function ardentOperationView(row: Row) {
-  const request = JSON.parse(row.requestJson) as Partial<DeployRequest>;
+  const request = JSON.parse(row.requestJson) as Partial<DeployRequest> & Partial<ModelCredentialRequest>;
   return {
     id: row.id, kind: row.kind as Kind, nodeId: row.nodeId, profile: row.profile,
     status: row.status as 'running' | 'succeeded' | 'failed', steps: JSON.parse(row.stepsJson) as Step[],
     error: row.error, createdBy: row.createdBy, attempts: row.attempts,
-    request: { apiPort: request.apiPort ?? null, model: request.model ?? null, skills: request.skills ?? [], hivemem: true,
+    request: { apiPort: request.apiPort ?? null, model: request.model ?? request.modelCredential ?? null, skills: request.skills ?? [], hivemem: true,
       artifacts_max_bytes: request.artifacts_max_bytes ?? null,
       definition: request.definition ? { name: request.definition.name, sha256: request.definition.sha256 } : null },
     createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(), completedAt: row.completedAt?.toISOString() ?? null,
@@ -181,7 +185,8 @@ export async function getArdentAgentOperation(id: string): Promise<ArdentOperati
 
 async function createOperation(kind: Kind, request: StoredRequest, actor: ArdentOperationActor): Promise<string> {
   const id = randomUUID();
-  const steps: Step[] = (kind === 'deploy' ? ARDENT_DEPLOY_STEPS : kind === 'definition' ? ARDENT_DEFINITION_STEPS : ARDENT_HIVEMEM_STEPS)
+  const steps: Step[] = (kind === 'deploy' ? ARDENT_DEPLOY_STEPS : kind === 'definition' ? ARDENT_DEFINITION_STEPS
+    : kind === 'model-credential' ? ARDENT_MODEL_CREDENTIAL_STEPS : ARDENT_HIVEMEM_STEPS)
     .map(name => ({ name, status: 'pending', startedAt: null, finishedAt: null, receipt: null, error: null }));
   try {
     await getDb().ardentAgentOperation.create({ data: { id, kind, nodeId: request.nodeId, profile: request.profile,
@@ -265,12 +270,70 @@ export async function startArdentHiveMemEnable(nodeId: string, profile: string, 
   return id;
 }
 
-/** The Emberpath alias of a New Agent operation whose config-save step has not yet delivered the client key, else undefined. */
+/**
+ * The base URLs an existing profile's model may name to count as served by `gateway` (with or without a final slash).
+ */
+function sameEndpoint(value: unknown, gateway: string): boolean {
+  if (typeof value !== 'string') return false;
+  const trim = (url: string) => url.replace(/\/+$/u, '');
+  try { return trim(new URL(value).toString()) === trim(gateway); } catch { return false; }
+}
+
+/**
+ * Set Emberpath key: set or rotate the Emberpath client key of an existing, running agent whose model is an alias
+ * served by MAGNUS_ARDENT_EMBERPATH_URL. The same checks as New Agent's key (400 EMBERPATH_KEY_REQUIRED, 409
+ * EMBERPATH_NOT_EXPLICIT, studio level 6, Emberpath's model list), then an operation that writes it to the
+ * profile's .env (model-credential-set), names it in providers.llamacpp.api_key_env and restarts the profile.
+ * The key is held in this process's memory only until config-save has delivered it; it is never stored or audited.
+ */
+export async function startArdentModelCredentialSet(nodeId: string, profile: string, raw: unknown, actor: ArdentOperationActor): Promise<string> {
+  if (raw && typeof raw === 'object' && !Array.isArray(raw) && (raw as Record<string, unknown>)['emberpath_client_key'] === undefined)
+    throw new HttpError(400, 'EMBERPATH_KEY_REQUIRED', EMBERPATH_KEY_MISSING);
+  const parsed = ardentAgentModelCredentialRequestSchema.safeParse(raw);
+  // The issues name the field and the rule, never the value.
+  if (!parsed.success) throw new HttpError(400, 'VALIDATION_ERROR', parsed.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; ').slice(0, 500));
+  const key = parsed.data.emberpath_client_key;
+  await deps.discover().catch(() => undefined);
+  const gateway = emberpathUrl();
+  if (!deps.emberpathExplicit()) throw new HttpError(409, 'EMBERPATH_NOT_EXPLICIT', EMBERPATH_KEY_NOT_EXPLICIT);
+  await deps.studio(nodeId, ARDENT_STUDIO_CAPABILITY.modelCredential);
+  const installation = await deps.installation(nodeId);
+  if (!installation.reachable) throw new HttpError(503, 'DEPENDENCY_UNAVAILABLE', installation.error ?? 'Ardent node unavailable');
+  if (!installation.installed) throw new HttpError(409, 'ARDENT_NOT_INSTALLED', 'Install the Ardent package on this node first');
+  const current = installation.profiles.find(item => item.id === profile);
+  if (!current) throw new HttpError(404, 'NOT_FOUND', 'Ardent profile not found');
+  if (!current.running) throw new HttpError(409, 'PROFILE_NOT_RUNNING', 'Start the Ardent profile before setting its Emberpath key');
+  let config: { text: string };
+  try { config = await deps.read<{ text: string }>(nodeId, profile, 'config'); }
+  catch { throw new HttpError(503, 'DEPENDENCY_UNAVAILABLE', 'The Ardent configuration could not be read'); }
+  let parsedConfig: { execution?: { backend?: unknown }; providers?: { llamacpp?: { base_url?: unknown; model?: unknown } } } | null;
+  try { parsedConfig = YAML.parse(config.text) as typeof parsedConfig; } catch { parsedConfig = null; }
+  const llamacpp = parsedConfig?.providers?.llamacpp;
+  const alias = typeof llamacpp?.model === 'string' ? llamacpp.model : undefined;
+  if (parsedConfig?.execution?.backend !== 'llamacpp' || alias === undefined || !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/u.test(alias) || !sameEndpoint(llamacpp?.base_url, gateway))
+    throw new HttpError(409, 'MODEL_NOT_EMBERPATH', 'This agent\'s model is not an Emberpath alias served by MAGNUS_ARDENT_EMBERPATH_URL '
+      + '(execution.backend llamacpp with providers.llamacpp.base_url set to it); an Emberpath client key would not reach its model');
+  const keyCheck = await deps.emberpathKey(gateway, key, alias);
+  const id = await createOperation('model-credential', { nodeId, profile, modelCredential: { emberpath_alias: alias } }, actor);
+  holdEmberpathClientKey(id, key);
+  await logAuditEvent({ action: 'ardent.agent.model-credential', actorId: actor.actorId, targetType: 'ardent-profile', targetId: `${nodeId}:${profile}`,
+    // Whether Emberpath accepted the key; never the key.
+    details: { operationId: id, model: { emberpath_alias: alias }, keyEnv: ARDENT_MODEL_API_KEY_ENV,
+      emberpathClientKey: keyCheck.checked ? 'checked' : `unchecked: ${keyCheck.reason}`, ...actor.details } });
+  launch(id);
+  return id;
+}
+
+const isModelCredential = (request: StoredRequest): request is ModelCredentialRequest => 'modelCredential' in request;
+
+/** The Emberpath alias of an operation whose config-save step has not yet delivered the client key, else undefined. */
 function aliasAwaitingKey(request: StoredRequest, steps: Step[]): string | undefined {
-  if (!isDeploy(request) || !('emberpath_alias' in request.model)) return undefined;
+  const alias = isModelCredential(request) ? request.modelCredential.emberpath_alias
+    : isDeploy(request) && 'emberpath_alias' in request.model ? request.model.emberpath_alias : undefined;
+  if (alias === undefined) return undefined;
   const config = steps.find(step => step.name === 'config-save');
   if (!config || config.status === 'succeeded' || config.status === 'skipped' || config.receipt?.['modelKeyConfigured'] === true) return undefined;
-  return request.model.emberpath_alias;
+  return alias;
 }
 
 /**
@@ -429,11 +492,40 @@ async function instanceRefStep(context: Context): Promise<Record<string, unknown
   return { instanceRef: value };
 }
 
+/**
+ * Write the held Emberpath client key to the profile's .env (model-credential-set), once: the receipt records that it
+ * did and whether the file changed, never the key, and the key leaves this process's memory as soon as it is delivered.
+ */
+async function deliverModelKey(context: Context): Promise<void> {
+  if (context.step.receipt?.['modelKeyConfigured'] === true) return;
+  const key = heldEmberpathClientKey(context.row.id);
+  if (key === undefined) throw new Error(`${EMBERPATH_KEY_MISSING}. This server no longer holds the key; resume the operation with emberpath_client_key`);
+  const result = await deps.action(context.row.nodeId, context.row.profile, 'model-credential-set', undefined, { api_key: key }) as { changed?: unknown } | undefined;
+  context.step.receipt = { ...context.step.receipt, modelKeyEnv: ARDENT_MODEL_API_KEY_ENV, modelKeyConfigured: true,
+    ...(typeof result?.changed === 'boolean' ? { modelKeyChanged: result.changed } : {}) };
+  await context.save();
+  releaseEmberpathClientKey(context.row.id);
+}
+
+/** Set Emberpath key's config-save: deliver the key, then point providers.llamacpp.api_key_env at it. Nothing else changes. */
+async function modelCredentialConfig(context: Context): Promise<Result> {
+  await deliverModelKey(context);
+  const config = await deps.read<{ revision: string; text: string }>(context.row.nodeId, context.row.profile, 'config');
+  const document = YAML.parseDocument(config.text, { uniqueKeys: true });
+  const previous = document.getIn(['providers', 'llamacpp', 'api_key_env']);
+  document.setIn(['providers', 'llamacpp', 'api_key_env'], ARDENT_MODEL_API_KEY_ENV);
+  const text = String(document);
+  const named = { previousKeyEnv: typeof previous === 'string' ? previous : null };
+  if (text === config.text) return { skipped: true, receipt: { revision: config.revision, unchanged: true, ...named } };
+  const saved = await deps.action(context.row.nodeId, context.row.profile, 'config-save', undefined, { text, revision: config.revision }) as { revision?: unknown };
+  return { receipt: { revision: typeof saved?.revision === 'string' ? saved.revision : null, activationRequired: true, ...named } };
+}
+
 const STEPS: Record<StepName, (context: Context) => Promise<Result>> = {
   'profile-check': async context => {
     const { installation, profile } = await profileOf(context);
     if (!profile) throw new Error('Ardent profile not found on the node');
-    if (!profile.running) throw new Error('Start the Ardent profile before enabling HiveMem');
+    if (!profile.running) throw new Error(isModelCredential(context.request) ? 'Start the Ardent profile before setting its Emberpath key' : 'Start the Ardent profile before enabling HiveMem');
     return { receipt: { apiPort: profile.apiPort, version: installation.version } };
   },
 
@@ -502,8 +594,9 @@ const STEPS: Record<StepName, (context: Context) => Promise<Result>> = {
   },
 
   'config-save': async context => {
-    const settings = deps.hivemem();
     const request = context.request;
+    if (isModelCredential(request)) return modelCredentialConfig(context);
+    const settings = deps.hivemem();
     const agentId = context.steps.find(step => step.name === 'hivemem-enroll')?.receipt?.['agentId'] as string | undefined;
     const config = await deps.read<{ revision: string; text: string }>(context.row.nodeId, context.row.profile, 'config');
     const document = YAML.parseDocument(config.text, { uniqueKeys: true });
@@ -514,15 +607,7 @@ const STEPS: Record<StepName, (context: Context) => Promise<Result>> = {
       document.setIn(['providers', 'llamacpp', 'base_url'], model.base_url);
       document.setIn(['providers', 'llamacpp', 'model'], model.model);
       if ('emberpath_alias' in request.model) {
-        // The Emberpath client key goes to the profile's .env first, from memory only; the receipt records that it did.
-        if (context.step.receipt?.['modelKeyConfigured'] !== true) {
-          const key = heldEmberpathClientKey(context.row.id);
-          if (key === undefined) throw new Error(`${EMBERPATH_KEY_MISSING}. This server no longer holds the key; resume the operation with emberpath_client_key`);
-          await deps.action(context.row.nodeId, context.row.profile, 'model-credential-set', undefined, { api_key: key });
-          context.step.receipt = { ...context.step.receipt, modelKeyEnv: ARDENT_MODEL_API_KEY_ENV, modelKeyConfigured: true };
-          await context.save();
-          releaseEmberpathClientKey(context.row.id);
-        }
+        await deliverModelKey(context);
         document.setIn(['providers', 'llamacpp', 'api_key_env'], ARDENT_MODEL_API_KEY_ENV);
       }
       // Ardent 2.2.0 added artifacts.max_bytes (default 2 MiB). A new agent gets the node agent's relay cap unless told otherwise.
@@ -595,6 +680,11 @@ const STEPS: Record<StepName, (context: Context) => Promise<Result>> = {
   },
 
   'service-restart': async context => {
+    if (isModelCredential(context.request)) {
+      // Nothing to activate when the profile already had this key under the name its configuration uses.
+      const config = context.steps.find(step => step.name === 'config-save')?.receipt;
+      if (config?.['modelKeyChanged'] === false && config['unchanged'] === true) return { skipped: true, receipt: { running: true, unchanged: true } };
+    }
     const result = await deps.action(context.row.nodeId, context.row.profile, 'service-restart') as { running?: unknown };
     return { receipt: { running: result?.running === true } };
   },
@@ -604,6 +694,8 @@ const STEPS: Record<StepName, (context: Context) => Promise<Result>> = {
     for (let attempt = 1; attempt <= 10; attempt++) {
       try {
         const status = await deps.read<{ version?: unknown; backend?: unknown }>(context.row.nodeId, context.row.profile, 'status');
+        // Set Emberpath key touches only the model; the agent may have no HiveMem at all.
+        if (isModelCredential(context.request)) return { receipt: { attempts: attempt, version: status?.version ?? null, backend: status?.backend ?? null } };
         const memory = await deps.read<{ status?: unknown; agent_id?: unknown; reason?: unknown }>(context.row.nodeId, context.row.profile, 'memory/status');
         if (memory?.status === 'ready') return { receipt: { attempts: attempt, version: status?.version ?? null, backend: status?.backend ?? null,
           memory: 'ready', agentId: memory.agent_id ?? null, ...await definitionMatches(context) } };

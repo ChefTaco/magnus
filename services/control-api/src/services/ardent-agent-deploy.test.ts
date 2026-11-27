@@ -399,6 +399,149 @@ describe('New Agent with an Emberpath alias', () => {
   });
 });
 
+describe('Set Emberpath key on an existing agent', () => {
+  const GATEWAY = 'https://models.example.com/v1';
+  const KEY = 'fixture-emberpath-client-key-0005';
+  const ROTATED = 'fixture-emberpath-client-key-0006';
+  const EXISTING = 'schema_version: 1\nprofile: existing\nname: existing\nexecution:\n  backend: llamacpp\nproviders:\n  llamacpp:\n'
+    + `    base_url: ${GATEWAY}/\n    model: general\nmemory:\n  provider: none\nskills:\n  directories: [skills]\n  enabled: []\n`;
+  let logged: string[] = [];
+  beforeEach(() => {
+    vi.stubEnv('MAGNUS_ARDENT_EMBERPATH_URL', GATEWAY);
+    node.config = EXISTING;
+    logged = [];
+    for (const level of ['log', 'info', 'warn', 'error', 'debug'] as const)
+      vi.spyOn(console, level).mockImplementation((...args: unknown[]) => { logged.push(args.map(String).join(' ')); });
+  });
+  afterEach(() => { vi.restoreAllMocks(); });
+  const set = (body: unknown, profile = 'existing') => deploy.startArdentModelCredentialSet('node-1', profile, body, actor);
+
+  it('checks the key with Emberpath, writes it to the profile, names it in the configuration and restarts, keeping nothing', async () => {
+    const levels: number[] = [];
+    deploy.setArdentDeployDeps({ ...fakeDeps, studio: async (_nodeId, level) => { levels.push(level ?? 1); } });
+    const operation = await run(() => set({ emberpath_client_key: KEY }));
+    expect(operation.status).toBe('succeeded');
+    expect(operation.kind).toBe('model-credential');
+    expect(operation.steps.map(step => [step.name, step.status])).toEqual([
+      ['profile-check', 'succeeded'], ['config-save', 'succeeded'], ['service-restart', 'succeeded'], ['ready-probe', 'succeeded']]);
+    expect(levels).toContain(6);
+    // The alias comes from the profile's configuration; the base URL matches with or without its final slash.
+    expect(keyChecks).toEqual([{ baseUrl: GATEWAY, key: KEY, alias: 'general' }]);
+    expect(node.actions).toEqual(['model-credential-set', 'config-save', 'service-restart']);
+    expect(node.env).toEqual([`ARDENT_LLAMA_API_KEY=${KEY}`]);
+    const config = YAML.parse(node.config) as Record<string, any>;
+    expect(config['providers']['llamacpp']).toEqual({ base_url: `${GATEWAY}/`, model: 'general', api_key_env: 'ARDENT_LLAMA_API_KEY' });
+    // Only the model key changes: memory, skills and everything else stay as they were.
+    expect(config['memory']).toEqual({ provider: 'none' });
+    expect(credential).not.toHaveBeenCalled();
+    expect(operation.request.model).toEqual({ emberpath_alias: 'general' });
+    expect(operation.steps[1]!.receipt).toMatchObject({ modelKeyEnv: 'ARDENT_LLAMA_API_KEY', modelKeyConfigured: true, previousKeyEnv: null });
+    expect(store.audit.find(event => event.action === 'ardent.agent.model-credential')!.details).toMatchObject({
+      model: { emberpath_alias: 'general' }, keyEnv: 'ARDENT_LLAMA_API_KEY', emberpathClientKey: 'checked' });
+    expect(JSON.stringify([operation, [...store.rows.values()], store.audit, logged])).not.toContain(KEY);
+  });
+
+  it('rotates a key, and restarts nothing when neither the key nor the configuration changed', async () => {
+    let changed = true;
+    deploy.setArdentDeployDeps({ ...fakeDeps, action: async (nodeId, profile, action, target, body) => {
+      const result = await fakeDeps.action!(nodeId, profile, action, target, body);
+      return action === 'model-credential-set' ? { keyEnv: 'ARDENT_LLAMA_API_KEY', configured: true, changed } : result;
+    } });
+    expect((await run(() => set({ emberpath_client_key: KEY }))).status).toBe('succeeded');
+    const rotated = await run(() => set({ emberpath_client_key: ROTATED }));
+    expect(rotated.status).toBe('succeeded');
+    // The configuration already names the key, so only the .env changed; the restart activates the new key.
+    expect(rotated.steps.map(step => [step.name, step.status])).toEqual([
+      ['profile-check', 'succeeded'], ['config-save', 'skipped'], ['service-restart', 'succeeded'], ['ready-probe', 'succeeded']]);
+    expect(rotated.steps[1]!.receipt).toMatchObject({ modelKeyChanged: true, unchanged: true, previousKeyEnv: 'ARDENT_LLAMA_API_KEY' });
+    changed = false;
+    node.actions = [];
+    const same = await run(() => set({ emberpath_client_key: ROTATED }));
+    expect(same.steps.map(step => [step.name, step.status])).toEqual([
+      ['profile-check', 'succeeded'], ['config-save', 'skipped'], ['service-restart', 'skipped'], ['ready-probe', 'succeeded']]);
+    expect(node.actions).toEqual(['model-credential-set']);
+    expect(JSON.stringify([[...store.rows.values()], store.audit, logged])).not.toMatch(/fixture-emberpath-client-key-000[56]/u);
+  });
+
+  it('refuses a missing or malformed key, an implicit Emberpath, an old node agent and a model that is not an Emberpath alias, before anything runs', async () => {
+    const { HttpError } = await import('../middleware/error-handler.js');
+    await expect(set({})).rejects.toMatchObject({ status: 400, code: 'EMBERPATH_KEY_REQUIRED', message: expect.stringMatching(/^Emberpath key missing/u) });
+    await expect(set(null)).rejects.toMatchObject({ status: 400, code: 'VALIDATION_ERROR' });
+    const malformed = set({ emberpath_client_key: 'has a space in it, not a key' });
+    await expect(malformed).rejects.toMatchObject({ status: 400, code: 'VALIDATION_ERROR' });
+    await malformed.catch((error: Error) => expect(error.message).not.toContain('not a key'));
+    await expect(set({ emberpath_client_key: KEY, extra: true })).rejects.toMatchObject({ status: 400, code: 'VALIDATION_ERROR' });
+    deploy.setArdentDeployDeps({ ...fakeDeps, emberpathExplicit: () => false });
+    await expect(set({ emberpath_client_key: KEY })).rejects.toMatchObject({ status: 409, code: 'EMBERPATH_NOT_EXPLICIT' });
+    deploy.setArdentDeployDeps({ ...fakeDeps, studio: async (_nodeId, level) => {
+      if ((level ?? 1) >= 6) throw new HttpError(409, 'AGENT_UPGRADE_REQUIRED', 'Upgrade the Magnus agent on node-1 to deliver an Emberpath client key');
+    } });
+    await expect(set({ emberpath_client_key: KEY })).rejects.toMatchObject({ status: 409, code: 'AGENT_UPGRADE_REQUIRED' });
+    deploy.setArdentDeployDeps(fakeDeps);
+    await expect(set({ emberpath_client_key: KEY }, 'missing')).rejects.toMatchObject({ status: 404, code: 'NOT_FOUND' });
+    for (const config of [TEMPLATE, EXISTING.replace(`${GATEWAY}/`, 'http://192.0.2.10:8080/v1'), EXISTING.replace('backend: llamacpp', 'backend: codex')]) {
+      node.config = config;
+      await expect(set({ emberpath_client_key: KEY })).rejects.toMatchObject({ status: 409, code: 'MODEL_NOT_EMBERPATH' });
+    }
+    node.config = EXISTING;
+    node.profiles[0]!.running = false;
+    await expect(set({ emberpath_client_key: KEY })).rejects.toMatchObject({ status: 409, code: 'PROFILE_NOT_RUNNING' });
+    expect(keyChecks).toEqual([]);
+    expect(node.actions).toEqual([]);
+    expect(store.rows.size).toBe(0);
+    expect(store.audit).toEqual([]);
+  });
+
+  it('refuses a key Emberpath rejects or that may not use the alias, and reports one it could not check', async () => {
+    const { HttpError } = await import('../middleware/error-handler.js');
+    for (const code of ['EMBERPATH_KEY_INVALID', 'EMBERPATH_KEY_FORBIDDEN', 'EMBERPATH_ALIAS_UNAVAILABLE']) {
+      keyAnswer = async () => { throw new HttpError(422, code, 'Emberpath refused the client key'); };
+      await expect(set({ emberpath_client_key: KEY })).rejects.toMatchObject({ status: 422, code });
+    }
+    expect(node.actions).toEqual([]);
+    expect(store.rows.size).toBe(0);
+    keyAnswer = async () => ({ checked: false, reason: 'Emberpath could not be reached from the Magnus server to check the client key' });
+    expect((await run(() => set({ emberpath_client_key: KEY }))).status).toBe('succeeded');
+    expect(store.audit.find(event => event.action === 'ardent.agent.model-credential')!.details!['emberpathClientKey']).toMatch(/^unchecked: /u);
+  });
+
+  it('needs the key again on resume only when it never reached the profile and the server no longer holds it', async () => {
+    const { releaseEmberpathClientKey } = await import('./ardent-emberpath-key.js');
+    node.failOnce.add('model-credential-set');
+    const failed = await run(() => set({ emberpath_client_key: KEY }));
+    expect(failed.status).toBe('failed');
+    expect(failed.error).toMatch(/^config-save: /u);
+    releaseEmberpathClientKey(failed.id);
+    await expect(deploy.resumeArdentAgentOperation(failed.id, actor)).rejects.toMatchObject({ status: 409, code: 'EMBERPATH_KEY_REQUIRED' });
+    const resumed = await run(() => deploy.resumeArdentAgentOperation(failed.id, actor, { emberpath_client_key: KEY }));
+    expect(resumed.status).toBe('succeeded');
+    expect(keyChecks.at(-1)).toEqual({ baseUrl: GATEWAY, key: KEY, alias: 'general' });
+    expect(node.env).toEqual([`ARDENT_LLAMA_API_KEY=${KEY}`]);
+    // A failure after the key arrived resumes without it, and refuses it.
+    node.failOnce.add('service-restart');
+    const later = await run(() => set({ emberpath_client_key: ROTATED }));
+    expect(later.status).toBe('failed');
+    await expect(deploy.resumeArdentAgentOperation(later.id, actor, { emberpath_client_key: ROTATED })).rejects.toMatchObject({ status: 400, code: 'VALIDATION_ERROR' });
+    expect((await run(() => deploy.resumeArdentAgentOperation(later.id, actor))).status).toBe('succeeded');
+    expect(node.actions.filter(action => action === 'model-credential-set')).toHaveLength(3);
+    expect(JSON.stringify([[...store.rows.values()], store.audit, logged])).not.toMatch(/fixture-emberpath-client-key-000[56]/u);
+  });
+
+  it('allows one running operation per profile', async () => {
+    let release: () => void = () => undefined;
+    deploy.setArdentDeployDeps({ ...fakeDeps, delay: () => new Promise<void>(resolve => { release = resolve; }),
+      read: async <T,>(nodeId: string, profile: string, resource: string) => {
+        if (resource === 'status') throw new Error('not yet');
+        return fakeDeps.read!<T>(nodeId, profile, resource);
+      } });
+    const first = await set({ emberpath_client_key: KEY });
+    await expect(set({ emberpath_client_key: ROTATED })).rejects.toMatchObject({ status: 409, code: 'OPERATION_RUNNING' });
+    deploy.setArdentDeployDeps(fakeDeps);
+    release();
+    await deploy.settleArdentAgentOperation(first);
+  });
+});
+
 const { checkEmberpathClientKey } = await import('./ardent-emberpath-key.js');
 describe('the Emberpath client key check', () => {
   const KEY = 'fixture-emberpath-client-key-0003';
