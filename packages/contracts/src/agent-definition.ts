@@ -136,9 +136,17 @@ export type AgentDefinitionProblem = z.infer<typeof agentDefinitionProblemSchema
 export type AgentDefinitionPreflight = z.infer<typeof agentDefinitionPreflightSchema>;
 
 const nodeId = z.string().regex(/^[A-Za-z0-9._-]{1,128}$/u);
+/** An Emberpath client key: the same pattern as ARDENT_EMBERPATH_CLIENT_KEY_PATTERN in browser.ts (this module imports only zod). */
+export const AGENT_DEFINITION_EMBERPATH_KEY_PATTERN = /^[A-Za-z0-9._~+/=-]{16,512}$/u;
+const emberpathClientKey = z.string().regex(AGENT_DEFINITION_EMBERPATH_KEY_PATTERN, 'Expected an Emberpath client key: 16 to 512 characters without whitespace');
 // POST /ardent/agent-definitions/validate. Without bindings, every required binding is reported missing.
 export const agentDefinitionValidateRequestSchema = z.object({
   definition: z.unknown(), nodeId, bindings: agentDefinitionBindingsSchema.optional(),
+  /**
+   * The Emberpath client key the install will deliver, so the preflight can check it against Emberpath.
+   * Without it, a definition whose model is an Emberpath alias reports SECRET_UNBOUND (Emberpath key missing).
+   */
+  emberpath_client_key: emberpathClientKey.optional(),
 }).strict();
 // POST /ardent/agent-definitions/install: a New Agent built from the definition, once its preflight passes.
 export const agentDefinitionInstallRequestSchema = z.object({
@@ -149,6 +157,12 @@ export const agentDefinitionInstallRequestSchema = z.object({
   bindings: agentDefinitionBindingsSchema,
   /** Omitted: the first free port from 9910 on that node. */
   apiPort: z.number().int().min(1024).max(65535).optional(),
+  /**
+   * The Emberpath client key for the agent's Emberpath alias, delivered to the new profile as New Agent does
+   * (`ardentAgentDeployRequestSchema`). Required for an alias model; it satisfies the definition's model-key
+   * secret. Never stored or returned, and the only credential an install request may carry.
+   */
+  emberpath_client_key: emberpathClientKey.optional(),
 }).strict();
 // GET /ardent/installations/{nodeId}/profiles/{name}/definition
 export const agentDefinitionExportSchema = z.object({

@@ -9,8 +9,28 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Fixed
 
+- **New Agent delivers the Emberpath client key an alias model needs.** An agent created with an
+  `emberpath_alias` got Emberpath's URL and the alias but no client key, so every model request was
+  refused with 401. `POST /api/v1/ardent/agents` (and the agent definition install and validate
+  routes) now take `emberpath_client_key`, the key an operator creates in Emberpath (Emberpath lets
+  only a recently signed-in person create one, never a service token, so Magnus does not issue keys).
+  Without it New Agent answers 400 `EMBERPATH_KEY_REQUIRED` ("Emberpath key missing") and a
+  definition's preflight reports `SECRET_UNBOUND`. Magnus checks the key with Emberpath's model list
+  first (422 `EMBERPATH_KEY_INVALID`, `EMBERPATH_KEY_FORBIDDEN` or `EMBERPATH_ALIAS_UNAVAILABLE`),
+  sends it only to an explicitly configured `MAGNUS_ARDENT_EMBERPATH_URL` (409
+  `EMBERPATH_NOT_EXPLICIT` otherwise), holds it in memory only, and `config-save` writes it to the new
+  profile's `.env` as `ARDENT_LLAMA_API_KEY` through the new node agent action
+  `model-credential-set` (studio level 6). The key is never stored in the operation, audited, logged
+  or returned. Resume takes `emberpath_client_key` in its body when the key has not reached the
+  profile and the server no longer holds it (409 `EMBERPATH_KEY_REQUIRED`).
 - Magnus reports the manager address for Wazuh 5 agents configured with an endpoint. Legacy Wazuh
   agent configurations still report their server addresses.
+
+### Migration impact
+
+- Clients of New Agent with an Emberpath alias (HiveXUI's New Agent wizard, definition installs) must
+  send `emberpath_client_key`; requests without one are refused instead of creating an agent that
+  cannot reach its model. Upgrade the node agents before creating such agents (studio level 6).
 
 ## [3.4.1] - 2026-11-26
 

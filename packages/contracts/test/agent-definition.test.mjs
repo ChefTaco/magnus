@@ -65,3 +65,25 @@ test('credential-like strings are found anywhere, even in a malformed definition
   assert.deepEqual(leaked.paths, ['$.persona.soul_md']);
   assert.equal((await verifyAgentDefinition({ nonsense: true })).code, 'DEFINITION_INVALID');
 });
+
+test('install and validate requests take an Emberpath client key of the same shape New Agent takes', async () => {
+  const { AGENT_DEFINITION_EMBERPATH_KEY_PATTERN, agentDefinitionInstallRequestSchema, agentDefinitionValidateRequestSchema } = await import('../src/agent-definition.ts');
+  const { ARDENT_EMBERPATH_CLIENT_KEY_PATTERN, ardentAgentDeployRequestSchema, ardentAgentOperationResumeRequestSchema } = await import('../src/browser.ts');
+  // Both modules import only zod, so each keeps the pattern; they must not drift.
+  assert.equal(AGENT_DEFINITION_EMBERPATH_KEY_PATTERN.source, ARDENT_EMBERPATH_CLIENT_KEY_PATTERN.source);
+  assert.equal(AGENT_DEFINITION_EMBERPATH_KEY_PATTERN.flags, ARDENT_EMBERPATH_CLIENT_KEY_PATTERN.flags);
+  const install = { definition: {}, nodeId: 'node-1', name: 'researcher', bindings: {} };
+  const deploy = { nodeId: 'node-1', profile: 'lead', soul_md: '# Soul\n', identity_md: '# Identity\n', model: { emberpath_alias: 'general' }, hivemem: true };
+  for (const key of ['fixture-emberpath-key-0001', 'A'.repeat(512)]) {
+    assert.ok(agentDefinitionInstallRequestSchema.safeParse({ ...install, emberpath_client_key: key }).success, key.slice(0, 10));
+    assert.ok(agentDefinitionValidateRequestSchema.safeParse({ definition: {}, nodeId: 'node-1', emberpath_client_key: key }).success);
+    assert.ok(ardentAgentDeployRequestSchema.safeParse({ ...deploy, emberpath_client_key: key }).success);
+    assert.ok(ardentAgentOperationResumeRequestSchema.safeParse({ emberpath_client_key: key }).success);
+  }
+  for (const key of ['short', 'fixture key with spaces', 'fixture-key\nINJECTED=1', 'fixture"quoted"key-0001', 'A'.repeat(513)]) {
+    assert.equal(agentDefinitionInstallRequestSchema.safeParse({ ...install, emberpath_client_key: key }).success, false, JSON.stringify(key.slice(0, 20)));
+    assert.equal(ardentAgentDeployRequestSchema.safeParse({ ...deploy, emberpath_client_key: key }).success, false);
+  }
+  assert.ok(ardentAgentOperationResumeRequestSchema.safeParse({}).success);
+  assert.equal(ardentAgentOperationResumeRequestSchema.safeParse({ other: true }).success, false);
+});

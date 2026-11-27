@@ -2827,9 +2827,10 @@ export const ardentTaskDoneEventSchema = z.object({
  * execution context passthrough, artifact transfer v2 and imports), each further gated per profile by
  * the profile's own capabilities (see ardentProfileCapabilities). 5: also the Ardent 3.4.0 operations
  * (the metrics read, peer credential reload, management credential rotation and task list filters).
+ * 6: also model-credential-set, which writes the model API key New Agent delivers into a new profile.
  * A route that needs a higher level than the agent reports answers 409 AGENT_UPGRADE_REQUIRED.
  */
-export const ARDENT_STUDIO_CAPABILITY = { bridge: 1, missions: 2, skillInstall: 3, runtimeContracts: 4, operations: 5 } as const;
+export const ARDENT_STUDIO_CAPABILITY = { bridge: 1, missions: 2, skillInstall: 3, runtimeContracts: 4, operations: 5, modelCredential: 6 } as const;
 /** task.event kinds that Ardent 2.2.0 adds. Other kinds appear too, so readers must accept unknown ones. */
 export const ARDENT_STUDIO_EVENT_KINDS = [
   'mission', 'team_handoff', 'team_ask_user', 'team_propose_decision', 'artifact_registered', 'development_note',
@@ -2988,6 +2989,18 @@ export const ardentAgentModelSchema = z.union([
   z.object({ emberpath_alias: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/u) }).strict(),
   z.object({ base_url: z.string().max(2048).refine(credentialFreeUrl, 'Expected an HTTP(S) URL without credentials, query or fragment'), model: z.string().min(1).max(200) }).strict(),
 ]);
+/**
+ * The profile environment key that holds the model API key of an agent New Agent creates with an Emberpath
+ * alias: Ardent's default `providers.llamacpp.api_key_env`. Magnus writes only this key, never a name a caller chose.
+ */
+export const ARDENT_MODEL_API_KEY_ENV = 'ARDENT_LLAMA_API_KEY';
+/**
+ * An Emberpath client API key, as New Agent accepts it: 16 to 512 characters without whitespace or quotes.
+ * Write-only: Magnus delivers it to the new profile's `.env` and never stores, logs, audits or returns it.
+ * agent-definition.ts keeps the same pattern, since each of these modules imports only `zod`.
+ */
+export const ARDENT_EMBERPATH_CLIENT_KEY_PATTERN = /^[A-Za-z0-9._~+/=-]{16,512}$/u;
+export const ardentEmberpathClientKeySchema = z.string().regex(ARDENT_EMBERPATH_CLIENT_KEY_PATTERN, 'Expected an Emberpath client key: 16 to 512 characters without whitespace');
 export const ardentAgentDeployRequestSchema = z.object({
   nodeId: ardentNodeIdSchema,
   profile: ardentProfileIdSchema,
@@ -3003,7 +3016,16 @@ export const ardentAgentDeployRequestSchema = z.object({
    * relay cap. Written only on Ardent 2.2.0 or later; older runtimes skip it with a note in the receipt.
    */
   artifacts_max_bytes: z.number().int().min(1024).max(67_108_864).optional(),
+  /**
+   * The Emberpath client key the agent sends to Emberpath. Required with `model.emberpath_alias` (Emberpath
+   * answers 401 without one); refused with a `base_url` model. Create the key in Emberpath (a credential write
+   * that needs a recent sign-in there), ideally limited to the alias. Magnus checks it against Emberpath, writes
+   * it to the profile as ARDENT_MODEL_API_KEY_ENV, and never stores, echoes or audits it.
+   */
+  emberpath_client_key: ardentEmberpathClientKeySchema.optional(),
 }).strict();
+/** POST /ardent/agents/operations/{id}/resume. A key is needed only when the step that delivers it has not finished. */
+export const ardentAgentOperationResumeRequestSchema = z.object({ emberpath_client_key: ardentEmberpathClientKeySchema.optional() }).strict();
 export const ardentAgentStepNameSchema = z.enum([
   'profile-check', 'profile-create', 'service-start', 'identity-soul', 'identity-identity',
   'hivemem-enroll', 'config-save', 'skill-set', 'service-restart', 'ready-probe',

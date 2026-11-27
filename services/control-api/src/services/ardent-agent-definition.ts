@@ -6,10 +6,12 @@
  *
  * A definition never carries a credential. The export keeps secret-bearing settings out and turns the
  * environment variables they name into `requirements.secrets`; the install sets no secret value and
- * asks only that each one is bound (`secret:<NAME>` = `provided` or `none`). History, memory, sessions
- * and artifacts are never part of a definition. Nothing is created on the target until the preflight
- * passes, and the operation succeeds only once the ready probe finds the definition's persona and
- * skills on the running agent.
+ * asks only that each one is bound (`secret:<NAME>` = `provided` or `none`). The one exception is the
+ * Emberpath client key an alias model needs: the install request carries it beside the definition
+ * (`emberpath_client_key`), it satisfies the definition's model-key secret, and New Agent delivers it.
+ * History, memory, sessions and artifacts are never part of a definition. Nothing is created on the
+ * target until the preflight passes, and the operation succeeds only once the ready probe finds the
+ * definition's persona and skills on the running agent.
  */
 import { createHash } from 'node:crypto';
 import YAML from 'yaml';
@@ -28,6 +30,7 @@ import { ardentHiveSkillsUrl, checkArdentSkillRelease } from './ardent-hiveskill
 import { requireArdentHiveMemSettings, type ArdentHiveMemSettings } from './ardent-hivemem.js';
 import { getArdentInstallation, getArdentProfileResource, getArdentSkillReceipts } from './ardent-service.js';
 import { dependencyReport } from './discovery.js';
+import { checkEmberpathClientKey, EMBERPATH_KEY_MISSING, EMBERPATH_KEY_NOT_EXPLICIT, type EmberpathKeyCheck } from './ardent-emberpath-key.js';
 
 export interface ArdentDefinitionDeps {
   installation(nodeId: string): Promise<ArdentFleetInstallation>;
@@ -43,6 +46,8 @@ export interface ArdentDefinitionDeps {
   emberpathExplicit(): boolean;
   /** The HiveSkills registry, or null. Throws on an unusable setting. */
   hiveskills(): string | null;
+  /** Ask Emberpath whether a client key may use an alias; throws a 422 HttpError on a definite refusal. */
+  emberpathKey(baseUrl: string, key: string, alias: string): Promise<EmberpathKeyCheck>;
   start(input: unknown, definition: ArdentStoredDefinition, actor: ArdentOperationActor): Promise<string>;
   now(): Date;
 }
@@ -57,6 +62,7 @@ const defaultDeps: ArdentDefinitionDeps = {
   emberpath: emberpathUrl,
   emberpathExplicit: () => Boolean(process.env['MAGNUS_ARDENT_EMBERPATH_URL']),
   hiveskills: () => ardentHiveSkillsUrl(),
+  emberpathKey: (baseUrl, key, alias) => checkEmberpathClientKey(baseUrl, key, alias),
   start: startArdentDefinitionDeploy,
   now: () => new Date(),
 };
@@ -250,11 +256,23 @@ function checkBindingKeys(definition: AgentDefinition, bindings: AgentDefinition
   if (unknown.length) throw new HttpError(400, 'VALIDATION_ERROR', `Bindings the definition does not require: ${unknown.slice(0, 10).join(', ')}`);
 }
 
+/** The export's purpose for the model endpoint key; that secret is the one the Emberpath client key satisfies. */
+const MODEL_KEY_PURPOSE = 'providers.llamacpp.api_key_env';
+const isModelKeySecret = (definition: AgentDefinition, secret: AgentDefinition['requirements']['secrets'][number]) =>
+  definition.config.execution.backend === 'llamacpp' && secret.purpose.startsWith(MODEL_KEY_PURPOSE);
+
+/** The credential scan of a request body, without its Emberpath client key: the one credential a request may carry. */
+function requestCredentialPaths(raw: unknown): string[] {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return credentialLikePaths(raw);
+  const { emberpath_client_key: _key, ...rest } = raw as Record<string, unknown>;
+  return credentialLikePaths(rest);
+}
+
 const semverParts = (value: string | null | undefined) => /^v?(\d+)\.(\d+)\.(\d+)/u.exec(value ?? '')?.slice(1).map(Number);
 
 /** The preflight: every problem that would stop the definition from installing on the node as defined. */
 async function preflight(definition: AgentDefinition, bindings: AgentDefinitionBindings | undefined,
-  installation: ArdentFleetInstallation): Promise<AgentDefinitionPreflight> {
+  installation: ArdentFleetInstallation, clientKey: string | undefined): Promise<AgentDefinitionPreflight> {
   const problems: AgentDefinitionProblem[] = [];
   const problem = (code: AgentDefinitionProblem['code'], detail: string) => problems.push({ code, detail: detail.slice(0, 500) });
   const given = bindings ?? {};
@@ -313,13 +331,26 @@ async function preflight(definition: AgentDefinition, bindings: AgentDefinitionB
     problem('MISSING_BINDING', `hivemem: Magnus enrolls agents into the HiveMem workspace ${hivemem.workspaceId}; bind default or ${hivemem.workspaceId}`);
   const model = given['model'] ?? (required.has('model') ? undefined : definition.config.model.emberpath_alias);
   if (definition.config.execution.backend === 'llamacpp') {
+    // New Agent's model is always an Emberpath alias, which needs a client key whatever the alias is.
+    if (clientKey === undefined) problem('SECRET_UNBOUND', EMBERPATH_KEY_MISSING);
     if (model === undefined && !required.has('model')) problem('MISSING_BINDING', 'Bind model (emberpath_alias): the definition names no Emberpath alias');
     else if (model !== undefined && !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/u.test(model)) problem('MISSING_BINDING', 'model: an Emberpath alias is letters, digits and ._:/-');
     else if (model !== undefined) {
-      try { deps.emberpath(); }
+      let gateway: string | null = null;
+      try { gateway = deps.emberpath(); }
       catch (error: unknown) { problem('MISSING_BINDING', `model: ${message(error)}`); }
       const emberpath = (await dependencies()).find(item => item.name === 'emberpath');
       if (emberpath?.status === 'missing' && emberpath.source !== 'none') problem('MISSING_BINDING', `model: ${emberpath.reason ?? 'Emberpath does not answer'}`);
+      // The key goes only to an explicitly configured Emberpath, which is asked whether it may use the alias.
+      if (clientKey !== undefined && gateway !== null && !deps.emberpathExplicit()) problem('SECRET_UNBOUND', `emberpath_client_key: ${EMBERPATH_KEY_NOT_EXPLICIT}`);
+      else if (clientKey !== undefined && gateway !== null) {
+        try { await deps.emberpathKey(gateway, clientKey, model); }
+        catch (error: unknown) {
+          if (!(error instanceof HttpError)) throw error;
+          problem(error.code === 'EMBERPATH_ALIAS_UNAVAILABLE' ? 'MISSING_BINDING' : 'SECRET_UNBOUND',
+            `${error.code === 'EMBERPATH_ALIAS_UNAVAILABLE' ? 'model' : 'emberpath_client_key'}: ${error.message}`);
+        }
+      }
     }
   }
   if (definition.skills.length) {
@@ -339,9 +370,15 @@ async function preflight(definition: AgentDefinition, bindings: AgentDefinitionB
     }
   }
 
-  // Secrets: named only; each must be bound to provided or none, never to a value.
+  // Secrets: named only; each must be bound to provided or none, never to a value. The model key is the Emberpath
+  // client key the request carries (checked above), so its binding may be left out but never be none.
   for (const secret of definition.requirements.secrets) {
     const value = given[agentDefinitionSecretBindingKey(secret.env_name)];
+    if (isModelKeySecret(definition, secret)) {
+      if (value !== undefined && value !== 'provided')
+        problem('SECRET_UNBOUND', `${secret.env_name}: the Emberpath alias needs the client key emberpath_client_key delivers; bind ${agentDefinitionSecretBindingKey(secret.env_name)} to provided or leave it out`);
+      continue;
+    }
     if (value !== 'provided' && value !== 'none')
       problem('SECRET_UNBOUND', `${secret.env_name} (${secret.purpose}): bind ${agentDefinitionSecretBindingKey(secret.env_name)} to provided, once the target profile's environment supplies it, or none`);
     // The carried configuration's only endpoint is the model gateway: a supplied key would reach it, so it must be
@@ -354,13 +391,13 @@ async function preflight(definition: AgentDefinition, bindings: AgentDefinitionB
 
 /** POST /ardent/agent-definitions/validate */
 export async function validateArdentAgentDefinition(raw: unknown): Promise<AgentDefinitionPreflight> {
-  const credentials = credentialLikePaths(raw);
+  const credentials = requestCredentialPaths(raw);
   if (credentials.length) throw new HttpError(422, 'DEFINITION_CONTAINS_CREDENTIAL', `Credential-like values at ${credentials.slice(0, 10).join(', ')}`, { paths: credentials.slice(0, 50) });
   const parsed = agentDefinitionValidateRequestSchema.safeParse(raw);
   if (!parsed.success) throw new HttpError(400, 'VALIDATION_ERROR', parsed.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; ').slice(0, 500));
   const definition = await checkedDefinition(parsed.data.definition);
   if (parsed.data.bindings) checkBindingKeys(definition, parsed.data.bindings);
-  return preflight(definition, parsed.data.bindings, await reachableInstallation(parsed.data.nodeId));
+  return preflight(definition, parsed.data.bindings, await reachableInstallation(parsed.data.nodeId), parsed.data.emberpath_client_key);
 }
 
 /**
@@ -368,14 +405,14 @@ export async function validateArdentAgentDefinition(raw: unknown): Promise<Agent
  * failed preflight answers 409 PREFLIGHT_FAILED with the report in error.details and creates nothing.
  */
 export async function installArdentAgentDefinition(raw: unknown, actor: ArdentOperationActor): Promise<string> {
-  const credentials = credentialLikePaths(raw);
+  const credentials = requestCredentialPaths(raw);
   if (credentials.length) throw new HttpError(422, 'DEFINITION_CONTAINS_CREDENTIAL', `Credential-like values at ${credentials.slice(0, 10).join(', ')}`, { paths: credentials.slice(0, 50) });
   const parsed = agentDefinitionInstallRequestSchema.safeParse(raw);
   if (!parsed.success) throw new HttpError(400, 'VALIDATION_ERROR', parsed.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; ').slice(0, 500));
-  const { nodeId, name, bindings, apiPort } = parsed.data;
+  const { nodeId, name, bindings, apiPort, emberpath_client_key: key } = parsed.data;
   const definition = await checkedDefinition(parsed.data.definition);
   checkBindingKeys(definition, bindings);
-  const report = await preflight(definition, bindings, await reachableInstallation(nodeId));
+  const report = await preflight(definition, bindings, await reachableInstallation(nodeId), key);
   if (!report.ok) throw new HttpError(409, 'PREFLIGHT_FAILED', `The definition cannot be installed on this node: ${report.problems.map(item => item.code).join(', ')}`,
     { problems: report.problems });
   const alias = bindings['model'] ?? definition.config.model.emberpath_alias!;
@@ -389,7 +426,7 @@ export async function installArdentAgentDefinition(raw: unknown, actor: ArdentOp
   return deps.start({
     nodeId, profile: name, ...(apiPort !== undefined ? { apiPort } : {}),
     soul_md: definition.persona.soul_md, identity_md: definition.persona.identity_md,
-    model: { emberpath_alias: alias }, skills: [], hivemem: true,
+    model: { emberpath_alias: alias }, skills: [], hivemem: true, ...(key !== undefined ? { emberpath_client_key: key } : {}),
     ...(definition.config.artifacts.max_bytes !== undefined ? { artifacts_max_bytes: definition.config.artifacts.max_bytes } : {}),
   }, stored, actor);
 }

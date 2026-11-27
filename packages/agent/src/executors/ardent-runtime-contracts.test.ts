@@ -64,7 +64,7 @@ describe('Ardent 3.2.0 runtime contracts through the node agent', () => {
   it('reports each profile\'s version and capabilities, from its status or else the installed package', async () => {
     const { target } = await fixtureNode({ current: { status: status320 }, legacy: { status: status314 } });
     const state = await readArdentState(target) as { capabilities: unknown; profiles: Array<{ id: string; version: string; capabilities: unknown }> };
-    expect(state.capabilities).toEqual({ studio: 5, recovery: 1, lineage: 1, artifact_transfer: 2, task_filters: 1 });
+    expect(state.capabilities).toEqual({ studio: 6, recovery: 1, lineage: 1, artifact_transfer: 2, task_filters: 1 });
     expect(state.profiles.map(profile => [profile.id, profile.version, profile.capabilities])).toEqual([
       ['current', '3.2.0', { recovery: 1, lineage: 1, artifact_transfer: 2 }],
       ['legacy', '3.1.4', { recovery: 0, lineage: 0, artifact_transfer: 1 }],

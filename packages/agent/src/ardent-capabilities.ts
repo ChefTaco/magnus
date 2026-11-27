@@ -10,6 +10,8 @@
  * imports) and the instance reference Magnus writes into each profile.
  * `studio: 5` adds the Ardent 3.4.0 operations: the metrics read, peer credential
  * reload and management credential rotation, and task list filters.
+ * `studio: 6` adds model-credential-set, which writes the Emberpath client key New
+ * Agent delivers into the new profile's `.env`.
  * `recovery`, `lineage` and `artifact_transfer` are the highest levels the
  * bridge relays; each profile reports its own, capped by these
  * (ardentProfileCapabilities in the contracts). `task_filters: 1` means the bridge
@@ -19,4 +21,4 @@
  * The ping route reports the studio level and the server gates Studio actions on it, and the
  * Ardent installation report carries all of them, so both read this one constant.
  */
-export const ARDENT_AGENT_CAPABILITIES = { studio: 5, recovery: 1, lineage: 1, artifact_transfer: 2, task_filters: 1 } as const;
+export const ARDENT_AGENT_CAPABILITIES = { studio: 6, recovery: 1, lineage: 1, artifact_transfer: 2, task_filters: 1 } as const;

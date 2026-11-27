@@ -22,6 +22,7 @@ const deploy = await import('./ardent-agent-deploy.js');
 const definitions = await import('./ardent-agent-definition.js');
 const { HttpError } = await import('../middleware/error-handler.js');
 const { AgentResponseError } = await import('../sdk/node-api-client.js');
+type EmberpathKeyCheck = import('./ardent-emberpath-key.js').EmberpathKeyCheck;
 
 const GATEWAY = 'https://models.example.com/v1';
 const sri = (value: string) => `sha512-${createHash('sha512').update(value).digest('base64')}`;
@@ -125,6 +126,7 @@ async function action(nodeId: string, name: string, kind: string, target?: strin
   if (kind === 'identity-save') { profile[target as 'soul' | 'identity'] = value['text']; return { revision: sha(value['text']) }; }
   if (kind === 'config-save') { profile.config = value['text']; return { revision: sha(profile.config) }; }
   if (kind === 'hivemem-credential-set') return { configured: true };
+  if (kind === 'model-credential-set') { delivered.push(value['api_key']); return { keyEnv: 'ARDENT_LLAMA_API_KEY', configured: true }; }
   if (kind === 'instance-ref-set') { profile.instanceRef = value['instance_ref']; return { changed: true }; }
   if (kind === 'skill-install') {
     expect(value).not.toHaveProperty('pinned');
@@ -142,11 +144,21 @@ async function action(nodeId: string, name: string, kind: string, target?: strin
 const HIVEMEM = { apiUrl: 'https://memory.example.com/', agentUrl: 'https://memory.example.com/', auth: { kind: 'token' as const, token: 'fixture-enrollment-token' }, workspaceId: 'agents', hours: 720 };
 const actor = { actorId: 'alice', details: {} };
 const BINDINGS = { hivemem: 'default', model: 'research-large', hiveskills: 'default', 'secret:LLAMACPP_API_KEY': 'provided' };
+/** An obviously fake Emberpath client key, and what the fake Emberpath answers for it. */
+// Built from parts so the repository's secret scan does not take the fixture for a real key.
+const KEY = ['sk', '-fixture-emberpath-client-key-0001'].join('');
+let delivered: string[] = [];
+const keyChecks: Array<{ baseUrl: string; alias: string }> = [];
+let keyAnswer: () => Promise<EmberpathKeyCheck> = async () => ({ checked: true });
+const emberpathKey = async (baseUrl: string, key: string, alias: string) => { expect(key).toBe(KEY); keyChecks.push({ baseUrl, alias }); return keyAnswer(); };
 
 beforeEach(() => {
   store.rows.clear();
   store.audit.length = 0;
   targetConfigured = true;
+  delivered = [];
+  keyChecks.length = 0;
+  keyAnswer = async () => ({ checked: true });
   const source: Profile = { config: SOURCE_CONFIG, soul: SOUL, identity: IDENTITY, running: true, apiPort: 9910, receipts: new Map([
     ['web-research', { version: '1.2.0', sha256: RELEASES['web-research']!.sha256 }],
     ['citations', { version: '2.0.0', sha256: RELEASES['citations']!.sha256 }],
@@ -167,18 +179,20 @@ beforeEach(() => {
     skillReceipts, hivemem: () => HIVEMEM, prepare: async () => undefined,
     credential: async (_settings, plan) => ({ token: 'fixture-agent-token', agentId: plan.agentId, expiresAt: '2026-12-01T00:00:00.000Z', operationId: 'f'.repeat(64) }),
     supportsRenewal: async () => false, record: async () => undefined, delay: async () => undefined, owners: async () => [], explain: async () => undefined,
+    emberpathKey,
   });
   vi.stubEnv('MAGNUS_ARDENT_EMBERPATH_URL', GATEWAY);
   definitions.setArdentDefinitionDeps({
     installation: async nodeId => installation(nodeId), read, skillReceipts, dependencies: async () => [],
     skillRelease: async request => { const known = release(request.name, request.version, request.pinned); return { sha256: known.sha256, promoted: known.promoted }; },
     hivemem: () => HIVEMEM, emberpath: () => GATEWAY, hiveskills: () => 'https://skills.example.com/', now: () => new Date('2026-11-24T00:00:00.000Z'),
+    emberpathKey,
   });
 });
 afterEach(() => { deploy.setArdentDeployDeps({}); definitions.setArdentDefinitionDeps({}); vi.unstubAllEnvs(); });
 
 async function install(definition: unknown, nodeId = 'node-b', bindings: Record<string, string> = BINDINGS) {
-  const id = await definitions.installArdentAgentDefinition({ definition, nodeId, name: 'researcher', bindings }, actor);
+  const id = await definitions.installArdentAgentDefinition({ definition, nodeId, name: 'researcher', bindings, emberpath_client_key: KEY }, actor);
   await deploy.settleArdentAgentOperation(id);
   return deploy.getArdentAgentOperation(id);
 }
@@ -230,7 +244,7 @@ describe('portable agent definitions', () => {
 
   it('validates and installs the export on a second node with the same persona, skills and extensions', async () => {
     const { definition } = await definitions.exportArdentAgentDefinition('node-a', 'lead');
-    expect(await definitions.validateArdentAgentDefinition({ definition, nodeId: 'node-b', bindings: BINDINGS })).toEqual({ ok: true, problems: [] });
+    expect(await definitions.validateArdentAgentDefinition({ definition, nodeId: 'node-b', bindings: BINDINGS, emberpath_client_key: KEY })).toEqual({ ok: true, problems: [] });
     const operation = await install(definition);
     expect(operation).toMatchObject({ kind: 'definition', status: 'succeeded', request: { definition: { name: 'Lead Researcher', sha256: definition.sha256 } } });
     expect(operation.steps.map(step => step.name)).toEqual(['profile-create', 'service-start', 'identity-soul', 'identity-identity', 'hivemem-enroll',
@@ -257,16 +271,17 @@ describe('portable agent definitions', () => {
   it('blocks a missing HiveMem binding before any profile is created', async () => {
     const { definition } = await definitions.exportArdentAgentDefinition('node-a', 'lead');
     const { hivemem: _hivemem, ...bindings } = BINDINGS;
-    const report = await definitions.validateArdentAgentDefinition({ definition, nodeId: 'node-b', bindings });
+    const report = await definitions.validateArdentAgentDefinition({ definition, nodeId: 'node-b', bindings, emberpath_client_key: KEY });
     expect(report).toEqual({ ok: false, problems: [{ code: 'MISSING_BINDING', detail: 'Bind hivemem (hivemem)' }] });
-    const refused = definitions.installArdentAgentDefinition({ definition, nodeId: 'node-b', name: 'researcher', bindings }, actor);
+    const refused = definitions.installArdentAgentDefinition({ definition, nodeId: 'node-b', name: 'researcher', bindings, emberpath_client_key: KEY }, actor);
     await expect(refused).rejects.toMatchObject({ status: 409, code: 'PREFLIGHT_FAILED', details: { problems: report.problems } });
     expect(nodes['node-b']!.actions).toEqual([]);
     expect(nodes['node-b']!.profiles.size).toBe(0);
     expect(store.rows.size).toBe(0);
-    // Without bindings, every required one and the secret are reported.
+    // Without bindings or a key, every required binding and the missing Emberpath key are reported.
     const bare = await definitions.validateArdentAgentDefinition({ definition, nodeId: 'node-b' });
     expect(bare.problems.map(item => item.code)).toEqual(['MISSING_BINDING', 'MISSING_BINDING', 'MISSING_BINDING', 'SECRET_UNBOUND']);
+    expect(bare.problems[3]!.detail).toMatch(/^Emberpath key missing: .*emberpath_client_key$/u);
   });
 
   it('rejects a definition carrying a token-like string, and refuses to export one', async () => {
@@ -288,7 +303,7 @@ describe('portable agent definitions', () => {
   it('installs pinned skills that are not promoted with target credentials and reports them unavailable without', async () => {
     const { definition } = await definitions.exportArdentAgentDefinition('node-a', 'lead');
     targetConfigured = false;
-    const report = await definitions.validateArdentAgentDefinition({ definition, nodeId: 'node-b', bindings: BINDINGS });
+    const report = await definitions.validateArdentAgentDefinition({ definition, nodeId: 'node-b', bindings: BINDINGS, emberpath_client_key: KEY });
     expect(report.problems).toEqual([
       { code: 'SKILL_VERSION_UNAVAILABLE', detail: expect.stringContaining('citations 2.0.0') },
       { code: 'SKILL_VERSION_UNAVAILABLE', detail: expect.stringContaining('summaries 0.3.1') },
@@ -301,7 +316,7 @@ describe('portable agent definitions', () => {
       { name: 'web-research', version: '1.2.0' }, { name: 'citations', version: '2.0.0' }, { name: 'summaries', version: '0.3.1' }] });
     // A digest that differs from what HiveSkills states is unavailable too.
     const other = await reseal(definition, body => { body.skills[1]!.sha256 = 'e'.repeat(64); });
-    expect((await definitions.validateArdentAgentDefinition({ definition: other, nodeId: 'node-b', bindings: BINDINGS })).problems)
+    expect((await definitions.validateArdentAgentDefinition({ definition: other, nodeId: 'node-b', bindings: BINDINGS, emberpath_client_key: KEY })).problems)
       .toEqual([{ code: 'SKILL_VERSION_UNAVAILABLE', detail: expect.stringContaining('another digest') }]);
   });
 
@@ -315,37 +330,87 @@ describe('portable agent definitions', () => {
     expect(report.ok).toBe(false);
     expect(report.problems.map(item => item.code)).toEqual(['RUNTIME_INCOMPATIBLE', 'CAPABILITY_MISSING', 'CAPABILITY_MISSING', 'EXTENSION_NOT_REVIEWED', 'SECRET_UNBOUND']);
     expect(report.problems[3]!.detail).toContain('@example/ardent-tools@1.4.1');
+    // The model-key binding may be left out; what is missing is the Emberpath key itself.
+    expect(report.problems[4]!.detail).toContain('Emberpath key missing');
     // The node's reported capabilities and a dependency's satisfy them.
     nodes['node-b'] = { ...nodes['node-b']!, version: '3.2.0', extensions: EXTENSIONS, capabilities: { studio: 4, recovery: 1 } };
     definitions.setArdentDefinitionDeps({
       installation: async nodeId => installation(nodeId), read, skillReceipts, hivemem: () => HIVEMEM, emberpath: () => GATEWAY, hiveskills: () => 'https://skills.example.com/',
       skillRelease: async request => { const known = release(request.name, request.version, request.pinned); return { sha256: known.sha256, promoted: known.promoted }; },
       dependencies: async () => [{ name: 'emberpath', status: 'usable', source: 'registry', endpoint: GATEWAY, capabilities: ['emberpath.execution-trace.v1'] }],
+      emberpathKey,
     });
-    expect(await definitions.validateArdentAgentDefinition({ definition: needs, nodeId: 'node-b', bindings: BINDINGS })).toEqual({ ok: true, problems: [] });
+    expect(await definitions.validateArdentAgentDefinition({ definition: needs, nodeId: 'node-b', bindings: BINDINGS, emberpath_client_key: KEY })).toEqual({ ok: true, problems: [] });
     // An agent that relays recovery does not make an older installed Ardent serve it.
     nodes['node-b'] = { ...nodes['node-b']!, version: '3.1.5', capabilities: { studio: 4, recovery: 1, lineage: 1, artifact_transfer: 2 } };
     const older = needs.runtime.version === '3.2.0' ? await reseal(needs, body => { body.runtime.version = '3.1.0'; }) : needs;
-    expect((await definitions.validateArdentAgentDefinition({ definition: older, nodeId: 'node-b', bindings: BINDINGS })).problems.map(item => item.code))
+    expect((await definitions.validateArdentAgentDefinition({ definition: older, nodeId: 'node-b', bindings: BINDINGS, emberpath_client_key: KEY })).problems.map(item => item.code))
       .toEqual(['CAPABILITY_MISSING']);
     nodes['node-b'] = { ...nodes['node-b']!, version: '3.2.0' };
     // An agent that does not report extensions cannot vouch for them.
     nodes['node-b']!.extensions = undefined;
-    expect((await definitions.validateArdentAgentDefinition({ definition, nodeId: 'node-b', bindings: BINDINGS })).problems.map(item => item.code))
+    expect((await definitions.validateArdentAgentDefinition({ definition, nodeId: 'node-b', bindings: BINDINGS, emberpath_client_key: KEY })).problems.map(item => item.code))
       .toEqual(['EXTENSION_NOT_REVIEWED', 'EXTENSION_NOT_REVIEWED']);
   });
 
-  it('uses a provided model key only with an explicitly configured Emberpath', async () => {
+  it('sends the Emberpath key only to an explicitly configured Emberpath, and never accepts none for the model key', async () => {
     const { definition } = await definitions.exportArdentAgentDefinition('node-a', 'lead');
-    definitions.setArdentDefinitionDeps({
+    const withExplicit = (explicit: boolean) => definitions.setArdentDefinitionDeps({
       installation: async nodeId => installation(nodeId), read, skillReceipts, dependencies: async () => [], hivemem: () => HIVEMEM,
-      emberpath: () => GATEWAY, emberpathExplicit: () => false, hiveskills: () => 'https://skills.example.com/',
+      emberpath: () => GATEWAY, emberpathExplicit: () => explicit, hiveskills: () => 'https://skills.example.com/', emberpathKey,
       skillRelease: async request => { const known = release(request.name, request.version, request.pinned); return { sha256: known.sha256, promoted: known.promoted }; },
     });
-    expect((await definitions.validateArdentAgentDefinition({ definition, nodeId: 'node-b', bindings: BINDINGS })).problems)
+    withExplicit(false);
+    expect((await definitions.validateArdentAgentDefinition({ definition, nodeId: 'node-b', bindings: BINDINGS, emberpath_client_key: KEY })).problems)
       .toEqual([{ code: 'SECRET_UNBOUND', detail: expect.stringContaining('set MAGNUS_ARDENT_EMBERPATH_URL') }]);
-    expect(await definitions.validateArdentAgentDefinition({ definition, nodeId: 'node-b', bindings: { ...BINDINGS, 'secret:LLAMACPP_API_KEY': 'none' } }))
-      .toEqual({ ok: true, problems: [] });
+    expect(keyChecks).toEqual([]);
+    withExplicit(true);
+    // Running the alias without a key would only ever get 401s from Emberpath.
+    expect((await definitions.validateArdentAgentDefinition({ definition, nodeId: 'node-b', bindings: { ...BINDINGS, 'secret:LLAMACPP_API_KEY': 'none' }, emberpath_client_key: KEY })).problems)
+      .toEqual([{ code: 'SECRET_UNBOUND', detail: expect.stringContaining('bind secret:LLAMACPP_API_KEY to provided or leave it out') }]);
+    const { 'secret:LLAMACPP_API_KEY': _secret, ...bindings } = BINDINGS;
+    expect(await definitions.validateArdentAgentDefinition({ definition, nodeId: 'node-b', bindings, emberpath_client_key: KEY })).toEqual({ ok: true, problems: [] });
+    expect(keyChecks.at(-1)).toEqual({ baseUrl: GATEWAY, alias: 'research-large' });
+  });
+
+  it('reports an Emberpath key that Emberpath refuses, or that may not use the alias, before anything is created', async () => {
+    const { definition } = await definitions.exportArdentAgentDefinition('node-a', 'lead');
+    keyAnswer = async () => { throw new HttpError(422, 'EMBERPATH_KEY_INVALID', 'Emberpath refused the client key (401): it is unknown, disabled or expired'); };
+    expect((await definitions.validateArdentAgentDefinition({ definition, nodeId: 'node-b', bindings: BINDINGS, emberpath_client_key: KEY })).problems)
+      .toEqual([{ code: 'SECRET_UNBOUND', detail: expect.stringMatching(/^emberpath_client_key: Emberpath refused the client key \(401\)/u) }]);
+    await expect(install(definition)).rejects.toMatchObject({ status: 409, code: 'PREFLIGHT_FAILED' });
+    keyAnswer = async () => { throw new HttpError(422, 'EMBERPATH_ALIAS_UNAVAILABLE', 'Emberpath does not offer research-large to this client key'); };
+    expect((await definitions.validateArdentAgentDefinition({ definition, nodeId: 'node-b', bindings: BINDINGS, emberpath_client_key: KEY })).problems)
+      .toEqual([{ code: 'MISSING_BINDING', detail: expect.stringContaining('model: Emberpath does not offer research-large') }]);
+    expect(nodes['node-b']!.actions).toEqual([]);
+    expect(store.rows.size).toBe(0);
+    // A key Emberpath could not be asked about does not block the install.
+    keyAnswer = async () => ({ checked: false, reason: 'Emberpath could not be reached from the Magnus server to check the client key' });
+    expect(await definitions.validateArdentAgentDefinition({ definition, nodeId: 'node-b', bindings: BINDINGS, emberpath_client_key: KEY })).toEqual({ ok: true, problems: [] });
+  });
+
+  it('delivers the Emberpath key to the new profile only, never into the operation, the audit or a response', async () => {
+    const { definition } = await definitions.exportArdentAgentDefinition('node-a', 'lead');
+    // The key looks like a credential; the request scan skips it and only it.
+    expect(credentialLikePaths({ emberpath_client_key: KEY })).toEqual(['$.emberpath_client_key']);
+    const operation = await install(definition);
+    expect(operation.status).toBe('succeeded');
+    expect(delivered).toEqual([KEY]);
+    const actions = nodes['node-b']!.actions;
+    expect(actions.indexOf('model-credential-set')).toBeGreaterThan(actions.indexOf('hivemem-credential-set'));
+    expect(actions.indexOf('model-credential-set')).toBeLessThan(actions.indexOf('config-save'));
+    const config = YAML.parse(nodes['node-b']!.profiles.get('researcher')!.config) as Record<string, any>;
+    expect(config['providers']['llamacpp']).toMatchObject({ base_url: GATEWAY, model: 'research-large', api_key_env: 'ARDENT_LLAMA_API_KEY' });
+    expect(operation.steps.find(step => step.name === 'config-save')!.receipt).toMatchObject({ modelKeyEnv: 'ARDENT_LLAMA_API_KEY', modelKeyConfigured: true });
+    expect(JSON.stringify([operation, [...store.rows.values()], store.audit])).not.toContain(KEY);
+    expect(store.audit.find(event => event.action === 'ardent.agent.definition-install')!.details).toMatchObject({ emberpathClientKey: 'checked' });
+    // A request without the key creates nothing and says why.
+    await expect(definitions.installArdentAgentDefinition({ definition, nodeId: 'node-b', name: 'second', bindings: BINDINGS }, actor))
+      .rejects.toMatchObject({ status: 409, code: 'PREFLIGHT_FAILED', details: { problems: [{ code: 'SECRET_UNBOUND', detail: expect.stringContaining('Emberpath key missing') }] } });
+    // Any other credential-like value in the request is still refused.
+    const token = ['gh', 'p_', 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8'].join('');
+    await expect(definitions.installArdentAgentDefinition({ definition, nodeId: 'node-b', name: 'second', bindings: BINDINGS, emberpath_client_key: KEY, apiPort: 9920,
+      extra: token }, actor)).rejects.toMatchObject({ status: 422, code: 'DEFINITION_CONTAINS_CREDENTIAL' });
   });
 
   it('refuses a definition whose digest or persona digest does not match, and bindings it does not require', async () => {
