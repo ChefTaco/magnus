@@ -10,10 +10,10 @@ vi.mock('../utils/env.js', async (original) => ({
   IAM_CORE_URL: '',
 }));
 vi.mock('../middleware/user-status.js', () => ({ getCurrentUserStatus: vi.fn(async () => ({ active: true, role: 'ADMIN' })), invalidateUserStatus: vi.fn() }));
-const mocks = vi.hoisted(() => ({ definitionExport: vi.fn(), definitionValidate: vi.fn(), definitionInstall: vi.fn(), dependencies: vi.fn(), deploy: vi.fn(), hivemem: vi.fn(), resume: vi.fn(), operation: vi.fn(), action: vi.fn(), read: vi.fn(), audit: vi.fn(), list: vi.fn(), release: vi.fn(), studio: vi.fn(),
+const mocks = vi.hoisted(() => ({ definitionExport: vi.fn(), definitionValidate: vi.fn(), definitionInstall: vi.fn(), dependencies: vi.fn(), deploy: vi.fn(), hivemem: vi.fn(), modelCredential: vi.fn(), resume: vi.fn(), operation: vi.fn(), action: vi.fn(), read: vi.fn(), audit: vi.fn(), list: vi.fn(), release: vi.fn(), studio: vi.fn(),
   capability: vi.fn(), studioAt: vi.fn(), execution: vi.fn(), stream: vi.fn() }));
 vi.mock('../services/ardent-agent-deploy.js', () => ({
-  startArdentAgentDeploy: mocks.deploy, startArdentHiveMemEnable: mocks.hivemem, resumeArdentAgentOperation: mocks.resume, getArdentAgentOperation: mocks.operation,
+  startArdentAgentDeploy: mocks.deploy, startArdentHiveMemEnable: mocks.hivemem, startArdentModelCredentialSet: mocks.modelCredential, resumeArdentAgentOperation: mocks.resume, getArdentAgentOperation: mocks.operation,
 }));
 vi.mock('../services/ardent-agent-definition.js', () => ({
   exportArdentAgentDefinition: mocks.definitionExport, validateArdentAgentDefinition: mocks.definitionValidate, installArdentAgentDefinition: mocks.definitionInstall,
@@ -121,6 +121,7 @@ beforeEach(() => {
   });
   mocks.deploy.mockResolvedValue('00000000-0000-4000-8000-0000000000aa');
   mocks.hivemem.mockResolvedValue('00000000-0000-4000-8000-0000000000ab');
+  mocks.modelCredential.mockResolvedValue('00000000-0000-4000-8000-0000000000ac');
   mocks.resume.mockResolvedValue('00000000-0000-4000-8000-0000000000aa');
   mocks.operation.mockResolvedValue({ id: 'op', status: 'running' });
   mocks.action.mockResolvedValue({ task_id: 'task', state: 'queued' });
@@ -393,9 +394,9 @@ describe('linked Ardent service identity', () => {
     expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ action: 'ardent.development-note', actorId: 'bob', details: expect.objectContaining({ kind: 'operator_note' }) }));
   });
 
-  it('creates agents, resumes and enables HiveMem only for an acting ADMIN', async () => {
+  it('creates agents, resumes, enables HiveMem and sets Emberpath keys only for an acting ADMIN', async () => {
     const token = await serviceToken();
-    const requests: Array<[string, string]> = [['POST', '/api/v1/ardent/agents'], ['POST', `${operation}/resume`], ['POST', `${profile}/hivemem`]];
+    const requests: Array<[string, string]> = [['POST', '/api/v1/ardent/agents'], ['POST', `${operation}/resume`], ['POST', `${profile}/hivemem`], ['POST', `${profile}/model-credential`]];
     for (const [method, path] of requests) {
       const missing = await call(token, method, path, { body: {} });
       expect(missing.status, path).toBe(403);
@@ -408,6 +409,15 @@ describe('linked Ardent service identity', () => {
     expect(mocks.resume).toHaveBeenCalledOnce();
     expect(mocks.resume).toHaveBeenCalledWith('00000000-0000-4000-8000-0000000000aa', expect.objectContaining({ actorId: 'alice' }), {});
     expect(mocks.hivemem).toHaveBeenCalledWith('node-1', 'lead', expect.objectContaining({ actorId: 'alice' }));
+    expect(mocks.modelCredential).toHaveBeenCalledOnce();
+    expect(mocks.modelCredential).toHaveBeenCalledWith('node-1', 'lead', {}, expect.objectContaining({ actorId: 'alice', details: expect.objectContaining({ actingSubject: 'admin-subject' }) }));
+    // Set Emberpath key passes the body on as it came, and a body that is not JSON as null (which the service refuses).
+    const keyBody = { emberpath_client_key: 'fixture-emberpath-client-key-0007' };
+    expect((await call(token, 'POST', `${profile}/model-credential`, { acting: 'admin-subject', body: keyBody })).status).toBe(202);
+    expect(mocks.modelCredential).toHaveBeenLastCalledWith('node-1', 'lead', keyBody, expect.objectContaining({ actorId: 'alice' }));
+    // PUT is not part of the bridge, and the key is never echoed or audited by the route.
+    expect((await call(token, 'PUT', `${profile}/model-credential`, { acting: 'admin-subject', body: keyBody })).status).toBe(403);
+    expect(JSON.stringify(mocks.audit.mock.calls)).not.toContain(keyBody.emberpath_client_key);
     // Resume passes the optional body (an Emberpath client key) on, and refuses one that is not JSON.
     const key = { emberpath_client_key: 'fixture-emberpath-client-key-0004' };
     expect((await call(token, 'POST', `${operation}/resume`, { acting: 'admin-subject', body: key })).status).toBe(202);
@@ -481,9 +491,15 @@ describe('Ardent routes for people', () => {
     const admin = await userToken('admin-subject', ['magnus:admin']);
     expect((await call(admin, 'POST', '/api/v1/ardent/agents', { body: {} })).status).toBe(202);
     expect(mocks.deploy).toHaveBeenCalledWith({}, { actorId: 'alice', details: {} });
+    const keyBody = { emberpath_client_key: 'fixture-emberpath-client-key-0008' };
+    const answer = await call(admin, 'POST', `${profile}/model-credential`, { body: keyBody });
+    expect(answer.status).toBe(202);
+    expect(await answer.text()).not.toContain(keyBody.emberpath_client_key);
+    expect(mocks.modelCredential).toHaveBeenCalledWith('node-1', 'lead', keyBody, { actorId: 'alice', details: {} });
+    expect((await call(admin, 'POST', '/api/v1/ardent/installations/node-1/profiles/bad.name/model-credential', { body: keyBody })).status).toBe(400);
     vi.stubGlobal('fetch', async (input: RequestInfo | URL) => String(input) === JWKS_URL ? Response.json(jwks) : Response.json({ sub: 'operator-subject' }));
     const operator = await userToken('operator-subject', ['magnus:operate']);
-    for (const [method, path] of [['GET', '/api/v1/ardent/profiles'], ['POST', '/api/v1/ardent/agents'], ['GET', operation]] as const)
+    for (const [method, path] of [['GET', '/api/v1/ardent/profiles'], ['POST', '/api/v1/ardent/agents'], ['GET', operation], ['POST', `${profile}/model-credential`]] as const)
       expect((await call(operator, method, path, { body: method === 'POST' ? {} : undefined })).status, path).toBe(403);
   });
 });

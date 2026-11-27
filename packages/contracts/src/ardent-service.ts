@@ -6,7 +6,7 @@
  */
 import { z } from 'zod';
 import {
-  ARDENT_EMBERPATH_CLIENT_KEY_PATTERN, ARDENT_MODEL_API_KEY_ENV, ardentEmberpathClientKeySchema, ardentAgentOperationResumeRequestSchema,
+  ARDENT_EMBERPATH_CLIENT_KEY_PATTERN, ARDENT_MODEL_API_KEY_ENV, ardentEmberpathClientKeySchema, ardentAgentModelCredentialRequestSchema, ardentAgentOperationResumeRequestSchema,
   ARDENT_STUDIO_CAPABILITY, ARDENT_STUDIO_EVENT_KINDS, ardentAgentDeployRequestSchema, ardentAgentOperationAcceptedResponseSchema,
   ardentAgentOperationResponseSchema, ardentAgentOperationSchema, ardentArtifactManifestSchema, ardentArtifactRecordSchema,
   ardentContextItemSchema, ardentDevelopmentNoteSchema, ardentDevelopmentPageSchema, ardentDevelopmentQuerySchema,
@@ -305,6 +305,8 @@ export const ardentServiceRoutes: readonly ArdentServiceRoute[] = [
   { method: 'POST', path: '/ardent/agents/operations/{id}/resume', request: ardentAgentOperationResumeRequestSchema, response: ardentAgentOperationAcceptedResponseSchema, successStatus: 202, actingAdmin: true,
     note: 'The body is optional. 409 EMBERPATH_KEY_REQUIRED when the Emberpath client key has not reached the profile and this server no longer holds it; resume with emberpath_client_key.' },
   { method: 'POST', path: '/ardent/installations/{nodeId}/profiles/{name}/hivemem', response: ardentAgentOperationAcceptedResponseSchema, successStatus: 202, actingAdmin: true },
+  { method: 'POST', path: '/ardent/installations/{nodeId}/profiles/{name}/model-credential', request: ardentAgentModelCredentialRequestSchema, response: ardentAgentOperationAcceptedResponseSchema, successStatus: 202, actingAdmin: true,
+    note: 'Set Emberpath key: sets or rotates the Emberpath client key of a running profile whose providers.llamacpp.base_url is MAGNUS_ARDENT_EMBERPATH_URL, as an operation (kind model-credential: profile-check, config-save, service-restart, ready-probe). 400 EMBERPATH_KEY_REQUIRED without the key, 409 EMBERPATH_NOT_EXPLICIT, 409 MODEL_NOT_EMBERPATH for a profile whose model is not an Emberpath alias, 409 PROFILE_NOT_RUNNING, 409 AGENT_UPGRADE_REQUIRED below studio 6, 422 EMBERPATH_KEY_INVALID, EMBERPATH_KEY_FORBIDDEN or EMBERPATH_ALIAS_UNAVAILABLE. The key is never stored or returned.' },
   { method: 'GET', path: '/ardent/dependencies', response: ardentDependenciesResponseSchema, actingAdmin: false,
     note: 'HiveMem, HiveSkills and Emberpath as Magnus resolved them (explicit setting, then the Hive Registry). Read only; refresh=true resolves again now.' },
   { method: 'GET', path: '/ardent/installations/{nodeId}/profiles/{name}/definition', response: ok(agentDefinitionExportSchema), actingAdmin: true,
@@ -341,7 +343,7 @@ export type ArdentServiceProfile = z.infer<typeof ardentServiceProfileSchema>;
 export type ArdentAgentDeployRequest = z.infer<typeof ardentAgentDeployRequestSchema>;
 export type ArdentAgentOperation = z.infer<typeof ardentAgentOperationSchema>;
 export {
-  ARDENT_EMBERPATH_CLIENT_KEY_PATTERN, ARDENT_MODEL_API_KEY_ENV, ardentEmberpathClientKeySchema, ardentAgentOperationResumeRequestSchema,
+  ARDENT_EMBERPATH_CLIENT_KEY_PATTERN, ARDENT_MODEL_API_KEY_ENV, ardentEmberpathClientKeySchema, ardentAgentModelCredentialRequestSchema, ardentAgentOperationResumeRequestSchema,
   ARDENT_STUDIO_CAPABILITY, ARDENT_STUDIO_EVENT_KINDS, ardentAgentDeployRequestSchema, ardentAgentOperationAcceptedResponseSchema,
   ardentAgentOperationResponseSchema, ardentAgentOperationSchema, ardentArtifactManifestSchema, ardentArtifactRecordSchema,
   ardentContextItemSchema, ardentDevelopmentNoteSchema, ardentDevelopmentPageSchema, ardentDevelopmentQuerySchema,

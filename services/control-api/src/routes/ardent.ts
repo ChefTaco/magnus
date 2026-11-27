@@ -5,7 +5,7 @@ import { authMiddleware, getUser } from '../middleware/auth.js';
 import { HttpError } from '../middleware/error-handler.js';
 import { logAuditEvent } from '../services/audit-service.js';
 import { actingOathweaveLink, watchOathweaveStream } from '../middleware/oathweave.js';
-import { getArdentAgentOperation, resumeArdentAgentOperation, startArdentAgentDeploy, startArdentHiveMemEnable, type ArdentOperationActor } from '../services/ardent-agent-deploy.js';
+import { getArdentAgentOperation, resumeArdentAgentOperation, startArdentAgentDeploy, startArdentHiveMemEnable, startArdentModelCredentialSet, type ArdentOperationActor } from '../services/ardent-agent-deploy.js';
 import { ardentAcceptsExecution, ardentStudioAgentAt, getArdentContextAdoption, getArdentContextRelease, getArdentInstallation, getArdentProfileResource, getArdentProfileText, listArdentInstallations, performArdentAction, requireArdentProfileCapability, requireArdentStudioAgent, streamArdentProfileResource } from '../services/ardent-service.js';
 import { AgentResponseError, managedCommandOf } from '../sdk/node-api-client.js';
 import { ardentOwnerBlock, reconcileArdentCommandOwner } from '../services/ardent-command-owner.js';
@@ -648,4 +648,13 @@ ardentRouter.post('/installations/:nodeId/profiles/:name/hivemem', async c => {
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(profile)) throw new HttpError(400, 'VALIDATION_ERROR', 'Invalid Ardent profile');
   const actor = ardentActor(c, true);
   return c.json({ success: true, data: { operationId: await startArdentHiveMemEnable(nodeId, profile, actor) } }, 202);
+});
+/** Set Emberpath key: set or rotate the Emberpath client key of an existing agent. ADMIN, or a service acting for an ADMIN. */
+ardentRouter.post('/installations/:nodeId/profiles/:name/model-credential', async c => {
+  const nodeId = id(c.req.param('nodeId'));
+  const profile = id(c.req.param('name'));
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(profile)) throw new HttpError(400, 'VALIDATION_ERROR', 'Invalid Ardent profile');
+  const actor = ardentActor(c, true);
+  const body: unknown = await c.req.json().catch(() => null);
+  return c.json({ success: true, data: { operationId: await startArdentModelCredentialSet(nodeId, profile, body, actor) } }, 202);
 });

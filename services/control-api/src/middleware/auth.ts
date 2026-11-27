@@ -139,7 +139,7 @@ const ARDENT_SERVICE_READS = [
   new RegExp(`${ARDENT_PROFILE}/definition$`),
 ];
 const ARDENT_SERVICE_WRITES = [
-  new RegExp(`${ARDENT_PROFILE}/(?:action|hivemem)$`),
+  new RegExp(`${ARDENT_PROFILE}/(?:action|hivemem|model-credential)$`),
   /^\/api\/v1\/ardent\/agents$/,
   new RegExp(`^/api/v1/ardent/agents/operations/${ARDENT_UUID}/resume$`),
   /^\/api\/v1\/ardent\/agent-definitions\/(?:validate|install)$/,

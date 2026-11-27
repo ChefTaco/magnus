@@ -68,7 +68,7 @@ test('credential-like strings are found anywhere, even in a malformed definition
 
 test('install and validate requests take an Emberpath client key of the same shape New Agent takes', async () => {
   const { AGENT_DEFINITION_EMBERPATH_KEY_PATTERN, agentDefinitionInstallRequestSchema, agentDefinitionValidateRequestSchema } = await import('../src/agent-definition.ts');
-  const { ARDENT_EMBERPATH_CLIENT_KEY_PATTERN, ardentAgentDeployRequestSchema, ardentAgentOperationResumeRequestSchema } = await import('../src/browser.ts');
+  const { ARDENT_EMBERPATH_CLIENT_KEY_PATTERN, ardentAgentDeployRequestSchema, ardentAgentModelCredentialRequestSchema, ardentAgentOperationResumeRequestSchema } = await import('../src/browser.ts');
   // Both modules import only zod, so each keeps the pattern; they must not drift.
   assert.equal(AGENT_DEFINITION_EMBERPATH_KEY_PATTERN.source, ARDENT_EMBERPATH_CLIENT_KEY_PATTERN.source);
   assert.equal(AGENT_DEFINITION_EMBERPATH_KEY_PATTERN.flags, ARDENT_EMBERPATH_CLIENT_KEY_PATTERN.flags);
@@ -79,11 +79,16 @@ test('install and validate requests take an Emberpath client key of the same sha
     assert.ok(agentDefinitionValidateRequestSchema.safeParse({ definition: {}, nodeId: 'node-1', emberpath_client_key: key }).success);
     assert.ok(ardentAgentDeployRequestSchema.safeParse({ ...deploy, emberpath_client_key: key }).success);
     assert.ok(ardentAgentOperationResumeRequestSchema.safeParse({ emberpath_client_key: key }).success);
+    assert.ok(ardentAgentModelCredentialRequestSchema.safeParse({ emberpath_client_key: key }).success);
   }
   for (const key of ['short', 'fixture key with spaces', 'fixture-key\nINJECTED=1', 'fixture"quoted"key-0001', 'A'.repeat(513)]) {
     assert.equal(agentDefinitionInstallRequestSchema.safeParse({ ...install, emberpath_client_key: key }).success, false, JSON.stringify(key.slice(0, 20)));
     assert.equal(ardentAgentDeployRequestSchema.safeParse({ ...deploy, emberpath_client_key: key }).success, false);
+    assert.equal(ardentAgentModelCredentialRequestSchema.safeParse({ emberpath_client_key: key }).success, false);
   }
+  // Set Emberpath key needs the key and takes nothing else.
+  assert.equal(ardentAgentModelCredentialRequestSchema.safeParse({}).success, false);
+  assert.equal(ardentAgentModelCredentialRequestSchema.safeParse({ emberpath_client_key: 'fixture-emberpath-key-0001', alias: 'general' }).success, false);
   assert.ok(ardentAgentOperationResumeRequestSchema.safeParse({}).success);
   assert.equal(ardentAgentOperationResumeRequestSchema.safeParse({ other: true }).success, false);
 });

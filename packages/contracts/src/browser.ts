@@ -3026,6 +3026,11 @@ export const ardentAgentDeployRequestSchema = z.object({
 }).strict();
 /** POST /ardent/agents/operations/{id}/resume. A key is needed only when the step that delivers it has not finished. */
 export const ardentAgentOperationResumeRequestSchema = z.object({ emberpath_client_key: ardentEmberpathClientKeySchema.optional() }).strict();
+/**
+ * POST /ardent/installations/{nodeId}/profiles/{name}/model-credential: set or rotate the Emberpath client key of an
+ * existing agent whose model is served by MAGNUS_ARDENT_EMBERPATH_URL. Write-only, like New Agent's key.
+ */
+export const ardentAgentModelCredentialRequestSchema = z.object({ emberpath_client_key: ardentEmberpathClientKeySchema }).strict();
 export const ardentAgentStepNameSchema = z.enum([
   'profile-check', 'profile-create', 'service-start', 'identity-soul', 'identity-identity',
   'hivemem-enroll', 'config-save', 'skill-set', 'service-restart', 'ready-probe',
@@ -3043,8 +3048,11 @@ export const ardentAgentStepSchema = z.object({
 });
 export const ardentAgentOperationSchema = z.object({
   id: z.string(),
-  /** definition: an install of a hive-agent-definition/1 (request.definition names it). */
-  kind: z.enum(['deploy', 'hivemem', 'definition']),
+  /**
+   * definition: an install of a hive-agent-definition/1 (request.definition names it). model-credential: Set
+   * Emberpath key on an existing agent (request.model names its alias).
+   */
+  kind: z.enum(['deploy', 'hivemem', 'definition', 'model-credential']),
   nodeId: z.string(),
   profile: z.string(),
   status: z.enum(['running', 'succeeded', 'failed']),
@@ -3436,17 +3444,19 @@ export const magnusBrowserRoutes: readonly MagnusBrowserRoute[] = [
     note: 'Relayed unbuffered from Ardent. task.delta and task.text appear only with an Ardent that streams live text. Ardent ends a stream after 60 seconds: reconnect with after or Last-Event-ID set to the last task.event id. 409 AGENT_UPGRADE_REQUIRED when the node agent predates the bridge.' },
 
   { method: 'POST', path: '/ardent/agents', request: ardentAgentDeployRequestSchema, response: ardentAgentOperationAcceptedResponseSchema, roles: ADMIN_ONLY, successStatus: 202,
-    note: 'Starts a New Agent operation: profile-create, service-start, identity-soul, identity-identity, hivemem-enroll, config-save, skill-set, service-restart, ready-probe. 409 when the profile exists or another operation on it is running; 409 AGENT_UPGRADE_REQUIRED for an agent without the bridge; 503 HIVEMEM_ENROLLMENT_UNAVAILABLE when the server has no HiveMem enrollment settings.' },
+    note: 'Starts a New Agent operation: profile-create, service-start, identity-soul, identity-identity, hivemem-enroll, config-save, skill-set, service-restart, ready-probe. 409 when the profile exists or another operation on it is running; 409 AGENT_UPGRADE_REQUIRED for an agent without the bridge; 503 HIVEMEM_ENROLLMENT_UNAVAILABLE when the server has no HiveMem enrollment settings. An emberpath_alias model needs emberpath_client_key: 400 EMBERPATH_KEY_REQUIRED without it, 409 EMBERPATH_NOT_EXPLICIT, 422 EMBERPATH_KEY_INVALID, EMBERPATH_KEY_FORBIDDEN or EMBERPATH_ALIAS_UNAVAILABLE.' },
   { method: 'GET', path: '/ardent/agents/operations/{id}', response: ardentAgentOperationResponseSchema, roles: ADMIN_ONLY, note: '404 for an unknown operation.' },
   { method: 'GET', path: '/ardent/agents/operations/{id}/stream', response: null, roles: ADMIN_ONLY,
     events: { operation: ardentAgentOperationSchema, done: ardentAgentOperationSchema },
     note: 'operation on connect and on every step change; done once the operation succeeds or fails, then the stream ends. Oathweave streams close on logout and at token expiry: reconnect with a fresh token.' },
-  { method: 'POST', path: '/ardent/agents/operations/{id}/resume', response: ardentAgentOperationAcceptedResponseSchema, roles: ADMIN_ONLY, successStatus: 202,
-    note: 'Reruns a failed operation from its first unfinished step; finished steps are never rerun. 409 unless the operation failed.' },
+  { method: 'POST', path: '/ardent/agents/operations/{id}/resume', request: ardentAgentOperationResumeRequestSchema, response: ardentAgentOperationAcceptedResponseSchema, roles: ADMIN_ONLY, successStatus: 202,
+    note: 'Reruns a failed operation from its first unfinished step; finished steps are never rerun. 409 unless the operation failed. The body is optional: 409 EMBERPATH_KEY_REQUIRED when the operation\'s Emberpath client key has not reached the profile and the server no longer holds it; resume with emberpath_client_key (422 when Emberpath refuses it).' },
   { method: 'GET', path: '/ardent/dependencies', response: ardentDependenciesResponseSchema, roles: ADMIN_ONLY,
     note: 'HiveMem, HiveSkills and Emberpath as Magnus resolved them: an explicit setting first, then the Hive Registry. refresh=true resolves again now instead of using the result of the last five-minute refresh.' },
   { method: 'POST', path: '/ardent/installations/{nodeId}/profiles/{name}/hivemem', response: ardentAgentOperationAcceptedResponseSchema, roles: ADMIN_ONLY, successStatus: 202,
     note: 'Enable HiveMem on an existing running profile: profile-check, hivemem-enroll, config-save, service-restart, ready-probe. A profile already enrolled in HiveMem gets a replacement credential: renewed with a fresh deadline where HiveMem supports it, otherwise rotated. Magnus then renews it before every deadline.' },
+  { method: 'POST', path: '/ardent/installations/{nodeId}/profiles/{name}/model-credential', request: ardentAgentModelCredentialRequestSchema, response: ardentAgentOperationAcceptedResponseSchema, roles: ADMIN_ONLY, successStatus: 202,
+    note: 'Set Emberpath key: sets or rotates the Emberpath client key of a running profile whose model is an Emberpath alias at MAGNUS_ARDENT_EMBERPATH_URL, as an operation of kind model-credential (profile-check, config-save, service-restart, ready-probe). 400 EMBERPATH_KEY_REQUIRED without the key; 409 EMBERPATH_NOT_EXPLICIT, MODEL_NOT_EMBERPATH, PROFILE_NOT_RUNNING or AGENT_UPGRADE_REQUIRED (node agent below studio 6); 422 EMBERPATH_KEY_INVALID, EMBERPATH_KEY_FORBIDDEN or EMBERPATH_ALIAS_UNAVAILABLE. Write-only: the key is never stored or returned.' },
 
   // Agent identity
   { method: 'GET', path: '/agents/identity', query: agentIdentityLookupQuerySchema, response: agentIdentityResponseSchema, roles: ANY_ROLE,

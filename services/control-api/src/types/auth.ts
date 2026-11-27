@@ -170,6 +170,7 @@ export type AuditAction =
   | 'ardent.agent.resume'
   | 'ardent.agent.step'
   | 'ardent.agent.complete'
+  | 'ardent.agent.model-credential'
   | 'ardent.hivemem.enable'
   | 'ardent.hivemem.renew'
   | 'ardent.hivemem.untrack'

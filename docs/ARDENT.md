@@ -116,8 +116,40 @@ So Magnus does not issue keys: create one in Emberpath (Client keys), preferably
 
 If the operation fails before `config-save` and the server restarted (or an hour passed), resume
 answers 409 `EMBERPATH_KEY_REQUIRED`: resume with `{"emberpath_client_key": "…"}` in the body. Once
-`config-save` has delivered it, resume needs no key and refuses one. To replace an agent's key later,
-rotate it in Emberpath and update the profile's `.env`.
+`config-save` has delivered it, resume needs no key and refuses one.
+
+#### Set Emberpath key on an existing agent
+
+`POST /api/v1/ardent/installations/:nodeId/profiles/:name/model-credential` (ADMIN, or a linked
+service identity acting for an ADMIN) sets or rotates the key of an agent that already exists, for
+example one New Agent created before it delivered keys, or one whose key was rotated in Emberpath:
+
+```json
+{ "emberpath_client_key": "<the client key created in Emberpath>" }
+```
+
+The profile must be running, and its model an Emberpath alias at `MAGNUS_ARDENT_EMBERPATH_URL`:
+`execution.backend: llamacpp` and `providers.llamacpp.base_url` that URL (with or without the final
+slash). The alias is the profile's `providers.llamacpp.model`. Magnus answers before changing anything:
+
+| Answer | When |
+|---|---|
+| 400 `EMBERPATH_KEY_REQUIRED` | The body has no `emberpath_client_key` (400 `VALIDATION_ERROR` for a malformed key or another field) |
+| 409 `EMBERPATH_NOT_EXPLICIT` | `MAGNUS_ARDENT_EMBERPATH_URL` is not set |
+| 409 `AGENT_UPGRADE_REQUIRED` | The node agent is below studio level 6 |
+| 404 `NOT_FOUND`, 409 `PROFILE_NOT_RUNNING` | No such profile, or it is stopped |
+| 409 `MODEL_NOT_EMBERPATH` | The profile's model is not an Emberpath alias at that URL |
+| 422 `EMBERPATH_KEY_INVALID`, `EMBERPATH_KEY_FORBIDDEN`, `EMBERPATH_ALIAS_UNAVAILABLE` | Emberpath refused the key, as for New Agent |
+
+Then it answers `202 { "operationId": "…" }` for an operation of kind `model-credential`:
+`profile-check`, `config-save` (writes the key to the profile's `.env` as `ARDENT_LLAMA_API_KEY` with
+`model-credential-set`, then sets `providers.llamacpp.api_key_env: ARDENT_LLAMA_API_KEY`; nothing else
+in the configuration changes), `service-restart` (skipped when neither the key nor the configuration
+changed) and `ready-probe` (the profile answers its status; HiveMem is not required). The start is
+audited as `ardent.agent.model-credential` with the alias and whether Emberpath checked the key, never
+the key itself. The key is held in memory only until `config-save`, and resume takes it again with 409
+`EMBERPATH_KEY_REQUIRED` exactly as for New Agent. HiveXUI offers this as **Set Emberpath key** on the
+agent's page.
 
 ## Failed actions and command owners
 
@@ -641,7 +673,7 @@ what it may call. In short:
 - It names the person it acts for in `x-acting-subject` (their Oathweave subject). That subject must
   have one person link on the same issuer, and the audit names that person with the service in its
   details.
-- New Agent, resume and Enable HiveMem additionally need that person's link role to be `ADMIN`.
+- New Agent, resume, Enable HiveMem and Set Emberpath key additionally need that person's link role to be `ADMIN`.
 - So do agent changes: `identity-save`, `skill-set`, `config-save` and `skill-install`, and reading `config` (as a
   person needs ADMIN to read it). Without an acting ADMIN they answer 403 `ACTING_ADMIN_REQUIRED`.
 - A service's `config-save` may change only the backend and model settings, `skills.enabled` and
