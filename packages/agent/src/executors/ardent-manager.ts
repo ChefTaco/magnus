@@ -14,7 +14,7 @@ import { childEnvironment } from '../utils/child-env.js';
 import { managedExecution } from '../security/managed-context.js';
 import { logger } from '../utils/logger.js';
 import {
-  ARDENT_CONTENT_HEADER_PATTERNS, ARDENT_IF_RANGE_PATTERN, ARDENT_TASK_FILTER_QUERY, ardentCredentialReloadSchema, ARDENT_INSTANCE_REF_ENV, ARDENT_INSTANCE_REF_PATTERN, ARDENT_RANGE_PATTERN, ardentInstanceRef, ARDENT_SKILL_ARCHIVE_LIMITS, ARDENT_SKILL_RECEIPT_FILE,
+  ARDENT_CONTENT_HEADER_PATTERNS, ARDENT_IF_RANGE_PATTERN, ARDENT_MODEL_API_KEY_ENV, ardentEmberpathClientKeySchema, ARDENT_TASK_FILTER_QUERY, ardentCredentialReloadSchema, ARDENT_INSTANCE_REF_ENV, ARDENT_INSTANCE_REF_PATTERN, ARDENT_RANGE_PATTERN, ardentInstanceRef, ARDENT_SKILL_ARCHIVE_LIMITS, ARDENT_SKILL_RECEIPT_FILE,
   ardentArtifactImportSchema, ardentMediaType, ardentTraceHeaders, ardentDevelopmentNoteSchema, ardentMissionSubmitSchema,
   ardentPreviewSubmitSchema, ardentProfileCapabilities, ardentSessionOpenSchema, ardentSkillInstallNodeSchema, ardentSkillReceiptSchema,
   ardentTaskRecoveryDecisionSchema, checkArdentSkillArchive, parseArdentExecutionContext, type ArdentSkillInstallResult,
@@ -547,7 +547,7 @@ async function relayArdentContent(url: URL, headers: Record<string, string>, max
 }
 const actionInput = z.object({
   profile: profileName,
-  action: z.enum(['profile-create', 'session-open', 'hivemem-credential-set', 'hivemem-credential-reload', 'config-validate', 'config-save', 'peer-validate', 'peer-save', 'identity-save', 'identity-restore', 'provider-test', 'channel-test', 'peer-test', 'memory-search', 'task-submit', 'task-cancel', 'mission-submit', 'task-pause', 'task-resume', 'preview-submit', 'development-note', 'skill-set', 'service-start', 'service-stop', 'service-restart', 'package-install', 'context-stage', 'context-adopt', 'context-rollback', 'skill-install', 'task-recovery', 'artifact-import', 'instance-ref-set', 'peer-credential-reload', 'management-credential-rotate']),
+  action: z.enum(['profile-create', 'session-open', 'hivemem-credential-set', 'hivemem-credential-reload', 'config-validate', 'config-save', 'peer-validate', 'peer-save', 'identity-save', 'identity-restore', 'provider-test', 'channel-test', 'peer-test', 'memory-search', 'task-submit', 'task-cancel', 'mission-submit', 'task-pause', 'task-resume', 'preview-submit', 'development-note', 'skill-set', 'service-start', 'service-stop', 'service-restart', 'package-install', 'context-stage', 'context-adopt', 'context-rollback', 'skill-install', 'task-recovery', 'artifact-import', 'instance-ref-set', 'peer-credential-reload', 'management-credential-rotate', 'model-credential-set']),
   target: z.string().max(128).optional(),
   body: z.unknown().optional(),
   /** An execution context v1 for task-submit, mission-submit and preview-submit; an invalid one is dropped. */
@@ -600,6 +600,7 @@ const actionRoutes: Record<z.infer<typeof actionInput>['action'], { method: 'POS
   'peer-credential-reload': { method: 'POST', path: () => 'credentials/peers/reload' },
   // The agent writes a new management token and switches the gateway to it (rotateManagementCredential).
   'management-credential-rotate': { method: 'POST', path: () => '' },
+  'model-credential-set': { method: 'POST', path: () => '' },
 };
 
 /** Ardent 3.4.0 refuses a management request body above 1 MiB (413 BODY_TOO_LARGE). */
@@ -869,7 +870,7 @@ export { ARDENT_INSTANCE_REF_ENV, ardentInstanceRef };
 const jwt = z.string().max(8192).regex(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
 const instanceRef = z.string().regex(ARDENT_INSTANCE_REF_PATTERN);
 /** The keys Magnus writes into a profile's `.env`, each with the values it may hold. */
-const PROFILE_ENV_VALUES = { [ARDENT_HIVEMEM_TOKEN_ENV]: jwt, [ARDENT_INSTANCE_REF_ENV]: instanceRef } as const;
+const PROFILE_ENV_VALUES = { [ARDENT_HIVEMEM_TOKEN_ENV]: jwt, [ARDENT_INSTANCE_REF_ENV]: instanceRef, [ARDENT_MODEL_API_KEY_ENV]: ardentEmberpathClientKeySchema } as const;
 
 /**
  * Set one key in a profile's private `.env`, keeping every other line, its
@@ -943,6 +944,21 @@ async function setHiveMemCredential(root: ArdentRoot, profile: string, body: unk
   await writeProfileCredential(dir, ARDENT_HIVEMEM_TOKEN_ENV, input.token);
   // Report only that the key is set: the token never leaves the node again.
   return { profile, tokenEnv: ARDENT_HIVEMEM_TOKEN_ENV, configured: true, activationRequired: true };
+}
+
+/**
+ * Write the model API key New Agent delivers (an Emberpath client key) into a profile's `.env` as
+ * ARDENT_MODEL_API_KEY_ENV, the only key this action writes. Refused when the profile's management token
+ * lives under that name. Root only, like the HiveMem credential; the key never leaves the node again.
+ */
+async function setModelCredential(root: ArdentRoot, profile: string, body: unknown): Promise<object> {
+  if (process.getuid?.() !== 0) throw new Error('Ardent credential management requires a root node manager');
+  const input = z.object({ api_key: ardentEmberpathClientKeySchema }).strict().safeParse(body);
+  if (!input.success) throw new Error('The model API key must be 16 to 512 characters without whitespace');
+  const { config, dir } = await profileConfig(root.root, profile);
+  if (config.api.token_env === ARDENT_MODEL_API_KEY_ENV) throw new Error(`The profile's management token uses ${ARDENT_MODEL_API_KEY_ENV}; the model key cannot share it`);
+  const changed = await writeProfileEnv(dir, ARDENT_MODEL_API_KEY_ENV, input.data.api_key);
+  return { profile, keyEnv: ARDENT_MODEL_API_KEY_ENV, configured: true, changed, activationRequired: changed };
 }
 
 /** What Ardent accepts as a management token: 16 to 4096 characters without whitespace. */
@@ -1279,6 +1295,7 @@ export function createArdentRoutes(resolveRoot: () => Promise<ArdentRoot> = arde
       if (input.action === 'instance-ref-set') return c.json(await setInstanceRef(root, input.profile, input.body));
       if (input.action === 'profile-create') return c.json(await withArdentLifecycle(root.install, () => createProfile(root, input.profile, input.body)));
       if (input.action === 'hivemem-credential-set') return c.json(await setHiveMemCredential(root, input.profile, input.body));
+      if (input.action === 'model-credential-set') return c.json(await setModelCredential(root, input.profile, input.body));
       if (input.action === 'management-credential-rotate')
         return c.json(await withArdentLifecycle(root.install, () => rotateManagementCredential(root, input.profile, input.body)));
       if (input.action === 'skill-install') return c.json(await installSkill(root, input.profile, input.body));

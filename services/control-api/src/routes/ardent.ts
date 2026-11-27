@@ -635,7 +635,12 @@ ardentRouter.get('/agents/operations/:id/stream', async c => {
 ardentRouter.post('/agents/operations/:id/resume', async c => {
   const id = operationId(c.req.param('id'));
   const actor = ardentActor(c, true);
-  return c.json({ success: true, data: { operationId: await resumeArdentAgentOperation(id, actor) } }, 202);
+  // The body is optional; it carries only the Emberpath client key an operation may still need.
+  const text = await c.req.text();
+  let body: unknown;
+  try { body = text.trim() ? JSON.parse(text) : undefined; }
+  catch { throw new HttpError(400, 'VALIDATION_ERROR', 'The body must be JSON'); }
+  return c.json({ success: true, data: { operationId: await resumeArdentAgentOperation(id, actor, body) } }, 202);
 });
 ardentRouter.post('/installations/:nodeId/profiles/:name/hivemem', async c => {
   const nodeId = id(c.req.param('nodeId'));

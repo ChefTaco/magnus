@@ -406,7 +406,17 @@ describe('linked Ardent service identity', () => {
     }
     expect(mocks.deploy).toHaveBeenCalledWith({}, { actorId: 'alice', details: { serviceActor: 'service:ardent:ardent-studio', serviceClientId: 'ardent-studio', actingSubject: 'admin-subject' } });
     expect(mocks.resume).toHaveBeenCalledOnce();
+    expect(mocks.resume).toHaveBeenCalledWith('00000000-0000-4000-8000-0000000000aa', expect.objectContaining({ actorId: 'alice' }), {});
     expect(mocks.hivemem).toHaveBeenCalledWith('node-1', 'lead', expect.objectContaining({ actorId: 'alice' }));
+    // Resume passes the optional body (an Emberpath client key) on, and refuses one that is not JSON.
+    const key = { emberpath_client_key: 'fixture-emberpath-client-key-0004' };
+    expect((await call(token, 'POST', `${operation}/resume`, { acting: 'admin-subject', body: key })).status).toBe(202);
+    expect(mocks.resume).toHaveBeenLastCalledWith('00000000-0000-4000-8000-0000000000aa', expect.objectContaining({ actorId: 'alice' }), key);
+    const bare = await app().request(`${operation}/resume`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'x-acting-subject': 'admin-subject' } });
+    expect(bare.status).toBe(202);
+    expect(mocks.resume).toHaveBeenLastCalledWith('00000000-0000-4000-8000-0000000000aa', expect.objectContaining({ actorId: 'alice' }), undefined);
+    const broken = await app().request(`${operation}/resume`, { method: 'POST', body: '{', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json', 'x-acting-subject': 'admin-subject' } });
+    expect(broken.status).toBe(400);
   });
 
   it('reads the dependency report, and exports, validates and installs definitions only for an acting ADMIN', async () => {

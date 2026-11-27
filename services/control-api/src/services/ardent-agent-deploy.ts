@@ -10,7 +10,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import YAML from 'yaml';
-import { agentPersonaSha256, ARDENT_INSTANCE_REF_ENV, ARDENT_STUDIO_CAPABILITY, ardentInstanceRef, ardentAgentDeployRequestSchema, type ArdentCommandOwner, type ArdentFleetInstallation,
+import { agentPersonaSha256, ARDENT_INSTANCE_REF_ENV, ARDENT_MODEL_API_KEY_ENV, ardentAgentOperationResumeRequestSchema, ARDENT_STUDIO_CAPABILITY, ardentInstanceRef, ardentAgentDeployRequestSchema, type ArdentCommandOwner, type ArdentFleetInstallation,
   type ArdentSkillInstall, type ArdentSkillInstallResult, type ArdentSkillReceipts } from '@hivemagnus/magnus-contracts';
 import { getDb } from '../db/index.js';
 import { HttpError } from '../middleware/error-handler.js';
@@ -25,6 +25,10 @@ import {
   type ArdentHiveMemSettings,
 } from './ardent-hivemem.js';
 import { recordArdentHiveMemCredential } from './ardent-hivemem-renewal.js';
+import {
+  checkEmberpathClientKey, EMBERPATH_KEY_MISSING, EMBERPATH_KEY_NOT_EXPLICIT, heldEmberpathClientKey, holdEmberpathClientKey, releaseEmberpathClientKey,
+  type EmberpathKeyCheck,
+} from './ardent-emberpath-key.js';
 import type { z } from 'zod';
 
 export type ArdentAgentDeployInput = z.infer<typeof ardentAgentDeployRequestSchema>;
@@ -45,7 +49,8 @@ export interface ArdentStoredDefinition {
   plugins: string[];
   skills: Array<{ slug: string; version: string; sha256: string }>;
 }
-type DeployRequest = Omit<ArdentAgentDeployInput, 'apiPort'> & { apiPort: number; definition?: ArdentStoredDefinition };
+/** The stored deploy input: never the Emberpath client key, which only this process's memory holds until it is delivered. */
+type DeployRequest = Omit<ArdentAgentDeployInput, 'apiPort' | 'emberpath_client_key'> & { apiPort: number; definition?: ArdentStoredDefinition };
 /** The stored request: the deploy input with its port resolved, or the profile for a backfill. */
 type StoredRequest = DeployRequest | { nodeId: string; profile: string; hivemem: true };
 
@@ -85,6 +90,10 @@ export interface ArdentDeployDeps {
   owners(nodeId: string): Promise<ArdentCommandOwner[]>;
   /** Why a step's failure blocks the node, when a command owner is the cause. */
   explain(nodeId: string, error: unknown): Promise<Error | undefined>;
+  /** Whether the Emberpath URL is the explicit MAGNUS_ARDENT_EMBERPATH_URL rather than one the Hive Registry resolved. */
+  emberpathExplicit(): boolean;
+  /** Ask Emberpath whether a client key may use an alias; throws a 422 HttpError on a definite refusal. */
+  emberpathKey(baseUrl: string, key: string, alias: string): Promise<EmberpathKeyCheck>;
 }
 
 const defaultDeps: ArdentDeployDeps = {
@@ -104,6 +113,8 @@ const defaultDeps: ArdentDeployDeps = {
   delay: ms => new Promise(resolve => setTimeout(resolve, ms)),
   owners: async nodeId => (await ardentCommandOwners([nodeId])).get(nodeId) ?? [],
   explain: ardentOwnerBlock,
+  emberpathExplicit: () => Boolean(process.env['MAGNUS_ARDENT_EMBERPATH_URL']),
+  emberpathKey: (baseUrl, key, alias) => checkEmberpathClientKey(baseUrl, key, alias),
 };
 let deps = defaultDeps;
 /** Replace node, HiveMem and timer access in tests. Returns a restore function. */
@@ -199,10 +210,20 @@ export async function startArdentDefinitionDeploy(raw: unknown, definition: Arde
 async function startDeploy(raw: unknown, actor: ArdentOperationActor, definition?: ArdentStoredDefinition): Promise<string> {
   const parsed = ardentAgentDeployRequestSchema.safeParse(raw);
   if (!parsed.success) throw new HttpError(400, 'VALIDATION_ERROR', parsed.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; ').slice(0, 500));
-  const input = parsed.data;
+  const { emberpath_client_key: key, ...input } = parsed.data;
   await deps.discover().catch(() => undefined);
   const hivemem = deps.hivemem();
-  if ('emberpath_alias' in input.model) emberpathUrl();
+  const alias = 'emberpath_alias' in input.model ? input.model.emberpath_alias : undefined;
+  if (alias === undefined && key !== undefined)
+    throw new HttpError(400, 'VALIDATION_ERROR', 'emberpath_client_key belongs to an emberpath_alias model; a base_url model keeps its key in the profile environment');
+  let keyCheck: EmberpathKeyCheck | undefined;
+  if (alias !== undefined) {
+    const gateway = emberpathUrl();
+    if (key === undefined) throw new HttpError(400, 'EMBERPATH_KEY_REQUIRED', EMBERPATH_KEY_MISSING);
+    if (!deps.emberpathExplicit()) throw new HttpError(409, 'EMBERPATH_NOT_EXPLICIT', EMBERPATH_KEY_NOT_EXPLICIT);
+    await deps.studio(input.nodeId, ARDENT_STUDIO_CAPABILITY.modelCredential);
+    keyCheck = await deps.emberpathKey(gateway, key, alias);
+  }
   await deps.studio(input.nodeId);
   if (definition?.skills.length) await deps.studio(input.nodeId, ARDENT_STUDIO_CAPABILITY.skillInstall);
   await deps.prepare(hivemem);
@@ -218,9 +239,13 @@ async function startDeploy(raw: unknown, actor: ArdentOperationActor, definition
     if (apiPort === undefined) throw new HttpError(409, 'PORT_IN_USE', 'No free Ardent API port from 9910 to 9999; choose one');
   }
   const id = await createOperation(definition ? 'definition' : 'deploy', { ...input, apiPort, ...(definition ? { definition } : {}) }, actor);
+  if (key !== undefined) holdEmberpathClientKey(id, key);
   await logAuditEvent({ action: definition ? 'ardent.agent.definition-install' : 'ardent.agent.deploy', actorId: actor.actorId, targetType: 'ardent-profile', targetId: `${input.nodeId}:${input.profile}`,
     details: { operationId: id, apiPort, model: 'emberpath_alias' in input.model ? { emberpath_alias: input.model.emberpath_alias } : { base_url: input.model.base_url, model: input.model.model },
-      skills: input.skills, ...(definition ? { definition: { name: definition.name, sha256: definition.sha256 },
+      skills: input.skills,
+      // Whether a key came and what Emberpath said about it; never the key.
+      ...(keyCheck ? { emberpathClientKey: keyCheck.checked ? 'checked' : `unchecked: ${keyCheck.reason}` } : {}),
+      ...(definition ? { definition: { name: definition.name, sha256: definition.sha256 },
         pinnedSkills: definition.skills.map(skill => `${skill.slug}@${skill.version}`), extensions: definition.extensions.map(item => `${item.name}@${item.version}`) } : {}),
       ...actor.details } });
   launch(id);
@@ -240,13 +265,36 @@ export async function startArdentHiveMemEnable(nodeId: string, profile: string, 
   return id;
 }
 
-/** Rerun a failed (or interrupted) operation from its first unfinished step. */
-export async function resumeArdentAgentOperation(id: string, actor: ArdentOperationActor): Promise<string> {
+/** The Emberpath alias of a New Agent operation whose config-save step has not yet delivered the client key, else undefined. */
+function aliasAwaitingKey(request: StoredRequest, steps: Step[]): string | undefined {
+  if (!isDeploy(request) || !('emberpath_alias' in request.model)) return undefined;
+  const config = steps.find(step => step.name === 'config-save');
+  if (!config || config.status === 'succeeded' || config.status === 'skipped' || config.receipt?.['modelKeyConfigured'] === true) return undefined;
+  return request.model.emberpath_alias;
+}
+
+/**
+ * Rerun a failed (or interrupted) operation from its first unfinished step. When its Emberpath client key has not
+ * reached the profile and this process no longer holds it, the body must carry it again (409 EMBERPATH_KEY_REQUIRED).
+ */
+export async function resumeArdentAgentOperation(id: string, actor: ArdentOperationActor, body?: unknown): Promise<string> {
+  const parsedBody = ardentAgentOperationResumeRequestSchema.safeParse(body ?? {});
+  if (!parsedBody.success) throw new HttpError(400, 'VALIDATION_ERROR', parsedBody.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; ').slice(0, 500));
+  const key = parsedBody.data.emberpath_client_key;
   const db = getDb();
   const row = await db.ardentAgentOperation.findUnique({ where: { id } });
   if (!row) throw new HttpError(404, 'NOT_FOUND', 'Ardent agent operation not found');
   const interrupted = row.status === 'running' && !active.has(id) && Date.now() - row.updatedAt.getTime() > STALE_MS;
   if (row.status !== 'failed' && !interrupted) throw new HttpError(409, 'OPERATION_NOT_RESUMABLE', `The operation is ${row.status}; only a failed operation can be resumed`);
+  const alias = aliasAwaitingKey(JSON.parse(row.requestJson) as StoredRequest, JSON.parse(row.stepsJson) as Step[]);
+  if (alias === undefined && key !== undefined)
+    throw new HttpError(400, 'VALIDATION_ERROR', 'This operation needs no Emberpath client key: it has none to deliver, or delivered it already');
+  if (alias !== undefined && key === undefined && heldEmberpathClientKey(id) === undefined)
+    throw new HttpError(409, 'EMBERPATH_KEY_REQUIRED', `${EMBERPATH_KEY_MISSING}. This server does not keep the key the operation started with; resume with it again`);
+  if (alias !== undefined && key !== undefined) {
+    if (!deps.emberpathExplicit()) throw new HttpError(409, 'EMBERPATH_NOT_EXPLICIT', EMBERPATH_KEY_NOT_EXPLICIT);
+    await deps.emberpathKey(emberpathUrl(), key, alias);
+  }
   // Every step is a managed Ardent action, so a held command owner would stop it again at once.
   const [owner] = await deps.owners(row.nodeId);
   if (owner) throw new HttpError(409, 'COMMAND_OWNER_UNSETTLED', owner.state === 'unknown'
@@ -262,8 +310,9 @@ export async function resumeArdentAgentOperation(id: string, actor: ArdentOperat
     if ((error as { code?: unknown }).code === 'P2002') throw new HttpError(409, 'OPERATION_RUNNING', 'Another operation on this Ardent profile is still running');
     throw error;
   }
+  if (key !== undefined) holdEmberpathClientKey(id, key);
   await logAuditEvent({ action: 'ardent.agent.resume', actorId: actor.actorId, targetType: 'ardent-profile', targetId: `${row.nodeId}:${row.profile}`,
-    details: { operationId: id, attempt: row.attempts + 1, ...actor.details } });
+    details: { operationId: id, attempt: row.attempts + 1, ...(key !== undefined ? { emberpathClientKey: 'supplied' } : {}), ...actor.details } });
   launch(id);
   return id;
 }
@@ -321,6 +370,7 @@ async function runOperation(id: string): Promise<void> {
       details: { operationId: id, step: step.name, status: step.status } });
   }
   await save({ status: 'succeeded', error: null, completedAt: new Date() });
+  releaseEmberpathClientKey(id);
   await logAuditEvent({ action: 'ardent.agent.complete', actorId: row.createdBy, targetType: 'ardent-profile', targetId: `${row.nodeId}:${row.profile}`,
     details: { operationId: id, kind: row.kind } });
 }
@@ -463,6 +513,18 @@ const STEPS: Record<StepName, (context: Context) => Promise<Result>> = {
       const model = 'emberpath_alias' in request.model ? { base_url: emberpathUrl(), model: request.model.emberpath_alias } : request.model;
       document.setIn(['providers', 'llamacpp', 'base_url'], model.base_url);
       document.setIn(['providers', 'llamacpp', 'model'], model.model);
+      if ('emberpath_alias' in request.model) {
+        // The Emberpath client key goes to the profile's .env first, from memory only; the receipt records that it did.
+        if (context.step.receipt?.['modelKeyConfigured'] !== true) {
+          const key = heldEmberpathClientKey(context.row.id);
+          if (key === undefined) throw new Error(`${EMBERPATH_KEY_MISSING}. This server no longer holds the key; resume the operation with emberpath_client_key`);
+          await deps.action(context.row.nodeId, context.row.profile, 'model-credential-set', undefined, { api_key: key });
+          context.step.receipt = { ...context.step.receipt, modelKeyEnv: ARDENT_MODEL_API_KEY_ENV, modelKeyConfigured: true };
+          await context.save();
+          releaseEmberpathClientKey(context.row.id);
+        }
+        document.setIn(['providers', 'llamacpp', 'api_key_env'], ARDENT_MODEL_API_KEY_ENV);
+      }
       // Ardent 2.2.0 added artifacts.max_bytes (default 2 MiB). A new agent gets the node agent's relay cap unless told otherwise.
       const { installation } = await profileOf(context);
       if (newerOrEqual(installation.version, [2, 2, 0])) document.setIn(['artifacts', 'max_bytes'], request.artifacts_max_bytes ?? ARDENT_NEW_AGENT_ARTIFACT_MAX_BYTES);

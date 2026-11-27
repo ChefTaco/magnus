@@ -6,6 +6,7 @@
  */
 import { z } from 'zod';
 import {
+  ARDENT_EMBERPATH_CLIENT_KEY_PATTERN, ARDENT_MODEL_API_KEY_ENV, ardentEmberpathClientKeySchema, ardentAgentOperationResumeRequestSchema,
   ARDENT_STUDIO_CAPABILITY, ARDENT_STUDIO_EVENT_KINDS, ardentAgentDeployRequestSchema, ardentAgentOperationAcceptedResponseSchema,
   ardentAgentOperationResponseSchema, ardentAgentOperationSchema, ardentArtifactManifestSchema, ardentArtifactRecordSchema,
   ardentContextItemSchema, ardentDevelopmentNoteSchema, ardentDevelopmentPageSchema, ardentDevelopmentQuerySchema,
@@ -296,11 +297,13 @@ export const ardentServiceRoutes: readonly ArdentServiceRoute[] = [
     note: 'application/octet-stream, streamed; up to the node agent cap (64 MiB by default).' },
   { method: 'GET', path: '/ardent/installations/{nodeId}/profiles/{name}/artifacts/{sha256}/content', response: null, actingAdmin: false,
     note: 'Artifact transfer v2 (studio >= 4, capabilities.artifact_transfer >= 2), streamed: the artifact media type and Content-Disposition with its name, Accept-Ranges, ETag "<sha256>", Repr-Digest and X-Content-SHA256. Range and If-Range pass through: 206 with Content-Range for one range, 416 with Content-Range bytes */<size> when unsatisfiable. Up to the node agent cap (64 MiB by default) for the whole artifact; 409 unsupported_capability on an older profile.' },
-  { method: 'POST', path: '/ardent/agents', request: ardentAgentDeployRequestSchema, response: ardentAgentOperationAcceptedResponseSchema, successStatus: 202, actingAdmin: true },
+  { method: 'POST', path: '/ardent/agents', request: ardentAgentDeployRequestSchema, response: ardentAgentOperationAcceptedResponseSchema, successStatus: 202, actingAdmin: true,
+    note: 'An emberpath_alias model needs emberpath_client_key: 400 EMBERPATH_KEY_REQUIRED without it, 422 EMBERPATH_KEY_INVALID or EMBERPATH_KEY_FORBIDDEN when Emberpath refuses it, 422 EMBERPATH_ALIAS_UNAVAILABLE when the key cannot use the alias. The key is never stored or returned.' },
   { method: 'GET', path: '/ardent/agents/operations/{id}', response: ardentAgentOperationResponseSchema, actingAdmin: false },
   { method: 'GET', path: '/ardent/agents/operations/{id}/stream', response: null, actingAdmin: false,
     events: { operation: ardentAgentOperationSchema, done: ardentAgentOperationSchema } },
-  { method: 'POST', path: '/ardent/agents/operations/{id}/resume', response: ardentAgentOperationAcceptedResponseSchema, successStatus: 202, actingAdmin: true },
+  { method: 'POST', path: '/ardent/agents/operations/{id}/resume', request: ardentAgentOperationResumeRequestSchema, response: ardentAgentOperationAcceptedResponseSchema, successStatus: 202, actingAdmin: true,
+    note: 'The body is optional. 409 EMBERPATH_KEY_REQUIRED when the Emberpath client key has not reached the profile and this server no longer holds it; resume with emberpath_client_key.' },
   { method: 'POST', path: '/ardent/installations/{nodeId}/profiles/{name}/hivemem', response: ardentAgentOperationAcceptedResponseSchema, successStatus: 202, actingAdmin: true },
   { method: 'GET', path: '/ardent/dependencies', response: ardentDependenciesResponseSchema, actingAdmin: false,
     note: 'HiveMem, HiveSkills and Emberpath as Magnus resolved them (explicit setting, then the Hive Registry). Read only; refresh=true resolves again now.' },
@@ -338,6 +341,7 @@ export type ArdentServiceProfile = z.infer<typeof ardentServiceProfileSchema>;
 export type ArdentAgentDeployRequest = z.infer<typeof ardentAgentDeployRequestSchema>;
 export type ArdentAgentOperation = z.infer<typeof ardentAgentOperationSchema>;
 export {
+  ARDENT_EMBERPATH_CLIENT_KEY_PATTERN, ARDENT_MODEL_API_KEY_ENV, ardentEmberpathClientKeySchema, ardentAgentOperationResumeRequestSchema,
   ARDENT_STUDIO_CAPABILITY, ARDENT_STUDIO_EVENT_KINDS, ardentAgentDeployRequestSchema, ardentAgentOperationAcceptedResponseSchema,
   ardentAgentOperationResponseSchema, ardentAgentOperationSchema, ardentArtifactManifestSchema, ardentArtifactRecordSchema,
   ardentContextItemSchema, ardentDevelopmentNoteSchema, ardentDevelopmentPageSchema, ardentDevelopmentQuerySchema,

@@ -16,6 +16,7 @@ Every route below needs a node agent that reports a `studio` level in its ping f
 | 3 | Also `skill-install`, which installs a HiveSkills catalog release onto a profile |
 | 4 | Also the Ardent 3.2.0 runtime contracts: task recovery and lineage, execution context, artifact transfer v2 and imports, and `ARDENT_INSTANCE_REF` |
 | 5 | Also the Ardent 3.4.0 operations: task list filters (`capabilities.task_filters: 1`), the metrics read, peer credential reload and management credential rotation |
+| 6 | Also `model-credential-set`, which writes the Emberpath client key New Agent delivers; New Agent with an Emberpath alias needs it |
 
 A request that needs a higher level than the agent reports answers 409 `AGENT_UPGRADE_REQUIRED`:
 upgrade the agent from the console first. Level 2 features also need Ardent 2.2.0 or later on the
@@ -42,6 +43,7 @@ node agent itself; only the small enable request reaches Ardent. Magnus calls no
   "soul_md": "# Soul\n…",
   "identity_md": "# Identity\n…",
   "model": { "emberpath_alias": "general" },
+  "emberpath_client_key": "<the client key created in Emberpath>",
   "skills": ["grounded-answers"],
   "hivemem": true,
   "artifacts_max_bytes": 67108864
@@ -50,10 +52,11 @@ node agent itself; only the small enable request reaches Ardent. Magnus calls no
 
 - `apiPort` is optional; Magnus picks the first port from 9910 that no profile on the node uses.
 - `model` is either `{ "emberpath_alias": "…" }`, served at the server's `MAGNUS_ARDENT_EMBERPATH_URL`
-  (or, when it is unset, the Emberpath the Hive Registry lists; see [agent dependencies](#agent-dependencies)),
-  or `{ "base_url": "http://192.0.2.10:8080/v1", "model": "…" }` for any OpenAI-compatible endpoint.
+  (which its client key needs; see [agent dependencies](#agent-dependencies)), or `{ "base_url": "http://192.0.2.10:8080/v1", "model": "…" }` for any OpenAI-compatible endpoint.
   The model API key, when the endpoint needs one, stays in the profile's `.env` as
   `ARDENT_LLAMA_API_KEY`.
+- `emberpath_client_key` is required with an `emberpath_alias`: Emberpath answers every model request
+  without a client key with 401. See [the Emberpath client key](#the-emberpath-client-key).
 - `hivemem` must be `true`: every agent created this way gets HiveMem memory.
 - `artifacts_max_bytes` (1 KiB to 64 MiB) is written as `artifacts.max_bytes`. When it is omitted, a
   new agent gets 64 MiB, the node agent's default relay cap, instead of Ardent's 2 MiB default. Only
@@ -72,7 +75,7 @@ The answer is `202 { "operationId": "…" }`. The operation runs these steps in 
 | `service-start` | Installs and starts `ardent@<profile>.service`, because Ardent serves its management API from the running gateway |
 | `identity-soul`, `identity-identity` | Writes `SOUL.md` and `IDENTITY.md` (skipped when unchanged) |
 | `hivemem-enroll` | Enrolls a HiveMem agent credential and writes it to the profile (below) |
-| `config-save` | Model provider, `memory.provider: hivemem`, artifact limit |
+| `config-save` | For an alias, first writes the Emberpath client key to the profile's `.env` (`model-credential-set`); then the model provider (`api_key_env: ARDENT_LLAMA_API_KEY` for an alias), `memory.provider: hivemem`, artifact limit |
 | `skill-set` | Enables each requested skill that is not enabled yet |
 | `service-restart` | Activates the configuration and the credential |
 | `ready-probe` | Waits until the profile answers and `memory/status` reports `ready` |
@@ -88,6 +91,33 @@ steps never run again. Only one operation per profile runs at a time. An operati
 server restart can be resumed once it has been idle for two minutes. While a command owner holds the
 node (below), resume answers 409 `COMMAND_OWNER_UNSETTLED` and says which action holds it and what to
 do; a step that failed because of one names it in its error.
+
+### The Emberpath client key
+
+Emberpath serves `/v1` only to a client key, and creating one is a credential write that Emberpath
+allows only a person who signed in recently (it asks again after 15 minutes) and never a service token.
+So Magnus does not issue keys: create one in Emberpath (Client keys), preferably limited to the alias
+(`allowedModels`) with the `models:read` and `inference:write` scopes, and pass it as
+`emberpath_client_key`. New Agent then:
+
+1. answers 400 `EMBERPATH_KEY_REQUIRED` ("Emberpath key missing") for an alias without a key, and 409
+   `EMBERPATH_NOT_EXPLICIT` unless `MAGNUS_ARDENT_EMBERPATH_URL` is set: the key goes only to an
+   explicitly configured Emberpath, never to one only the Hive Registry named;
+2. needs a node agent at studio level 6 (`model-credential-set`), else 409 `AGENT_UPGRADE_REQUIRED`;
+3. asks Emberpath `GET <MAGNUS_ARDENT_EMBERPATH_URL>/models` with the key and answers 422
+   `EMBERPATH_KEY_INVALID` (401: unknown, disabled or expired), `EMBERPATH_KEY_FORBIDDEN` (403: missing
+   scope) or `EMBERPATH_ALIAS_UNAVAILABLE` (the alias is not in the key's model list) before anything is
+   created. When the server cannot reach Emberpath at that address (the agents may reach it where the
+   server cannot), the operation goes on and the audit event says `emberpathClientKey: unchecked: …`;
+4. holds the key in the server's memory only, until `config-save` has written it to the new profile's
+   `.env` as `ARDENT_LLAMA_API_KEY` (mode 0600, by the root node agent). The key is never stored in the
+   operation, audited, logged or returned; the `config-save` receipt records only
+   `modelKeyConfigured: true`.
+
+If the operation fails before `config-save` and the server restarted (or an hour passed), resume
+answers 409 `EMBERPATH_KEY_REQUIRED`: resume with `{"emberpath_client_key": "…"}` in the body. Once
+`config-save` has delivered it, resume needs no key and refuses one. To replace an agent's key later,
+rotate it in Emberpath and update the profile's `.env`.
 
 ## Failed actions and command owners
 
@@ -508,10 +538,11 @@ to an endpoint only the Registry named:
 - HiveMem: enrollment sends Magnus's Oathweave client token or enrollment token, so it uses only
   `MAGNUS_ARDENT_HIVEMEM_URL`. A HiveMem found only in the Registry is reported
   `awaiting_configuration`, with the setting to add.
-- Emberpath: New Agent and definitions use a Registry-resolved Emberpath for the model alias when
-  `MAGNUS_ARDENT_EMBERPATH_URL` is unset. Magnus itself sends Emberpath no credential. A definition
-  whose model key is bound `provided` would make the agent send that key there, so its preflight reports
-  `SECRET_UNBOUND` unless the Emberpath is explicitly configured, or the key is bound `none`.
+- Emberpath: the dependency report and the export resolve a Registry-resolved Emberpath when
+  `MAGNUS_ARDENT_EMBERPATH_URL` is unset, but an alias needs an Emberpath client key, which Magnus
+  checks (`GET models` with the operator's key) and delivers only with an explicitly configured
+  Emberpath. With a Registry-resolved one, New Agent answers 409 `EMBERPATH_NOT_EXPLICIT` and a
+  definition's preflight reports `SECRET_UNBOUND`. Magnus sends Emberpath no credential of its own.
 
 A Registry-resolved endpoint reported `missing` is never used. Discovery never enrolls, installs or
 enables anything, and grants nothing: a resolved endpoint is only available. A managed node's agents must be able to
@@ -537,7 +568,8 @@ addition to the planned shape. `verifyAgentDefinition()`, `sealAgentDefinition()
 
 Credentials are never carried. A definition or a request that holds a credential-like string (API
 keys, npm or GitHub tokens, a JWT, a bearer header, a private key, a URL with a password; the guard
-ArdentStudio templates use) is refused with 422 `DEFINITION_CONTAINS_CREDENTIAL` and the JSON paths.
+ArdentStudio templates use) is refused with 422 `DEFINITION_CONTAINS_CREDENTIAL` and the JSON paths;
+the only exception is an install or validate request's own `emberpath_client_key`.
 Secrets appear only as `requirements.secrets[].env_name`. All three routes need ADMIN, or a service
 identity acting for an ADMIN, like New Agent.
 
@@ -554,9 +586,9 @@ be carried: local skills, plugins outside a reviewed extension, a model that is 
 and peers. A node agent that reports neither extensions nor skill receipts answers 409
 `AGENT_UPGRADE_REQUIRED`.
 
-**Validate.** `POST /api/v1/ardent/agent-definitions/validate` with `{definition, nodeId, bindings?}`
-checks the definition (422 `DEFINITION_INVALID` for a bad shape or digest) and answers the preflight
-`{ok, problems: [{code, detail}]}`:
+**Validate.** `POST /api/v1/ardent/agent-definitions/validate` with `{definition, nodeId, bindings?,
+emberpath_client_key?}` checks the definition (422 `DEFINITION_INVALID` for a bad shape or digest)
+and answers the preflight `{ok, problems: [{code, detail}]}`:
 
 | Code | When |
 |---|---|
@@ -565,16 +597,19 @@ checks the definition (422 `DEFINITION_INVALID` for a bad shape or digest) and a
 | `EXTENSION_NOT_REVIEWED` | The node has no reviewed, retained extension with that name, version, integrity and package tree digest; add it to the node's extension bundle through the package review first |
 | `RUNTIME_INCOMPATIBLE` | Another runtime package, another major version or an older version on the node, or a backend New Agent does not provision (`codex`) |
 | `CAPABILITY_MISSING` | A `runtime.required_capabilities` entry the node's Ardent installation (`ardent.recovery.v1`, `ardent.lineage.v1`, `artifact-transfer.v2`, from its `capabilities`) or a resolved dependency (the others) does not report |
-| `SECRET_UNBOUND` | A named secret has no `secret:<ENV_NAME>` binding of `provided` (the target profile's environment supplies it) or `none` (run without it), or is bound `provided` while the Emberpath in use was only found through the Hive Registry |
+| `SECRET_UNBOUND` | A named secret has no `secret:<ENV_NAME>` binding of `provided` (the target profile's environment supplies it) or `none` (run without it), or is bound `provided` while the Emberpath in use was only found through the Hive Registry. For a `llamacpp` definition: "Emberpath key missing" without `emberpath_client_key`, a key with an Emberpath that is not explicitly configured, a key Emberpath refuses, or the model-key secret bound `none` |
 
 Without `bindings`, every required binding is reported missing. A binding the definition does not
 require answers 400.
 
 **Install.** `POST /api/v1/ardent/agent-definitions/install` with `{definition, nodeId, name, bindings,
-apiPort?}` runs the preflight first. Any problem answers 409 `PREFLIGHT_FAILED` with the report in
-`error.details.problems`, and nothing is created. Bindings: `hivemem` is `default` or Magnus's HiveMem
+apiPort?, emberpath_client_key}` runs the preflight first. Any problem answers 409 `PREFLIGHT_FAILED`
+with the report in `error.details.problems`, and nothing is created. Bindings: `hivemem` is `default` or Magnus's HiveMem
 workspace; `model` is the Emberpath alias; `hiveskills` is `default`; each `secret:<ENV_NAME>` is
-`provided` or `none`. Magnus never sets a secret value. The answer is `202 {operationId}` for an
+`provided` or `none`. Magnus sets no other secret value: the model-key secret (the exported
+`providers.llamacpp.api_key_env`) is satisfied by `emberpath_client_key`, which the preflight checks
+with Emberpath and New Agent delivers as [above](#the-emberpath-client-key); its binding may be left out
+or `provided`, never `none`. The credential guard skips that one field and no other. The answer is `202 {operationId}` for an
 operation of kind `definition`, which New Agent's operation routes read, stream and resume:
 
 | Step | What it does |

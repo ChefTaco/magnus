@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { gzipSync } from 'node:zlib';
-import { ARDENT_MANAGEMENT_BODY_LIMIT_BYTES, ardentActionBodyLimit, ardentActionReachesProfile, ardentArtifactMaxBytes, ardentPackageNames, ardentUserUnit, createArdentInstallStage, createArdentRoutes, type OwnerRunner, hermesTrafficConsumersDisabled, installSkill, ownerCommand, packageTreeDigest, promoteArdentPackage, readArdentState, readSkillReceipts, relayBody, SkillInstallRefused, verifiedInstalledArdentPackage, withArdentLifecycle, writeProfileCredential } from './ardent-manager.js';
+import { ARDENT_MANAGEMENT_BODY_LIMIT_BYTES, ardentActionBodyLimit, ardentActionReachesProfile, ardentArtifactMaxBytes, ardentPackageNames, ardentUserUnit, createArdentInstallStage, createArdentRoutes, type OwnerRunner, hermesTrafficConsumersDisabled, installSkill, ownerCommand, packageTreeDigest, promoteArdentPackage, readArdentState, readSkillReceipts, relayBody, SkillInstallRefused, verifiedInstalledArdentPackage, withArdentLifecycle, writeProfileCredential, writeProfileEnv } from './ardent-manager.js';
 
 const dirs: string[] = [];
 const servers: Server[] = [];
@@ -500,7 +500,7 @@ describe('Ardent Studio bridge', () => {
     const home = await mkdtemp(join(tmpdir(), 'magnus-ardent-capability-'));
     dirs.push(home);
     const state = await readArdentState({ owner: 'fixture', home, root: join(home, '.ardent'), install: join(home, 'install') }) as { capabilities?: { studio?: number } };
-    expect(state.capabilities).toEqual({ studio: 5, recovery: 1, lineage: 1, artifact_transfer: 2, task_filters: 1 });
+    expect(state.capabilities).toEqual({ studio: 6, recovery: 1, lineage: 1, artifact_transfer: 2, task_filters: 1 });
   });
 
   it('opens sessions and submits session-bound tasks with bounded input', async () => {
@@ -1003,5 +1003,30 @@ describe('profile HiveMem credential', () => {
     expect(refused.status).toBe(422);
     expect(JSON.stringify(await refused.json())).not.toContain('a.b.c');
     expect((await send({ profile: 'example', action: 'hivemem-credential-set', target: 'x', body: { token: 'a.b.c' } })).status).toBe(400);
+  });
+
+  it('writes the model API key only as ARDENT_LLAMA_API_KEY with a key-shaped value', async () => {
+    const { readFile, stat } = await import('node:fs/promises');
+    const dir = await mkdtemp(join(tmpdir(), 'magnus-ardent-model-key-'));
+    dirs.push(dir);
+    await writeFile(join(dir, '.env'), 'ARDENT_API_TOKEN=private-fixture-token\n', { mode: 0o600 });
+    expect(await writeProfileEnv(dir, 'ARDENT_LLAMA_API_KEY', 'sk-fixture-model-key-0000')).toBe(true);
+    expect(await writeProfileEnv(dir, 'ARDENT_LLAMA_API_KEY', 'sk-fixture-model-key-0000')).toBe(false);
+    expect(await readFile(join(dir, '.env'), 'utf8')).toBe('ARDENT_API_TOKEN=private-fixture-token\nARDENT_LLAMA_API_KEY=sk-fixture-model-key-0000\n');
+    expect((await stat(join(dir, '.env'))).mode & 0o777).toBe(0o600);
+    await expect(writeProfileEnv(dir, 'ARDENT_LLAMA_API_KEY', 'sk-fixture-key\nARDENT_API_TOKEN=injected')).rejects.toThrow();
+    await expect(writeProfileEnv(dir, 'ARDENT_LLAMA_API_KEY', 'short')).rejects.toThrow();
+  });
+
+  it('accepts the model credential action only with a key and only as root, and never echoes the key', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'magnus-ardent-model-key-route-'));
+    dirs.push(home);
+    const routes = createArdentRoutes(async () => ({ owner: 'fixture', home, root: join(home, '.ardent'), install: join(home, 'install') }));
+    const send = (body: unknown) => routes.request('/action', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    const refused = await send({ profile: 'example', action: 'model-credential-set', body: { api_key: 'sk-fixture-model-key-0000' } });
+    expect(refused.status).toBe(422);
+    expect(JSON.stringify(await refused.json())).not.toContain('sk-fixture-model-key-0000');
+    expect((await send({ profile: 'example', action: 'model-credential-set', target: 'x', body: { api_key: 'sk-fixture-model-key-0000' } })).status).toBe(400);
+    expect(ardentActionReachesProfile('model-credential-set')).toBe(false);
   });
 });

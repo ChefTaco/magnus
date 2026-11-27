@@ -16,7 +16,7 @@ import {
 } from '../schemas/shared-resource-lease.js';
 import { managedCronRegistrationSchema, schedulerSourceSettlementSchema } from '../schemas/managed-cron.js';
 import { legacyAdmissionRequestSchema, resourceClaimSchema } from '../security/managed-http.js';
-import { agentDefinitionExportSchema, agentDefinitionInstallRequestSchema, agentDefinitionPreflightSchema, agentDefinitionValidateRequestSchema, ardentAgentDeployRequestSchema, ardentAgentOperationSchema, magnusObservationSchema, responseRequestSchema } from '@hivemagnus/magnus-contracts';
+import { agentDefinitionExportSchema, agentDefinitionInstallRequestSchema, agentDefinitionPreflightSchema, agentDefinitionValidateRequestSchema, ardentAgentDeployRequestSchema, ardentAgentOperationResumeRequestSchema, ardentAgentOperationSchema, magnusObservationSchema, responseRequestSchema } from '@hivemagnus/magnus-contracts';
 import { ardentDependencySchema } from '@hivemagnus/magnus-contracts/browser';
 import { maintenanceSchema } from '../services/maintenance-service.js';
 import { rolloutInputSchema } from '../services/rollout-service.js';
@@ -3011,10 +3011,12 @@ const paths: Record<string, Record<string, unknown>> = {
   },
   '/ardent/agents': {
     post: { tags: ['Magnus Ardent'], summary: 'Deploy a new Ardent agent (New Agent)',
-      description: 'ADMIN, or a linked Ardent service identity acting for an ADMIN named in x-acting-subject. Validates the request, resolves the API port (the first free one from 9910 when omitted) and starts an operation: profile-create, service-start, identity-soul, identity-identity, hivemem-enroll, config-save, skill-set, service-restart, ready-probe. Each step is audited and keeps a receipt; a failure stops the operation, which can be resumed. The HiveMem credential goes straight to the node and is never returned or stored.',
+      description: 'ADMIN, or a linked Ardent service identity acting for an ADMIN named in x-acting-subject. Validates the request, resolves the API port (the first free one from 9910 when omitted) and starts an operation: profile-create, service-start, identity-soul, identity-identity, hivemem-enroll, config-save, skill-set, service-restart, ready-probe. Each step is audited and keeps a receipt; a failure stops the operation, which can be resumed. The HiveMem credential goes straight to the node and is never returned or stored. An emberpath_alias model needs emberpath_client_key, an Emberpath client key the operator created in Emberpath: Magnus sends it only to MAGNUS_ARDENT_EMBERPATH_URL, checks it there (GET models), and config-save writes it to the profile as ARDENT_LLAMA_API_KEY (node agent studio level 6). The key is held in server memory only until then, and never stored, audited or returned.',
       security: apiSecretAuth, requestBody: { required: true, content: { 'application/json': { schema: zod(ardentAgentDeployRequestSchema) } } },
-      responses: { 202: success('Operation started', { type: 'object', properties: { operationId: { type: 'string', format: 'uuid' } } }), 400: err400, 401: err401, 403: err403,
-        409: { description: 'Profile or port in use, another operation running, Ardent not installed, or the node agent must be upgraded' },
+      responses: { 202: success('Operation started', { type: 'object', properties: { operationId: { type: 'string', format: 'uuid' } } }),
+        400: { description: 'Invalid request; EMBERPATH_KEY_REQUIRED (Emberpath key missing) for an emberpath_alias model without emberpath_client_key' }, 401: err401, 403: err403,
+        409: { description: 'Profile or port in use, another operation running, Ardent not installed, the node agent must be upgraded, or EMBERPATH_NOT_EXPLICIT (an Emberpath client key goes only to MAGNUS_ARDENT_EMBERPATH_URL)' },
+        422: { description: 'Emberpath refused the client key: EMBERPATH_KEY_INVALID (401), EMBERPATH_KEY_FORBIDDEN (403) or EMBERPATH_ALIAS_UNAVAILABLE (the key may not use the alias)' },
         503: { description: 'Node unavailable, or HiveMem enrollment or Emberpath not configured' } } },
   },
   '/ardent/agents/operations/{id}': {
@@ -3029,10 +3031,12 @@ const paths: Record<string, Record<string, unknown>> = {
   },
   '/ardent/agents/operations/{id}/resume': {
     post: { tags: ['Magnus Ardent'], summary: 'Resume a failed Ardent agent operation',
-      description: 'Reruns the first unfinished step and everything after it; finished steps are never rerun. ADMIN, or a service identity acting for an ADMIN.',
+      description: 'Reruns the first unfinished step and everything after it; finished steps are never rerun. The body is optional: emberpath_client_key, needed only when the operation\'s Emberpath client key has not reached the profile and this server no longer holds it (409 EMBERPATH_KEY_REQUIRED otherwise). ADMIN, or a service identity acting for an ADMIN.',
       security: apiSecretAuth, parameters: [pp('id', 'Operation UUID')],
+      requestBody: { required: false, content: { 'application/json': { schema: zod(ardentAgentOperationResumeRequestSchema) } } },
       responses: { 202: success('Operation resumed', { type: 'object', properties: { operationId: { type: 'string', format: 'uuid' } } }), 400: err400, 401: err401, 403: err403, 404: err404,
-        409: { description: 'The operation did not fail, or another operation on the profile is running' } } },
+        409: { description: 'The operation did not fail, another operation on the profile is running, or EMBERPATH_KEY_REQUIRED (resume with emberpath_client_key)' },
+        422: { description: 'Emberpath refused the client key given on resume' } } },
   },
   '/ardent/installations/{nodeId}/profiles/{name}/hivemem': {
     post: { tags: ['Magnus Ardent'], summary: 'Enable HiveMem on an existing Ardent profile',
@@ -3057,14 +3061,14 @@ const paths: Record<string, Record<string, unknown>> = {
   },
   '/ardent/agent-definitions/validate': {
     post: { tags: ['Magnus Ardent'], summary: 'Preflight an agent definition against a node',
-      description: 'Checks the definition (shape, persona and definition SHA-256 over canonical JSON, no credential-like value: 422 DEFINITION_INVALID or DEFINITION_CONTAINS_CREDENTIAL) and answers {ok, problems: [{code, detail}]}: MISSING_BINDING (a required binding absent, or its target unusable: HiveMem enrollment, Emberpath, HiveSkills), SKILL_VERSION_UNAVAILABLE (a pinned release HiveSkills will not serve Magnus, or with another digest), EXTENSION_NOT_REVIEWED (an extension that is not a reviewed archive retained on the node with that integrity), RUNTIME_INCOMPATIBLE (another runtime package, major version or an older version, or a backend New Agent does not provision), CAPABILITY_MISSING (a required capability the node\'s Ardent installation or a resolved dependency does not report) and SECRET_UNBOUND (a named secret without a secret:<NAME> binding to provided or none). Without bindings every required binding is reported. Changes nothing. ADMIN, or a service acting for an ADMIN.',
+      description: 'Checks the definition (shape, persona and definition SHA-256 over canonical JSON, no credential-like value: 422 DEFINITION_INVALID or DEFINITION_CONTAINS_CREDENTIAL) and answers {ok, problems: [{code, detail}]}: MISSING_BINDING (a required binding absent, or its target unusable: HiveMem enrollment, Emberpath, HiveSkills), SKILL_VERSION_UNAVAILABLE (a pinned release HiveSkills will not serve Magnus, or with another digest), EXTENSION_NOT_REVIEWED (an extension that is not a reviewed archive retained on the node with that integrity), RUNTIME_INCOMPATIBLE (another runtime package, major version or an older version, or a backend New Agent does not provision), CAPABILITY_MISSING (a required capability the node\'s Ardent installation or a resolved dependency does not report) and SECRET_UNBOUND (a named secret without a secret:<NAME> binding to provided or none, or, for an Emberpath alias, "Emberpath key missing" without emberpath_client_key, a key for an Emberpath that is not explicitly configured, or one Emberpath refuses; the model-key secret is satisfied by emberpath_client_key and may not be bound none). Without bindings every required binding is reported. Changes nothing. ADMIN, or a service acting for an ADMIN.',
       security: apiSecretAuth, requestBody: { required: true, content: { 'application/json': { schema: zod(agentDefinitionValidateRequestSchema) } } },
       responses: { 200: success('Preflight report', zod(agentDefinitionPreflightSchema)), 400: err400, 401: err401, 403: err403, 404: err404,
         422: { description: 'Invalid definition, or one with a credential-like value' }, 503: { description: 'Node unavailable' } } },
   },
   '/ardent/agent-definitions/install': {
     post: { tags: ['Magnus Ardent'], summary: 'Install an agent definition on a node as a new Ardent profile',
-      description: 'Runs the preflight; any problem answers 409 PREFLIGHT_FAILED with the report in error.details.problems and creates nothing. Otherwise starts an operation (kind definition): profile-create, service-start, identity-soul, identity-identity, hivemem-enroll, extensions-install (the reviewed archives retained on the node must still match), config-save (model alias, execution limits, artifact limit, plugins of the reviewed extensions), skill-install (each pinned HiveSkills release, digest checked, enabled), service-restart and ready-probe, which also requires the persona SHA-256 and skill receipts on the running agent to match the definition. bindings maps each requirement key to its target (hivemem: default or the workspace; model: an Emberpath alias; hiveskills: default; secret:<NAME>: provided or none). No secret value is ever sent or stored. ADMIN, or a service acting for an ADMIN.',
+      description: 'Runs the preflight; any problem answers 409 PREFLIGHT_FAILED with the report in error.details.problems and creates nothing. Otherwise starts an operation (kind definition): profile-create, service-start, identity-soul, identity-identity, hivemem-enroll, extensions-install (the reviewed archives retained on the node must still match), config-save (model alias, execution limits, artifact limit, plugins of the reviewed extensions), skill-install (each pinned HiveSkills release, digest checked, enabled), service-restart and ready-probe, which also requires the persona SHA-256 and skill receipts on the running agent to match the definition. bindings maps each requirement key to its target (hivemem: default or the workspace; model: an Emberpath alias; hiveskills: default; secret:<NAME>: provided or none). The one secret value a request carries is emberpath_client_key, which New Agent delivers to the profile as ARDENT_LLAMA_API_KEY and never stores. ADMIN, or a service acting for an ADMIN.',
       security: apiSecretAuth, requestBody: { required: true, content: { 'application/json': { schema: zod(agentDefinitionInstallRequestSchema) } } },
       responses: { 202: success('Operation started', { type: 'object', properties: { operationId: { type: 'string', format: 'uuid' } } }), 400: err400, 401: err401, 403: err403, 404: err404,
         409: { description: 'Preflight failed, profile or port in use, or another operation running' }, 422: { description: 'Invalid definition, or one with a credential-like value' },

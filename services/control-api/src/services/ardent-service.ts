@@ -130,7 +130,9 @@ export async function requireArdentStudioAgent(nodeId: string, level: number = A
   catch (error: unknown) {
     throw new HttpError(503, 'DEPENDENCY_UNAVAILABLE', error instanceof Error ? error.message.slice(0, 300) : 'Node agent unavailable');
   }
-  if (reported < level) throw new HttpError(409, 'AGENT_UPGRADE_REQUIRED', level >= ARDENT_STUDIO_CAPABILITY.runtimeContracts
+  if (reported < level) throw new HttpError(409, 'AGENT_UPGRADE_REQUIRED', level >= ARDENT_STUDIO_CAPABILITY.modelCredential
+    ? `Upgrade the Magnus agent on ${node.name} to deliver an Emberpath client key to a new agent`
+    : level >= ARDENT_STUDIO_CAPABILITY.runtimeContracts
     ? `Upgrade the Magnus agent on ${node.name} to use Ardent recovery, lineage, execution context and artifact transfer v2`
     : level >= ARDENT_STUDIO_CAPABILITY.skillInstall
     ? `Upgrade the Magnus agent on ${node.name} to install HiveSkills catalog skills on Ardent`
