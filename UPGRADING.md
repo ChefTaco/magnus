@@ -19,6 +19,22 @@ The rules every upgrade path follows:
   `slow` or `one-way`). Upgrades print slow and one-way migrations and wait for confirmation
   (`--yes`). Startup auto-migrate refuses them unless `MAGNUS_AUTO_MIGRATE_ALLOW_SLOW=true` is set.
 
+## Version 3.5.0: Emberpath client keys for New Agent and one fast migration
+
+Upgrade in this order: node agents, then the server and console, then HiveXUI. Ardent stays at
+3.5.1, so managed Ardent profiles need nothing. New Agent, definition installs and Set Emberpath key
+deliver an Emberpath alias model's client key through the node agent action `model-credential-set`,
+which needs the 3.5.0 node agent (studio level 6; older agents get 409 `AGENT_UPGRADE_REQUIRED`).
+For an Emberpath alias, clients must now send `emberpath_client_key` (400 `EMBERPATH_KEY_REQUIRED`
+otherwise), and the server sends it only to an explicitly set `MAGNUS_ARDENT_EMBERPATH_URL`. HiveXUI's
+key field ships in the HiveXUI release after 0.14.0. Repair alias agents an earlier Magnus created
+with `POST /api/v1/ardent/installations/:nodeId/profiles/:name/model-credential` once their node agent
+is on 3.5.0. The [CHANGELOG](CHANGELOG.md) upgrade notes list every change in detail.
+
+One fast migration (`20261127120000_ardent_agent_operation_model_credential_kind`) widens the Ardent
+operation kind check: `magnus upgrade` backs up and applies it, a Hive suite upgrade that manages
+Magnus needs `--allow-migrations`, and it is safe under a 3.4.1 server after a downgrade.
+
 ## Version 3.4.1: 3.4.0 with container images
 
 Same code as 3.4.0; 3.4.0 has no image tags, so container deployments use 3.4.1. From 3.4.0 there

@@ -7,6 +7,38 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [3.5.0] - 2026-11-27
+
+New Agent and agent definition installs deliver the Emberpath client key an Emberpath alias model
+needs, and a new route sets or rotates that key on an existing agent. One fast migration.
+
+### Upgrade notes
+
+Order: Magnus node agents, then the Magnus server and console, then HiveXUI. Ardent stays at 3.5.1,
+so managed Ardent profiles need no upgrade.
+
+- **Upgrade node agents to 3.5.0 (studio level 6) before creating agents with an Emberpath alias.**
+  The key reaches the new profile's `.env` through the node agent action `model-credential-set`, which
+  only a 3.5.0 agent has. New Agent, definition installs and Set Emberpath key answer 409
+  `AGENT_UPGRADE_REQUIRED` on a node agent below studio level 6; agents without an Emberpath alias are
+  not affected.
+- **Clients must send `emberpath_client_key` for an Emberpath alias.** `POST /api/v1/ardent/agents`
+  and the agent definition install and validate routes answer 400 `EMBERPATH_KEY_REQUIRED` without it
+  (a definition's preflight reports `SECRET_UNBOUND`), instead of creating an agent whose every model
+  request Emberpath refuses with 401. HiveXUI's key field (New Agent, resume, Set Emberpath key and
+  Create agent from definition) arrives in the HiveXUI release after 0.14.0; HiveXUI 0.14.0 and older
+  cannot create an Emberpath-alias agent against a 3.5.0 server. The key is created by an operator in
+  Emberpath; Magnus never issues one, never stores it and never returns it.
+- **The key is sent only to an explicitly configured `MAGNUS_ARDENT_EMBERPATH_URL`** (409
+  `EMBERPATH_NOT_EXPLICIT` for a discovered Emberpath). Set it on the server before using an alias.
+- **Repair existing alias agents** created by an earlier Magnus (their model requests fail with 401)
+  with `POST /api/v1/ardent/installations/:nodeId/profiles/:name/model-credential` (ADMIN) or HiveXUI's
+  Set Emberpath key, after their node agent is on 3.5.0. The profile restarts.
+- **`ardentAgentOperationSchema.kind` gains `model-credential`.** Clients that list or show Ardent
+  operations should accept it.
+- **One fast migration** (see Migration impact below). Hive suite upgrades that manage Magnus need
+  `--allow-migrations`.
+
 ### Added
 
 - **Set Emberpath key on an existing agent.** `POST
@@ -39,16 +71,18 @@ All notable changes to this project are documented in this file. The format is b
   `model-credential-set` (studio level 6). The key is never stored in the operation, audited, logged
   or returned. Resume takes `emberpath_client_key` in its body when the key has not reached the
   profile and the server no longer holds it (409 `EMBERPATH_KEY_REQUIRED`).
+- **Set Emberpath key operations are accepted by the database.** The `ardent_agent_operations` kind
+  check allowed only `deploy`, `hivemem` and `definition`, so every `model-credential` operation would
+  have failed with 500 when it was created. A migration widens the check, the service's operation kinds
+  now come from the contracts enum, and the PostgreSQL integration test covers every kind in it.
 - Magnus reports the manager address for Wazuh 5 agents configured with an endpoint. Legacy Wazuh
   agent configurations still report their server addresses.
 
 ### Migration impact
 
-- Clients of New Agent with an Emberpath alias (HiveXUI's New Agent wizard, definition installs) must
-  send `emberpath_client_key`; requests without one are refused instead of creating an agent that
-  cannot reach its model. Upgrade the node agents before creating such agents (studio level 6).
-- `ardentAgentOperationSchema.kind` gains `model-credential`; clients that list or show operations
-  should accept it.
+- `20261127120000_ardent_agent_operation_model_credential_kind` (fast): widens the
+  `ardent_agent_operations` kind check to `model-credential`. Existing rows already satisfy it and are
+  unchanged. It is safe under a 3.4.1 server after a downgrade.
 
 ## [3.4.1] - 2026-11-26
 

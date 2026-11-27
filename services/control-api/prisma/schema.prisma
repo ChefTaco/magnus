@@ -2103,7 +2103,7 @@ model ResourceEnrollment {
 /// it can be resumed. Holds no credential: HiveMem tokens go straight to the node.
 model ArdentAgentOperation {
   id            String    @id
-  kind          String // deploy | hivemem
+  kind          String // deploy | hivemem | definition | model-credential
   nodeId        String
   profile       String
   status        String    @default("running") // running | succeeded | failed

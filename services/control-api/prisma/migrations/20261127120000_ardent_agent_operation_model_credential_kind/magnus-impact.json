@@ -1,0 +1,1 @@
+{"schema":1,"migration":"20261127120000_ardent_agent_operation_model_credential_kind","impact":"fast","note":"Widen the Ardent operation kind check to the model-credential operations that set an existing agent's Emberpath client key; existing rows already satisfy it and are unchanged."}

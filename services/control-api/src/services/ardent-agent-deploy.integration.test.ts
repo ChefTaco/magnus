@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { ardentAgentOperationSchema } from '@hivemagnus/magnus-contracts';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 describe.skipIf(!process.env['TEST_DATABASE_URL'])('Ardent agent operations in PostgreSQL', () => {
@@ -23,8 +24,10 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('Ardent agent operations in P
   });
 
   it('accepts every operation kind the service records', async () => {
-    // Kind is the service's own union (ardent-agent-deploy.ts); a kind the database refuses fails every operation of it.
-    for (const kind of ['deploy', 'hivemem', 'definition']) {
+    // The service's Kind is this contract enum (ardent-agent-deploy.ts); a kind the database refuses fails every operation of it.
+    const kinds = ardentAgentOperationSchema.shape.kind.options;
+    expect(kinds).toContain('model-credential');
+    for (const kind of kinds) {
       await db.ardentAgentOperation.create({ data: { ...base(), profile: `kind-${kind}`, kind, status: 'succeeded' } });
     }
   });
