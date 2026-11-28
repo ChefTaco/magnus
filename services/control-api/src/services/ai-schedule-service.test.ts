@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ findMany: vi.fn(), updateMany: vi.fn(), update: vi.fn(), chat: vi.fn() }));
+const mocks = vi.hoisted(() => ({ findMany: vi.fn(), updateMany: vi.fn(), update: vi.fn(), chat: vi.fn(), audit: vi.fn() }));
+vi.mock('./audit-service.js', () => ({ logAuditEvent: mocks.audit }));
 vi.mock('../db/index.js', () => ({ getDb: () => ({ aiScheduledOp: { findMany: mocks.findMany, updateMany: mocks.updateMany, update: mocks.update } }) }));
 vi.mock('./ai-assistant-service.js', () => ({ chat: mocks.chat }));
 
@@ -15,6 +16,7 @@ beforeEach(() => {
   mocks.updateMany.mockResolvedValue({ count: 1 });
   mocks.update.mockResolvedValue({});
   mocks.chat.mockResolvedValue({ content: 'all good' });
+  mocks.audit.mockResolvedValue(undefined);
 });
 
 describe('scheduled AI operations', () => {
@@ -61,5 +63,33 @@ describe('scheduled AI operations', () => {
     mocks.chat.mockResolvedValue({ content: 'I need to run a command', conversationId: 'conv-9', pendingApproval: { toolName: 'execCommand' } });
     expect(await executeDueOps()).toBe(0);
     expect(mocks.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ lastError: expect.stringContaining('execCommand') }) }));
+  });
+
+  it('audits every run with its outcome and who started it', async () => {
+    mocks.chat.mockResolvedValueOnce({ content: 'all good', conversationId: 'conv-1' });
+    await executeDueOps();
+    expect(mocks.audit).toHaveBeenLastCalledWith({ action: 'ai_schedule.run', actorId: 'ai-scheduler', actorType: 'system',
+      targetType: 'ai-schedule', targetId: 'op-1', details: { outcome: 'completed', conversationId: 'conv-1' } });
+
+    mocks.chat.mockResolvedValueOnce({ content: 'needs a tool', conversationId: 'conv-2', pendingApproval: { toolName: 'execCommand' } });
+    await executeDueOps(undefined, { actorId: 'admin-1', actorType: 'user' });
+    expect(mocks.audit).toHaveBeenLastCalledWith(expect.objectContaining({ actorId: 'admin-1', actorType: 'user',
+      details: { outcome: 'stopped', conversationId: 'conv-2', toolName: 'execCommand' } }));
+
+    mocks.chat.mockRejectedValueOnce(new Error('provider down'));
+    await executeDueOps();
+    expect(mocks.audit).toHaveBeenLastCalledWith(expect.objectContaining({ details: { outcome: 'failed', error: 'Error: provider down' } }));
+
+    mocks.updateMany.mockResolvedValueOnce({ count: 0 });
+    mocks.audit.mockClear();
+    await executeDueOps();
+    expect(mocks.audit).not.toHaveBeenCalled();
+  });
+
+  it('keeps running due operations when an audit write fails', async () => {
+    mocks.findMany.mockResolvedValue([op, { ...op, id: 'op-2' }]);
+    mocks.audit.mockRejectedValue(new Error('audit disk full'));
+    expect(await executeDueOps()).toBe(2);
+    expect(mocks.chat).toHaveBeenCalledTimes(2);
   });
 });
