@@ -145,7 +145,11 @@ export function rateLimitMiddleware(
       // Recovery clears the health warning; lastErrorAt keeps the history.
       lastRateLimitError = null;
     } catch (error: unknown) {
-      if (HiveError.is(error) && error.status === 429) return tooManyRequests(c, error);
+      if (HiveError.is(error) && error.status === 429) {
+        // Redis answered: a refusal clears the health warning as well.
+        lastRateLimitError = null;
+        return tooManyRequests(c, error);
+      }
       lastRateLimitError = 'Redis unavailable for rate limiting';
       lastRateLimitErrorAt = new Date().toISOString();
       incMetric('rateLimiterFailures');
