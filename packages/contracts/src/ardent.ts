@@ -156,8 +156,10 @@ export const ArdentCommandOwnerSchema = z.object({
   label: z.string().nullable(),
   profile: z.string().nullable(),
   action: z.string().nullable(),
-  /** An Ardent action, which the `command-reconcile` action can settle. Other commands use POST /commands/{id}/reconcile-resource. */
+  /** An Ardent action, which the `command-reconcile` action can settle. Other commands use POST /commands/{id}/reconcile-resource with the same decision. */
   ardent: z.boolean(),
+  /** False for a scheduler occurrence or skill publication, which settle only from their own retained evidence. Absent from older servers. */
+  reconcilable: z.boolean().optional(),
   acquiredAt: z.string(),
   dispatchedAt: z.string().nullable(),
   deadline: z.string(),
@@ -174,6 +176,9 @@ export const ArdentCommandReconcileSchema = z.object({
   reason: z.string().trim().min(10).max(500),
 }).strict();
 export type ArdentCommandReconcile = z.infer<typeof ArdentCommandReconcileSchema>;
+/** An ADMIN's decision about any other command whose node holds an unknown outcome (POST /commands/{id}/reconcile-resource). */
+export const CommandReconcileDecisionSchema = ArdentCommandReconcileSchema;
+export type CommandReconcileDecision = ArdentCommandReconcile;
 export const ArdentCommandReconcileResultSchema = z.object({
   commandId: z.string(),
   outcome: z.enum(['settled', 'already-settled']),
@@ -184,6 +189,9 @@ export const ArdentCommandReconcileResultSchema = z.object({
   decisionId: z.string().nullable(),
 });
 export type ArdentCommandReconcileResult = z.infer<typeof ArdentCommandReconcileResultSchema>;
+/** What POST /commands/{id}/reconcile-resource answers to a decision. */
+export const CommandReconcileDecisionResultSchema = ArdentCommandReconcileResultSchema;
+export type CommandReconcileDecisionResult = ArdentCommandReconcileResult;
 
 export const ArdentFleetInstallationSchema = ArdentNodeStateSchema.extend({
   nodeId: z.string(), nodeName: z.string(), hostname: z.string(),

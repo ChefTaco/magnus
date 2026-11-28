@@ -220,6 +220,9 @@ class DashboardApiClient {
     get: (id: string) => this.get<RemoteCommand>(`commands/${id}`),
     result: (id: string) => this.get<CommandResult>(`commands/${id}/result`),
     cancel: (id: string, reason: string) => this.post<{ cancelled: boolean }>(`commands/${id}/cancel`, { reason }),
+    /** An ADMIN's decision about a non-Ardent command whose node holds an unknown outcome; the server signs it for the node. */
+    reconcileResource: (id: string, decision: { disposition: string; reason: string }) =>
+      this.post<unknown>(`commands/${encodeURIComponent(id)}/reconcile-resource`, decision),
   };
 
   cron = {

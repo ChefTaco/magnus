@@ -84,6 +84,13 @@ describe('Ardent command owners', () => {
     expect(listed.get('node-2')).toEqual([]);
   });
 
+  it('marks owners that settle only from their own retained evidence as not reconcilable by a decision', async () => {
+    state.leases.set('cron-1', lease({ commandId: 'cron-1', label: null, completionDescriptorId: null, completionClass: 'managed-scheduler' } as Partial<Lease>));
+    state.leases.set('skill-1', lease({ commandId: 'skill-1', nodeId: 'node-1', label: null, completionDescriptorId: 'skill-install' }));
+    const listed = (await owners.ardentCommandOwners(['node-1'])).get('node-1')!;
+    expect(Object.fromEntries(listed.map(owner => [owner.commandId, owner.reconcilable]))).toEqual({ 'native-1': true, 'cron-1': false, 'skill-1': false });
+  });
+
   it('explains a block by the owner that causes it', async () => {
     const tagged = Object.defineProperty(new Error('Request failed with status code 409'), 'managedCommandId', { value: 'native-1' });
     expect(await owners.ardentOwnerBlock('node-1', tagged)).toMatchObject({ status: 409, code: 'ARDENT_OUTCOME_UNKNOWN',

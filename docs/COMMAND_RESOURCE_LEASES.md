@@ -107,6 +107,17 @@ below; adding a diagnostic never relabels historical execution.
   `{ "assertion": ... }` submits a signed reconciliation in the
   [receipt format](COMMAND_RECEIPTS.md#reconciling-an-uncertain-command). The lease settles only
   after the node acknowledges the exact decision.
+- The same route takes an ADMIN's decision about any command that is not an Ardent action:
+  `{ "disposition": "no_effect_verified" | "effects_verified", "reason": "<10 to 500 characters>" }`.
+  It works like the Ardent `command-reconcile` action
+  ([ARDENT.md](ARDENT.md#reconciling-an-unknown-outcome)): after the deadline plus one minute, the
+  node agent's own result or decision, or a signed ledger trace that proves the command never ran,
+  settles the lease first. Only when the agent's own receipt is `unknown` does the server sign the
+  decision for that node, bound to the exact request, fence and reason, and the agent records it
+  under its execution lock. Scheduler occurrences and skill publications are refused with 409
+  `RETAINED_EVIDENCE_REQUIRED`: they settle only from their own retained evidence, as above. Every
+  attempt is audited as `command.resource_reconcile`. The standalone
+  console offers it on the Ardent installations page, where the held owners of each node are listed.
 
 ## Native requests
 
@@ -234,6 +245,14 @@ invocation and command digest, and can adopt a completed command after a restart
 it again. A command counts as finished only when its cgroup is empty and its exit evidence is
 valid. The command does not inherit the node, API or signing credentials. Work that a privileged
 command hands to another service or scheduler is outside the supervisor's view.
+
+The supervisor proves completion only for commands in the command completion registry. A
+supervised agent refuses every other command (a plain shell command such as `uptime -p`, or a
+registered one without its fence) with 409 `UNREGISTERED_COMMAND` before its ledger claim and
+before any unit exists. For a managed request the refusal is signed with `executed: false`, so the
+server settles the lease as `not-dispatched` and records the command as failed with nothing run.
+Earlier agents ran such a command in a unit and then held it as an unknown outcome; settle a
+lease left that way with the decision above.
 
 ## Shared resource leases
 

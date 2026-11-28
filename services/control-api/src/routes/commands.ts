@@ -16,6 +16,7 @@ import { parseBody } from '../utils/validate.js';
 import { dispatchCommandSchema, cancelCommandSchema, reconcileCommandResourceSchema } from '../schemas/commands.js';
 import { serializeStringArray, serializeRecord } from '../utils/json-fields.js';
 import { eventBus, EventChannels } from '../services/event-bus.js';
+import { reconcileCommandOwner } from '../services/command-owner-reconcile.js';
 
 export const commandsRouter = new Hono<AppVariables>();
 commandsRouter.use('*', authMiddleware);
@@ -185,7 +186,8 @@ commandsRouter.get('/:commandId/result', async (c) => {
   return c.json({ success: true, data: result });
 });
 
-// Resource reconciliation accepts verified node evidence, never a naked unlock.
+// Resource reconciliation accepts verified node evidence or an ADMIN's server-signed
+// decision about an unknown outcome, never a naked unlock.
 commandsRouter.get('/:commandId/resource-lease', async c => {
   const lease = await getDb().commandResourceLease.findUnique({ where: { commandId: c.req.param('commandId')! } });
   if (!lease) throw new HttpError(404, 'NOT_FOUND', 'Command has no resource lease');
@@ -196,6 +198,13 @@ commandsRouter.get('/:commandId/resource-lease', async c => {
 commandsRouter.post('/:commandId/reconcile-resource', requireRole('ADMIN', 'OPERATOR'), async c => {
   const commandId = c.req.param('commandId')!;
   const body = await parseBody(c, reconcileCommandResourceSchema);
+  if ('disposition' in body) {
+    // A decision the server signs for the node: ADMIN people only, as for Ardent actions.
+    const user = getUser(c);
+    if (user.role !== 'ADMIN' || user.service) throw new HttpError(403, 'FORBIDDEN', 'Recording a reconciliation decision requires an ADMIN');
+    return c.json({ success: true, data: await reconcileCommandOwner(commandId, body, { actorId: user.userId, details: {} },
+      { kind: 'command', audit: 'command.resource_reconcile' }) });
+  }
   const db = getDb();
   const lease = await db.commandResourceLease.findUnique({ where: { commandId } });
   if (!lease) throw new HttpError(404, 'NOT_FOUND', 'Command has no resource lease');

@@ -205,6 +205,12 @@ identity cannot reconcile. It settles nothing that may still be running:
 The command is never run again, and every attempt, settled or refused, is audited as
 `ardent.command-reconcile` with the decision and reason.
 
+A held owner that is not an Ardent action (a node command, listed as such on the installations
+page) takes the same decision through `POST /api/v1/commands/:commandId/reconcile-resource` with
+`{ "disposition": ..., "reason": ... }`, audited as `command.resource_reconcile`
+([command resource leases](COMMAND_RESOURCE_LEASES.md#operator-api)). The installations page sends
+it there for you.
+
 ## HiveMem
 
 Magnus enrolls one HiveMem agent per profile through HiveMem's durable actor-credential API, with the

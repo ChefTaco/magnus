@@ -187,3 +187,60 @@ for (const role of ['ADMIN', 'OPERATOR', 'VIEWER']) {
       body: { disposition: 'no_effect_verified', reason: 'Checked the profile environment and node journal; no write occurred.' } }]);
   });
 }
+
+test('standalone installations offer no decision for a scheduled run or skill publication', async ({ page }) => {
+  await page.goto('/ardent/installations');
+  if (new URL(page.url()).pathname === '/login') {
+    await page.getByLabel('Username').fill(process.env.TEST_USERNAME ?? 'ci-admin');
+    await page.getByLabel('Password', { exact: true }).fill(process.env.TEST_PASSWORD ?? 'ci-only-browser-password');
+    await page.getByRole('button', { name: 'Sign In', exact: true }).click();
+    await expect(page).toHaveURL('/');
+  }
+  await page.route('**/api/auth/me', route => route.fulfill({ json: { username: 'admin', role: 'ADMIN' } }));
+  const owner = { commandId: 'held-skill-publication', state: 'unknown', label: null, profile: null, action: null, ardent: false, reconcilable: false,
+    acquiredAt: '2026-01-01T00:00:00Z', dispatchedAt: '2026-01-01T00:00:00Z', deadline: '2026-01-01T00:01:00Z', reconcilableAfter: '2026-01-01T00:02:00Z' };
+  const writes: string[] = [];
+  await page.route('**/api/proxy/**', async route => {
+    if (route.request().method() !== 'GET') { writes.push(route.request().url()); return route.abort(); }
+    if (!route.request().url().includes('/api/proxy/ardent/')) return route.fallback();
+    return route.fulfill({ json: { success: true, data: [{ ...installation, commandOwners: [owner], commandReconciliation: { configured: true } }] } });
+  });
+  await page.goto('/ardent/installations');
+  const section = page.getByRole('region', { name: 'Unsettled commands on Fixture node' });
+  await expect(section).toContainText('settles only from its own retained evidence');
+  await expect(section.getByRole('button', { name: 'Review reconciliation' })).toHaveCount(0);
+  expect(writes).toEqual([]);
+});
+
+test('standalone installations reconcile a node command through the command route', async ({ page }) => {
+  await page.goto('/ardent/installations');
+  if (new URL(page.url()).pathname === '/login') {
+    await page.getByLabel('Username').fill(process.env.TEST_USERNAME ?? 'ci-admin');
+    await page.getByLabel('Password', { exact: true }).fill(process.env.TEST_PASSWORD ?? 'ci-only-browser-password');
+    await page.getByRole('button', { name: 'Sign In', exact: true }).click();
+    await expect(page).toHaveURL('/');
+  }
+  await page.route('**/api/auth/me', route => route.fulfill({ json: { username: 'admin', role: 'ADMIN' } }));
+  const owner = { commandId: 'held-node-command', state: 'unknown', label: null, profile: null, action: null, ardent: false,
+    acquiredAt: '2026-01-01T00:00:00Z', dispatchedAt: '2026-01-01T00:00:00Z', deadline: '2026-01-01T00:01:00Z', reconcilableAfter: '2026-01-01T00:02:00Z' };
+  let held = true;
+  const decisions: unknown[] = [];
+  await page.route('**/api/proxy/ardent/**', async route => {
+    if (route.request().method() !== 'GET') throw new Error('A node command must not use the Ardent action');
+    return route.fulfill({ json: { success: true, data: [{ ...installation, commandOwners: held ? [owner] : [], commandReconciliation: { configured: true } }] } });
+  });
+  await page.route('**/api/proxy/commands/held-node-command/reconcile-resource', async route => {
+    decisions.push(route.request().postDataJSON()); held = false;
+    return route.fulfill({ json: { success: true, data: { commandId: owner.commandId, outcome: 'settled', receipt: 'unknown',
+      settlement: 'signed-reconciliation:no_effect_verified', evidenceSha256: 'e'.repeat(64), decisionId: 'decision-1' } } });
+  });
+  await page.goto('/ardent/installations');
+  const section = page.getByRole('region', { name: 'Unsettled commands on Fixture node' });
+  await expect(section).toContainText('This is a node command, not an Ardent action');
+  await section.getByLabel('What did it do?').selectOption('no_effect_verified');
+  await section.getByLabel('What you checked').fill('Read-only uptime probe the agent refused; nothing changed on the node.');
+  await section.getByRole('button', { name: 'Review reconciliation' }).click();
+  await page.getByRole('dialog', { name: 'Reconcile this command?' }).getByRole('button', { name: 'Confirm reconciliation' }).click();
+  await expect(section).toHaveCount(0);
+  expect(decisions).toEqual([{ disposition: 'no_effect_verified', reason: 'Read-only uptime probe the agent refused; nothing changed on the node.' }]);
+});

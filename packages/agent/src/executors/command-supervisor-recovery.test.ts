@@ -37,7 +37,7 @@ describe('command ledger adoption of supervised execution', () => {
   });
   it('retains ownership when recovered identity differs or evidence is unavailable', async () => {
     const { executeCommand, recoverCommandReceipt, commandLedger } = await import('./command-executor.js');
-    const input = { commandId: 'uncertain', command: '/bin/true', args: [], timeoutSeconds: 2 };
+    const input = registered('uncertain');
     fixture.run.mockResolvedValue({ state: 'unknown', evidence: {} });
     await expect(executeCommand(input)).rejects.toMatchObject({ code: 'OUTCOME_UNKNOWN' });
     fixture.status.mockResolvedValue({ state: 'completed', evidence: { requestSha256: '0'.repeat(64) },
@@ -46,7 +46,7 @@ describe('command ledger adoption of supervised execution', () => {
     fixture.status.mockRejectedValue(new Error('systemd unavailable'));
     expect((await recoverCommandReceipt(input.commandId))?.state).toBe('unknown');
     expect(await commandLedger.drainSnapshot()).toMatchObject({ activeCount: 0, unknownCount: 1 });
-    await expect(executeCommand({ ...input, commandId: 'replacement' })).rejects.toMatchObject({ code: 'RESOURCE_BUSY' });
+    await expect(executeCommand({ ...registered('replacement'), coordination: { ...input.coordination, fence: '2' } })).rejects.toMatchObject({ code: 'RESOURCE_BUSY' });
     expect(fixture.run).toHaveBeenCalledTimes(1);
   });
   it('never adopts completion produced under a different completion registry', async () => {
@@ -74,18 +74,19 @@ describe('command ledger adoption of supervised execution', () => {
     expect(fixture.run).toHaveBeenCalledWith(input, owner);
   });
 
-  it('retains an unregistered or external-service process as unknown after its immediate cgroup exits', async () => {
-    const { executeCommand, recoverCommandReceipt, commandLedger } = await import('./command-executor.js');
-    const { commandRequestDigest } = await import('./command-ledger.js');
-    const input = { ...registered('external'), command: '/usr/bin/systemctl', args: ['restart', 'fixture.service'] };
-    const digest = commandRequestDigest(input);
-    fixture.run.mockResolvedValue({ state: 'completed', evidence: { requestSha256: digest },
-      result: { exitCode: 0, stdout: '', stderr: '', durationMs: 2, truncated: false } });
-    await expect(executeCommand(input)).rejects.toMatchObject({ code: 'OUTCOME_UNKNOWN' });
-    expect((await commandLedger.receipt(input.commandId))?.state).toBe('unknown');
-    fixture.status.mockResolvedValue({ state: 'completed', evidence: { requestSha256: digest },
-      result: { exitCode: 0, stdout: '', stderr: '', durationMs: 2, truncated: false } });
-    expect((await recoverCommandReceipt(input.commandId))?.state).toBe('unknown');
-    expect(fixture.run).toHaveBeenCalledWith(input, undefined);
+  it.each([
+    ['an external-service command', { command: '/usr/bin/systemctl', args: ['restart', 'fixture.service'] }],
+    ['a plain shell command', { command: 'uptime -p', args: [] }],
+    ['a registered command without its fence', { coordination: undefined }],
+  ])('refuses %s before the ledger claim and never starts a unit', async (_name, change) => {
+    const { executeCommand, commandLedger } = await import('./command-executor.js');
+    const input = { ...registered('unregistered'), ...change };
+    await expect(executeCommand(input)).rejects.toMatchObject({ code: 'UNREGISTERED_COMMAND', notStarted: true });
+    expect(fixture.run).not.toHaveBeenCalled();
+    expect(await commandLedger.receipt(input.commandId)).toBeNull();
+    expect(await commandLedger.drainSnapshot()).toMatchObject({ activeCount: 0, unknownCount: 0 });
+    // The id stays free: nothing local refers to it, so the refusal is a certain one.
+    expect(await commandLedger.commandTrace(input.commandId)).toMatchObject({ receipt: false, activeLock: false });
   });
+
 });
