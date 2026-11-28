@@ -39,16 +39,13 @@ describe('summarizeHermesInventory', () => {
 });
 
 describe('GET /api/v1/hermes/summary', () => {
-  it('answers an ADMIN with the counts, in the browser contract shape', async () => {
-    const response = await app.request('/api/v1/hermes/summary', { headers: await as('ADMIN') });
+  // Any role, like GET /hermes/installations and /hermes/profiles it counts: mission control shows
+  // the tiles to every signed-in user.
+  it.each(['ADMIN', 'OPERATOR', 'VIEWER'] as const)('answers %s with the counts, in the browser contract shape', async (role) => {
+    const response = await app.request('/api/v1/hermes/summary', { headers: await as(role) });
     expect(response.status).toBe(200);
     const body = hermesSummaryResponseSchema.parse(await response.json());
     expect(body.data).toEqual({ installations: 3, healthyInstallations: 2, profiles: 2, runningGateways: 1 });
-  });
-
-  it.each(['OPERATOR', 'VIEWER'] as const)('refuses %s', async (role) => {
-    const response = await app.request('/api/v1/hermes/summary', { headers: await as(role) });
-    expect(response.status).toBe(403);
   });
 
   it('refuses a caller without credentials', async () => {

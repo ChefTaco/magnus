@@ -41,7 +41,9 @@ migration, and no new setting.
   decision for a scheduler occurrence or skill publication (`reconcilable: false` on the owner).
 - Contracts: `CommandReconcileDecisionSchema`, `CommandReconcileDecisionResultSchema` and the optional
   `reconcilable` flag on `ArdentCommandOwnerSchema`.
-- `GET /api/v1/hermes/summary` (ADMIN) returns the mission-control Hermes counts (installations,
+- `POST /api/v1/discovery/scan` is rate limited to 6 scans a minute per caller (fail closed), now that it
+  is a browser route.
+- `GET /api/v1/hermes/summary` (any role, like the lists it counts) returns the mission-control Hermes counts (installations,
   healthy installations, profiles, running gateways), computed by the server over the same lists
   `GET /hermes/installations` and `GET /hermes/profiles` return, so HiveXUI can show the tiles
   without its own server. The console's mission-control page reads it instead of counting the lists

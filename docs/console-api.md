@@ -372,7 +372,7 @@ The standalone dashboard computes these in its own server, so a static console n
 - `/api/terminal/*`, replaced by the [fleet gateway](../services/fleet-gateway/README.md)
 - The Hermes dashboard proxy and the router admin proxy
 
-The mission-control Hermes tiles come from `GET /api/v1/hermes/summary` (ADMIN), which counts
+The mission-control Hermes tiles come from `GET /api/v1/hermes/summary` (any role), which counts
 installations, healthy installations, profiles and running gateways over the same lists
 `GET /api/v1/hermes/installations` and `GET /api/v1/hermes/profiles` return. The dashboard reads it
 too. It is not served under the deprecated `/orchestra` alias. The nodes page's
@@ -451,7 +451,7 @@ with published contracts. `POST /api/v1/hermes/deploy` is retired and always ans
 | GET | `/api/v1/hermes/installations` | browser | `user:any` | yes |
 | GET | `/api/v1/hermes/installations/:id/profiles` | browser | `user:any` |  |
 | GET | `/api/v1/hermes/profiles` | browser | `user:any` |  |
-| GET | `/api/v1/hermes/summary` | browser | `user:ADMIN` | yes |
+| GET | `/api/v1/hermes/summary` | browser | `user:any` | yes |
 | GET | `/api/v1/hive/events` | browser | `user:any` | yes |
 | GET | `/api/v1/library/categories` | browser | `user:any` |  |
 | POST | `/api/v1/library/categories` | browser | `user:ADMIN\|OPERATOR` |  |

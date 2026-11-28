@@ -3341,7 +3341,7 @@ export const magnusBrowserRoutes: readonly MagnusBrowserRoute[] = [
   { method: 'GET', path: '/ops/dependency-health', response: dependencyHealthResponseSchema, roles: ANY_ROLE },
   { method: 'GET', path: '/orchestra/installations', response: hermesInstallationsResponseSchema, roles: ANY_ROLE },
   { method: 'GET', path: '/orchestra/profiles', response: hermesProfilesResponseSchema, roles: ANY_ROLE },
-  { method: 'GET', path: '/hermes/summary', response: hermesSummaryResponseSchema, roles: ADMIN_ONLY, note: 'The installation, health, profile and gateway counts over the lists GET /hermes/installations and GET /hermes/profiles return. Not served under the deprecated /orchestra alias.' },
+  { method: 'GET', path: '/hermes/summary', response: hermesSummaryResponseSchema, roles: ANY_ROLE, note: 'The installation, health, profile and gateway counts over the lists GET /hermes/installations and GET /hermes/profiles return. Not served under the deprecated /orchestra alias.' },
   { method: 'GET', path: '/heartbeat/stream/stats', response: heartbeatStreamStatsResponseSchema, roles: ANY_ROLE, note: 'Residual state of the retired Redis stream heartbeat transport. enabled is false, with zero counts, when Redis cannot be read.' },
 
   // Fleet readiness
