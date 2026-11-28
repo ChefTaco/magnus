@@ -11,6 +11,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { jwtVerify } from 'jose';
 import { COOKIE_NAME, getSecretKey, sessionVerificationOptions } from '@/lib/auth-constants';
 import { securityConsoleDeepLink } from '@/lib/security-console-route';
+import { applyFrameHeaders, frameGrantDecision, parseFramePath } from '../runtime-embed-isolation.mjs';
 
 const PUBLIC_PATHS = [
   '/login',
@@ -55,10 +56,37 @@ export function crossSiteRequest(req: NextRequest): boolean {
   return site !== null && site !== 'same-origin' && site !== 'none';
 }
 
+/**
+ * Cross-site reads of the console API. A sandboxed embedded dashboard runs in an opaque origin
+ * (`Origin: null`, `Sec-Fetch-Site: cross-site`); none of its fetches, image or script loads may
+ * reach a console API, whatever cookies the browser attaches. Navigations (an identity
+ * provider's redirect back to the login callback) and the public endpoints stay reachable.
+ */
+export function crossSiteRead(req: NextRequest): boolean {
+  if (!SAFE_METHODS.has(req.method) || !req.nextUrl.pathname.startsWith('/api/')) return false;
+  if (PUBLIC_PATHS.includes(req.nextUrl.pathname)) return false;
+  if (req.headers.get('origin') === 'null') return true;
+  if (req.headers.get('sec-fetch-mode') === 'navigate') return false;
+  const site = req.headers.get('sec-fetch-site');
+  return site === 'cross-site' || site === 'same-site';
+}
+
 export default async function proxy(req: NextRequest): Promise<NextResponse> {
   const { pathname } = req.nextUrl;
 
-  if (crossSiteRequest(req)) {
+  // Embedded dashboard frames are authorized by their grant alone, never by console cookies.
+  const frame = parseFramePath(pathname);
+  if (frame) {
+    if (req.method === 'OPTIONS') return NextResponse.next();
+    // `remint` goes on to the route, which re-mints only with this session's console cookie.
+    const decision = await frameGrantDecision({ grant: frame.grant, app: frame.app, method: req.method, headers: req.headers, upstreamPath: frame.upstreamPath });
+    if (decision.action !== 'refuse') return NextResponse.next();
+    const refused = NextResponse.json({ error: decision.error }, { status: 401 });
+    applyFrameHeaders(refused.headers, req.headers.get('origin'));
+    return refused;
+  }
+
+  if (crossSiteRequest(req) || crossSiteRead(req)) {
     return NextResponse.json({ error: 'cross_site_request_refused' }, { status: 403 });
   }
 

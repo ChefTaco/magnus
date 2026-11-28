@@ -1,16 +1,39 @@
 import { type NextRequest, NextResponse } from 'next/server';
-import { verifySessionToken, COOKIE_NAME } from '@/lib/auth';
 import { orchestraFetch } from '@/lib/orchestra-fetch';
 import type { HermesInstallation } from '@/types/orchestra';
 import { requestHermesDashboardOverSsh } from '@/lib/hermes-ssh-proxy';
 import { chooseHermesInstallation, normalizeHermesInstallations } from '../../../../../../runtime-hermes-security.mjs';
 import { hermesEnabled } from '../../../../../../runtime-integrations.mjs';
+import { authorizeFrame, enterFrame as enterFrameWith, frameJson, requireConsoleSession } from '@/lib/embedded-frame';
+import {
+  FRAME_SEGMENT,
+  FRAME_TOKEN_PLACEHOLDER,
+  applyFrameHeaders,
+  frameEntryAllowed,
+  framePreflightHeaders,
+  frameSessionState,
+  injectFrameCompat,
+  splitFrameSegments,
+  swapFrameToken,
+} from '../../../../../../runtime-embed-isolation.mjs';
 
 export const runtime = 'nodejs';
 
+/**
+ * Reverse proxy for the Hermes dashboard of one installation, isolated from the console.
+ *
+ * The console's frame (or an operator's tab) opens the entry URL with its session cookie; the
+ * proxy answers with a redirect to a frame URL that carries a short-lived grant for that one
+ * installation (`runtime-embed-isolation.mjs`). Frame responses are sandboxed into an opaque
+ * origin, so the dashboard's script never runs with console authority: frame requests are
+ * authorized by the grant alone, and console cookies are neither read nor set on them.
+ *
+ * The dashboard's real session token never reaches the page: the proxy keeps it per console
+ * session and installation, shows the page a placeholder, and sends the real one upstream.
+ */
 const PROXY_BASE = '/api/hermes/dashboard';
-const DASHBOARD_INSTALLATION_COOKIE = 'magnus_hermes_dashboard_installation_id';
-const DASHBOARD_SESSION_TOKEN_COOKIE = 'magnus_hermes_dashboard_session_token';
+/** Cookies earlier releases set for the dashboard; cleared on entry. */
+const LEGACY_DASHBOARD_COOKIES = ['magnus_hermes_dashboard_installation_id', 'magnus_hermes_dashboard_session_token'];
 interface DashboardTarget {
   installation: HermesInstallation;
 }
@@ -34,14 +57,6 @@ async function loadHermesInstallations(): Promise<HermesInstallation[]> {
   }
 }
 
-async function requireSession(req: NextRequest): Promise<NextResponse | null> {
-  const sessionToken = req.cookies.get(COOKIE_NAME)?.value;
-  if (!sessionToken) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  const session = await verifySessionToken(sessionToken);
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  return null;
-}
-
 function firstParam(req: NextRequest, name: string): string | null {
   const value = req.nextUrl.searchParams.get(name);
   return value && value.trim() ? value.trim() : null;
@@ -50,15 +65,9 @@ function firstParam(req: NextRequest, name: string): string | null {
 async function resolveDashboardTarget(req: NextRequest): Promise<{ target: DashboardTarget | null; error: string | null }> {
   const installationId = firstParam(req, 'installationId');
   const nodeId = firstParam(req, 'nodeId');
-  const cookieInstallationId = req.cookies.get(DASHBOARD_INSTALLATION_COOKIE)?.value ?? null;
 
   try {
-    const selection = chooseHermesInstallation(
-      await loadHermesInstallations(),
-      installationId,
-      nodeId,
-      cookieInstallationId,
-    );
+    const selection = chooseHermesInstallation(await loadHermesInstallations(), installationId, nodeId, null);
     return { target: selection.installation ? { installation: selection.installation as HermesInstallation } : null, error: selection.error };
   } catch (err) {
     const correlationId = crypto.randomUUID();
@@ -74,72 +83,50 @@ function upstreamSearchParams(req: NextRequest): string {
   return params.toString();
 }
 
-function proxiedDashboardPath(path: string, installationId: string): string {
-  if (path.startsWith('api/')) return `${PROXY_BASE}/${path}`;
-  const separator = path.includes('?') ? '&' : '?';
-  return `${PROXY_BASE}/${path}${separator}installationId=${encodeURIComponent(installationId)}`;
+/** Hermes's own token injection: `window.__HERMES_SESSION_TOKEN__="…"` (or JSON-quoted). */
+const SESSION_TOKEN_PATTERN = /window\.__HERMES_SESSION_TOKEN__\s*=\s*(["'])([^"'\\]+)\1/;
+
+function dashboardSessionToken(text: string): string | null {
+  return SESSION_TOKEN_PATTERN.exec(text)?.[2] ?? null;
 }
 
-function rewriteDashboardText(text: string, installationId: string): string {
+/** Replace every copy of the real token in what the sandboxed page receives. */
+function withoutSessionToken(text: string, token: string | undefined): string {
+  return token ? text.replaceAll(token, FRAME_TOKEN_PLACEHOLDER) : text;
+}
+
+/** Rewrite the dashboard's root-relative URLs onto this frame's base (`.../_frame/<grant>`). */
+function rewriteDashboardText(text: string, frameBase: string): string {
   const alreadyProxied = 'api/hermes/dashboard';
+  const proxied = (path: string) => `${frameBase}/${path}`;
   return text
-    .replaceAll('}/dashboard-plugins/${', '}' + PROXY_BASE + '/dashboard-plugins/${')
-    .replace(/(dashboard-plugins\/[^`"']+)([`"'])/g, (_match, path: string, quote: string) => {
-      if (path.includes('installationId=')) return `${path}${quote}`;
-      return `${path}?installationId=${encodeURIComponent(installationId)}${quote}`;
-    })
+    .replaceAll('}/dashboard-plugins/${', '}' + frameBase + '/dashboard-plugins/${')
     .replace(/\b(href|src|action)=(["'])\/(?!api\/hermes\/dashboard(?:\/|$))([^"']*)/g, (_match, attr: string, quote: string, path: string) => {
-      return `${attr}=${quote}${proxiedDashboardPath(path, installationId)}`;
+      return `${attr}=${quote}${proxied(path)}`;
     })
     .replace(/(["'`])\/(?!api\/hermes\/dashboard(?:\/|$))((?:api\/|ws(?:\/|$)|assets\/|dashboard-plugins\/|favicon\.ico)[^"'`]*)/g, (_match, quote: string, path: string) => {
       if (path.startsWith(alreadyProxied)) return `${quote}/${path}`;
-      return `${quote}${proxiedDashboardPath(path, installationId)}`;
+      return `${quote}${proxied(path)}`;
     })
     .replace(/url\((['"]?)\/(assets\/|fonts-terminal\/)([^)'"]+)\1\)/g, (_match, quote: string, prefix: string, path: string) => {
-      return `url(${quote}${proxiedDashboardPath(`${prefix}${path}`, installationId)}${quote})`;
+      return `url(${quote}${proxied(`${prefix}${path}`)}${quote})`;
     });
 }
 
-function responseHeaders(contentType: string): Headers {
+function frameHeaders(req: NextRequest, contentType?: string): Headers {
   const headers = new Headers();
-  headers.set('content-type', contentType);
+  if (contentType) headers.set('content-type', contentType);
   headers.set('cache-control', 'no-cache, no-store');
-  headers.set('content-security-policy', "frame-ancestors 'self'");
-  headers.set('x-frame-options', 'SAMEORIGIN');
-  return headers;
+  return applyFrameHeaders(headers, req.headers.get('origin'));
 }
 
-function dashboardSessionToken(text: string): string | null {
-  return text.match(/window\.__HERMES_SESSION_TOKEN__=\"([^\"]+)\"/)?.[1] ?? null;
-}
-
-function withDashboardCookie(response: NextResponse, installation: HermesInstallation | null, sessionToken?: string | null): NextResponse {
-  if (installation) {
-    response.cookies.set(DASHBOARD_INSTALLATION_COOKIE, installation.id, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      path: '/',
-    });
-  }
-  if (sessionToken) {
-    response.cookies.set(DASHBOARD_SESSION_TOKEN_COOKIE, sessionToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      path: '/',
-    });
-  }
-  return response;
-}
-
-function rewriteRedirectLocation(req: NextRequest, installation: HermesInstallation, location: string): string {
+function rewriteRedirectLocation(req: NextRequest, installation: HermesInstallation, frameBase: string, location: string): string {
   try {
     const upstream = new URL(location, `http://127.0.0.1:${installation.dashboardPort}`);
     if (upstream.hostname !== '127.0.0.1' && upstream.hostname !== 'localhost') return location;
 
     const proxyUrl = req.nextUrl.clone();
-    proxyUrl.pathname = `${PROXY_BASE}${upstream.pathname}`;
+    proxyUrl.pathname = `${frameBase}${upstream.pathname}`;
     proxyUrl.search = upstream.search;
     return proxyUrl.toString();
   } catch {
@@ -147,19 +134,16 @@ function rewriteRedirectLocation(req: NextRequest, installation: HermesInstallat
   }
 }
 
-async function proxyHandler(
-  req: NextRequest,
-  { params }: { params: Promise<{ path?: string[] }> },
-): Promise<NextResponse> {
-  const unauthorized = await requireSession(req);
-  if (unauthorized) return unauthorized;
+/** Entry: a console-session request for the dashboard. Mint a grant and redirect into the frame. */
+async function enterFrame(req: NextRequest, path: string[] | undefined): Promise<NextResponse> {
+  const session = await requireConsoleSession(req);
+  if (session instanceof NextResponse) return session;
+  if (!frameEntryAllowed(req.headers)) {
+    return NextResponse.json({ error: 'cross_site_request_refused' }, { status: 403 });
+  }
   if (!hermesEnabled()) {
     return NextResponse.json({ error: 'Hermes Agent integration is not enabled. Set MAGNUS_HERMES_ENABLED=true to enable it.' }, { status: 503 });
   }
-
-  const { path } = await params;
-  const proxyPath = path?.join('/') ?? '';
-  const upstreamPath = proxyPath ? `/${proxyPath}` : '/';
   const { target, error: selectionError } = await resolveDashboardTarget(req);
   if (!target) {
     return NextResponse.json(
@@ -167,37 +151,75 @@ async function proxyHandler(
       { status: selectionError === 'installation_required' ? 400 : selectionError === 'control_api_unavailable' ? 502 : 404 },
     );
   }
-  const search = upstreamSearchParams(req);
+  const response = await enterFrameWith(req, {
+    app: 'hermes',
+    session,
+    installationId: target.installation.id,
+    path: path ?? [],
+    search: upstreamSearchParams(req),
+  });
+  for (const name of LEGACY_DASHBOARD_COOKIES) {
+    if (req.cookies.has(name)) response.cookies.set(name, '', { maxAge: 0, path: '/' });
+  }
+  return response;
+}
+
+async function proxyHandler(
+  req: NextRequest,
+  { params }: { params: Promise<{ path?: string[] }> },
+): Promise<NextResponse> {
+  const { path } = await params;
+  const frame = splitFrameSegments(path);
+  if (!frame) return enterFrame(req, path);
+
+  // Frame request: the grant is the only authority. Console cookies are ignored (except to
+  // re-mint an expired grant on a navigation, see authorizeFrame).
+  const authorized = await authorizeFrame(req, { app: 'hermes', grant: frame.grant, rest: frame.rest });
+  if (authorized instanceof NextResponse) return authorized;
+  const { grant, upstreamPath } = authorized;
+  if (!grant.installationId) return frameJson(req, { error: 'frame_grant_invalid' }, 401);
+  if (!hermesEnabled()) {
+    return frameJson(req, { error: 'Hermes Agent integration is not enabled. Set MAGNUS_HERMES_ENABLED=true to enable it.' }, 503);
+  }
+  const frameBase = `${PROXY_BASE}/${FRAME_SEGMENT}/${frame.grant}`;
+
+  let installation: HermesInstallation | null;
+  try {
+    installation = chooseHermesInstallation(await loadHermesInstallations(), grant.installationId, null, null)
+      .installation as HermesInstallation | null;
+  } catch (err) {
+    const correlationId = crypto.randomUUID();
+    console.error(`[hermes-target:${correlationId}] installation inventory failed`, err);
+    return frameJson(req, { success: false, error: 'control_api_unavailable' }, 502);
+  }
+  if (!installation) return frameJson(req, { success: false, error: 'installation_not_found' }, 404);
+  const state = frameSessionState(grant);
+  const storedSessionToken = state.hermesTokens.get(installation.id);
+  const search = swapFrameToken(upstreamSearchParams(req), storedSessionToken);
 
   const headers: Record<string, string> = {};
   const accept = req.headers.get('accept');
   if (accept) headers['accept'] = accept;
   const contentType = req.headers.get('content-type');
   if (contentType) headers['content-type'] = contentType;
+  // The page only knows the placeholder; the real token is this session's server-side copy.
   const authorization = req.headers.get('authorization');
-  const dashboardSessionTokenValue = req.cookies.get(DASHBOARD_SESSION_TOKEN_COOKIE)?.value ?? null;
-  if (authorization) headers['authorization'] = authorization;
-  else if (dashboardSessionTokenValue) headers['authorization'] = `Bearer ${dashboardSessionTokenValue}`;
+  if (storedSessionToken) headers['authorization'] = `Bearer ${storedSessionToken}`;
+  else if (authorization && !authorization.includes(FRAME_TOKEN_PLACEHOLDER)) headers['authorization'] = authorization;
 
-  const init: RequestInit = {
-    method: req.method,
-    headers,
-    cache: 'no-store',
-    redirect: 'manual',
-  };
-
+  let body: string | undefined;
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     const bodyText = await req.text().catch(() => '');
-    if (bodyText) init.body = bodyText;
+    if (bodyText) body = bodyText;
   }
 
   try {
     const upstream = await requestHermesDashboardOverSsh({
-      installation: target.installation,
+      installation,
       req,
       upstreamPath,
       search,
-      body: init.body as string | undefined,
+      body,
       headers,
     });
     const upstreamContentType = String(upstream.headers['content-type'] ?? 'application/octet-stream');
@@ -205,37 +227,50 @@ async function proxyHandler(
     if (upstream.status >= 300 && upstream.status < 400) {
       const location = upstream.headers['location'];
       if (typeof location === 'string') {
-        const response = NextResponse.redirect(
-          rewriteRedirectLocation(req, target.installation, location),
-          upstream.status,
-        );
-        return withDashboardCookie(response, target.installation);
+        const response = new NextResponse(null, { status: upstream.status, headers: frameHeaders(req) });
+        response.headers.set('location', rewriteRedirectLocation(req, installation, frameBase, location));
+        return response;
       }
     }
 
     if (upstreamContentType.includes('text/') || upstreamContentType.includes('javascript') || upstreamContentType.includes('json')) {
       const text = upstream.body.toString('utf-8');
+      // Only a page this session fetched with its own grant refreshes this session's copy.
+      const token = upstreamContentType.includes('html') ? dashboardSessionToken(text) : null;
+      if (token && token !== FRAME_TOKEN_PLACEHOLDER) state.hermesTokens.set(installation.id, token);
       const shouldRewrite = upstreamContentType.includes('html') || upstreamContentType.includes('javascript') || upstreamContentType.includes('json') || upstreamContentType.includes('css');
-      return withDashboardCookie(new NextResponse(shouldRewrite ? rewriteDashboardText(text, target.installation.id) : text, {
+      let output = withoutSessionToken(text, token ?? storedSessionToken);
+      if (shouldRewrite) output = rewriteDashboardText(output, frameBase);
+      if (upstreamContentType.includes('html')) output = injectFrameCompat(output);
+      return new NextResponse(output, {
         status: upstream.status,
         statusText: upstream.statusText,
-        headers: responseHeaders(upstreamContentType),
-      }), target.installation, dashboardSessionToken(text));
+        headers: frameHeaders(req, upstreamContentType),
+      });
     }
 
-    return withDashboardCookie(new NextResponse(new Uint8Array(upstream.body), {
+    return new NextResponse(new Uint8Array(upstream.body), {
       status: upstream.status,
       statusText: upstream.statusText,
-      headers: responseHeaders(upstreamContentType),
-    }), target.installation);
+      headers: frameHeaders(req, upstreamContentType),
+    });
   } catch (err: unknown) {
     const correlationId = crypto.randomUUID();
     console.error(`[hermes-http:${correlationId}] dashboard proxy failed`, err);
-    return NextResponse.json(
-      { success: false, error: 'hermes_proxy_unavailable', correlationId },
-      { status: 502, headers: { 'x-correlation-id': correlationId } },
-    );
+    const response = frameJson(req, { success: false, error: 'hermes_proxy_unavailable', correlationId }, 502);
+    response.headers.set('x-correlation-id', correlationId);
+    return response;
   }
+}
+
+/** CORS preflight from the sandboxed (opaque-origin) dashboard. */
+export async function OPTIONS(
+  req: NextRequest,
+  { params }: { params: Promise<{ path?: string[] }> },
+): Promise<NextResponse> {
+  const { path } = await params;
+  if (!splitFrameSegments(path)) return new NextResponse(null, { status: 405, headers: { allow: 'GET, HEAD, POST, PUT, PATCH, DELETE' } });
+  return new NextResponse(null, { status: 204, headers: framePreflightHeaders(req.headers) });
 }
 
 export const GET = proxyHandler;

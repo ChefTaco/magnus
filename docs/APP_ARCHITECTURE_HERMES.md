@@ -54,7 +54,10 @@ Not every domain has its own console page; all of them are in the OpenAPI docume
 The embedded Hermes dashboard is reached over SSH from the console server, never directly from the
 browser. Each installation must have an entry in `HERMES_SSH_AUTHORIZATIONS_FILE` that binds the
 installation ID and node ID to exact addresses and expected SHA-256 host keys. See
-[observability](OBSERVABILITY.md#hermes-proxy-security-events) for the proxy's event log.
+[observability](OBSERVABILITY.md#hermes-proxy-security-events) for the proxy's event log. The
+dashboard runs sandboxed in an opaque origin and is authorized by a frame grant, not the console
+cookie, so its script has no console authority; see
+[Hosting the Hermes dashboard in HiveXUI](HERMES_DASHBOARD_HIVEXUI.md).
 
 ## Installing Hermes
 

@@ -20,11 +20,8 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import { request as httpsRequest } from 'node:https';
-import { verifyLocalSession } from './runtime-local-sessions.mjs';
-import { jwtVerify } from 'jose';
 import { Client as SSHClient } from 'ssh2';
 import { WebSocket, WebSocketServer } from 'ws';
-import { parseCookieHeader } from './runtime-cookie.mjs';
 import { createSshHostVerifier } from './runtime-host-key.mjs';
 import {
   chooseHermesInstallation,
@@ -46,6 +43,14 @@ import { resolveSessionSecret } from './runtime-session-secret.mjs';
 import { dashboardCredentialDiagnostics, resolveDashboardSshCredentials } from './runtime-dashboard-credentials.mjs';
 import { hermesEnabled } from './runtime-integrations.mjs';
 import { guardFrameworkUpgradeListener, parseRequestTarget, rejectUpgrade } from './runtime-upgrade.mjs';
+import {
+  FRAME_SESSION_RECHECK_MS,
+  frameSessionAlive,
+  parseFramePath,
+  peekFrameSessionState,
+  swapFrameToken,
+  verifyFrameGrant,
+} from './runtime-embed-isolation.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = dirname(__filename);
@@ -75,37 +80,18 @@ if (certPath && keyPath) {
     + 'Session cookies are marked Secure, so browsers only keep them on https:// or http://localhost.');
 }
 
-const COOKIE_NAME = 'magnus_session';
 const HERMES_PROXY_BASE = '/api/hermes/dashboard';
-const HERMES_INSTALLATION_COOKIE = 'magnus_hermes_dashboard_installation_id';
-const jwtSecret = resolveSessionSecret();
+// Fail fast without a session secret: frame grants are derived from it.
+resolveSessionSecret();
 validateDashboardEnvironment(process.env);
 const credentialState = dashboardCredentialDiagnostics();
 if (credentialState.warning) console.error(credentialState.warning);
-const sessionIssuer = readDashboardEnvironment('SESSION_ISSUER');
-const sessionAudience = readDashboardEnvironment('SESSION_AUDIENCE');
 const controlApiBase = readDashboardEnvironment('CONTROL_API_URL');
 const controlApiTls = controlApiTlsOptions();
 const maxControlApiBytes = controlApiResponseLimit();
 const websocketAllowedOrigins = process.env['HERMES_WEBSOCKET_ALLOWED_ORIGINS']
   ?? readDashboardEnvironment('DASHBOARD_PUBLIC_ORIGIN')
   ?? '';
-
-async function verifyDashboardSession(req) {
-  if (!jwtSecret) return false;
-  const token = parseCookieHeader(req.headers.cookie ?? '').get(COOKIE_NAME);
-  if (!token) return false;
-  try {
-    const { payload } = await jwtVerify(token, new TextEncoder().encode(jwtSecret), {
-      algorithms: ['HS256'],
-      issuer: sessionIssuer,
-      audience: sessionAudience,
-    });
-    return payload.provider !== 'hive' && await verifyLocalSession(payload);
-  } catch {
-    return false;
-  }
-}
 
 function httpsJson(url, headers) {
   return new Promise((resolvePromise, reject) => {
@@ -154,21 +140,18 @@ async function fetchHermesInstallations() {
   return normalizeHermesInstallations(res?.data);
 }
 
-function firstQuery(url, name) {
-  const value = url.searchParams.get(name);
-  return value && value.trim() ? value.trim() : null;
+/** The installation a verified frame grant names, from the live inventory. */
+async function resolveHermesInstallation(installationId) {
+  return chooseHermesInstallation(await fetchHermesInstallations(), installationId, null, null);
 }
 
-async function resolveHermesInstallation(req) {
-  const url = parseRequestTarget(req) ?? new URL('https://localhost/');
-  const cookies = parseCookieHeader(req.headers.cookie ?? '');
-  const installations = await fetchHermesInstallations();
-  return chooseHermesInstallation(
-    installations,
-    firstQuery(url, 'installationId'),
-    firstQuery(url, 'nodeId'),
-    cookies.get(HERMES_INSTALLATION_COOKIE) ?? null,
-  );
+/**
+ * The Hermes frame (`/api/hermes/dashboard/_frame/<grant>/...`) an upgrade targets, or null.
+ * The sandboxed dashboard's sockets are authorized by its frame grant, never by console cookies.
+ */
+function hermesFrameFor(req) {
+  const frame = parseFramePath(parseRequestTarget(req)?.pathname ?? '');
+  return frame?.app === 'hermes' ? frame : null;
 }
 
 function resolveSshCredentials() {
@@ -230,9 +213,12 @@ function openHermesDashboardTunnel(conn, target) {
 
 function websocketPathFor(req) {
   const url = parseRequestTarget(req) ?? new URL('https://localhost/');
-  const upstreamPath = url.pathname.startsWith(HERMES_PROXY_BASE)
-    ? url.pathname.slice(HERMES_PROXY_BASE.length) || '/'
-    : url.pathname;
+  const frame = hermesFrameFor(req);
+  const upstreamPath = frame
+    ? frame.upstreamPath
+    : url.pathname.startsWith(HERMES_PROXY_BASE)
+      ? url.pathname.slice(HERMES_PROXY_BASE.length) || '/'
+      : url.pathname;
   url.searchParams.delete('installationId');
   url.searchParams.delete('nodeId');
   return `${upstreamPath}${url.search}`;
@@ -243,7 +229,7 @@ const hermesWss = new WebSocketServer({ noServer: true });
 function isHermesWebSocketUpgrade(req) {
   const pathname = parseRequestTarget(req)?.pathname ?? '';
   if (!pathname.startsWith(`${HERMES_PROXY_BASE}/`)) return false;
-  return hermesWebsocketPathAllowed(pathname.slice(HERMES_PROXY_BASE.length));
+  return hermesWebsocketPathAllowed(websocketPathFor(req).split('?')[0]);
 }
 
 function isHermesUpgradeTarget(target) {
@@ -287,16 +273,25 @@ function attachHermesWebSocketBridge(server) {
         socket.destroy();
         return;
       }
-      if (!websocketOriginAllowed(req.headers.origin, websocketAllowedOrigins)) {
+      const frame = hermesFrameFor(req);
+      if (!frame) {
+        console.warn(`[hermes-ws:${correlationId}] rejected upgrade without a frame grant`);
+        recordHermesSecurityEvent({ type: 'invalid_session', correlationId, path, reason: 'frame_grant_required' });
+        socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+      // The sandboxed dashboard has an opaque origin, so its sockets send `Origin: null`.
+      if (req.headers.origin !== 'null' && !websocketOriginAllowed(req.headers.origin, websocketAllowedOrigins)) {
         console.warn(`[hermes-ws:${correlationId}] rejected Origin ${req.headers.origin ?? '<missing>'}`);
         recordHermesSecurityEvent({ type: 'rejected_origin', correlationId, path, origin: req.headers.origin ?? null });
         socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
         socket.destroy();
         return;
       }
-      const ok = await verifyDashboardSession(req);
-      if (!ok) {
-        console.warn(`[hermes-ws:${correlationId}] rejected invalid dashboard session`);
+      const grant = await verifyFrameGrant(frame.grant, 'hermes');
+      if (!grant?.installationId) {
+        console.warn(`[hermes-ws:${correlationId}] rejected invalid frame grant`);
         recordHermesSecurityEvent({ type: 'invalid_session', correlationId, path, reason: 'verification_failed' });
         socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
         socket.destroy();
@@ -308,7 +303,7 @@ function attachHermesWebSocketBridge(server) {
       let tunnel;
       let work;
       try {
-        const selection = await resolveHermesInstallation(req);
+        const selection = await resolveHermesInstallation(grant.installationId);
         if (!selection.installation) {
           const status = selection.error === 'installation_required' ? '400 Bad Request' : '404 Not Found';
           socket.write(`HTTP/1.1 ${status}\r\nConnection: close\r\nContent-Type: application/json\r\n\r\n{"error":"${selection.error}"}`);
@@ -346,8 +341,11 @@ function attachHermesWebSocketBridge(server) {
 
       hermesWss.handleUpgrade(req, socket, head, (client) => {
         recordHermesSecurityEvent({ type: 'connection_started', correlationId, hostname: installation.hostname, path });
+        // The page sends a placeholder token; the real one is this console session's copy.
+        const [upstreamPathname, upstreamSearch = ''] = websocketPathFor(req).split('?');
+        const upstreamQuery = swapFrameToken(upstreamSearch, peekFrameSessionState(grant.sessionId)?.hermesTokens.get(installation.id));
         const upstream = new WebSocket(
-          `ws://127.0.0.1:${installation.dashboardPort || 9119}${websocketPathFor(req)}`,
+          `ws://127.0.0.1:${installation.dashboardPort || 9119}${upstreamPathname}${upstreamQuery ? `?${upstreamQuery}` : ''}`,
           {
             createConnection: () => tunnel,
             headers: {
@@ -362,7 +360,9 @@ function attachHermesWebSocketBridge(server) {
         let clientDrainTimer;
 
         let closed = false;
+        let sessionCheck;
         const closeBoth = (code = 1000, reason = 'Proxy connection closed') => {
+          clearInterval(sessionCheck);
           if (!closed) {
             closed = true;
             observeManagedSshEnd(work);
@@ -381,6 +381,23 @@ function attachHermesWebSocketBridge(server) {
           try { if (upstream.readyState <= 1) upstream.close(code, reason); } catch {}
           try { ssh?.end(); } catch {}
         };
+
+        // The grant authorizes the upgrade; an open socket (a PTY) lives only as long as the console
+        // session behind it: sign-out, revocation and credential changes close it within one check.
+        let sessionStoreFailures = 0;
+        sessionCheck = setInterval(() => {
+          frameSessionAlive(grant).then((alive) => {
+            sessionStoreFailures = 0;
+            if (!alive) {
+              recordHermesSecurityEvent({ type: 'invalid_session', correlationId, path, reason: 'console_session_ended' });
+              closeBoth(1008, 'Console session ended');
+            }
+          }, () => {
+            sessionStoreFailures += 1;
+            if (sessionStoreFailures >= 2) closeBoth(1011, 'Console session unverifiable');
+          });
+        }, FRAME_SESSION_RECHECK_MS);
+        sessionCheck.unref?.();
 
         const drain = (controller, destination, direction) => {
           if (closed || destination.readyState !== WebSocket.OPEN) return;

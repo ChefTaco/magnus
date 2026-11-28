@@ -9,6 +9,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { COOKIE_NAME, verifySessionToken } from '@/lib/auth';
 import { cookies } from 'next/headers';
 import { revokeHiveSession } from '@/lib/hive-login';
+import { clearFrameSessionState, clearFrameUserState } from '../../../../../runtime-embed-isolation.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -34,7 +35,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   if (session) {
     try {
       if (session.provider === 'hive') await revokeHiveSession(session);
-      else await revokeLocalSession(session, request.nextUrl.searchParams.get('all') === 'true');
+      else {
+        const all = request.nextUrl.searchParams.get('all') === 'true';
+        await revokeLocalSession(session, all);
+        // The embedded dashboards' server-side state (Hermes tokens, router cookies) goes too.
+        // (All of this user's sessions with `all=true`; other users keep theirs.)
+        if (all) clearFrameUserState(session.username);
+        else if (session.sessionId) clearFrameSessionState(session.sessionId);
+      }
     } catch {
       return NextResponse.json(
         { error: 'Session revocation unavailable; retry sign out' },

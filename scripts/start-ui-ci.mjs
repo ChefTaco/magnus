@@ -39,6 +39,8 @@ const testEnv = {
   CONTROL_NODE_CREDENTIAL_KEY:
     'ci-only-registry-key-0123456789abcdef0123456789',
   CONTROL_API_URL: 'http://localhost:55441',
+  // A fixture admin UI that tests/embedded-isolation.spec.ts serves; nothing listens otherwise.
+  HIVE_ROUTER_ADMIN_URL: 'http://127.0.0.1:55443',
   DASHBOARD_PUBLIC_ORIGIN: 'http://localhost:55442',
   DASHBOARD_ADMIN_USERNAME: 'ci-admin',
   DASHBOARD_ADMIN_PASSWORD: 'ci-only-browser-password',

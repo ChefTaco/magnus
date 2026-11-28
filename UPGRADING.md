@@ -46,6 +46,17 @@ hold a later enrollment drain at `DRAIN_EVIDENCE_UNAVAILABLE supervisor-unverifi
 reinstall. Stop them as root once their commands are settled: `systemctl stop <unit>`, and
 `systemctl reset-failed <unit>` if one is left failed.
 
+### Console: sandboxed embedded dashboards
+
+The console now serves the Hermes dashboard and the router admin UI sandboxed in an opaque origin,
+authorized by a short-lived frame grant instead of the console cookie, renewed by the console frame
+([design note](docs/HERMES_DASHBOARD_HIVEXUI.md)). Nothing to configure. Reconnect any Hermes frame
+or tab that was open across the upgrade. Dashboard preferences stored in the browser (theme,
+language) now last only until the frame reloads. Scripts or bookmarks that called a console `/api`
+route from another site with the browser's cookies now get 403 `cross_site_request_refused`. An open
+Hermes terminal (PTY) now closes within 30 seconds of signing out. Bookmarks of a dashboard's frame
+URL (`…/_frame/<grant>/…`) stop working after 10 minutes; bookmark `/orchestra/web-gateway` instead.
+
 ## Version 3.6.0: HiveCommon 0.11.1, trusted proxies and Hive IAM deprecation
 
 If the server runs in Hive IAM mode (`IAM_CORE_URL`), make sure its access tokens carry a `jti`

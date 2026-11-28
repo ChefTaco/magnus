@@ -43,6 +43,7 @@ server-tls.mjs             HTTPS wrapper around the standalone server.js (Hermes
 runtime-*.mjs              Plain-ESM helpers shared by the server, the wrapper and the CLI
   runtime-environment.mjs  Canonical environment schema (drives `env-schema` and the docs)
   runtime-integrations.mjs Optional integration detection
+  runtime-embed-isolation.mjs Sandbox policy and frame grants for the proxied dashboards
 scripts/stage-package.mjs  Builds the npm payload in dist/app
 src/app/                   Routes and route handlers (api/proxy injects API_SECRET server-side)
 src/components/            UI primitives (components/ui) and feature components
@@ -65,6 +66,9 @@ deploy/magnus-ui.service   Example systemd unit
 - Browser code calls same-origin routes only. Secrets (`API_SECRET`, session and credential keys)
   stay server-side; never expose them through `NEXT_PUBLIC_*`.
 - Keep login fail-closed: Redis-backed throttling and the authentication audit log are required.
+- Proxied third-party UIs (Hermes dashboard, router admin) never get console authority: keep their
+  responses sandboxed without `allow-same-origin`, authorize them by frame grant only, and never
+  forward console cookies to them (`runtime-embed-isolation.mjs`).
 - Terminal and proxy code audits metadata only, never terminal contents or request bodies.
 - Keep high-risk command and file workflows previewable (dry run or preview first).
 - Build UI from the primitives in `src/components/ui/` and the theme tokens; avoid stock Tailwind

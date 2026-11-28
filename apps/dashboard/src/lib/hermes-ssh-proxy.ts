@@ -131,7 +131,8 @@ function requestHeadersFrom(req: NextRequest, port: number, extraHeaders?: Recor
 
   for (const name of ['accept', 'content-type', 'user-agent', 'origin', 'referer']) {
     const value = req.headers.get(name);
-    if (value) headers[name] = value;
+    // A sandboxed (opaque-origin) dashboard sends `Origin: null`; it means nothing upstream.
+    if (value && !(name === 'origin' && value === 'null')) headers[name] = value;
   }
 
   return { ...headers, ...(extraHeaders ?? {}) };

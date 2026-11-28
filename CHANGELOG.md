@@ -31,6 +31,10 @@ migration, and no new setting.
 - Scripts or integrations that read the error bodies of the shared-credential, security inventory
   and backup, MCP, AI schedule or remediation-rule routes: they now answer the standard
   `{ success: false, error: { code, message } }` envelope, with the same status codes (see Changed).
+- **Console: reload open Hermes dashboards after the upgrade.** A dashboard tab or frame opened
+  before it keeps calling the old URLs, which now redirect or need a grant; reconnecting the frame
+  fixes it. Inside the sandbox, dashboard preferences (theme, language) last only until the frame
+  reloads, and clipboard writes from the frame may be refused. Nothing to configure.
 
 ### Added
 
@@ -83,6 +87,7 @@ migration, and no new setting.
   undeclared tag or an unknown security scheme, and generates TypeScript types from it with
   `openapi-typescript`, so a client can always be generated. The repository ships no generated
   client of its own API.
+- Docs: [Hosting the Hermes dashboard in HiveXUI](docs/HERMES_DASHBOARD_HIVEXUI.md), a design note.
 
 ### Changed
 
@@ -123,6 +128,31 @@ migration, and no new setting.
   `GET /api/v1/hermes/summary`, from this release. The rest of `/heartbeat` and `/discovery` stays
   machine-only.
 
+### Security
+
+- **Console: the embedded Hermes dashboard and router admin UI no longer run with console
+  authority.** Both proxies (`/api/hermes/dashboard`, `/api/hive-router/dashboard`) serve every
+  response with a `sandbox` Content Security Policy without `allow-same-origin`, and the Web Gateway
+  frame drops `allow-same-origin`, so the dashboard's script runs in an opaque origin, also in its own
+  tab. The entry URL needs the console session, only from the console itself or a typed address, and
+  redirects to `…/_frame/<grant>/…`: a grant signed with a key derived from `SESSION_SECRET`, scoped
+  to that dashboard (and Hermes installation), valid for 10 minutes (never past the console session)
+  and void once that session ends. The console frame renews it through `postMessage` before it
+  expires, and a reload with the console cookie re-mints it, so a grant copied from a log or the
+  history is useless within minutes. Frame requests and the Hermes WebSocket bridge accept only the
+  grant (and `Origin: null` for the sandboxed page); they ignore console cookies and set none. An
+  open Hermes WebSocket (the PTY included) re-checks its console session every 30 seconds and closes
+  when it is signed out or revoked. The frame policy adds `connect-src 'self'`. The Hermes session
+  token stays on the server per console session and installation (the page sees a placeholder), the
+  router's cookies likewise, and signing out clears both (signing out everywhere, only that
+  user's). An expired grant still loads static build files; that exemption and every forwarded
+  path are decided on one re-encoded, traversal-free path, so encoded traversals
+  (`%2e%2e`, `%252e%252e`, `..%2f`, `%5c`) never reach an API.
+- **Console: cross-site API reads are refused.** Any `/api` request with `Origin: null`, and any
+  cross-site or same-site `/api` request that is not a navigation, gets 403
+  `cross_site_request_refused`, as cross-site writes already did. Navigations (the sign-in callback)
+  and the public endpoints are unchanged.
+
 ### Deprecated
 
 - The static HiveSkills executor bearer (`tokenSha256` in `MAGNUS_HIVESKILLS_DEPLOYMENTS_JSON`).
@@ -149,6 +179,10 @@ migration, and no new setting.
 - Browser contract: `topologyScanRequestSchema` caps `probeTimeoutMs` at 15000, as the server does.
 - Console: the discovery scan result is typed with the server's `version` field (it was typed as
   `agentVersion`).
+- Console: the router admin proxy no longer rewrites an asset URL twice (`/assets/` became
+  `…/dashboard/api/hive-router/dashboard/assets/`).
+- Console: the `/dashboard-plugins/*` and `/kanban` rewrites into the Hermes proxy are gone; they
+  could not work from the sandboxed frame, which reaches the dashboard through its frame URL.
 - HiveSkills executor routes refuse a target or a registry named like an inherited object property
   (`constructor`, for example) with 403 instead of an internal error.
 - Agent: a supervised agent refuses a command it cannot prove finished (no completion registry

@@ -13,6 +13,8 @@ const signedIn = ['accessibility.spec.ts', 'api-docs.spec.ts', 'app.spec.ts', 'n
 process.env['TEST_USERNAME'] ??= 'ci-admin';
 process.env['TEST_PASSWORD'] ??= 'ci-only-browser-password';
 process.env['MAGNUS_SECURITY_CONSOLE_URL'] ??= 'https://security.example.invalid';
+// The harness points HIVE_ROUTER_ADMIN_URL here (scripts/start-ui-ci.mjs); tests/embedded-isolation.spec.ts serves it.
+process.env['MAGNUS_EMBED_FIXTURE_PORT'] = '55443';
 
 export default defineConfig({
   testDir: './tests',
@@ -30,7 +32,7 @@ export default defineConfig({
   },
   projects: [
     // These sign in (or refuse to) themselves.
-    { name: 'ci', testMatch: ['ci-workflows.spec.ts', 'ardent.spec.ts', 'console-security.spec.ts', 'login-lockout.spec.ts'] },
+    { name: 'ci', testMatch: ['ci-workflows.spec.ts', 'ardent.spec.ts', 'console-security.spec.ts', 'login-lockout.spec.ts', 'embedded-isolation.spec.ts'] },
     { name: 'ci-setup', testMatch: 'ci-auth.setup.ts' },
     { name: 'ci-signed-in', testMatch: signedIn, dependencies: ['ci-setup'], use: { storageState: 'tests/.auth/ci-admin.json' } },
   ],
