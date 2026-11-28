@@ -19,6 +19,31 @@ The rules every upgrade path follows:
   `slow` or `one-way`). Upgrades print slow and one-way migrations and wait for confirmation
   (`--yes`). Startup auto-migrate refuses them unless `MAGNUS_AUTO_MIGRATE_ALLOW_SLOW=true` is set.
 
+## 4.0.0 (breaking, unreleased): the console reads control-node credentials only with CONTROL_NODE_CREDENTIAL_KEY
+
+The standalone console no longer decrypts control-node credentials with the old key derived from
+`JWT_SECRET` (or `SESSION_SECRET`), and refuses to start while any value under it remains in
+`.magnus/control-nodes.json`:
+
+```text
+magnus-ui: refusing to start: 1 control-node credential(s) are still encrypted under the legacy JWT_SECRET-derived key, …
+```
+
+The last 3.x console re-encrypts them when it starts, so an install that ran it once has none.
+Check before upgrading, with the 3.x console and as the account it runs as:
+
+```bash
+sudo -u magnus magnus-ui credentials --env-file /etc/magnus-ui/magnus-ui.env --data-dir /var/lib/magnus-ui
+```
+
+It prints the file it checked. Exit 0 means nothing is left; exit 3 means there is no state file at
+that path (nothing was ever saved there, or `--data-dir` is wrong). Otherwise run it again with
+`--reencrypt` (or restart the 3.x console), or remove and re-add the control nodes it cannot
+decrypt. If `magnus upgrade` reaches 4.0.0 with values left, the console fails its health check and
+the upgrade switches back to the 3.x release, which still reads them. After the upgrade `JWT_SECRET` is no longer needed in the
+console's environment; the server still uses its own `JWT_SECRET`. The re-encryption tool
+`apps/dashboard/scripts/migrate-control-node-credentials.mjs` also refuses legacy values now.
+
 ## Unreleased: refused commands and non-Ardent reconciliation
 
 Upgrade the node agents first, then the server and console. No setting or migration changes.

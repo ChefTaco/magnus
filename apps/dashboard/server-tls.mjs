@@ -42,7 +42,7 @@ import { recordHermesSecurityEvent } from './runtime-hermes-security-events.mjs'
 import { resolveSessionSecret } from './runtime-session-secret.mjs';
 import { dashboardCredentialDiagnostics, resolveDashboardSshCredentials } from './runtime-dashboard-credentials.mjs';
 import { hermesEnabled } from './runtime-integrations.mjs';
-import { controlNodeStateFile, describeReencryption, reencryptLegacyControlNodeCredentials } from './runtime-control-node-credentials.mjs';
+import { controlNodeStateFile, describeReencryption, LegacyControlNodeCredentialsError, reencryptLegacyControlNodeCredentials } from './runtime-control-node-credentials.mjs';
 import { guardFrameworkUpgradeListener, parseRequestTarget, rejectUpgrade } from './runtime-upgrade.mjs';
 import {
   FRAME_SESSION_RECHECK_MS,
@@ -507,15 +507,19 @@ const nextServer = existsSync(resolve(__dirname, 'server.js'))
   : './apps/dashboard/server.js';
 const dataDir = process.env['MAGNUS_UI_DATA_DIR']?.trim();
 
-// Re-encrypt control-node credentials still under the legacy JWT_SECRET-derived key before any
-// request can read them. Idempotent; on failure the console keeps decrypting them as before.
+// Refuse to start while control-node credentials remain under the legacy JWT_SECRET-derived key,
+// which Magnus 4 no longer reads, and encrypt any unencrypted ones before a request can read them.
 try {
   const stateRoot = dataDir ? resolve(dataDir) : dirname(resolve(__dirname, nextServer));
   const message = describeReencryption(reencryptLegacyControlNodeCredentials(controlNodeStateFile(stateRoot)));
   if (message) console.log(`magnus-ui: ${message}`);
 } catch (error) {
-  console.error(`magnus-ui: control-node credentials were not re-encrypted: ${error instanceof Error ? error.message : String(error)}. `
-    + 'The console still reads them with the legacy key; `magnus-ui credentials` shows what remains.');
+  if (error instanceof LegacyControlNodeCredentialsError) {
+    console.error(`magnus-ui: refusing to start: ${error.message}. See UPGRADING.md (4.0.0).`);
+    process.exit(1);
+  }
+  console.error(`magnus-ui: control-node credentials were not encrypted: ${error instanceof Error ? error.message : String(error)}. `
+    + '`magnus-ui credentials` shows what remains.');
 }
 
 if (dataDir) {

@@ -2,11 +2,12 @@
  * Control-node credentials at rest (`.magnus/control-nodes.json` in the data directory).
  *
  * Current records are `enc2:` values under CONTROL_NODE_CREDENTIAL_KEY. Records saved before that
- * key existed are `enc:` values under a key derived from JWT_SECRET (or SESSION_SECRET), and very
- * old ones are unencrypted. This module counts both kinds and re-encrypts them under
- * CONTROL_NODE_CREDENTIAL_KEY in one atomic rewrite, after a byte-for-byte backup of the file. The
- * console runs the re-encryption at start; `magnus-ui credentials` reports what remains and
- * `magnus-ui credentials --reencrypt` runs it on demand. Nothing here logs or returns a credential.
+ * key existed are `enc:` values under a key derived from JWT_SECRET (or SESSION_SECRET), which
+ * Magnus 4 no longer reads: 3.x releases re-encrypted them at console start, and the console now
+ * refuses to start while any remain (`LegacyControlNodeCredentialsError`). Very old unencrypted
+ * values are still encrypted under CONTROL_NODE_CREDENTIAL_KEY in one atomic rewrite, after a
+ * byte-for-byte backup of the file. `magnus-ui credentials` reports what remains. Nothing here
+ * logs or returns a credential.
  *
  * Every rewrite holds `control-nodes.json.lock`, which the console's store also takes, so a CLI run
  * never overwrites a save made by a running console. A rewrite runs only as the account that owns
@@ -338,6 +339,17 @@ function withControlNodeStateLockSync(file, fn, waitMs = LOCK_WAIT_MS) {
   }
 }
 
+/** Legacy `enc:` values remain; Magnus 4 cannot decrypt them. */
+export class LegacyControlNodeCredentialsError extends Error {
+  constructor(count) {
+    super(`${count} control-node credential(s) are still encrypted under the legacy JWT_SECRET-derived key, `
+      + 'which Magnus 4 no longer reads. Start the last 3.x console once (it re-encrypts them; or run '
+      + '`magnus-ui credentials --reencrypt` from 3.x), or restore the 3.x data directory and re-add those control nodes');
+    this.name = 'LegacyControlNodeCredentialsError';
+    this.count = count;
+  }
+}
+
 function deriveKey(secret) {
   return createHash('sha256').update(secret).digest();
 }
@@ -349,12 +361,6 @@ function dedicatedKey(env) {
     if (env[name] && env[name] === secret) throw new Error(`CONTROL_NODE_CREDENTIAL_KEY must be distinct from ${name}`);
   }
   return deriveKey(secret);
-}
-
-/** Every key a legacy `enc:` record may have used: JWT_SECRET first, then SESSION_SECRET. */
-function legacyKeys(env) {
-  return [...new Set([env['JWT_SECRET'], env['SESSION_SECRET']].filter((value) => typeof value === 'string' && value !== ''))]
-    .map(deriveKey);
 }
 
 function decryptWith(value, marker, key) {
@@ -372,20 +378,6 @@ function encryptWith(plaintext, key) {
   const cipher = createCipheriv('aes-256-gcm', key, iv);
   const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
   return `${CURRENT_MARKER}${iv.toString('base64')}:${cipher.getAuthTag().toString('base64')}:${ciphertext.toString('base64')}`;
-}
-
-function decryptLegacy(value, keys, label) {
-  for (const key of keys) {
-    let plaintext;
-    try {
-      plaintext = decryptWith(value, LEGACY_MARKER, key);
-    } catch {
-      continue;
-    }
-    if (!plaintext || plaintext.startsWith(LEGACY_MARKER)) break;
-    return plaintext;
-  }
-  throw new Error(`${label} did not decrypt with JWT_SECRET or SESSION_SECRET; set the secret the console used when it was saved`);
 }
 
 function backupName(file, now) {
@@ -424,15 +416,16 @@ function writeBackup(file, raw, now) {
 }
 
 /**
- * Re-encrypt every legacy (`enc:`) and unencrypted control-node credential under
- * CONTROL_NODE_CREDENTIAL_KEY and drop retired fields. Idempotent: a file that needs nothing is
- * left untouched (`status: 'current'`, or `'absent'` when there is no file). Otherwise the original
- * file is first copied to `control-nodes.json.legacy-key-backup-<time>` (mode 0600), every new value
- * is verified by decrypting it again, and the file is replaced atomically; when it changed in the
+ * Encrypt every unencrypted control-node credential under CONTROL_NODE_CREDENTIAL_KEY and drop
+ * retired fields. Throws `LegacyControlNodeCredentialsError`, with nothing written, while any value
+ * is still under the legacy JWT_SECRET-derived key. Idempotent: a file that needs nothing is left
+ * untouched (`status: 'current'`, or `'absent'` when there is no file). Otherwise the original file
+ * is first copied to `control-nodes.json.legacy-key-backup-<time>` (mode 0600), every new value is
+ * verified by decrypting it again, and the file is replaced atomically; when it changed in the
  * meantime nothing is written. The rewrite holds the state lock shared with the console's store and
  * runs only as the account that owns the file (any other account, root included, is refused, so
- * nothing it writes can end up unreadable by the console or be redirected by that account). Throws, with nothing replaced, when a legacy value
- * cannot be decrypted, when CONTROL_NODE_CREDENTIAL_KEY does not decrypt the values already stored
+ * nothing it writes can end up unreadable by the console or be redirected by that account). Throws, with nothing replaced, when
+ * CONTROL_NODE_CREDENTIAL_KEY does not decrypt the values already stored
  * under it, or when the lock stays busy; the console then keeps reading the file as before.
  *
  * @param {string} file
@@ -442,18 +435,21 @@ function writeBackup(file, raw, now) {
  */
 export function reencryptLegacyControlNodeCredentials(file, env = process.env, options = {}) {
   const peek = readState(file);
-  if (!peek) return { status: 'absent', reencrypted: 0, encrypted: 0, retired: 0, backup: null };
-  if (!credentialsNeedReencryption(summarize(peek.records))) {
-    return { status: 'current', reencrypted: 0, encrypted: 0, retired: 0, backup: null };
+  if (!peek) return { status: 'absent', encrypted: 0, retired: 0, backup: null };
+  const counts = summarize(peek.records);
+  if (counts.legacy > 0) throw new LegacyControlNodeCredentialsError(counts.legacy);
+  if (!credentialsNeedReencryption(counts)) {
+    return { status: 'current', encrypted: 0, retired: 0, backup: null };
   }
   return withControlNodeStateLockSync(file, () => rewriteUnderLock(file, env, options), options.lockWaitMs);
 }
 
 function rewriteUnderLock(file, env, options) {
   const state = readState(file);
-  if (!state) return { status: 'absent', reencrypted: 0, encrypted: 0, retired: 0, backup: null };
+  if (!state) return { status: 'absent', encrypted: 0, retired: 0, backup: null };
   const before = summarize(state.records);
-  if (!credentialsNeedReencryption(before)) return { status: 'current', reencrypted: 0, encrypted: 0, retired: 0, backup: null };
+  if (before.legacy > 0) throw new LegacyControlNodeCredentialsError(before.legacy);
+  if (!credentialsNeedReencryption(before)) return { status: 'current', encrypted: 0, retired: 0, backup: null };
 
   // The rewrite must stay readable by the account the console runs as, which owns the file.
   const euid = options.euid ?? (typeof process.geteuid === 'function' ? process.geteuid() : null);
@@ -476,10 +472,6 @@ function rewriteUnderLock(file, env, options) {
       }
     }
   }
-  const candidates = before.legacy > 0 ? legacyKeys(env) : [];
-  if (before.legacy > 0 && candidates.length === 0) {
-    throw new Error(`${before.legacy} control-node credential(s) use the legacy key, but neither JWT_SECRET nor SESSION_SECRET is set to decrypt them`);
-  }
 
   const next = state.records.map((record, index) => {
     const updated = { ...record };
@@ -489,7 +481,7 @@ function rewriteUnderLock(file, env, options) {
       const kind = classifyStoredCredential(value);
       if (kind === 'empty' || kind === 'current') continue;
       const label = `Control-node entry ${index} ${field}`;
-      const plaintext = kind === 'legacy' ? decryptLegacy(value, candidates, label) : value;
+      const plaintext = value;
       const encrypted = encryptWith(plaintext, key);
       if (decryptWith(encrypted, CURRENT_MARKER, key) !== plaintext) throw new Error(`${label} failed round-trip verification`);
       updated[field] = encrypted;
@@ -520,17 +512,16 @@ function rewriteUnderLock(file, env, options) {
 
   const after = inspectControlNodeCredentials(file);
   if (credentialsNeedReencryption(after)) throw new Error('Control-node state still holds legacy credentials after re-encryption');
-  return { status: 'reencrypted', reencrypted: before.legacy, encrypted: before.plaintext, retired: before.retired, backup };
+  return { status: 'reencrypted', encrypted: before.plaintext, retired: before.retired, backup };
 }
 
 /** One log line for a re-encryption result, or null when nothing changed. Never includes a value. */
 export function describeReencryption(result) {
   if (result.status !== 'reencrypted') return null;
   const parts = [];
-  if (result.reencrypted) parts.push(`${result.reencrypted} from the legacy JWT_SECRET-derived key`);
   if (result.encrypted) parts.push(`${result.encrypted} that were not encrypted`);
   if (result.retired) parts.push(`dropped ${result.retired} retired node-manager secret(s)`);
-  return `re-encrypted control-node credentials under CONTROL_NODE_CREDENTIAL_KEY (${parts.join('; ')}); the previous file is kept at ${result.backup}`;
+  return `encrypted control-node credentials under CONTROL_NODE_CREDENTIAL_KEY (${parts.join('; ')}); the previous file is kept at ${result.backup}`;
 }
 
 /** One summary line for `magnus-ui credentials`; with `file`, it names the file it describes. */

@@ -53,6 +53,12 @@ describe('decryptSecret', () => {
     expect(decryptSecret(encryptSecret(original))).toBe(original);
   });
 
+  it('refuses values under the legacy JWT_SECRET-derived key instead of decrypting them', () => {
+    process.env['JWT_SECRET'] = 'legacy-jwt-secret-for-unit-tests-0123456789';
+    expect(() => decryptSecret('enc:AAAAAAAAAAAAAAAA:AAAAAAAAAAAAAAAAAAAAAA==:AAAA')).toThrow(/legacy JWT_SECRET-derived key/);
+    delete process.env['JWT_SECRET'];
+  });
+
   it('fails closed for malformed ciphertext', () => {
     expect(() => decryptSecret('enc2:baddata')).toThrow(/malformed/);
   });
