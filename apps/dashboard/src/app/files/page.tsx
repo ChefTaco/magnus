@@ -171,19 +171,20 @@ export default function FilesPage(): React.ReactElement {
             placeholder="Select a node…"
           />
           <div>
-            <label className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-text-muted">File Path</label>
+            <span id="file-path-label" className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-text-muted">File Path</span>
             <div className="flex gap-2">
-              <div
-                onClick={() => nodeId && setBrowserOpen(true)}
-                className={`flex-1 flex items-center gap-2 rounded border border-border bg-bg px-3 py-2 text-xs cursor-pointer hover:border-primary/40 hover:shadow-[0_0_8px_var(--color-glow)] transition-all ${
-                  !nodeId ? 'opacity-50 cursor-not-allowed' : ''
-                }`}
+              <button
+                type="button"
+                onClick={() => setBrowserOpen(true)}
+                disabled={!nodeId}
+                aria-labelledby="file-path-label file-path-value"
+                className="flex-1 flex items-center gap-2 rounded border border-border bg-bg px-3 py-2 text-left text-xs cursor-pointer hover:border-primary/40 hover:shadow-[0_0_8px_var(--color-glow)] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <FileText className="h-3.5 w-3.5 text-text-muted shrink-0" />
-                <span className={filePath ? '' : 'text-text-muted'}>
+                <span id="file-path-value" className={filePath ? '' : 'text-text-muted'}>
                   {filePath || 'Browse to select a file…'}
                 </span>
-              </div>
+              </button>
               <Button
                 variant="secondary"
                 size="sm"

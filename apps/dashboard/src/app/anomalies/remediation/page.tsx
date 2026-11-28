@@ -178,7 +178,7 @@ export default function RemediationPage(): React.ReactElement {
             {tab === 'rules' && (
               <button
                 onClick={() => { setShowCreate(true); setEditingId(null); setForm(emptyForm); }}
-                className="inline-flex items-center gap-2 rounded bg-primary px-3 py-2 text-xs font-semibold uppercase tracking-wider text-white hover:bg-primary/80"
+                className="inline-flex items-center gap-2 rounded bg-primary px-3 py-2 text-xs font-semibold uppercase tracking-wider text-bg hover:bg-primary/80"
               >
                 <Plus className="h-3.5 w-3.5" />
                 New Rule
@@ -267,7 +267,7 @@ export default function RemediationPage(): React.ReactElement {
               </div>
             </div>
             <div className="mt-4 flex items-center gap-2">
-              <button onClick={() => void handleSave()} disabled={saving || !form.name || !form.agentDefinitionId} className="inline-flex items-center gap-2 rounded bg-primary px-4 py-2 text-xs font-semibold uppercase tracking-wider text-white hover:bg-primary/80 disabled:opacity-50">
+              <button onClick={() => void handleSave()} disabled={saving || !form.name || !form.agentDefinitionId} className="inline-flex items-center gap-2 rounded bg-primary px-4 py-2 text-xs font-semibold uppercase tracking-wider text-bg hover:bg-primary/80 disabled:opacity-50">
                 <Save className="h-3.5 w-3.5" />
                 {saving ? 'Saving…' : editingId ? 'Update' : 'Create'}
               </button>

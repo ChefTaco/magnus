@@ -146,6 +146,7 @@ export default function AuditPageClient({
             <div className="flex items-center gap-2">
               <Calendar className="h-4 w-4 text-primary/60" />
               <select
+                aria-label="Audit day"
                 value={selectedDay}
                 onChange={(e) => handleDayChange(e.target.value)}
                 className="rounded border border-border bg-bg px-3 py-1.5 text-xs text-text focus:border-primary focus:outline-none focus:shadow-[0_0_8px_var(--color-glow)] transition-all"

@@ -263,7 +263,7 @@ function ScheduledSkillJobsSection(): React.ReactElement {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={load} disabled={loading}>
+          <Button variant="ghost" size="sm" onClick={load} disabled={loading} aria-label="Refresh operations" title="Refresh">
             <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
           </Button>
           <Button variant="primary" size="sm" onClick={() => setAddOpen(true)}>
@@ -282,7 +282,7 @@ function ScheduledSkillJobsSection(): React.ReactElement {
         <div className="rounded border border-dashed border-border py-8 text-center">
           <Terminal className="h-8 w-8 mx-auto mb-3 text-text-muted/40" />
           <p className="text-sm text-text-muted">No scheduled skill jobs yet.</p>
-          <p className="text-xs text-text-muted/60 mt-1">Click &ldquo;Add Job&rdquo; to create a skill-based analysis cron job.</p>
+          <p className="text-xs text-text-muted mt-1">Click &ldquo;Add Job&rdquo; to create a skill-based analysis cron job.</p>
         </div>
       ) : (
         <div className="space-y-2 mt-3">
@@ -326,7 +326,7 @@ function ScheduledSkillJobsSection(): React.ReactElement {
                     </span>
                   )}
                 </div>
-                <p className="mt-0.5 text-[10px] font-mono text-text-muted/60 truncate">{job.command}</p>
+                <p className="mt-0.5 text-[10px] font-mono text-text-muted truncate">{job.command}</p>
               </div>
 
               {/* Actions */}
