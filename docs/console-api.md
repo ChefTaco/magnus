@@ -377,7 +377,7 @@ The standalone dashboard computes these in its own server, so a static console n
 - `/api/federation` (fan-out over several control nodes) and `/api/control-nodes`. Federation stays in
   the console: HiveXUI implements its own.
 - `/api/terminal/*`, replaced by the [fleet gateway](../services/fleet-gateway/README.md)
-- The Hermes dashboard proxy and the router admin proxy
+- The Hermes dashboard proxy
 
 The mission-control Hermes tiles come from `GET /api/v1/hermes/summary` (any role), which counts
 installations, healthy installations, profiles and running gateways over the same lists

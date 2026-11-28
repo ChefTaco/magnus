@@ -63,9 +63,9 @@ Main areas:
   `/orchestra/profiles`, `/orchestra/web-gateway`, `/hermes-drift` and `/hermes-security`.
 - Security: `/security-fusion`, a summary of and links into an external security console
   (Cindertrace) when `MAGNUS_SECURITY_CONSOLE_URL` is set; see [Cindertrace migration](CINDERTRACE_MIGRATION.md).
-- Embedded services: the Hermes dashboard under `/api/hermes/dashboard` and a router admin UI under
-  `/api/hive-router/dashboard`, each only when its integration is configured. Emberpath's current
-  source has no admin UI to embed; only a release that still bundles one does. Both run sandboxed in
+- Embedded services: the Hermes dashboard under `/api/hermes/dashboard`, when Hermes Agent is
+  enabled. (The router admin proxy under `/api/hive-router/dashboard` was removed in 4.0.0; current
+  Emberpath has no admin UI to embed.) Both run sandboxed in
   an opaque origin, authorized by a short-lived frame grant instead of the console cookie, so their
   script has no console authority ([design note](HERMES_DASHBOARD_HIVEXUI.md)).
 

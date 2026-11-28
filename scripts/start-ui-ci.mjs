@@ -79,8 +79,6 @@ const testEnv = {
     'ci-only-registry-key-0123456789abcdef0123456789',
   CONTROL_API_URL: 'https://localhost:55441',
   CONTROL_API_CA_PATH: join(tls, 'ca.pem'),
-  // A fixture admin UI that tests/embedded-isolation.spec.ts serves; nothing listens otherwise.
-  HIVE_ROUTER_ADMIN_URL: 'http://127.0.0.1:55443',
   // The Hermes fixture node (see above); the dashboard itself is the spec's.
   MAGNUS_HERMES_ENABLED: 'true',
   HERMES_SSH_ALLOWED_CIDRS: `${hermesAddress}/32`,

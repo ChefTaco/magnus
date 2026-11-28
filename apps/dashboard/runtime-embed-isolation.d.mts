@@ -1,4 +1,4 @@
-export type EmbeddedDashboard = 'hermes' | 'router';
+export type EmbeddedDashboard = 'hermes';
 export const EMBEDDED_DASHBOARDS: Readonly<Record<EmbeddedDashboard, string>>;
 export const FRAME_SEGMENT: string;
 export const FRAME_GRANT_TTL_SECONDS: number;
@@ -21,7 +21,6 @@ export interface FrameSessionState {
   username: string;
   expiresAt: number;
   hermesTokens: Map<string, string>;
-  routerCookies: Map<string, string>;
 }
 export function mintFrameGrant(input: {
   app: EmbeddedDashboard;

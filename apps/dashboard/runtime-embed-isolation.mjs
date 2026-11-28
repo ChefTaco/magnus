@@ -1,9 +1,9 @@
 /**
- * Isolation for the third-party dashboards the console proxies (the Hermes dashboard and the
- * deprecated Hive Router admin UI).
+ * Isolation for the third-party dashboard the console proxies (the Hermes dashboard; the table of
+ * embedded dashboards leaves room for another).
  *
- * Their pages are served from the console's own host, so without isolation a script flaw in
- * either would run with full console authority. Every proxied response therefore carries a
+ * Its pages are served from the console's own host, so without isolation a script flaw in it
+ * would run with full console authority. Every proxied response therefore carries a
  * `sandbox` Content Security Policy without `allow-same-origin`: the browser gives the page an
  * opaque origin, so its script cannot read console cookies, storage or pages, and the console's
  * cross-site checks refuse its requests. `connect-src 'self'` keeps its fetches and sockets on
@@ -30,7 +30,6 @@ import { resolveSessionSecret } from './runtime-session-secret.mjs';
 /** Proxy base path of each embedded dashboard. */
 export const EMBEDDED_DASHBOARDS = Object.freeze({
   hermes: '/api/hermes/dashboard',
-  router: '/api/hive-router/dashboard',
 });
 
 /** Path segment that introduces a frame grant. */
@@ -79,7 +78,7 @@ const nowSeconds = () => Math.floor(Date.now() / 1000);
 
 /**
  * Mint a frame grant for one embedded dashboard from a verified console session.
- * @param {{ app: 'hermes' | 'router', installationId?: string | null, session: { username: string, sessionId?: string, provider?: string, exp: number } }} input
+ * @param {{ app: 'hermes', installationId?: string | null, session: { username: string, sessionId?: string, provider?: string, exp: number } }} input
  */
 export async function mintFrameGrant({ app, installationId = null, session }) {
   if (!Object.hasOwn(EMBEDDED_DASHBOARDS, app)) throw new Error(`Unknown embedded dashboard: ${app}`);
@@ -107,7 +106,7 @@ export async function mintFrameGrant({ app, installationId = null, session }) {
  * (with `expired: true`) only when `allowExpired` is set, for the narrow uses in
  * {@link frameGrantDecision}.
  * @param {string} token
- * @param {'hermes' | 'router'} app
+ * @param {'hermes'} app
  * @param {{ allowExpired?: boolean }} [options]
  */
 export async function verifyFrameGrant(token, app, { allowExpired = false } = {}) {
@@ -225,7 +224,7 @@ export function frameUpstreamPath(segments) {
  * Decide a frame request: `allow` with a current grant (or an expired one for a static asset),
  * `remint` for a navigation with an expired grant (the route re-mints it when the request also
  * carries the console cookie for the same session), otherwise `refuse`.
- * @param {{ grant: string, app: 'hermes' | 'router', method: string, headers: { get(name: string): string | null }, upstreamPath: string }} request
+ * @param {{ grant: string, app: 'hermes', method: string, headers: { get(name: string): string | null }, upstreamPath: string }} request
  */
 export async function frameGrantDecision({ grant, app, method, headers, upstreamPath }) {
   const verified = await verifyFrameGrant(grant, app, { allowExpired: true });
@@ -299,13 +298,13 @@ export function swapFrameToken(search, token) {
 }
 
 // ── Server-side state per console session ───────────────────────────────────
-// The Hermes session tokens and router cookies the sandboxed pages cannot hold. On globalThis
+// The Hermes session tokens the sandboxed pages cannot hold. On globalThis
 // under a registered symbol, so every route bundle and the TLS wrapper share one copy.
 
 const STATE = Symbol.for('magnus.embeddedDashboardState');
 const MAX_STATE_SESSIONS = 256;
 
-/** @returns {Map<string, { username: string, expiresAt: number, hermesTokens: Map<string, string>, routerCookies: Map<string, string> }>} */
+/** @returns {Map<string, { username: string, expiresAt: number, hermesTokens: Map<string, string> }>} */
 function stateStore() {
   const holder = /** @type {Record<symbol, any>} */ (globalThis);
   return (holder[STATE] ??= new Map());
@@ -327,7 +326,7 @@ export function frameSessionState(grant) {
   if (entry) {
     store.delete(grant.sessionId);
   } else {
-    entry = { username: grant.username, expiresAt: grant.sessionExpiresAt, hermesTokens: new Map(), routerCookies: new Map() };
+    entry = { username: grant.username, expiresAt: grant.sessionExpiresAt, hermesTokens: new Map() };
     while (store.size >= MAX_STATE_SESSIONS) store.delete(store.keys().next().value);
   }
   entry.expiresAt = Math.max(entry.expiresAt, grant.sessionExpiresAt);

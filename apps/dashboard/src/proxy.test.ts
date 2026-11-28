@@ -9,6 +9,14 @@ process.env['SESSION_SECRET'] ??= 'test-only-session-secret-0123456789abcdef';
 const { default: proxy } = await import('./proxy');
 const { mintFrameGrant } = await import('../runtime-embed-isolation.mjs');
 
+/** A well-formed grant another console signed: right shape and claims, wrong key. */
+async function foreignGrant(): Promise<string> {
+  const { SignJWT } = await import('jose');
+  return new SignJWT({ app: 'hermes', u: 'admin', sid: 'foreign-session', sexp: Math.floor(Date.now() / 1000) + 600, ins: 'install-a' })
+    .setProtectedHeader({ alg: 'HS256' }).setIssuer('magnus-dashboard').setAudience('magnus-embedded-dashboard')
+    .setIssuedAt().setExpirationTime('5m').sign(new TextEncoder().encode('fixture-another-console-secret-0123456789'));
+}
+
 describe('dashboard authentication proxy', () => {
   it('no longer exempts the retired internal drain route from authentication', async () => {
     expect((await proxy(new NextRequest('https://magnus.example/api/internal/resource-enrollment/drain', { method: 'POST' }))).status).toBe(401);
@@ -70,8 +78,7 @@ describe('embedded dashboard isolation', () => {
   });
 
   it('refuses a frame request with a bad or foreign grant, even with a console cookie', async () => {
-    const router = await mintFrameGrant({ app: 'router', session });
-    for (const grant of ['forged', router]) {
+    for (const grant of ['forged', await foreignGrant()]) {
       const response = await get(`/api/hermes/dashboard/_frame/${grant}/api/status`, { cookie: 'magnus_session=x', origin: 'null' });
       expect(response.status).toBe(401);
       expect(response.headers.get('access-control-allow-origin')).toBe('null');

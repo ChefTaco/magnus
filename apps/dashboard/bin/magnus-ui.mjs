@@ -122,6 +122,9 @@ export async function checkEnvironment(env) {
   if (!present(env, 'DASHBOARD_SSH_USERNAME') || !(present(env, 'DASHBOARD_SSH_PRIVATE_KEY_PATH') || present(env, 'DASHBOARD_SSH_PASSWORD'))) {
     warnings.push('DASHBOARD_SSH_USERNAME with DASHBOARD_SSH_PRIVATE_KEY_PATH (or DASHBOARD_SSH_PASSWORD) is not set; the node terminal and Hermes proxy are unavailable');
   }
+  for (const name of ['HIVE_ROUTER_ADMIN_URL', 'HIVE_ROUTER_CA_PATH']) {
+    if (present(env, name)) warnings.push(`${name} is ignored: the embedded Emberpath admin proxy (/api/hive-router/dashboard) was removed in 4.0.0; remove the setting`);
+  }
   const cert = env.TLS_CERT_PATH?.trim();
   const key = env.TLS_KEY_PATH?.trim();
   if (cert || key) {

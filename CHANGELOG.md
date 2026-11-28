@@ -22,6 +22,13 @@ key when it starts. No migration, and no new setting.
   any such value remains; the 3.x console re-encrypts them when it starts. Unencrypted values from
   very old releases are still encrypted at start
   ([UPGRADING.md](UPGRADING.md#400-breaking-unreleased-the-console-reads-control-node-credentials-only-with-control_node_credential_key)).
+- **Console: the embedded Emberpath admin proxy is gone.** `/api/hive-router/dashboard`, its
+  same-origin framing rules, `HIVE_ROUTER_ADMIN_URL` and `HIVE_ROUTER_CA_PATH` are removed, and
+  with them the router parts of the embedded-dashboard isolation (its frame grants and server-side
+  cookie jar); current Emberpath has no admin UI. `magnus-ui check` and `start` warn while either
+  setting is still present. The server's router settings (`MAGNUS_ROUTER_*` and the
+  `HIVE_ROUTER_URL`/`_MODEL`/`_API_KEY`/`_HEALTH_URL` aliases) are unchanged
+  ([UPGRADING.md](UPGRADING.md#400-breaking-unreleased-embedded-router-admin-proxy-removed)).
 
 ### Upgrade notes
 
@@ -116,6 +123,13 @@ key when it starts. No migration, and no new setting.
 
 ### Changed
 
+- Console CI: the browser isolation suite runs against a Hermes installation on a fixture node
+  reached over SSH, with a pinned host key and the console's dedicated identity, as in production.
+  The Control API answers over TLS, and the console runs behind its production wrapper. Besides
+  the sandbox checks, it proves that the page never sees the dashboard's real session token, that
+  the WebSocket bridge carries the terminal socket over SSH with the real token and refuses one
+  without a valid grant, and that signing out of the console closes an open terminal. A second
+  console without the Hermes integration keeps its disabled state covered.
 - `npm run docs:check` (and so `npm run verify` and CI) fails when a document names a version that
   is no longer current (`scripts/check-doc-versions.mjs`, tests in `npm run docs:test`): Magnus
   package and image versions, "pins Ardent X" (must match the agent's `@hivemagnus/ardent`
@@ -162,8 +176,8 @@ key when it starts. No migration, and no new setting.
 - Documentation, env examples and CLI output call the integrations by their current names:
   Oathweave (formerly Hive IAM) and Emberpath (formerly Hive Router). `magnus-server check` lists
   `External IAM` (marked deprecated when on) and `Model router`, and `magnus-ui check` lists
-  `Emberpath admin (deprecated)` and `OIDC login`. No variable is renamed: `HIVE_OAUTH_*`,
-  `HIVE_ROUTER_*` and `IAM_*` keep working, as does the `hive-router` application-probe kind.
+  `OIDC login`. No variable is renamed: `HIVE_OAUTH_*`, the server's `HIVE_ROUTER_*` aliases and
+  `IAM_*` keep working, as does the `hive-router` application-probe kind.
 - Console CI: the browser suite also runs the sign-in, navigation, overview, API docs and webhook
   specs, a sign-in lockout test (five wrong passwords, then even the right one gets `429` with
   `Retry-After` until the window ends) and an axe-core (`@axe-core/playwright` 4.14.0) WCAG 2.1 AA

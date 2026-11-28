@@ -44,8 +44,6 @@ const EMBEDDED_DASHBOARD_POLICY = [
   "base-uri 'self'",
 ].join('; ');
 const EMBEDDED_DASHBOARD_SOURCES = [
-  '/api/hive-router/dashboard',
-  '/api/hive-router/dashboard/:path+',
   '/api/hermes/dashboard',
   '/api/hermes/dashboard/:path+',
 ];
@@ -86,7 +84,7 @@ const nextConfig: NextConfig = {
         ],
       })),
       {
-        source: '/((?!api/hive-router/dashboard|api/hermes/dashboard).*)',
+        source: '/((?!api/hermes/dashboard).*)',
         headers: [
           { key: 'Content-Security-Policy', value: CONTENT_SECURITY_POLICY },
           { key: 'X-Content-Type-Options', value: 'nosniff' },

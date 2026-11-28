@@ -58,8 +58,10 @@ host. Because the pages come from the console's host, they are isolated from it
   in an opaque origin. Dashboard preferences (theme, language, collapsed panels) therefore last only
   until the frame reloads, and clipboard writes from the frame may be refused.
 
-`tests/embedded-isolation.spec.ts` proves this in a browser against the deprecated router admin
-proxy, which shares the mechanism; the route and bridge unit tests cover the Hermes specifics.
+`tests/embedded-isolation.spec.ts` proves this in a browser against a Hermes installation on a
+fixture node that the console reaches over SSH, as in production (`scripts/ci-hermes-ssh-fixture.mjs`),
+including the WebSocket bridge and its close on sign-out; the route and bridge unit tests cover the
+rest.
 
 ## What HiveXUI needs
 
@@ -122,4 +124,4 @@ dashboard's own API and WebSocket work.
 Once HiveXUI hosts the dashboard, the console's Hermes proxy (`src/app/api/hermes/dashboard`), its
 WebSocket bridge in `server-tls.mjs`, `src/lib/embedded-frame.ts`, `src/lib/frame-grant-relay.ts`
 and `runtime-embed-isolation.mjs` go with the standalone console. The router admin
-proxy (`/api/hive-router/dashboard`) is removed separately in the next major.
+proxy (`/api/hive-router/dashboard`) was removed in 4.0.0.
