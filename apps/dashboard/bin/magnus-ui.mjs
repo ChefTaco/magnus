@@ -21,12 +21,13 @@ const USAGE = `Usage: magnus-ui [command] [options]
 Commands:
   start         Start the Magnus UI server (default)
   check         Validate the configuration and list enabled integrations
-  credentials   Count stored control-node credentials still under the legacy
-                JWT_SECRET-derived key in DIR/.magnus/control-nodes.json: exit 0
-                when none remain, 1 while any do (or on an error), 3 when there
-                is no state file there. With --reencrypt, re-encrypt them under
-                CONTROL_NODE_CREDENTIAL_KEY (the console also does this when it
-                starts). Run it as the account the console runs as.
+  credentials   Count stored control-node credentials by key in
+                DIR/.magnus/control-nodes.json: exit 0 when all are under
+                CONTROL_NODE_CREDENTIAL_KEY, 1 while any are unencrypted or under
+                the legacy JWT_SECRET-derived key, which this release no longer
+                reads (or on an error), 3 when there is no state file there. With
+                --reencrypt, encrypt unencrypted ones. Run it as the account the
+                console runs as.
   env-schema    Print every supported environment variable (--json for JSON)
 
 Options:
@@ -34,7 +35,7 @@ Options:
   --port N          Listen port (PORT, default 3000)
   --host ADDR       Listen address (HOST, default 0.0.0.0)
   --data-dir DIR    Runtime state directory (MAGNUS_UI_DATA_DIR, default: current directory)
-  --reencrypt       credentials: re-encrypt legacy values (backs up the file first)
+  --reencrypt       credentials: encrypt unencrypted values (backs up the file first)
   -h, --help        Show this help
   -v, --version     Print the version`;
 
@@ -149,19 +150,23 @@ function dataDirectory(env) {
 }
 
 /**
- * Warnings about stored control-node credentials in the data directory.
+ * Problems with the stored control-node credentials in the data directory. Values under the legacy
+ * JWT_SECRET-derived key are errors: the console refuses to start while any remain.
  * @param {Record<string, string | undefined>} env
- * @returns {Promise<string[]>}
+ * @returns {Promise<{ errors: string[]; warnings: string[] }>}
  */
-export async function credentialStorageWarnings(env) {
+export async function credentialStorageProblems(env) {
   const { controlNodeStateFile, credentialsNeedReencryption, describeCredentialCounts, inspectControlNodeCredentials } = await runtimeModule('runtime-control-node-credentials.mjs');
   try {
     const file = controlNodeStateFile(dataDirectory(env));
     const counts = inspectControlNodeCredentials(file);
-    if (!credentialsNeedReencryption(counts)) return [];
-    return [`${describeCredentialCounts(counts, file)}; the console re-encrypts them when it starts, or run \`magnus-ui credentials --reencrypt\``];
+    if (!credentialsNeedReencryption(counts)) return { errors: [], warnings: [] };
+    if (counts.legacy) {
+      return { errors: [`${describeCredentialCounts(counts, file)}; this release cannot read legacy values, so the console refuses to start (see UPGRADING.md, 4.0.0)`], warnings: [] };
+    }
+    return { errors: [], warnings: [`${describeCredentialCounts(counts, file)}; the console encrypts them when it starts, or run \`magnus-ui credentials --reencrypt\``] };
   } catch (error) {
-    return [`control-node credentials could not be inspected: ${error instanceof Error ? error.message : String(error)}`];
+    return { errors: [], warnings: [`control-node credentials could not be inspected: ${error instanceof Error ? error.message : String(error)}`] };
   }
 }
 
@@ -184,8 +189,8 @@ export function dropPrivilegesToOwner(owner, proc = process) {
 export const CREDENTIALS_NO_STATE_EXIT = 3;
 
 /**
- * `magnus-ui credentials [--reencrypt]`: 0 when the state file holds nothing under the legacy key,
- * 1 while something does or on an error, CREDENTIALS_NO_STATE_EXIT when there is no state file (a
+ * `magnus-ui credentials [--reencrypt]`: 0 when every stored value is under
+ * CONTROL_NODE_CREDENTIAL_KEY, 1 while one is not or on an error, CREDENTIALS_NO_STATE_EXIT when there is no state file (a
  * wrong --data-dir must not read as all clear).
  * @param {Record<string, string | undefined>} env
  * @param {Set<string>} flags
@@ -199,13 +204,15 @@ export async function commandCredentials(env, flags) {
         console.log(`magnus-ui: running as uid ${process.getuid?.()}, the owner of ${file}`);
       }
       const message = credentials.describeReencryption(credentials.reencryptLegacyControlNodeCredentials(file, env));
-      console.log(message ?? 'control-node credentials: nothing to re-encrypt');
+      console.log(message ?? 'control-node credentials: nothing to encrypt');
     }
     const counts = credentials.inspectControlNodeCredentials(file);
     console.log(credentials.describeCredentialCounts(counts, file));
     if (!counts.present) return CREDENTIALS_NO_STATE_EXIT;
     if (!credentials.credentialsNeedReencryption(counts)) return 0;
-    console.error('Run `magnus-ui credentials --reencrypt` (or restart the console) to re-encrypt them under CONTROL_NODE_CREDENTIAL_KEY.');
+    console.error(counts.legacy
+      ? 'This release cannot read values under the legacy key: re-encrypt them with the last 3.x console (start it once, or `magnus-ui credentials --reencrypt`), or re-add those control nodes.'
+      : 'Run `magnus-ui credentials --reencrypt` (or restart the console) to encrypt them under CONTROL_NODE_CREDENTIAL_KEY.');
     return 1;
   } catch (error) {
     console.error(`magnus-ui: ${error instanceof Error ? error.message : String(error)}`);
@@ -215,7 +222,9 @@ export async function commandCredentials(env, flags) {
 
 async function commandCheck(env) {
   const { errors, warnings } = await checkEnvironment(env);
-  warnings.push(...await credentialStorageWarnings(env));
+  const stored = await credentialStorageProblems(env);
+  errors.push(...stored.errors);
+  warnings.push(...stored.warnings);
   for (const warning of warnings) console.warn(`warning: ${warning}`);
   await printIntegrations(env);
   if (errors.length) {
