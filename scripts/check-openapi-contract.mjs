@@ -16,8 +16,14 @@ const failures = [];
 if (spec.openapi !== '3.1.0') failures.push('spec.openapi must be 3.1.0');
 if (!spec.info?.title || !spec.info?.description) failures.push('spec.info needs title and description');
 
+const declaredTags = new Set((spec.tags ?? []).map((tag) => tag.name));
+const schemes = new Set(Object.keys(spec.components?.securitySchemes ?? {}));
 for (const [path, methods] of Object.entries(spec.paths ?? {})) {
   for (const [method, operation] of Object.entries(methods)) {
+    for (const tag of operation.tags ?? []) if (!declaredTags.has(tag)) failures.push(`${method.toUpperCase()} ${path} uses undeclared tag ${tag}`);
+    for (const requirement of operation.security ?? []) {
+      for (const name of Object.keys(requirement)) if (!schemes.has(name)) failures.push(`${method.toUpperCase()} ${path} uses unknown security scheme ${name}`);
+    }
     if (!operation.summary) failures.push(`${method.toUpperCase()} ${path} missing summary`);
     if (!Array.isArray(operation.tags) || operation.tags.length === 0) failures.push(`${method.toUpperCase()} ${path} missing tags`);
     if (!operation.responses || Object.keys(operation.responses).length === 0) failures.push(`${method.toUpperCase()} ${path} missing responses`);
