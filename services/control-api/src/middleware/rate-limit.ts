@@ -94,8 +94,9 @@ function clientKey(c: Context): string {
     forwardedFor: c.req.header('x-forwarded-for'),
     trusted: rateLimitTrustedProxies(),
   });
-  // IPv6 clients are grouped by /64, since one host usually holds a whole prefix.
-  return client.decision === 'unknown_peer' ? 'unknown-peer' : addressKey(client.address);
+  // Every IPv6 address keeps its own bucket: agents on one LAN /64, or on a mesh VPN whose nodes
+  // all share a prefix, would otherwise share one budget on the fail-closed agent routes.
+  return client.decision === 'unknown_peer' ? 'unknown-peer' : addressKey(client.address, { ipv6PrefixLength: 128 });
 }
 
 function tooManyRequests(c: Context, error: HiveError): Response {

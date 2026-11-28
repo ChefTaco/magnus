@@ -18,7 +18,7 @@ All notable changes to this project are documented in this file. The format is b
   and `x-correlation-id` are accepted as aliases. Generated IDs are UUIDs instead of nanoid strings.
 - **Rate limits** keep their budgets, keys, Redis store and `429` body. When Redis is unavailable,
   routes that are not fail-closed are now limited per process with the same budget instead of
-  unlimited, and an IPv6 client is keyed by its /64 prefix.
+  unlimited, and an IPv6 client is keyed by its canonical address.
 
 ### Added
 

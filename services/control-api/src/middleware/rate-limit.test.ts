@@ -279,11 +279,11 @@ describe('trusted proxies (MAGNUS_TRUSTED_PROXIES)', () => {
     expect([...buckets.keys()].some((key) => key.endsWith(':10.0.0.5'))).toBe(true);
   });
 
-  it('groups IPv6 clients by /64', async () => {
+  it('keys every IPv6 address separately, in canonical form', async () => {
     const v6 = (address: string) => ({ incoming: { socket: { remoteAddress: address, remotePort: 44321, remoteFamily: 'IPv6' } } });
     await call(undefined, {}, v6('2001:db8:1:2::10'));
-    await call(undefined, {}, v6('2001:db8:1:2::11'));
-    expect([...buckets.keys()]).toEqual([expect.stringMatching(/rl:hermes:2001:db8:1:2::\/64$/)]);
+    await call(undefined, {}, v6('2001:DB8:1:2:0::11'));
+    expect([...buckets.keys()].sort()).toEqual([expect.stringMatching(/rl:hermes:2001:db8:1:2::10$/), expect.stringMatching(/rl:hermes:2001:db8:1:2::11$/)]);
   });
 
   it('is refused at startup when an entry is not an address or range', () => {
