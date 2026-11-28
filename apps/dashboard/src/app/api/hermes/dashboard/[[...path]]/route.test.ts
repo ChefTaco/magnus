@@ -35,6 +35,15 @@ function upstream(body: string, contentType: string) {
   return { status: 200, statusText: 'OK', headers: { 'content-type': contentType, 'set-cookie': 'upstream=1' }, body: Buffer.from(body) };
 }
 
+
+/** A well-formed grant another console signed: right shape and claims, wrong key. */
+async function foreignGrant(): Promise<string> {
+  const { SignJWT } = await import('jose');
+  return new SignJWT({ app: 'hermes', u: 'admin', sid: 'foreign-session', sexp: Math.floor(Date.now() / 1000) + 600, ins: 'install-a' })
+    .setProtectedHeader({ alg: 'HS256' }).setIssuer('magnus-dashboard').setAudience('magnus-embedded-dashboard')
+    .setIssuedAt().setExpirationTime('5m').sign(new TextEncoder().encode('fixture-another-console-secret-0123456789'));
+}
+
 describe('Hermes dashboard proxy isolation', () => {
   beforeEach(() => { mocks.ssh.mockReset(); mocks.live = true; resetFrameState(); vi.useRealTimers(); });
 
@@ -183,8 +192,7 @@ describe('Hermes dashboard proxy isolation', () => {
   });
 
   it('refuses a missing, foreign or revoked grant without reaching the node', async () => {
-    const router = await mintFrameGrant({ app: 'router', session });
-    for (const grant of ['not-a-grant', router]) {
+    for (const grant of ['not-a-grant', await foreignGrant()]) {
       const response = await GET(new NextRequest(`${base}/_frame/${grant}/api/status`, { headers: { cookie: 'magnus_session=signed' } }), context(['_frame', grant, 'api', 'status']));
       expect(response.status).toBe(401);
     }

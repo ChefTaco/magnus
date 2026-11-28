@@ -39,4 +39,12 @@ describe('magnus-ui CLI', () => {
     expect(errors).toContain('REDIS_URL is required');
     expect(errors.some((error: string) => error.includes('TLS_CERT_PATH'))).toBe(true);
   });
+
+  it('warns that the removed router admin proxy settings are ignored', async () => {
+    for (const name of ['HIVE_ROUTER_ADMIN_URL', 'HIVE_ROUTER_CA_PATH']) {
+      const { errors, warnings } = await checkEnvironment({ ...valid, [name]: name === 'HIVE_ROUTER_CA_PATH' ? '/etc/magnus-ui/router-ca.pem' : 'https://router.example.com' });
+      expect(errors).toEqual([]);
+      expect(warnings).toContainEqual(expect.stringContaining(`${name} is ignored`));
+    }
+  });
 });

@@ -44,6 +44,15 @@ the upgrade switches back to the 3.x release, which still reads them. After the 
 console's environment; the server still uses its own `JWT_SECRET`. The re-encryption tool
 `apps/dashboard/scripts/migrate-control-node-credentials.mjs` also refuses legacy values now.
 
+## 4.0.0 (breaking, unreleased): embedded router admin proxy removed
+
+The standalone console no longer serves `/api/hive-router/dashboard`, the embedded admin UI of
+older Emberpath (formerly Hive Router) releases; current Emberpath has none. `HIVE_ROUTER_ADMIN_URL`
+and `HIVE_ROUTER_CA_PATH` are gone with it: remove them from the console's environment.
+`magnus-ui check` warns while either is still set. Use Emberpath's own tools to administer it.
+Model routing for managed Hermes Agents (`MAGNUS_ROUTER_URL` and its `HIVE_ROUTER_*` aliases on the
+server) is unchanged, and so is the embedded Hermes dashboard.
+
 ## Unreleased: refused commands and non-Ardent reconciliation
 
 Upgrade the node agents first, then the server and console. No setting or migration changes.

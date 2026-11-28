@@ -80,7 +80,6 @@ it('ends the embedded dashboards with the console session on logout', async () =
   const verified = (await isolation.verifyFrameGrant(grant, 'hermes'))!;
   expect(verified.sessionId).toBe(session.sessionId);
   isolation.frameSessionState(verified).hermesTokens.set('install-a', 'fixture-token');
-  isolation.frameSessionState(verified).routerCookies.set('admin', 'fixture');
   await logout.POST(new NextRequest('https://example.test/api/auth/logout', { method: 'POST' }));
   await expect(isolation.verifyFrameGrant(grant, 'hermes')).resolves.toBeNull();
   await expect(isolation.frameSessionAlive(verified)).resolves.toBe(false);
@@ -92,10 +91,10 @@ it('signing out everywhere forgets only this user\'s dashboard state', async () 
   const session = (await auth.verifySessionToken(state.token))!;
   const exp = Math.floor(Date.now() / 1000) + 600;
   isolation.frameSessionState({ sessionId: session.sessionId!, username: 'admin', sessionExpiresAt: exp });
-  isolation.frameSessionState({ sessionId: 'other-user-session', username: 'operator', sessionExpiresAt: exp }).routerCookies.set('admin', 'kept');
+  isolation.frameSessionState({ sessionId: 'other-user-session', username: 'operator', sessionExpiresAt: exp }).hermesTokens.set('install-a', 'kept');
   await logout.POST(new NextRequest('https://example.test/api/auth/logout?all=true', { method: 'POST' }));
   expect(isolation.peekFrameSessionState(session.sessionId!)).toBeNull();
-  expect(isolation.peekFrameSessionState('other-user-session')?.routerCookies.get('admin')).toBe('kept');
+  expect(isolation.peekFrameSessionState('other-user-session')?.hermesTokens.get('install-a')).toBe('kept');
   isolation.resetFrameState();
 });
 it('revokes all sessions while allowing a subsequent login', async () => {

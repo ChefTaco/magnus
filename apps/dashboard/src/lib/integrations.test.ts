@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { describeIntegrations, hermesEnabled, hiveLoginConfigured, hiveRouterAdminUrl, readIntegrations, securityConsoleUrl } from '../../runtime-integrations.mjs';
+import { describeIntegrations, hermesEnabled, hiveLoginConfigured, readIntegrations, securityConsoleUrl } from '../../runtime-integrations.mjs';
 import { securityConsoleDeepLink } from './security-console-route';
 import { NAV_GROUPS, NO_INTEGRATIONS, activeNavHref, visibleNavGroups } from './routes';
 
@@ -23,8 +23,8 @@ describe('optional integrations', () => {
     expect(securityConsoleUrl({ MAGNUS_SECURITY_CONSOLE_URL: 'not a url' })).toBeNull();
     expect(securityConsoleUrl({ MAGNUS_SECURITY_CONSOLE_URL: 'javascript:alert(1)' })).toBeNull();
     expect(securityConsoleUrl({ MAGNUS_SECURITY_CONSOLE_URL: 'https://user:pw@security.example.com' })).toBeNull();
-    expect(hiveRouterAdminUrl({ HIVE_ROUTER_ADMIN_URL: 'https://router.example.com//' })).toBe('https://router.example.com');
-    expect(hiveRouterAdminUrl({})).toBeNull();
+    // The removed router admin proxy's setting enables nothing.
+    expect(readIntegrations({ HIVE_ROUTER_ADMIN_URL: 'https://router.example.com' })).toEqual(NO_INTEGRATIONS);
   });
 
   it('require every Hive login variable', () => {

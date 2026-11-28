@@ -22,10 +22,10 @@ describe('embedded dashboard frame grants', () => {
     await expect(isolation.verifyFrameGrant(grant, 'hermes')).resolves.toMatchObject({
       app: 'hermes', username: 'admin', sessionId: SESSION_ID, installationId: 'install-a', expired: false, sessionExpiresAt: session.exp,
     });
-    // A Hermes grant does not open the router proxy, and the reverse.
-    await expect(isolation.verifyFrameGrant(grant, 'router')).resolves.toBeNull();
-    const router = await isolation.mintFrameGrant({ app: 'router', session });
-    await expect(isolation.verifyFrameGrant(router, 'hermes')).resolves.toBeNull();
+    // The removed router admin proxy is no embedded dashboard any more: nothing is minted or accepted for it.
+    await expect(isolation.verifyFrameGrant(grant, 'router' as never)).resolves.toBeNull();
+    await expect(isolation.mintFrameGrant({ app: 'router' as never, session })).rejects.toThrow(/Unknown embedded dashboard/);
+    expect(Object.keys(isolation.EMBEDDED_DASHBOARDS)).toEqual(['hermes']);
   });
 
   it('lives minutes, not as long as the console session', async () => {
@@ -121,11 +121,11 @@ describe('server-side dashboard state', () => {
   it('keeps tokens per console session and forgets them on sign-out', () => {
     const exp = Math.floor(Date.now() / 1000) + 600;
     isolation.frameSessionState({ sessionId: 'session-a', username: 'admin', sessionExpiresAt: exp }).hermesTokens.set('install-a', 'token-a');
-    isolation.frameSessionState({ sessionId: 'session-b', username: 'admin', sessionExpiresAt: exp }).routerCookies.set('admin', 'b');
-    expect(isolation.peekFrameSessionState('session-b')?.hermesTokens.size).toBe(0);
+    isolation.frameSessionState({ sessionId: 'session-b', username: 'admin', sessionExpiresAt: exp }).hermesTokens.set('install-b', 'b');
+    expect(isolation.peekFrameSessionState('session-b')?.hermesTokens.has('install-a')).toBe(false);
     isolation.clearFrameSessionState('session-a');
     expect(isolation.peekFrameSessionState('session-a')).toBeNull();
-    expect(isolation.peekFrameSessionState('session-b')?.routerCookies.get('admin')).toBe('b');
+    expect(isolation.peekFrameSessionState('session-b')?.hermesTokens.get('install-b')).toBe('b');
     isolation.resetFrameState();
     expect(isolation.peekFrameSessionState('session-b')).toBeNull();
   });
@@ -134,11 +134,11 @@ describe('server-side dashboard state', () => {
     const exp = Math.floor(Date.now() / 1000) + 600;
     isolation.frameSessionState({ sessionId: 'alice-1', username: 'alice', sessionExpiresAt: exp });
     isolation.frameSessionState({ sessionId: 'alice-2', username: 'alice', sessionExpiresAt: exp });
-    isolation.frameSessionState({ sessionId: 'bob-1', username: 'bob', sessionExpiresAt: exp }).routerCookies.set('admin', 'b');
+    isolation.frameSessionState({ sessionId: 'bob-1', username: 'bob', sessionExpiresAt: exp }).hermesTokens.set('install-a', 'b');
     isolation.clearFrameUserState('alice');
     expect(isolation.peekFrameSessionState('alice-1')).toBeNull();
     expect(isolation.peekFrameSessionState('alice-2')).toBeNull();
-    expect(isolation.peekFrameSessionState('bob-1')?.routerCookies.get('admin')).toBe('b');
+    expect(isolation.peekFrameSessionState('bob-1')?.hermesTokens.get('install-a')).toBe('b');
     isolation.resetFrameState();
   });
 
@@ -155,7 +155,7 @@ describe('embedded dashboard paths and headers', () => {
       app: 'hermes', base: '/api/hermes/dashboard', grant: 'abc.def',
       frameBase: '/api/hermes/dashboard/_frame/abc.def', upstreamPath: '/api/ws',
     });
-    expect(isolation.parseFramePath('/api/hive-router/dashboard/_frame/g')?.upstreamPath).toBe('/');
+    expect(isolation.parseFramePath('/api/hive-router/dashboard/_frame/g')).toBeNull();
     expect(isolation.parseFramePath('/api/hermes/dashboard/api/ws')).toBeNull();
     expect(isolation.parseFramePath('/api/proxy/_frame/abc/nodes')).toBeNull();
     expect(isolation.splitFrameSegments(['_frame', 'g', 'api', 'x'])).toEqual({ grant: 'g', rest: ['api', 'x'] });
@@ -196,7 +196,8 @@ describe('embedded dashboard paths and headers', () => {
     expect(HERMES_FRAME_SANDBOX).toBe(isolation.EMBED_IFRAME_SANDBOX);
     expect(HERMES_FRAME_SANDBOX).not.toContain('allow-same-origin');
     const rules = await nextConfig.headers!();
-    for (const source of ['/api/hermes/dashboard', '/api/hermes/dashboard/:path+', '/api/hive-router/dashboard', '/api/hive-router/dashboard/:path+']) {
+    expect(rules.some((entry) => entry.source.includes('hive-router'))).toBe(false);
+    for (const source of ['/api/hermes/dashboard', '/api/hermes/dashboard/:path+']) {
       const rule = rules.find((entry) => entry.source === source)!;
       expect(rule.headers.find((header) => header.key === 'Content-Security-Policy')?.value, source).toBe(isolation.EMBED_CONTENT_SECURITY_POLICY);
       expect(rule.headers.find((header) => header.key === 'Referrer-Policy')?.value, source).toBe('no-referrer');
