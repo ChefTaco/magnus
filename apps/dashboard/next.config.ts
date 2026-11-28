@@ -38,6 +38,7 @@ const CONTENT_SECURITY_POLICY = [
 
 const EMBEDDED_DASHBOARD_POLICY = [
   'sandbox allow-scripts allow-forms allow-popups allow-downloads allow-modals',
+  "connect-src 'self'",
   "frame-ancestors 'self'",
   "object-src 'none'",
   "base-uri 'self'",
@@ -96,12 +97,6 @@ const nextConfig: NextConfig = {
           { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
         ],
       },
-    ];
-  },
-  async rewrites() {
-    return [
-      { source: '/dashboard-plugins/:path*', destination: '/api/hermes/dashboard/dashboard-plugins/:path*' },
-      { source: '/kanban', destination: '/api/hermes/dashboard/kanban' },
     ];
   },
   async redirects() {

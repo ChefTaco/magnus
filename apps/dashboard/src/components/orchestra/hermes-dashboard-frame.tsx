@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ExternalLink, MonitorDot, Play, Power, RefreshCcw, RotateCcw } from 'lucide-react';
 import { api } from '@/lib/api-client';
+import { frameMintUrl, installFrameGrantRelay } from '@/lib/frame-grant-relay';
 import { Badge, statusVariant } from '@/components/ui/badge';
 import type { HermesInstallation } from '@/types/orchestra';
 
@@ -34,23 +35,38 @@ export function HermesDashboardFrame({
   heightClass = 'h-[720px]',
   emptyMessage = 'Select a Hermes installation with dashboard access.',
 }: HermesDashboardFrameProps): React.ReactElement {
-  const [connected, setConnected] = useState(false);
-  const [frameNonce, setFrameNonce] = useState(0);
+  // The frame URL carries a short-lived grant; the relay renews it while the frame is open.
+  const [frame, setFrame] = useState<{ url: string; grant: string } | null>(null);
+  const frameRef = useRef<HTMLIFrameElement | null>(null);
   const [busyAction, setBusyAction] = useState<HermesDashboardAction | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    setConnected(false);
-    setFrameNonce(0);
+    setFrame(null);
     setMessage(null);
     setError(null);
   }, [installation?.id, frameSrc]);
 
+  useEffect(() => {
+    if (!frame || !frameRef.current || !frameSrc) return undefined;
+    return installFrameGrantRelay(frameRef.current, frameMintUrl(frameSrc), frame.grant);
+  }, [frame, frameSrc]);
+
   const canConnect = Boolean(installation && frameSrc);
-  const src = frameSrc
-    ? `${frameSrc}${frameSrc.includes('?') ? '&' : '?'}frame=${frameNonce}`
-    : '';
+
+  async function connectFrame(): Promise<void> {
+    if (!canConnect) return;
+    setError(null);
+    try {
+      const response = await fetch(frameMintUrl(frameSrc), { credentials: 'same-origin', cache: 'no-store' });
+      const body = await response.json().catch(() => null) as { grant?: string; frameUrl?: string; error?: string } | null;
+      if (!response.ok || !body?.grant || !body.frameUrl) throw new Error(body?.error ?? `Dashboard frame unavailable (${response.status})`);
+      setFrame({ url: body.frameUrl, grant: body.grant });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Dashboard frame unavailable');
+    }
+  }
 
   async function runAction(action: HermesDashboardAction, connectAfter = false): Promise<void> {
     if (!installation) return;
@@ -62,23 +78,13 @@ export function HermesDashboardFrame({
       const jobId = response.data?.id ? ` Job ${response.data.id.slice(0, 8)} queued.` : '';
       setMessage(`${action === 'launch' ? 'Launch' : action} requested for ${installLabel(installation)}.${jobId}`);
       if (connectAfter) {
-        window.setTimeout(() => {
-          setFrameNonce((current) => current + 1);
-          setConnected(true);
-        }, 2500);
+        window.setTimeout(() => void connectFrame(), 2500);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : `Failed to ${action} Hermes Dashboard`);
     } finally {
       setBusyAction(null);
     }
-  }
-
-  function connectFrame(): void {
-    if (!canConnect) return;
-    setFrameNonce((current) => current + 1);
-    setConnected(true);
-    setError(null);
   }
 
   if (!installation) {
@@ -132,7 +138,7 @@ export function HermesDashboardFrame({
           </button>
           <button
             type="button"
-            onClick={connectFrame}
+            onClick={() => void connectFrame()}
             disabled={!canConnect || busyAction !== null}
             className="inline-flex h-8 items-center justify-center gap-2 rounded border border-border bg-surface px-3 text-[11px] font-bold uppercase tracking-wider text-text-muted transition-all hover:border-primary/50 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -159,11 +165,12 @@ export function HermesDashboardFrame({
         </div>
       )}
 
-      {connected && src ? (
+      {frame ? (
         <div className="overflow-hidden rounded border border-border/50 bg-bg">
           <iframe
+            ref={frameRef}
             title={frameTitle}
-            src={src}
+            src={frame.url}
             className={`${heightClass} w-full bg-bg`}
             sandbox={HERMES_FRAME_SANDBOX}
             referrerPolicy="no-referrer"

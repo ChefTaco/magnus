@@ -66,7 +66,7 @@ Main areas:
 - Embedded services: the Hermes dashboard under `/api/hermes/dashboard` and a router admin UI under
   `/api/hive-router/dashboard`, each only when its integration is configured. Emberpath's current
   source has no admin UI to embed; only a release that still bundles one does. Both run sandboxed in
-  an opaque origin, authorized by a per-session frame grant instead of the console cookie, so their
+  an opaque origin, authorized by a short-lived frame grant instead of the console cookie, so their
   script has no console authority ([design note](HERMES_DASHBOARD_HIVEXUI.md)).
 
 ### Sign-in

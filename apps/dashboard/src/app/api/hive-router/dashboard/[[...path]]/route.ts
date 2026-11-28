@@ -11,10 +11,11 @@
  * Isolated like the Hermes dashboard (`runtime-embed-isolation.mjs`): the entry URL needs the
  * console session and redirects to a frame URL carrying a grant; frame responses are sandboxed
  * into an opaque origin and authorized by the grant alone. The router's own cookies are kept
- * server-side per console session, because an opaque-origin page cannot store them.
+ * server-side per console session, because an opaque-origin page cannot store them, and are
+ * forgotten on sign-out.
  */
 import { type NextRequest, NextResponse } from 'next/server';
-import { verifySessionToken, COOKIE_NAME, type SessionPayload } from '@/lib/auth';
+import { authorizeFrame, enterFrame as enterFrameWith, frameJson, requireConsoleSession } from '@/lib/embedded-frame';
 import { hiveRouterFetch } from '@/lib/hive-router-fetch';
 import { readLimitedBytes, RequestBodyTooLarge } from '@/lib/limited-request-body';
 import { readDashboardEnvironment } from '../../../../../../runtime-environment.mjs';
@@ -24,34 +25,16 @@ import {
   applyFrameHeaders,
   frameEntryAllowed,
   framePreflightHeaders,
+  frameSessionState,
   injectFrameCompat,
-  mintFrameGrant,
   splitFrameSegments,
-  verifyFrameGrant,
 } from '../../../../../../runtime-embed-isolation.mjs';
 
 const PROXY_BASE = '/api/hive-router/dashboard';
 /** Largest router response the proxy reads (the admin UI's bundles are well below it). */
 const MAX_ROUTER_RESPONSE_BYTES = 16 * 1024 * 1024;
-const MAX_JAR_SESSIONS = 256;
 const MAX_JAR_COOKIES = 32;
 const MAX_COOKIE_BYTES = 4096;
-
-/** Router cookies per console session (the router's admin login and CSRF cookies). */
-const cookieJars: Map<string, Map<string, string>> = ((globalThis as { __magnusRouterCookieJars?: Map<string, Map<string, string>> })
-  .__magnusRouterCookieJars ??= new Map());
-
-function jarFor(sessionId: string): Map<string, string> {
-  let jar = cookieJars.get(sessionId);
-  if (jar) {
-    cookieJars.delete(sessionId);
-  } else {
-    jar = new Map();
-    while (cookieJars.size >= MAX_JAR_SESSIONS) cookieJars.delete(cookieJars.keys().next().value as string);
-  }
-  cookieJars.set(sessionId, jar);
-  return jar;
-}
 
 /** Keep a router Set-Cookie in the session's jar (or drop it when the router expires it). */
 function storeRouterCookie(jar: Map<string, string>, setCookie: string): void {
@@ -80,20 +63,6 @@ function jarCookieHeader(jar: Map<string, string>): string | undefined {
   return [...jar].map(([name, value]) => `${name}=${value}`).join('; ');
 }
 
-async function requireSession(req: NextRequest): Promise<SessionPayload | NextResponse> {
-  const sessionToken = req.cookies.get(COOKIE_NAME)?.value;
-  if (!sessionToken) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  const session = await verifySessionToken(sessionToken);
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  return session;
-}
-
 /** Rewrite root-relative asset and API URLs onto the frame base, in one pass (never twice). */
 function rewriteTextAsset(text: string, frameBase: string): string {
   return text.replace(/(["'`])\/(assets|api|api-docs)\//g, (_match, quote: string, prefix: string) => `${quote}${frameBase}/${prefix}/`);
@@ -105,14 +74,9 @@ function shouldRewrite(contentType: string): boolean {
     || contentType.includes('text/css');
 }
 
-function frameJson(req: NextRequest, body: unknown, status: number): NextResponse {
-  const headers = applyFrameHeaders(new Headers({ 'content-type': 'application/json', 'cache-control': 'no-store' }), req.headers.get('origin'));
-  return new NextResponse(JSON.stringify(body), { status, headers });
-}
-
 /** Entry: a console-session request. Mint a grant and redirect into the frame. */
 async function enterFrame(req: NextRequest, path: string[] | undefined): Promise<NextResponse> {
-  const session = await requireSession(req);
+  const session = await requireConsoleSession(req);
   if (session instanceof NextResponse) return session;
   if (!frameEntryAllowed(req.headers)) {
     return NextResponse.json({ error: 'cross_site_request_refused' }, { status: 403 });
@@ -123,13 +87,7 @@ async function enterFrame(req: NextRequest, path: string[] | undefined): Promise
       { status: 503 },
     );
   }
-  const grant = await mintFrameGrant({ app: 'router', session });
-  const url = req.nextUrl.clone();
-  url.pathname = `${PROXY_BASE}/${FRAME_SEGMENT}/${grant}/${(path ?? []).join('/')}`;
-  const response = NextResponse.redirect(url, 307);
-  response.headers.set('cache-control', 'no-store');
-  response.headers.set('referrer-policy', 'no-referrer');
-  return response;
+  return enterFrameWith(req, { app: 'router', session, path: path ?? [], search: req.nextUrl.search });
 }
 
 async function proxyHandler(
@@ -141,8 +99,8 @@ async function proxyHandler(
   if (!frame) return enterFrame(req, path);
 
   // Frame request: the grant is the only authority. Console cookies are ignored.
-  const grant = await verifyFrameGrant(frame.grant, 'router');
-  if (!grant) return frameJson(req, { error: 'frame_grant_invalid' }, 401);
+  const grant = await authorizeFrame(req, { app: 'router', grant: frame.grant, rest: frame.rest });
+  if (grant instanceof NextResponse) return grant;
 
   const routerBase = hiveRouterAdminUrl();
   if (!routerBase) {
@@ -158,7 +116,7 @@ async function proxyHandler(
     const value = req.headers.get(header);
     if (value) headers[header] = value;
   }
-  const jar = jarFor(grant.sessionId);
+  const jar = frameSessionState(grant).routerCookies;
   const routerCookie = jarCookieHeader(jar);
   if (routerCookie) headers.cookie = routerCookie;
 

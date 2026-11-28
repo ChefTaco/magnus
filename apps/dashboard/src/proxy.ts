@@ -11,7 +11,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { jwtVerify } from 'jose';
 import { COOKIE_NAME, getSecretKey, sessionVerificationOptions } from '@/lib/auth-constants';
 import { securityConsoleDeepLink } from '@/lib/security-console-route';
-import { applyFrameHeaders, parseFramePath, verifyFrameGrant } from '../runtime-embed-isolation.mjs';
+import { applyFrameHeaders, frameGrantDecision, parseFramePath } from '../runtime-embed-isolation.mjs';
 
 const PUBLIC_PATHS = [
   '/login',
@@ -78,8 +78,10 @@ export default async function proxy(req: NextRequest): Promise<NextResponse> {
   const frame = parseFramePath(pathname);
   if (frame) {
     if (req.method === 'OPTIONS') return NextResponse.next();
-    if (await verifyFrameGrant(frame.grant, frame.app)) return NextResponse.next();
-    const refused = NextResponse.json({ error: 'frame_grant_invalid' }, { status: 401 });
+    // `remint` goes on to the route, which re-mints only with this session's console cookie.
+    const decision = await frameGrantDecision({ grant: frame.grant, app: frame.app, method: req.method, headers: req.headers, upstreamPath: frame.upstreamPath });
+    if (decision.action !== 'refuse') return NextResponse.next();
+    const refused = NextResponse.json({ error: decision.error }, { status: 401 });
     applyFrameHeaders(refused.headers, req.headers.get('origin'));
     return refused;
   }

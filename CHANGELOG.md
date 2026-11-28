@@ -52,10 +52,15 @@ no new setting.
   frame drops `allow-same-origin`, so the dashboard's script runs in an opaque origin, also in its own
   tab. The entry URL needs the console session, only from the console itself or a typed address, and
   redirects to `…/_frame/<grant>/…`: a grant signed with a key derived from `SESSION_SECRET`, scoped
-  to that dashboard (and Hermes installation), expiring with the console session and revoked on
-  sign-out. Frame requests and the Hermes WebSocket bridge accept only the grant (and `Origin: null`
-  for the sandboxed page); they ignore console cookies and set none. The Hermes session token and the
-  router's cookies are kept server-side.
+  to that dashboard (and Hermes installation), valid for 10 minutes (never past the console session)
+  and void once that session ends. The console frame renews it through `postMessage` before it
+  expires, and a reload with the console cookie re-mints it, so a grant copied from a log or the
+  history is useless within minutes. Frame requests and the Hermes WebSocket bridge accept only the
+  grant (and `Origin: null` for the sandboxed page); they ignore console cookies and set none. An
+  open Hermes WebSocket (the PTY included) re-checks its console session every 30 seconds and closes
+  when it is signed out or revoked. The frame policy adds `connect-src 'self'`. The Hermes session
+  token stays on the server per console session and installation (the page sees a placeholder), the
+  router's cookies likewise, and signing out clears both.
 - **Console: cross-site API reads are refused.** Any `/api` request with `Origin: null`, and any
   cross-site or same-site `/api` request that is not a navigation, gets 403
   `cross_site_request_refused`, as cross-site writes already did. Navigations (the sign-in callback)
@@ -65,6 +70,8 @@ no new setting.
 
 - Console: the router admin proxy no longer rewrites an asset URL twice (`/assets/` became
   `…/dashboard/api/hive-router/dashboard/assets/`).
+- Console: the `/dashboard-plugins/*` and `/kanban` rewrites into the Hermes proxy are gone; they
+  could not work from the sandboxed frame, which reaches the dashboard through its frame URL.
 
 ### Fixed
 

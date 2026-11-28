@@ -72,6 +72,20 @@ it('rejects copied-cookie reuse after logout with HTTP 401', async () => {
     ).status,
   ).toBe(401);
 });
+it('ends the embedded dashboards with the console session on logout', async () => {
+  const isolation = await import('../../runtime-embed-isolation.mjs');
+  state.token = await auth.createSessionToken('admin');
+  const session = (await auth.verifySessionToken(state.token))!;
+  const grant = await isolation.mintFrameGrant({ app: 'hermes', installationId: 'install-a', session });
+  const verified = (await isolation.verifyFrameGrant(grant, 'hermes'))!;
+  expect(verified.sessionId).toBe(session.sessionId);
+  isolation.frameSessionState(verified).hermesTokens.set('install-a', 'fixture-token');
+  isolation.frameSessionState(verified).routerCookies.set('admin', 'fixture');
+  await logout.POST(new NextRequest('https://example.test/api/auth/logout', { method: 'POST' }));
+  await expect(isolation.verifyFrameGrant(grant, 'hermes')).resolves.toBeNull();
+  await expect(isolation.frameSessionAlive(verified)).resolves.toBe(false);
+  expect(isolation.peekFrameSessionState(session.sessionId!)).toBeNull();
+});
 it('revokes all sessions while allowing a subsequent login', async () => {
   const first = await auth.createSessionToken('admin'),
     second = await auth.createSessionToken('admin');

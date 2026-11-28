@@ -17,7 +17,7 @@ vi.mock('../../../../../../runtime-local-sessions.mjs', () => ({
 
 process.env['SESSION_SECRET'] ??= 'test-only-session-secret-0123456789abcdef';
 const { GET, POST } = await import('./route');
-const { mintFrameGrant } = await import('../../../../../../runtime-embed-isolation.mjs');
+const { mintFrameGrant, clearFrameSessionState } = await import('../../../../../../runtime-embed-isolation.mjs');
 const session = { username: 'admin', sessionId: SESSION_ID, exp: Math.floor(Date.now() / 1000) + 3600 };
 const grant = await mintFrameGrant({ app: 'router', session });
 
@@ -59,6 +59,11 @@ describe('Hive Router admin proxy', () => {
     expect(mocks.fetch.mock.calls[1]![1].headers.cookie).toBe('hive_router_admin=a; csrf=b');
     await GET(request('GET'), context(['api', 'x']));
     expect(mocks.fetch.mock.calls[2]![1].headers.cookie).toBe('hive_router_admin=a');
+
+    // Signing out of the console forgets the router login.
+    clearFrameSessionState(SESSION_ID);
+    await GET(request('GET'), context(['api', 'x']));
+    expect(mocks.fetch.mock.calls[3]![1].headers.cookie).toBeUndefined();
   });
 
   it('rewrites router pages onto the frame base and refuses a foreign grant', async () => {

@@ -78,6 +78,19 @@ describe('embedded dashboard isolation', () => {
     }
   });
 
+  it('passes an expired grant only for a navigation (to be re-minted) or a static asset', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.now() - 3600 * 1000);
+    const grant = await mintFrameGrant({ app: 'hermes', installationId: 'install-a', session: { ...session, exp: Math.floor(Date.now() / 1000) + 7200 } });
+    vi.useRealTimers();
+    const base = `/api/hermes/dashboard/_frame/${grant}`;
+    const api = await get(`${base}/api/status`, { origin: 'null' });
+    expect(api.status).toBe(401);
+    await expect(api.json()).resolves.toEqual({ error: 'frame_grant_expired' });
+    expect((await get(`${base}/sessions`, { 'sec-fetch-mode': 'navigate' })).headers.get('x-middleware-next')).toBe('1');
+    expect((await get(`${base}/assets/index.js`, {})).headers.get('x-middleware-next')).toBe('1');
+  });
+
   it('refuses console API reads from a sandboxed page or another site', async () => {
     for (const headers of <Record<string, string>[]>[{ origin: 'null' }, { 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'cors' }, { 'sec-fetch-site': 'same-site', 'sec-fetch-mode': 'no-cors' }]) {
       const response = await get('/api/proxy/nodes', { cookie: 'magnus_session=x', ...headers });

@@ -2,7 +2,8 @@ import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
 import ts from 'typescript';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { resolveHermesDashboardForwardTarget } from '../../runtime-hermes-security.mjs';
+import { createBoundedMessageQueue, createWebSocketBackpressureController, resolveHermesDashboardForwardTarget } from '../../runtime-hermes-security.mjs';
+import { FRAME_TOKEN_PLACEHOLDER, clearFrameSessionState, frameSessionState, peekFrameSessionState, swapFrameToken } from '../../runtime-embed-isolation.mjs';
 const fixture = vi.hoisted(() => ({ begin: vi.fn(), finish: vi.fn(), approved: vi.fn(), clients: [] as any[], requests: [] as any[] }));
 vi.mock('../../runtime-resource-participant.mjs', async original => ({ ...(await original<any>()), beginManagedSshWork: fixture.begin }));
 vi.mock('../../runtime-dashboard-credentials.mjs', () => ({ resolveDashboardSshCredentials: () => ({ username: 'fixture', password: 'fixture' }) }));
@@ -31,7 +32,16 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 // Load exact production bridge functions without evaluating server bootstrap
 // (which reads production certs and opens listeners). All bridge control flow,
 // resolver invocation, admission ordering and forwardOut calls remain native.
-function websocketFixture(selected: typeof installation, enabled = true, options: { frame?: boolean; grant?: boolean; origin?: string } = {}) {
+class FakeSocket extends EventEmitter {
+  static OPEN = 1;
+  readyState = 1;
+  bufferedAmount = 0;
+  close = vi.fn((code?: number) => { this.readyState = 3; this.emit('close', code); });
+  send = vi.fn();
+  constructor(public url = '') { super(); }
+}
+type FixtureOptions = { frame?: boolean; grant?: boolean; origin?: string; open?: boolean; alive?: () => Promise<boolean>; path?: string };
+function websocketFixture(selected: typeof installation, enabled = true, options: FixtureOptions = {}) {
   const path = new URL('../../server-tls.mjs', import.meta.url);
   const text = readFileSync(path, 'utf8');
   const ast = ts.createSourceFile(path.pathname, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
@@ -40,13 +50,21 @@ function websocketFixture(selected: typeof installation, enabled = true, options
   if (source.length < 100) throw Error('production bridge functions missing');
   const stream = new EventEmitter();
   const ssh = Object.assign(new EventEmitter(), { forwardOut: vi.fn((_a, _b, _host, _port, cb) => cb(null, stream)), end: vi.fn() });
-  const upgraded = vi.fn(); const connect = vi.fn(async () => ssh);
+  const client = new FakeSocket();
+  const upstreams: FakeSocket[] = [];
+  const upgraded = vi.fn((_req, _socket, _head, done: (client: FakeSocket) => void) => { if (options.open) done(client); });
+  const connect = vi.fn(async () => ssh);
   const bindings = {
     parseRequestTarget, rejectUpgrade,
-    randomUUID: () => 'fixture', websocketPathFor: () => '/ws', isHermesUpgradeNamespace: () => true, isHermesWebSocketUpgrade: () => true,
+    randomUUID: () => 'fixture', websocketPathFor: () => options.path ?? '/ws', isHermesUpgradeNamespace: () => true, isHermesWebSocketUpgrade: () => true,
     cookieHeaderAllowed: () => true, websocketOriginAllowed: (origin: string | undefined) => origin === 'https://fixture', websocketAllowedOrigins: 'https://fixture',
     hermesFrameFor: () => (options.frame ?? true) ? { app: 'hermes', grant: 'fixture-grant', upstreamPath: '/ws' } : null,
-    verifyFrameGrant: async (grant: string) => (options.grant ?? true) && grant === 'fixture-grant' ? { app: 'hermes', installationId: selected.id } : null,
+    verifyFrameGrant: async (grant: string) => (options.grant ?? true) && grant === 'fixture-grant'
+      ? { app: 'hermes', installationId: selected.id, username: 'admin', sessionId: 'session-fixture' } : null,
+    frameSessionAlive: options.alive ?? (async () => true), FRAME_SESSION_RECHECK_MS: 5, peekFrameSessionState, swapFrameToken,
+    createBoundedMessageQueue, createWebSocketBackpressureController,
+    WebSocket: class extends FakeSocket { constructor(url: string) { super(url); upstreams.push(this); } },
+    setInterval, clearInterval,
     recordHermesSecurityEvent: vi.fn(), resolveHermesInstallation: async () => ({ installation: selected }),
     resolveApprovedHermesSshTarget: fixture.approved, resolveHermesDashboardForwardTarget,
     beginManagedSshWork: fixture.begin, observeManagedSshEnd: vi.fn(), connectSsh: connect,
@@ -56,7 +74,7 @@ function websocketFixture(selected: typeof installation, enabled = true, options
   const server = new EventEmitter(); attach(server);
   const socket = { destroyed: false, write: vi.fn(), destroy: vi.fn() };
   server.emit('upgrade', { headers: { origin: options.origin ?? 'null' }, url: '/api/hermes/dashboard/_frame/fixture-grant/ws' }, socket, Buffer.alloc(0));
-  return { ssh, stream, socket, connect, upgraded };
+  return { ssh, stream, socket, connect, upgraded, client, upstreams };
 }
 describe('actual Hermes HTTP/WebSocket forwarding selection', () => {
   it('WebSocket bridge refuses upgrades while the Hermes integration is disabled', async () => {
@@ -79,6 +97,29 @@ describe('actual Hermes HTTP/WebSocket forwarding selection', () => {
     expect(foreign.connect).not.toHaveBeenCalled();
     const configured = websocketFixture(installation, true, { origin: 'https://fixture' }); await tick();
     expect(configured.upgraded).toHaveBeenCalledOnce();
+  });
+  it('WebSocket bridge closes an open socket once its console session ends', async () => {
+    let alive = true;
+    const ws = websocketFixture(installation, true, { open: true, alive: async () => alive });
+    await vi.waitFor(() => expect(ws.upgraded).toHaveBeenCalledOnce());
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(ws.client.close).not.toHaveBeenCalled();
+    alive = false;
+    await vi.waitFor(() => expect(ws.client.close).toHaveBeenCalledWith(1008, 'Console session ended'));
+    expect(ws.upstreams[0]!.close).toHaveBeenCalled();
+  });
+  it('WebSocket bridge closes the socket when the session cannot be verified twice running', async () => {
+    const ws = websocketFixture(installation, true, { open: true, alive: async () => { throw new Error('store down'); } });
+    await vi.waitFor(() => expect(ws.client.close).toHaveBeenCalledWith(1011, 'Console session unverifiable'));
+  });
+  it('WebSocket bridge sends the real dashboard token upstream, never the placeholder', async () => {
+    clearFrameSessionState();
+    frameSessionState({ sessionId: 'session-fixture', sessionExpiresAt: Math.floor(Date.now() / 1000) + 600 }).hermesTokens.set(installation.id, 'real-token');
+    const ws = websocketFixture(installation, true, { open: true, path: `/api/pty?token=${FRAME_TOKEN_PLACEHOLDER}&cols=80` });
+    await vi.waitFor(() => expect(ws.upstreams).toHaveLength(1));
+    expect(ws.upstreams[0]!.url).toBe('ws://127.0.0.1:9119/api/pty?token=real-token&cols=80');
+    ws.client.close(1000);
+    clearFrameSessionState();
   });
   it('HTTP forwards to approved observed private listener after durable admission', async () => {
     const response = await requestHermesDashboardOverSsh({ installation: installation as any, req: { headers: new Headers(), nextUrl: { protocol: 'https:' }, method: 'GET' } as any, upstreamPath: '/', search: '' });

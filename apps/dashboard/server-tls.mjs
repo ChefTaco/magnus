@@ -43,7 +43,14 @@ import { resolveSessionSecret } from './runtime-session-secret.mjs';
 import { dashboardCredentialDiagnostics, resolveDashboardSshCredentials } from './runtime-dashboard-credentials.mjs';
 import { hermesEnabled } from './runtime-integrations.mjs';
 import { guardFrameworkUpgradeListener, parseRequestTarget, rejectUpgrade } from './runtime-upgrade.mjs';
-import { parseFramePath, verifyFrameGrant } from './runtime-embed-isolation.mjs';
+import {
+  FRAME_SESSION_RECHECK_MS,
+  frameSessionAlive,
+  parseFramePath,
+  peekFrameSessionState,
+  swapFrameToken,
+  verifyFrameGrant,
+} from './runtime-embed-isolation.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = dirname(__filename);
@@ -334,8 +341,11 @@ function attachHermesWebSocketBridge(server) {
 
       hermesWss.handleUpgrade(req, socket, head, (client) => {
         recordHermesSecurityEvent({ type: 'connection_started', correlationId, hostname: installation.hostname, path });
+        // The page sends a placeholder token; the real one is this console session's copy.
+        const [upstreamPathname, upstreamSearch = ''] = websocketPathFor(req).split('?');
+        const upstreamQuery = swapFrameToken(upstreamSearch, peekFrameSessionState(grant.sessionId)?.hermesTokens.get(installation.id));
         const upstream = new WebSocket(
-          `ws://127.0.0.1:${installation.dashboardPort || 9119}${websocketPathFor(req)}`,
+          `ws://127.0.0.1:${installation.dashboardPort || 9119}${upstreamPathname}${upstreamQuery ? `?${upstreamQuery}` : ''}`,
           {
             createConnection: () => tunnel,
             headers: {
@@ -350,7 +360,9 @@ function attachHermesWebSocketBridge(server) {
         let clientDrainTimer;
 
         let closed = false;
+        let sessionCheck;
         const closeBoth = (code = 1000, reason = 'Proxy connection closed') => {
+          clearInterval(sessionCheck);
           if (!closed) {
             closed = true;
             observeManagedSshEnd(work);
@@ -369,6 +381,23 @@ function attachHermesWebSocketBridge(server) {
           try { if (upstream.readyState <= 1) upstream.close(code, reason); } catch {}
           try { ssh?.end(); } catch {}
         };
+
+        // The grant authorizes the upgrade; an open socket (a PTY) lives only as long as the console
+        // session behind it: sign-out, revocation and credential changes close it within one check.
+        let sessionStoreFailures = 0;
+        sessionCheck = setInterval(() => {
+          frameSessionAlive(grant).then((alive) => {
+            sessionStoreFailures = 0;
+            if (!alive) {
+              recordHermesSecurityEvent({ type: 'invalid_session', correlationId, path, reason: 'console_session_ended' });
+              closeBoth(1008, 'Console session ended');
+            }
+          }, () => {
+            sessionStoreFailures += 1;
+            if (sessionStoreFailures >= 2) closeBoth(1011, 'Console session unverifiable');
+          });
+        }, FRAME_SESSION_RECHECK_MS);
+        sessionCheck.unref?.();
 
         const drain = (controller, destination, direction) => {
           if (closed || destination.readyState !== WebSocket.OPEN) return;

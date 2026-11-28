@@ -11,24 +11,40 @@ host. Because the pages come from the console's host, they are isolated from it
 (`runtime-embed-isolation.mjs`):
 
 - **Sandbox.** Every proxied response carries `Content-Security-Policy: sandbox allow-scripts
-  allow-forms allow-popups allow-downloads allow-modals` without `allow-same-origin`, and the Web
-  Gateway frame has the matching `sandbox` attribute. The dashboard runs in an opaque origin: its
-  script cannot read the console's cookies, storage or pages, also when the dashboard is opened in
-  its own tab, and popups inherit the sandbox.
+  allow-forms allow-popups allow-downloads allow-modals; connect-src 'self'` without
+  `allow-same-origin`, and the Web Gateway frame has the matching `sandbox` attribute. The dashboard
+  runs in an opaque origin: its script cannot read the console's cookies, storage or pages, also
+  when the dashboard is opened in its own tab, popups inherit the sandbox, and its fetches and
+  sockets cannot reach another host.
 - **Frame grant.** An opaque-origin page cannot send the console session cookie, so the entry URL
   (`/api/hermes/dashboard?installationId=…`, console session required, only from the console itself
   or a typed address) redirects to `/api/hermes/dashboard/_frame/<grant>/…`. The grant is a JWT
-  signed with a key derived from `SESSION_SECRET`, scoped to one dashboard and one installation, and
-  valid only while the console session that minted it is: it expires with the session and dies on
-  sign-out. Frame requests and the WebSocket bridge are authorized by the grant alone; console
-  cookies are neither read nor set on them.
+  signed with a key derived from `SESSION_SECRET`, scoped to one dashboard and one installation.
+  Because it sits in the URL, where access logs, history and the page's own script can see it, it
+  lives 10 minutes (never past the console session) and stops working as soon as that session
+  ends. Frame requests and the WebSocket bridge are authorized by the grant alone; console cookies
+  are neither read nor set on them.
+- **Renewal.** Five minutes before a grant expires, the page asks the console frame for a new one
+  (`postMessage`, echoing its grant); the console mints it with its cookie (`?mint=json` on the entry
+  URL) and posts it back, and the page sends its later requests, sockets and link navigations with
+  it (`src/lib/frame-grant-relay.ts` and the compatibility script). A reload in a tab carries the
+  console cookie and is re-minted directly; a reload inside the frame, which carries no cookie,
+  gets a page that asks the console frame first. An expired grant alone reaches nothing but the
+  dashboard's static build files, so a URL copied from a log or the history is useless.
+- **Open sockets.** The WebSocket bridge checks the grant at the upgrade and then re-checks the
+  console session every 30 seconds, closing the socket (a PTY included) once the session is signed
+  out, revoked or its credentials change. It does not close a socket when the grant that opened it
+  expires: renewal changes the URLs of later requests, not the socket already open.
 - **Console API refusal.** The console's middleware refuses every `/api` request with
   `Origin: null`, and every cross-site or same-site `/api` request that is not a navigation, so the
   sandboxed page cannot call a console API with the browser's credentials (state changes were
   already refused).
 - **Credentials stay server-side.** The Hermes session token the dashboard injects into its HTML is
-  kept in the console process and sent as the bearer for frame requests. The browser never holds a
-  console-scoped credential for the dashboard.
+  kept in the console process per console session and installation, and the page sees a
+  placeholder instead (`magnus-frame`); the proxy sends the real token as the upstream bearer and
+  swaps it into the `token` parameter of sockets and downloads. The router's cookies are kept per
+  console session too. Signing out clears both. The browser never holds a console-scoped credential
+  or the dashboard's own token.
 - **Compatibility.** The proxy rewrites the dashboard's root-relative URLs onto the frame path and
   adds per-document stand-ins for `localStorage`, `sessionStorage` and `document.cookie`, which throw
   in an opaque origin. Dashboard preferences (theme, language, collapsed panels) therefore last only
@@ -96,6 +112,6 @@ dashboard's own API and WebSocket work.
 ## Retiring the console proxy
 
 Once HiveXUI hosts the dashboard, the console's Hermes proxy (`src/app/api/hermes/dashboard`), its
-WebSocket bridge in `server-tls.mjs`, the `/dashboard-plugins` and `/kanban` rewrites in
-`next.config.ts` and `runtime-embed-isolation.mjs` go with the standalone console. The router admin
+WebSocket bridge in `server-tls.mjs`, `src/lib/embedded-frame.ts`, `src/lib/frame-grant-relay.ts`
+and `runtime-embed-isolation.mjs` go with the standalone console. The router admin
 proxy (`/api/hive-router/dashboard`) is removed separately in the next major.

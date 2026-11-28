@@ -83,7 +83,7 @@ describe('console upgrade contract', () => {
 
   it('configures no external rewrite, the only way Next.js keeps an upgrade socket open in production', () => {
     const config = readFileSync(new URL('../../next.config.ts', import.meta.url), 'utf8');
-    expect(config).toContain('async rewrites()');
+    // No rewrites at all since the embedded dashboards moved onto frame URLs; never an external one.
     expect(config).not.toMatch(/destination:\s*['"`](?:[a-z][a-z0-9+.-]*:)?\/\//i);
   });
 });

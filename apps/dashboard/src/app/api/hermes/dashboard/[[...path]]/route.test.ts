@@ -23,7 +23,7 @@ vi.mock('../../../../../../runtime-local-sessions.mjs', () => ({
 
 process.env['SESSION_SECRET'] ??= 'test-only-session-secret-0123456789abcdef';
 const { GET, POST, OPTIONS } = await import('./route');
-const { mintFrameGrant } = await import('../../../../../../runtime-embed-isolation.mjs');
+const { mintFrameGrant, clearFrameSessionState, FRAME_GRANT_TTL_SECONDS, FRAME_TOKEN_PLACEHOLDER } = await import('../../../../../../runtime-embed-isolation.mjs');
 
 const context = (path: string[] = []) => ({ params: Promise.resolve({ path }) });
 const base = 'https://magnus.example.com/api/hermes/dashboard';
@@ -36,7 +36,15 @@ function upstream(body: string, contentType: string) {
 }
 
 describe('Hermes dashboard proxy isolation', () => {
-  beforeEach(() => { mocks.ssh.mockReset(); mocks.live = true; });
+  beforeEach(() => { mocks.ssh.mockReset(); mocks.live = true; clearFrameSessionState(); vi.useRealTimers(); });
+
+  async function expiredGrant(installationId = 'install-a') {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.now() - (FRAME_GRANT_TTL_SECONDS + 60) * 1000);
+    const grant = await mintFrameGrant({ app: 'hermes', installationId, session });
+    vi.useRealTimers();
+    return grant;
+  }
 
   it('turns a console-session entry into a grant-carrying frame URL and clears the legacy cookies', async () => {
     const req = new NextRequest(`${base}?installationId=install-a&frame=1`, {
@@ -81,6 +89,63 @@ describe('Hermes dashboard proxy isolation', () => {
     expect(text).toContain(`src="/api/hermes/dashboard/_frame/${grant}/assets/index.js"`);
     expect(text).toContain(`href="/api/hermes/dashboard/_frame/${grant}/sessions"`);
     expect(text.indexOf('localStorage')).toBeLessThan(text.indexOf('__HERMES_SESSION_TOKEN__'));
+    // The real dashboard token never reaches the sandboxed page.
+    expect(text).not.toContain('fixture-hermes-token');
+    expect(text).toContain(`window.__HERMES_SESSION_TOKEN__="${FRAME_TOKEN_PLACEHOLDER}"`);
+  });
+
+  it('answers the console frame with a fresh grant as JSON', async () => {
+    const response = await GET(new NextRequest(`${base}?installationId=install-a&mint=json`, {
+      headers: { cookie: 'magnus_session=signed', 'sec-fetch-site': 'same-origin' },
+    }), context());
+    expect(response.status).toBe(200);
+    const body = await response.json() as { grant: string; frameUrl: string };
+    expect(body.frameUrl).toBe(`/api/hermes/dashboard/_frame/${body.grant}/`);
+  });
+
+  it('re-mints an expired grant on a reload that carries the same console session', async () => {
+    const grant = await expiredGrant();
+    const reload = (cookie?: string) => GET(new NextRequest(`${base}/_frame/${grant}/sessions?x=1`, {
+      headers: { 'sec-fetch-mode': 'navigate', 'sec-fetch-site': 'cross-site', ...(cookie ? { cookie } : {}) },
+    }), context(['_frame', grant, 'sessions']));
+    const response = await reload('magnus_session=signed');
+    expect(response.status).toBe(307);
+    const location = new URL(response.headers.get('location')!);
+    expect(location.pathname).toMatch(/^\/api\/hermes\/dashboard\/_frame\/[\w.-]+\/sessions$/);
+    expect(location.pathname).not.toContain(grant);
+    expect(location.search).toBe('?x=1');
+    // Without the console cookie (a replayed URL from a log or history), nothing.
+    expect((await reload()).status).toBe(401);
+    // Inside the console frame (no cookie on its own reloads) the page asks the frame to renew.
+    const framed = await GET(new NextRequest(`${base}/_frame/${grant}/sessions`, {
+      headers: { 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'iframe' },
+    }), context(['_frame', grant, 'sessions']));
+    expect(framed.status).toBe(401);
+    expect(framed.headers.get('content-security-policy')).toMatch(/^sandbox /);
+    expect(await framed.text()).toContain('magnus-frame-refresh');
+    expect(mocks.ssh).not.toHaveBeenCalled();
+  });
+
+  it('refuses an expired grant for API calls', async () => {
+    const grant = await expiredGrant();
+    const response = await POST(new NextRequest(`${base}/_frame/${grant}/api/status`, {
+      method: 'POST', body: '{}', headers: { origin: 'null', cookie: 'magnus_session=signed' },
+    }), context(['_frame', grant, 'api', 'status']));
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({ error: 'frame_grant_expired' });
+    expect(mocks.ssh).not.toHaveBeenCalled();
+  });
+
+  it('keeps the dashboard token per console session and forgets it on sign-out', async () => {
+    const grant = await mintFrameGrant({ app: 'hermes', installationId: 'install-a', session });
+    mocks.ssh.mockResolvedValueOnce(upstream(html, 'text/html'));
+    await GET(new NextRequest(`${base}/_frame/${grant}/`), context(['_frame', grant]));
+    clearFrameSessionState(SESSION_ID);
+    mocks.ssh.mockResolvedValueOnce(upstream('{}', 'application/json'));
+    await GET(new NextRequest(`${base}/_frame/${grant}/api/status?token=${FRAME_TOKEN_PLACEHOLDER}`), context(['_frame', grant, 'api', 'status']));
+    const call = mocks.ssh.mock.calls[1]![0];
+    expect(call.headers.authorization).toBeUndefined();
+    expect(call.search).toBe(`token=${FRAME_TOKEN_PLACEHOLDER}`);
   });
 
   it('authorizes later frame API calls with the dashboard token it kept server-side', async () => {
@@ -96,6 +161,10 @@ describe('Hermes dashboard proxy isolation', () => {
     expect(call.upstreamPath).toBe('/api/status');
     expect(call.headers.authorization).toBe('Bearer fixture-hermes-token');
     expect(call.headers.cookie).toBeUndefined();
+    // A download link or socket carries the placeholder; upstream gets the real token.
+    mocks.ssh.mockResolvedValueOnce(upstream('x', 'application/octet-stream'));
+    await GET(new NextRequest(`${base}/_frame/${grant}/api/files/download?token=${FRAME_TOKEN_PLACEHOLDER}&path=a`), context(['_frame', grant, 'api', 'files', 'download']));
+    expect(mocks.ssh.mock.calls[2]![0].search).toBe('token=fixture-hermes-token&path=a');
   });
 
   it('refuses a missing, foreign or revoked grant without reaching the node', async () => {
