@@ -31,7 +31,7 @@ import { lessonSchema } from '../services/incident-lessons.js';
  */
 
 import {
-  type JsonSchema, apiSecretAuth, err400, err401, err403, err404, err409, hoistedSchemas, inlineBody, jsonBody, mergePaths, nodeAuthSecurity, nodeTokenAuth,
+  type JsonSchema, apiSecretAuth, err400, err401, err403, err404, err409, err503, browserOperation, hoistedSchemas, inlineBody, jsonBody, mergePaths, nodeAuthSecurity, nodeTokenAuth,
   paginated, pp, qp, ref, requestBody, sharedResourceAuth, success, zod,
 } from './helpers.js';
 import { documentedPaths } from './paths/index.js';
@@ -492,6 +492,13 @@ const webhookFields: Record<string, JsonSchema> = {
   retries: { type: 'integer', minimum: 0, maximum: 10, default: 3 },
   timeoutMs: { type: 'integer', minimum: 1000, maximum: 60000, default: 10000 },
 };
+
+/** POST /discovery/scan from the browser contract; the body is optional. */
+function discoveryScanOperation() {
+  const operation = browserOperation('POST', '/discovery/scan', { tags: ['Discovery'], summary: 'Scan the local network for agents',
+    errors: { 503: { ...err503, description: '`DISCOVERY_DISABLED`: authenticated agent discovery is not configured' } } });
+  return { ...operation, requestBody: { ...operation.requestBody, required: false } };
+}
 
 const paths: Record<string, Record<string, unknown>> = {
   '/shared-resource-leases/reserve': {
@@ -2433,34 +2440,7 @@ const paths: Record<string, Record<string, unknown>> = {
 
   // ──────────────── Discovery ────────────────
   '/discovery/scan': {
-    post: {
-      tags: ['Discovery'],
-      summary: 'Network scan',
-      description: 'Broadcast a UDP discovery packet on the local network and collect agent responses. Default timeout 5 seconds.',
-      security: apiSecretAuth,
-      requestBody: {
-        required: false,
-        content: {
-          'application/json': {
-            schema: {
-              type: 'object',
-              properties: { timeoutMs: { type: 'integer', description: 'Scan timeout in milliseconds (default 5000)' } },
-            },
-          },
-        },
-      },
-      responses: {
-        200: success('Discovered agents', {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: { hostname: { type: 'string' }, ip: { type: 'string' }, port: { type: 'integer' }, version: { type: 'string' } },
-          },
-        }),
-        401: err401,
-        403: err403,
-      },
-    },
+    post: discoveryScanOperation(),
   },
 
   // ──────────────── Scan ────────────────

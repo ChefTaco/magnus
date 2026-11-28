@@ -39,9 +39,19 @@ test('every route has a response schema or stream events, and valid roles', () =
   }
 });
 
+/** Reviewed browser routes under a machine prefix (owner decision 2026-11-28), with their roles: the nodes page's scan and mission control's stream stats. */
+const REVIEWED_MACHINE_PREFIX_ROUTES = new Map([
+  ['POST /discovery/scan', ['ADMIN', 'OPERATOR']],
+  ['GET /heartbeat/stream/stats', ['ADMIN', 'OPERATOR', 'VIEWER']],
+]);
+
 test('offers no terminal or machine route', () => {
   const forbidden = /terminal|heartbeat|discovery|logs\/ingest|resource-lease|\/mcp|security-integration|hiveskills|hermes-registry/u;
-  assert.deepEqual(magnusBrowserRoutes.filter((route) => forbidden.test(route.path)), []);
+  const key = (route) => `${route.method} ${route.path}`;
+  assert.deepEqual(magnusBrowserRoutes.filter((route) => forbidden.test(route.path) && !REVIEWED_MACHINE_PREFIX_ROUTES.has(key(route))), []);
+  for (const [route, roles] of REVIEWED_MACHINE_PREFIX_ROUTES) {
+    assert.deepEqual(magnusBrowserRoutes.find((candidate) => key(candidate) === route)?.roles, roles, route);
+  }
 });
 
 test('resolves concrete paths, preferring an exact path over a parameter', () => {

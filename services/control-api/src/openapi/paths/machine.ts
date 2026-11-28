@@ -161,13 +161,8 @@ export const paths: Paths = {
       responses: { 410: retiredHeartbeatStream } },
   },
   '/heartbeat/stream/stats': {
-    get: { tags: ['Heartbeat'], summary: 'Residual state of the retired heartbeat stream', security: userAuth,
-      description: 'Any role. Read-only Redis figures for the retired stream transport. `enabled` is false when Redis could not be read; the other fields then keep their defaults.',
-      responses: { 200: success('Heartbeat stream stats', { type: 'object', properties: {
-        enabled: { type: 'boolean' }, streamKey: { type: 'string', description: 'Physical Redis key, including any key prefix' },
-        length: { type: 'integer' }, consumerGroup: { type: 'string' }, pending: { type: 'integer' }, lastDeliveredId: { type: 'string', nullable: true },
-        consumers: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, pending: { type: 'integer' }, idleMs: { type: 'integer' } } } } } }),
-        401: err401 } },
+    get: browserOperation('GET', '/heartbeat/stream/stats', { tags: ['Heartbeat'], summary: 'Residual state of the retired heartbeat stream',
+      description: 'Read-only Redis figures for the retired stream transport; `streamKey` is the physical key, including any key prefix.' }),
   },
 
   // ──────────────── Self-update receipts ────────────────
@@ -184,6 +179,11 @@ export const paths: Paths = {
   },
 
   // ──────────────── Hermes Agent inventory reads ────────────────
+  '/hermes/summary': {
+    get: browserOperation('GET', '/hermes/summary', { tags: ['Hermes Agent'], summary: 'Hermes Agent inventory counts for mission control',
+      description: `Installations and their profiles on hosts that still have Hermes; an installation is healthy when its status is \`running\` or \`detected\`. Read from the Control database; no SSH. ${hermesRateLimit}`,
+      errors: { 429: errorResponse('Rate limited') } }),
+  },
   '/hermes/installations': {
     get: browserOperation('GET', '/hermes/installations', { tags: ['Hermes Agent'], summary: 'List Hermes Agent installations with their profiles',
       description: `Read from the Control database; no SSH. Detected aliases of one host are collapsed into one row. ${hermesRedaction} ${hermesRateLimit}`,
