@@ -150,7 +150,7 @@ export function serverCli(io: Io, project: Project, version: string, args: strin
     cwd: project.dir,
     capture: options.capture,
     detached: options.detached,
-    env: { ...io.env, MAGNUS_PROJECT_DIR: project.dir, MAGNUS_BACKUP_DIR: project.path('backups'), MAGNUS_BACKUP_KEEP: String(project.keepBackups()), ...options.env },
+    env: { ...io.env, MAGNUS_PROJECT_DIR: project.dir, MAGNUS_BACKUP_DIR: project.path('backups'), MAGNUS_BACKUP_KEEP: String(project.keepBackups()), MAGNUS_BACKUP_KEEP_DAYS: String(project.keepBackupDays()), ...options.env },
   });
 }
 

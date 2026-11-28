@@ -53,28 +53,95 @@ export async function databaseBytes(io: Io, project: Project): Promise<number | 
   return Number.isFinite(bytes) && bytes > 0 ? bytes : null;
 }
 
-/**
- * Keep the newest `keep` dumps in backups/ and any file in `protect` (the dump
- * the current upgrade's rollback restores); older ones go. Upgrade labels are
- * unique per step (`pre-upgrade-A-to-B`), so a per-label exemption would keep
- * every dump forever.
- */
-export function pruneBackups(dir: string, keep: number, protect: readonly string[] = []): string[] {
-  if (!existsSync(dir) || keep < 1) return [];
-  const dumps = readdirSync(dir).filter((name) => name.endsWith('.dump')).map((name) => {
+/** How many dumps backups/ keeps, and for how long. */
+export interface BackupRetention {
+  /** Newest dumps always kept (magnus-project.json `keepBackups`, default 5). Below 1, nothing is pruned. */
+  keep: number;
+  /** Dumps younger than this many days are always kept (`keepBackupDays`, default 7; 0 turns the age rule off). */
+  keepDays: number;
+}
+
+export interface DumpInfo {
+  file: string;
+  /** When it was taken: the metadata's createdAt, else the file's mtime (ms). */
+  at: number;
+  bytes: number;
+  label: string | null;
+  /** Non-empty, with metadata, and not marked unverified: a dump a restore can use. */
+  good: boolean;
+}
+
+export interface BackupPrunePlan {
+  keep: Array<DumpInfo & { reasons: string[] }>;
+  remove: DumpInfo[];
+}
+
+function dumpMetadata(file: string): { createdAt?: string; label?: string; verified?: boolean } | null {
+  try {
+    const meta: unknown = JSON.parse(readFileSync(`${file}.json`, 'utf8'));
+    return meta && typeof meta === 'object' ? meta as { createdAt?: string; label?: string; verified?: boolean } : null;
+  } catch {
+    return null; // no metadata
+  }
+}
+
+/** Every dump in `dir`, newest first. */
+export function listDumps(dir: string): DumpInfo[] {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).filter((name) => name.endsWith('.dump')).map((name) => {
     const file = join(dir, name);
-    let meta: { createdAt?: string } = {};
-    try { meta = JSON.parse(readFileSync(`${file}.json`, 'utf8')) as typeof meta; } catch { /* no metadata */ }
-    return { file, at: Date.parse(meta.createdAt ?? '') || statSync(file).mtimeMs };
-  }).sort((a, b) => b.at - a.at);
-  const removed: string[] = [];
+    const meta = dumpMetadata(file);
+    const stat = statSync(file);
+    const created = Date.parse(meta?.createdAt ?? '');
+    return {
+      file, at: Number.isFinite(created) ? created : stat.mtimeMs, bytes: stat.size, label: meta?.label ?? null,
+      good: stat.size > 0 && meta !== null && Number.isFinite(created) && meta.verified !== false,
+    };
+  }).sort((a, b) => b.at - a.at || b.file.localeCompare(a.file));
+}
+
+/**
+ * Which dumps a prune keeps and which it deletes. A dump is kept when it is one of the newest
+ * `keep`, younger than `keepDays`, named in `protect` (what a rollback would restore), or the
+ * newest good dump (so a run of failed or partial dumps can never push out the last usable one).
+ * Everything else goes. Upgrade labels are unique per step (`pre-upgrade-A-to-B`), so a per-label
+ * exemption would keep every dump forever.
+ */
+export function planBackupPrune(dir: string, retention: BackupRetention, protect: readonly string[] = [], now = Date.now()): BackupPrunePlan {
+  const dumps = listDumps(dir);
+  if (!Number.isInteger(retention.keep) || retention.keep < 1) return { keep: dumps.map((dump) => ({ ...dump, reasons: ['pruning off'] })), remove: [] };
+  const newestGood = dumps.find((dump) => dump.good)?.file;
+  const maxAgeMs = Math.max(0, retention.keepDays) * 86_400_000;
+  const plan: BackupPrunePlan = { keep: [], remove: [] };
   dumps.forEach((dump, index) => {
-    if (index < keep || protect.includes(dump.file)) return;
-    rmSync(dump.file, { force: true });
-    rmSync(`${dump.file}.json`, { force: true });
-    removed.push(dump.file);
+    const reasons: string[] = [];
+    if (index < retention.keep) reasons.push(`newest ${retention.keep}`);
+    if (maxAgeMs > 0 && now - dump.at < maxAgeMs) reasons.push(`younger than ${retention.keepDays}d`);
+    if (protect.includes(dump.file)) reasons.push('rollback dump');
+    if (dump.file === newestGood) reasons.push('newest good dump');
+    if (reasons.length) plan.keep.push({ ...dump, reasons });
+    else plan.remove.push(dump);
   });
-  return removed;
+  return plan;
+}
+
+/** Apply {@link planBackupPrune}; with `dryRun` nothing is deleted. Returns the files (to be) removed. */
+export function pruneBackups(dir: string, retention: BackupRetention, protect: readonly string[] = [], options: { dryRun?: boolean; now?: number } = {}): string[] {
+  const { remove } = planBackupPrune(dir, retention, protect, options.now);
+  if (!options.dryRun) {
+    for (const dump of remove) {
+      rmSync(dump.file, { force: true });
+      rmSync(`${dump.file}.json`, { force: true });
+    }
+  }
+  return remove.map((dump) => dump.file);
+}
+
+/** Dumps a rollback of this project could still restore: the interrupted upgrade's and the last upgrade's. */
+export function rollbackDumps(project: Project): string[] {
+  const files = [project.state.inProgress?.backup,
+    project.state.history.findLast((entry) => entry.action === 'upgrade' && entry.result === 'ok' && entry.backup)?.backup];
+  return files.filter((file): file is string => Boolean(file));
 }
 
 /**
@@ -119,7 +186,7 @@ export async function backupDatabase(io: Io, project: Project, version: string, 
   }
   const restoreCommand = restoreCommandFor(project, file);
   writeFileSync(`${file}.json`, `${JSON.stringify({ createdAt: io.now().toISOString(), label, restoreCommand }, null, 2)}\n`, { mode: 0o600 });
-  pruneBackups(dir, project.keepBackups(), [file]);
+  pruneBackups(dir, project.backupRetention(), [file, ...rollbackDumps(project)], { now: io.now().getTime() });
   return { file, restoreCommand };
 }
 

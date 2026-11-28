@@ -41,8 +41,9 @@ describe('auto-migrate decision', () => {
     expect(refused.action === 'refuse' && refused.reason).toMatch(/b failed earlier.*prisma migrate resolve/s);
   });
   it('reads its limits and the migrate connection from the environment', () => {
-    expect(autoMigrateLimits({})).toEqual({ lockTimeoutMs: 600_000, keepBackups: 5 });
-    expect(autoMigrateLimits({ MAGNUS_AUTO_MIGRATE_LOCK_TIMEOUT: '30', MAGNUS_BACKUP_KEEP: '2' })).toEqual({ lockTimeoutMs: 30_000, keepBackups: 2 });
+    expect(autoMigrateLimits({})).toEqual({ lockTimeoutMs: 600_000, keepBackups: 5, keepBackupDays: 7 });
+    expect(autoMigrateLimits({ MAGNUS_AUTO_MIGRATE_LOCK_TIMEOUT: '30', MAGNUS_BACKUP_KEEP: '2', MAGNUS_BACKUP_KEEP_DAYS: '0' })).toEqual({ lockTimeoutMs: 30_000, keepBackups: 2, keepBackupDays: 0 });
+    expect(autoMigrateLimits({ MAGNUS_BACKUP_KEEP_DAYS: 'soon' }).keepBackupDays).toBe(7);
     expect(migrateDatabaseUrl({ MAGNUS_MIGRATE_DATABASE_URL: 'postgresql://direct/db' }, 'postgresql://pool/db')).toBe('postgresql://direct/db');
     expect(migrateDatabaseUrl({}, 'postgresql://pool/db')).toBe('postgresql://pool/db');
     expect(poolerWarning('postgresql://u@pool:6432/db?pgbouncer=true')).toMatch(/MAGNUS_MIGRATE_DATABASE_URL/);
@@ -153,6 +154,22 @@ describe('migration files and backups', () => {
     for (let i = 0; i < 8; i++) writeDump(dir, `v${i}.dump`, { createdAt: `2026-11-0${i + 1}T00:00:00Z`, label: `pre-migrate-3.3.${i}` });
     const removed = pruneBackups(dir, 5);
     expect(removed.map(file => file.slice(dir.length + 1)).sort()).toEqual(['v0.dump', 'v1.dump', 'v2.dump']);
+  });
+
+  it('keeps dumps younger than keepDays and the newest verified one; a dry run deletes nothing', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'magnus-backups-'));
+    const now = new Date('2026-11-28T00:00:00Z');
+    writeDump(dir, 'verified-old.dump', { createdAt: '2026-10-01T00:00:00Z', label: 'manual-3.3.0', verified: true });
+    writeDump(dir, 'older.dump', { createdAt: '2026-09-01T00:00:00Z', label: 'manual-3.2.0', verified: true });
+    for (let i = 0; i < 3; i++) writeDump(dir, `unverified-${i}.dump`, { createdAt: `2026-11-0${i + 1}T00:00:00Z`, label: 'manual-3.4.0', verified: false });
+    for (let i = 0; i < 3; i++) writeDump(dir, `recent-${i}.dump`, { createdAt: `2026-11-2${i + 5}T00:00:00Z`, label: 'manual-3.5.0', verified: false });
+    expect(pruneBackups(dir, 1, { keepDays: 7, now, dryRun: true }).map(file => file.slice(dir.length + 1)).sort())
+      .toEqual(['older.dump', 'unverified-0.dump', 'unverified-1.dump', 'unverified-2.dump']);
+    expect(existsSync(join(dir, 'older.dump'))).toBe(true);
+    pruneBackups(dir, 1, { keepDays: 7, now });
+    expect(existsSync(join(dir, 'verified-old.dump'))).toBe(true);
+    expect(['recent-0', 'recent-1', 'recent-2'].every(name => existsSync(join(dir, `${name}.dump`)))).toBe(true);
+    expect(existsSync(join(dir, 'older.dump'))).toBe(false);
   });
 
   it('restores into a fresh schema and puts the original back when pg_restore fails', async () => {

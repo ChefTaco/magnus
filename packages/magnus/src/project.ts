@@ -72,6 +72,8 @@ export interface ProjectState {
   keepVersions: number;
   /** Dumps kept in backups/ (default 5), plus the dump the current upgrade's rollback restores. */
   keepBackups?: number;
+  /** Dumps younger than this many days are never pruned (default 7; 0: only `keepBackups` counts). */
+  keepBackupDays?: number;
   /** Node.js the units run (and the upgrade uses for npm and the server CLI); default: the units' ExecStart. */
   nodePath?: string;
   /** docker compose project of the bundled PostgreSQL and Redis (projects before 1.1.3: magnus-deps). */
@@ -81,6 +83,7 @@ export interface ProjectState {
 }
 
 export const DEFAULT_KEEP_BACKUPS = 5;
+export const DEFAULT_KEEP_BACKUP_DAYS = 7;
 
 export class Project {
   constructor(readonly dir: string, public state: ProjectState) {}
@@ -130,6 +133,15 @@ export class Project {
 
   keepBackups(): number {
     return this.state.keepBackups ?? DEFAULT_KEEP_BACKUPS;
+  }
+
+  keepBackupDays(): number {
+    const days = this.state.keepBackupDays;
+    return typeof days === 'number' && Number.isFinite(days) && days >= 0 ? days : DEFAULT_KEEP_BACKUP_DAYS;
+  }
+
+  backupRetention(): { keep: number; keepDays: number } {
+    return { keep: this.keepBackups(), keepDays: this.keepBackupDays() };
   }
 
   path(...segments: string[]): string {

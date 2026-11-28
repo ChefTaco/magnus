@@ -184,6 +184,8 @@ export interface BackupOptions {
   lastApplied?: string | null;
   /** Dumps to keep in backupDir (MAGNUS_BACKUP_KEEP), the new one included. */
   keep?: number;
+  /** Dumps younger than this many days are kept too (MAGNUS_BACKUP_KEEP_DAYS). */
+  keepDays?: number;
 }
 
 interface BackupMetadata {
@@ -223,22 +225,40 @@ export function findReusableBackup(dir: string, label: string, lastApplied: stri
   return best?.file ?? null;
 }
 
+export interface BackupPruneOptions {
+  /** Dumps younger than this many days are kept whatever `keep` says (MAGNUS_BACKUP_KEEP_DAYS); 0 turns it off. */
+  keepDays?: number;
+  now?: Date;
+  /** Report what would go; delete nothing. */
+  dryRun?: boolean;
+}
+
 /**
- * Keep the newest `keep` dumps; older ones go. The dump just written is the newest, so it always
- * stays. Labels name a version (`pre-migrate-X.Y.Z`, `manual-X.Y.Z`), so exempting the newest dump of
- * each label would keep one dump per release forever. Returns removed files.
+ * Keep the newest `keep` dumps, every dump younger than `keepDays`, and the newest verified dump
+ * (non-empty, with metadata, not marked unverified), so failed dumps can never push out the last
+ * usable one; older ones go. The dump just written is the newest, so it always stays. Labels name a
+ * version (`pre-migrate-X.Y.Z`, `manual-X.Y.Z`), so exempting the newest dump of each label would
+ * keep one dump per release forever. Returns the removed (with `dryRun`: removable) files.
  */
-export function pruneBackups(dir: string, keep: number): string[] {
+export function pruneBackups(dir: string, keep: number, options: BackupPruneOptions = {}): string[] {
   if (!Number.isInteger(keep) || keep < 1) return [];
+  const now = (options.now ?? new Date()).getTime();
+  const maxAgeMs = Math.max(0, options.keepDays ?? 0) * 86_400_000;
   const dumps = dumpsIn(dir).map(file => {
     const meta = readMetadata(file);
-    return { file, at: Date.parse(meta?.createdAt ?? '') || statSync(file).mtimeMs };
-  }).sort((a, b) => b.at - a.at);
+    const created = Date.parse(meta?.createdAt ?? '');
+    const bytes = statSync(file).size;
+    return { file, at: Number.isFinite(created) ? created : statSync(file).mtimeMs,
+      good: bytes > 0 && meta !== null && Number.isFinite(created) && (meta as { verified?: boolean }).verified !== false };
+  }).sort((a, b) => b.at - a.at || b.file.localeCompare(a.file));
+  const newestGood = dumps.find(dump => dump.good)?.file;
   const removed: string[] = [];
   dumps.forEach((dump, index) => {
-    if (index < keep) return;
-    rmSync(dump.file, { force: true });
-    rmSync(`${dump.file}.json`, { force: true });
+    if (index < keep || dump.file === newestGood || (maxAgeMs > 0 && now - dump.at < maxAgeMs)) return;
+    if (!options.dryRun) {
+      rmSync(dump.file, { force: true });
+      rmSync(`${dump.file}.json`, { force: true });
+    }
     removed.push(dump.file);
   });
   return removed;
@@ -247,6 +267,14 @@ export function pruneBackups(dir: string, keep: number): string[] {
 export function backupKeep(env: NodeJS.ProcessEnv = process.env): number {
   const value = Number.parseInt(env['MAGNUS_BACKUP_KEEP'] ?? '', 10);
   return Number.isInteger(value) && value > 0 ? value : 5;
+}
+
+/** MAGNUS_BACKUP_KEEP_DAYS: dumps younger than this are never pruned (default 7; 0 turns it off). */
+export function backupKeepDays(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env['MAGNUS_BACKUP_KEEP_DAYS']?.trim();
+  if (!raw) return 7;
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? value : 7;
 }
 
 /**
@@ -300,7 +328,7 @@ export async function backupDatabase(options: BackupOptions): Promise<BackupResu
     verified: listed !== null,
     restoreCommand: restore,
   }, null, 2)}\n`, { mode: 0o600 });
-  if (options.keep) pruneBackups(options.backupDir, options.keep);
+  if (options.keep) pruneBackups(options.backupDir, options.keep, { keepDays: options.keepDays ?? 0, now });
   return { file, metadataFile, restoreCommand: restore };
 }
 

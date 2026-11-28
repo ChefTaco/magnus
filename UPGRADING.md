@@ -21,7 +21,18 @@ The rules every upgrade path follows:
 
 ## Unreleased: refused commands and non-Ardent reconciliation
 
-Upgrade the node agents first, then the server and console. No setting or migration changes.
+Upgrade the node agents first, then the server and console. No migration.
+
+**Dump and history retention.** Dump pruning (`magnus upgrade`, startup auto-migrate,
+`magnus-server backup`) now also keeps every dump younger than seven days and always the newest good
+one, so `backups/` can briefly hold more than five dumps after several upgrades in a week. Set
+`keepBackupDays` in `magnus-project.json` (or `MAGNUS_BACKUP_KEEP_DAYS` for the server) to `0` for
+the previous count-only rule. `magnus backups prune --dry-run` shows what would go
+([pruning dumps](#pruning-dumps)). With `MAGNUS_HISTORY_RETENTION_DAYS` set, the first daily run
+after the upgrade also deletes old finished file pushes, rollouts, remediation executions, deploy
+and Hermes operation jobs, and superseded drift scans, Ardent agent operations and Hermes registry
+receipts; check `GET /api/v1/ops/retention` before upgrading if you rely on that history. The audit
+log is still kept forever unless you set the new `MAGNUS_AUDIT_RETENTION_DAYS` (at least 90).
 
 A supervised agent (`MAGNUS_EXECUTION_SUPERVISOR_ENABLED=true`, which a full-node install sets) now
 refuses a command outside the command completion registry with 409 `UNREGISTERED_COMMAND` before
@@ -284,8 +295,10 @@ Each upgrade goes through these steps:
 7. Runs the new version's `magnus-server check` and a start-up test (`--version`, native modules)
    **before** the database is touched. A failing or crashing check stops the upgrade here.
 8. If the database has pending migrations, dumps it into `backups/` with `pg_dump -Fc`, checks the
-   dump with `pg_restore --list`, and migrates. Old dumps are pruned to the newest five
-   (`keepBackups` in `magnus-project.json`); the dump this upgrade's rollback restores always stays.
+   dump with `pg_restore --list`, and migrates. Old dumps are pruned (see
+   [pruning dumps](#pruning-dumps)): the newest five (`keepBackups` in `magnus-project.json`) and
+   every dump younger than seven days (`keepBackupDays`) stay, and so do the newest good dump and the
+   dump this upgrade's rollback restores.
 9. Switches `./current`, restarts the services and waits until the new version answers health
    checks and reports itself as running. Health checks verify the certificate in each component's
    `TLS_CERT_PATH`; on an address of this machine, a missing or non-matching certificate does not
@@ -337,6 +350,26 @@ with the same owner and grants takes its place, `pg_restore --single-transaction
 old one is dropped only after the restore committed. If `pg_restore` fails, the original schema is
 put back and the database is unchanged. Without a managed project, stop the server and run
 `magnus-server restore <file> --env-file server.env`.
+
+### Pruning dumps
+
+Every upgrade prunes `backups/` after it succeeds. A dump stays when it is one of the newest
+`keepBackups` (default 5), younger than `keepBackupDays` days (default 7; `0` turns the age rule
+off), the newest good dump (non-empty, with its `.json` metadata, not marked unverified), or the dump
+the last upgrade's rollback would restore. Everything else is deleted with its metadata. Change the
+two numbers in `magnus-project.json`; the server's own startup and `magnus-server backup` dumps
+follow the same rules through `MAGNUS_BACKUP_KEEP` and `MAGNUS_BACKUP_KEEP_DAYS`, which `magnus`
+passes to it.
+
+```bash
+magnus backups                          # list the dumps and why each one stays
+magnus backups prune --dry-run          # what a prune would delete; deletes nothing
+magnus backups prune                    # delete them (takes the upgrade lock)
+magnus backups prune --keep 3 --keep-days 14 --json   # one-off numbers, machine-readable
+```
+
+Without a managed project: `magnus-server prune-backups --dry-run --env-file server.env`, then
+without `--dry-run`. Copy dumps you want to keep longer somewhere else first.
 
 ### Adopting an existing npm install
 
@@ -402,7 +435,8 @@ $c up -d
 ```
 
 `$c run --rm --no-deps --entrypoint sh magnus-server -c 'ls -l /var/lib/magnus/backups'` lists the
-dumps. Startup auto-migrate keeps the newest five (`MAGNUS_BACKUP_KEEP`), and a server that keeps
+dumps. Startup auto-migrate keeps the newest five (`MAGNUS_BACKUP_KEEP`) and any younger than seven
+days (`MAGNUS_BACKUP_KEEP_DAYS`), and a server that keeps
 restarting reuses the dump of its last attempt instead of writing a new one each time. A database
 with a migration that failed halfway is refused before any dump, with the way out.
 
@@ -734,7 +768,8 @@ If you run your own release process, set each switch you do not want:
 | `MAGNUS_AGENT_SELF_UPGRADE` | agent | `true` (`false` in the agent image) | the agent refuses upgrade requests |
 | `MAGNUS_LEGACY_GIT_SELF_UPDATE` | server | `false` | already off: the git pull/rebuild endpoints answer 410 |
 
-Related settings: `MAGNUS_BACKUP_KEEP` (dumps kept, default 5), `MAGNUS_AUTO_MIGRATE_LOCK_TIMEOUT`
+Related settings: `MAGNUS_BACKUP_KEEP` (dumps kept, default 5), `MAGNUS_BACKUP_KEEP_DAYS` (dumps
+younger than this are kept too, default 7), `MAGNUS_AUTO_MIGRATE_LOCK_TIMEOUT`
 (seconds to wait for another instance's migration, default 600) and `MAGNUS_MIGRATE_DATABASE_URL`
 (a direct connection for migrations, dumps and restores).
 

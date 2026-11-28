@@ -180,7 +180,8 @@ export const ENV_CATALOG: readonly EnvVariable[] = [
   { name: 'MAGNUS_AUTO_MIGRATE_BACKUP', group: 'upgrades', default: 'true', description: 'Dump the database (pg_dump -Fc into MAGNUS_BACKUP_DIR) before an automatic migration. A failed dump stops startup. Set false only if you back up another way.' },
   { name: 'MAGNUS_AUTO_MIGRATE_ALLOW_SLOW', group: 'upgrades', default: 'false', description: 'Let auto-migrate apply migrations marked slow or one-way; otherwise startup stops and asks for `magnus upgrade`.' },
   { name: 'MAGNUS_BACKUP_DIR', group: 'upgrades', default: '$MAGNUS_HOME/backups', description: 'Directory for pre-migration database dumps (0700; dumps are 0600).' },
-  { name: 'MAGNUS_BACKUP_KEEP', group: 'upgrades', default: '5', description: 'Dumps kept in MAGNUS_BACKUP_DIR after each new one, the new one included; older ones are deleted.' },
+  { name: 'MAGNUS_BACKUP_KEEP', group: 'upgrades', default: '5', description: 'Dumps kept in MAGNUS_BACKUP_DIR after each new one, the new one included; older ones are deleted unless MAGNUS_BACKUP_KEEP_DAYS keeps them. The newest verified dump is always kept.' },
+  { name: 'MAGNUS_BACKUP_KEEP_DAYS', group: 'upgrades', default: '7', description: 'Dumps younger than this many days are never pruned, whatever MAGNUS_BACKUP_KEEP says. 0 turns the age rule off. `magnus-server prune-backups --dry-run` shows what a prune would delete.' },
   { name: 'MAGNUS_AUTO_MIGRATE_LOCK_TIMEOUT', group: 'upgrades', default: '600', description: 'Seconds startup auto-migrate waits for another instance\'s migrate lock before it gives up and exits.' },
   { name: 'MAGNUS_MIGRATE_DATABASE_URL', group: 'upgrades', secret: true, description: 'Direct PostgreSQL connection for migrations, dumps and restores when DATABASE_URL goes through a pooler such as PgBouncer (advisory locks need a session). Defaults to DATABASE_URL.' },
   { name: 'MAGNUS_PG_DUMP', group: 'upgrades', default: 'pg_dump', description: 'pg_dump binary used for pre-migration backups. Its major version must be at least the server\'s.' },
@@ -198,7 +199,8 @@ export const ENV_CATALOG: readonly EnvVariable[] = [
   { name: 'LOG_RETENTION_DAYS', group: 'retention', default: '30', description: 'Days to keep ingested node logs.' },
   { name: 'HEALTH_SNAPSHOT_RETENTION_DAYS', group: 'retention', default: '7', description: 'Days to keep health snapshots.' },
   { name: 'NOTIFICATION_MAX_RETENTION_DAYS', group: 'retention', default: '90', description: 'Days to keep notifications.' },
-  { name: 'MAGNUS_HISTORY_RETENTION_DAYS', group: 'retention', description: 'Days (at least 7) to keep finished commands and their results, finished webhook deliveries, resolved alert violations and anomalies, finished cron executions and occurrences, and AI conversations not touched since. Unset keeps them all (the default). Unresolved and in-flight rows are never deleted.' },
+  { name: 'MAGNUS_HISTORY_RETENTION_DAYS', group: 'retention', description: 'Days (at least 7) to keep finished commands and their results, finished webhook deliveries, resolved alert violations and anomalies, finished cron executions and occurrences, and AI conversations not touched since. Unset keeps them all (the default). Unresolved and in-flight rows are never deleted. It also prunes finished file pushes, rollouts, remediation executions, deploy and Hermes operation jobs, and superseded drift scans, Ardent agent operations and Hermes registry receipts (the newest of each stays).' },
+  { name: 'MAGNUS_AUDIT_RETENTION_DAYS', group: 'retention', description: 'Days (at least 90) of audit log (AUDIT_LOG_DIR) to keep; older daily files are deleted once a day and the deletion is audited. Unset keeps the audit log forever (the default): set it only when your compliance rules allow it.' },
 ];
 
 /** JSON document printed by `magnus-server env-schema`. */

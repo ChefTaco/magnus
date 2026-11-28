@@ -6,9 +6,11 @@
  *   magnus rollback [--restore-db]               switch back to the previous version
  *   magnus restore FILE                          restore a database dump (stops and restarts the services)
  *   magnus status                                versions, health and available updates
+ *   magnus backups [prune] [--dry-run]           list database dumps; prune them by the retention
  *   magnus adopt --server-env-file FILE          take over an existing npm install
  */
 import { adopt } from './adopt.js';
+import { backups } from './backups.js';
 import { init, defaultProjectDir } from './init.js';
 import type { Io } from './io.js';
 import { findProjectDir, type Supervisor } from './project.js';
@@ -26,6 +28,7 @@ Commands:
   rollback    Switch back to the version that served before the last upgrade
   restore     Restore a database dump: stop the services, restore, start them again
   status      Show installed and serving versions, history and available updates
+  backups     List the database dumps in backups/; \`backups prune\` deletes those the retention does not keep
   adopt       Turn an existing npm install into a managed project
   version     Print this tool's version
 
@@ -72,6 +75,13 @@ rollback:
 
 restore FILE:           A dump from backups/ (shown by upgrade, rollback and status)
 
+backups [prune]:
+  --dry-run             prune: show what would be deleted; delete nothing
+  --keep N              Newest dumps to keep (default: magnus-project.json keepBackups, 5)
+  --keep-days D         Keep every dump younger than D days (default: keepBackupDays, 7; 0: off)
+  --json                Machine-readable output
+  The newest good dump and the dump a rollback would restore are always kept.
+
 status:
   --json                Machine-readable output
   --offline             Skip the registry check
@@ -95,10 +105,10 @@ interface Parsed {
 
 const VALUE_OPTIONS = new Set(['--dir', '--registry', '--source', '--health-timeout', '--version', '--service-user', '--supervisor',
   '--database-url', '--redis-url', '--postgres-port', '--redis-port', '--server-port', '--ui-port', '--public-host', '--admin-user',
-  '--admin-password', '--tls-cert', '--tls-key', '--to', '--server-env-file', '--ui-env-file', '--node']);
+  '--admin-password', '--tls-cert', '--tls-key', '--to', '--server-env-file', '--ui-env-file', '--node', '--keep', '--keep-days']);
 const FLAG_OPTIONS = new Set(['--yes', '--system', '--no-ui', '--no-start', '--no-auto-migrate', '--dry-run', '--allow-major',
   '--generate-secrets', '--resume', '--restore-db', '--json', '--offline', '--install-units', '--force', '--break-lock', '--help', '-h']);
-const COMMANDS = new Set(['init', 'upgrade', 'rollback', 'restore', 'status', 'adopt', 'version', 'help']);
+const COMMANDS = new Set(['init', 'upgrade', 'rollback', 'restore', 'status', 'adopt', 'backups', 'version', 'help']);
 
 export function parseArgs(argv: readonly string[]): Parsed {
   const values = new Map<string, string>();
@@ -120,6 +130,8 @@ export function parseArgs(argv: readonly string[]): Parsed {
     } else if (!command && COMMANDS.has(name)) {
       command = name;
     } else if (command === 'restore' && args.length === 0) {
+      args.push(name);
+    } else if (command === 'backups' && args.length === 0 && name === 'prune') {
       args.push(name);
     } else {
       throw new ArgsError(`unexpected argument ${name}`);
@@ -187,6 +199,23 @@ export async function run(io: Io, argv: readonly string[]): Promise<number> {
       const file = args[0];
       if (!file) throw new ArgsError('restore needs the dump file: magnus restore <file>');
       return restore(io, { dir: projectDir(io, values, false), file, yes, healthTimeoutMs, breakLock });
+    }
+    case 'backups': {
+      const count = (name: string): number | undefined => {
+        const raw = values.get(name);
+        if (raw === undefined) return undefined;
+        const value = Number(raw);
+        if (!Number.isFinite(value) || value < 0 || (name === '--keep' && (!Number.isInteger(value) || value < 1))) {
+          throw new ArgsError(name === '--keep' ? '--keep must be a whole number of at least 1' : '--keep-days must be a number of days, 0 or more');
+        }
+        return value;
+      };
+      const keep = count('--keep');
+      const keepDays = count('--keep-days');
+      return backups(io, {
+        dir: projectDir(io, values, false), prune: args[0] === 'prune', dryRun: flags.has('--dry-run'), json: flags.has('--json'), breakLock,
+        ...(keep !== undefined ? { keep } : {}), ...(keepDays !== undefined ? { keepDays } : {}),
+      });
     }
     case 'status':
       return status(io, { dir: projectDir(io, values, false), json: flags.has('--json'), offline: flags.has('--offline'), registry });

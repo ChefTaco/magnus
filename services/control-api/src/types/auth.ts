@@ -135,6 +135,8 @@ export type AuditAction =
   | 'control_node.restart'
   | 'credentials.rotate'
   | 'log.retention'
+  | 'audit.retention'
+  | 'history.retention'
   | 'batch.deploy'
   | 'batch.upgrade'
   | 'drift.scan'

@@ -181,6 +181,8 @@ export const envSchema = z.object({
   NOTIFICATION_READ_RETENTION_DAYS: z.coerce.number().int().min(1).default(30),
   NOTIFICATION_MAX_RETENTION_DAYS: z.coerce.number().int().min(1).default(90),
   MAGNUS_HISTORY_RETENTION_DAYS: z.coerce.number().int().min(7).optional(),
+  MAGNUS_AUDIT_RETENTION_DAYS: z.coerce.number().int().min(90).optional(),
+  MAGNUS_BACKUP_KEEP_DAYS: z.coerce.number().min(0).optional(),
   ANOMALY_BASELINE_CACHE_MS: z.coerce.number().int().min(30_000).default(300_000),
   MAGNUS_FLEET_CHECK_LOG_DIR: z.string().optional(),
 
