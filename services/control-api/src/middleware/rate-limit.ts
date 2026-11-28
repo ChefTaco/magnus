@@ -2,8 +2,8 @@ import type { Context, MiddlewareHandler } from 'hono';
 import { Redis } from 'ioredis';
 import { HiveError } from '@hivemagnus/hive-common/errors';
 import {
-  addressKey, createRateLimiter, enforceRateLimit, resolveClientAddress, trustedProxies,
-  type RateLimiter, type RateLimitResult, type RateLimitStore, type TrustedProxies,
+  addressKey, createRateLimiter, createRedisSlidingWindowStore, enforceRateLimit, resolveClientAddress,
+  trustedProxies, type RateLimiter, type RateLimitStore, type TrustedProxies,
 } from '@hivemagnus/hive-common/rate-limit';
 import { incMetric } from '../routes/metrics.js';
 import { heartbeatPeerAddress } from '../utils/heartbeat-peer.js';
@@ -27,48 +27,13 @@ function getRedis(): Redis {
 }
 
 /**
- * A HiveCommon `RateLimitStore` on a Redis sorted set: a sliding window of `max` requests per
- * `windowMs`, shared by every server process and kept across restarts. Refused requests count too,
- * so a client that keeps retrying stays refused. Throws when Redis is unavailable.
+ * A HiveCommon sliding-window store on a Redis sorted set: `max` requests per `windowMs`, shared by
+ * every server process and kept across restarts. Refused requests count too, so a client that keeps
+ * retrying stays refused, and `Retry-After` names when a slot frees (`retryAfter: 'oldest'`). The
+ * key passed in is the Redis key. Throws when Redis is unavailable or answers with an error.
  */
 function redisWindowStore(max: number, windowMs: number): RateLimitStore {
-  return {
-    async consume(key) {
-      const now = Date.now();
-      const redis = getRedis();
-      const pipe = redis.pipeline();
-      pipe.zremrangebyscore(key, '-inf', now - windowMs);
-      pipe.zadd(key, now, `${now}-${Math.random()}`);
-      pipe.zcard(key);
-      pipe.pexpire(key, windowMs);
-      const results = await pipe.exec();
-      const count = (results?.[2]?.[1] as number) ?? 0;
-      const allowed = count <= max;
-      return {
-        allowed,
-        limit: max,
-        remaining: Math.max(0, max - count),
-        retryAfterMs: allowed ? 0 : await retryAfterMs(redis, key, count, max, now, windowMs),
-        resetMs: windowMs,
-      } satisfies RateLimitResult;
-    },
-  };
-}
-
-/**
- * Milliseconds until a client that stops now may send again. Refused requests count too, so that is
- * when every entry but the newest max - 1 has left the window: entry (count - max) in age order.
- * Falls back to the whole window when the entry cannot be read.
- */
-async function retryAfterMs(redis: Redis, key: string, count: number, max: number, now: number, windowMs: number): Promise<number> {
-  try {
-    const entry = await redis.zrange(key, String(count - max), String(count - max), 'WITHSCORES');
-    const score = Number(entry[1]);
-    if (Number.isFinite(score)) return Math.min(windowMs, Math.max(1, score + windowMs - now));
-  } catch {
-    // The window is the safe answer.
-  }
-  return windowMs;
+  return createRedisSlidingWindowStore({ redis: getRedis, windowMs, max, retryAfter: 'oldest' });
 }
 
 let proxies: { raw: string; trusted: TrustedProxies } | undefined;
@@ -105,9 +70,9 @@ function tooManyRequests(c: Context, error: HiveError): Response {
 }
 
 /**
- * Rate limiter on HiveCommon `/rate-limit`, backed by Redis (see `redisWindowStore()`).
+ * Rate limiter on HiveCommon `/rate-limit`, backed by its Redis sliding window (see `redisWindowStore()`).
  * Keyed by the verified subject of an Oathweave token, otherwise by the client address.
- * When Redis is unavailable, a `failClosed` route answers 503; any other route falls back to an
+ * When Redis is unavailable or a command fails, a `failClosed` route answers 503; any other route falls back to an
  * in-process HiveCommon token bucket with the same budget.
  *
  * @param opts.windowMs  Time window in milliseconds (default: 60_000 = 1 minute)
