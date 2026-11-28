@@ -60,7 +60,7 @@ import { dependenciesRouter } from './routes/dependencies.js';
 import { aiScheduleRouter } from './routes/ai-schedule.js';
 import { profilingRouter } from './routes/profiling.js';
 import { predictionsRouter } from './routes/predictions.js';
-import { hermesRouter } from './routes/hermes.js';
+import { hermesRouter, hermesSummaryRouter } from './routes/hermes.js';
 import { hermesRegistryRouter } from './routes/hermes-registry.js';
 import { codexRouter } from './routes/codex.js';
 import { ardentRouter } from './routes/ardent.js';
@@ -131,6 +131,8 @@ v1.use('/self-update/*', rateLimitMiddleware({ windowMs: 60_000, max: 10, keyPre
 v1.use('/commands/*', rateLimitMiddleware({ windowMs: 60_000, max: 60, keyPrefix: 'rl:commands' }));
 v1.use('/quick-command/*', rateLimitMiddleware({ windowMs: 60_000, max: 30, keyPrefix: 'rl:quickcmd' }));
 v1.use('/users/*', rateLimitMiddleware({ windowMs: 60_000, max: 30, keyPrefix: 'rl:users' }));
+// A scan broadcasts on the LAN and holds the request for up to 10 s: a few a minute is plenty.
+v1.use('/discovery/scan', rateLimitMiddleware({ windowMs: 60_000, max: 6, keyPrefix: 'rl:discovery', failClosed: true }));
 v1.use('/roles/*', rateLimitMiddleware({ windowMs: 60_000, max: 30, keyPrefix: 'rl:roles' }));
 v1.use('/webhooks/*', rateLimitMiddleware({ windowMs: 60_000, max: 30, keyPrefix: 'rl:webhooks' }));
 // Key binding is rare; a tight budget bounds guessing of enrollment tokens.
@@ -185,6 +187,7 @@ v1.route('/rollouts', rolloutRouter);
 v1.route('/anomalies', anomaliesRouter);
 v1.route('/predictions', predictionsRouter);
 v1.route('/fleet-checks', fleetChecksRouter);
+v1.route('/hermes/summary', hermesSummaryRouter);
 v1.route('/hermes', hermesRouter);
 v1.route('/hermes-registry', hermesRegistryRouter);
 v1.route('/orchestra', hermesRouter);

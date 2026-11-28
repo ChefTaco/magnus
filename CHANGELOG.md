@@ -8,8 +8,9 @@ All notable changes to this project are documented in this file. The format is b
 ## [Unreleased]
 
 A supervised agent no longer leaves an unknown command owner behind when it refuses a command, and
-an ADMIN can settle an unknown non-Ardent command from the API and the console. No migration, and
-no new setting.
+an ADMIN can settle an unknown non-Ardent command from the API and the console. The OpenAPI document
+covers every route, and the console's mission-control Hermes counts come from a new ADMIN route. No
+migration, and no new setting.
 
 ### Upgrade notes
 
@@ -25,6 +26,8 @@ no new setting.
   you add a `HIVESKILLS_SERVICE` link. Add it only once the server and the fleet gateway both run
   this release (an earlier one refuses the unknown link role at startup), and remove it before
   rolling back. Keep `tokenSha256` until the registry sends Oathweave tokens, then drop it.
+- Upgrade the server before the console: the console's mission-control Hermes tiles read the new
+  `GET /api/v1/hermes/summary` and show "Hermes Agent data unavailable" against an older server.
 
 ### Added
 
@@ -56,6 +59,36 @@ no new setting.
   decision for a scheduler occurrence or skill publication (`reconcilable: false` on the owner).
 - Contracts: `CommandReconcileDecisionSchema`, `CommandReconcileDecisionResultSchema` and the optional
   `reconcilable` flag on `ArdentCommandOwnerSchema`.
+- `POST /api/v1/discovery/scan` is rate limited to 6 scans a minute per caller (fail closed), now that it
+  is a browser route.
+- `GET /api/v1/hermes/summary` (any role, like the lists it counts) returns the mission-control Hermes counts (installations,
+  healthy installations, profiles, running gateways), computed by the server over the same lists
+  `GET /hermes/installations` and `GET /hermes/profiles` return, so HiveXUI can show the tiles
+  without its own server. The console's mission-control page reads it instead of counting the lists
+  itself. It is not served under the deprecated `/orchestra` alias.
+- Browser contract: `hermesSummaryResponseSchema`, `heartbeatStreamStatsResponseSchema`,
+  `discoveryScanRequestSchema` and `discoveryScanResponseSchema`, with route entries for
+  `GET /hermes/summary`, `GET /heartbeat/stream/stats` and `POST /discovery/scan`.
+- **The OpenAPI document covers every mounted route.** The 123 routes that had no entry (assistant,
+  AI schedules, MCP, anomalies, predictions, drift, topology, profiling, alerts, remediation,
+  rollouts, fleet checks, credentials, security integration, node utilities, managed cron, resource
+  leases, fleet gateway and the Hermes reads) are documented from their handlers: roles, parameters,
+  request and response schemas and the errors they return. Routes the browser contract publishes take
+  their schemas from `@hivemagnus/magnus-contracts/browser`. `undocumented-routes.json` is gone: the
+  route test now fails for any mounted route without an entry.
+- `npm run openapi:check` validates the document as OpenAPI 3.1 (every `$ref` resolves), fails on an
+  undeclared tag or an unknown security scheme, and generates TypeScript types from it with
+  `openapi-typescript`, so a client can always be generated. The repository ships no generated
+  client of its own API.
+
+### Changed
+
+- Console route inventory: `POST /api/v1/discovery/scan` (ADMIN or OPERATOR) and
+  `GET /api/v1/heartbeat/stream/stats` (any role) move from `machine` to `browser`, with the same
+  authentication as before, so a static console can offer the nodes page's network scan and the
+  mission-control heartbeat stream panel. An ingress that follows the inventory allows them, and
+  `GET /api/v1/hermes/summary`, from this release. The rest of `/heartbeat` and `/discovery` stays
+  machine-only.
 
 ### Deprecated
 
