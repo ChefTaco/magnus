@@ -14,6 +14,8 @@ import { Hono } from 'hono';
 import type { AppVariables } from '../types/index.js';
 import { authMiddleware, requireRole } from '../middleware/auth.js';
 import { HttpError } from '../middleware/error-handler.js';
+import { z } from 'zod';
+import { parseBody, parseInput } from '../utils/validate.js';
 import {
   listAnomalyEvents,
   getNodeAnomalySummary,
@@ -29,6 +31,17 @@ import {
 } from '../services/ai-correlation-service.js';
 
 export const anomaliesRouter = new Hono<AppVariables>();
+
+const resolveNodeSchema = z.object({
+  nodeId: z.string('nodeId is required').min(1, 'nodeId is required').max(128),
+  metric: z.string().min(1).max(100).optional(),
+});
+
+/** Ten years at most; zero or a negative value would delete every resolved anomaly. */
+const purgeSchema = z.object({
+  retentionDays: z.number().int('retentionDays must be a whole number of days').min(1, 'retentionDays must be at least 1')
+    .max(3650, 'retentionDays must be at most 3650').default(30),
+});
 
 anomaliesRouter.use('*', authMiddleware);
 
@@ -95,18 +108,16 @@ anomaliesRouter.post('/:id/resolve', requireRole('ADMIN', 'OPERATOR'), async (c)
 
 // ── Bulk-resolve anomalies for a node ──
 anomaliesRouter.post('/resolve-node', requireRole('ADMIN', 'OPERATOR'), async (c) => {
-  const body = await c.req.json<{ nodeId: string; metric?: string }>();
-  if (!body.nodeId) {
-    throw new HttpError(400, 'VALIDATION_ERROR', 'nodeId is required');
-  }
+  const body = await parseBody(c, resolveNodeSchema);
   const count = await resolveNodeAnomalies(body.nodeId, body.metric);
   return c.json({ success: true, data: { resolved: count } });
 });
 
 // ── Purge old resolved anomalies ──
 anomaliesRouter.post('/purge', requireRole('ADMIN'), async (c) => {
-  const body = await c.req.json().catch(() => ({})) as { retentionDays?: number };
-  const retentionDays = body.retentionDays ?? 30;
+  // An empty or missing body keeps the 30-day default.
+  const raw: unknown = await c.req.json().catch(() => ({}));
+  const { retentionDays } = parseInput(raw ?? {}, purgeSchema);
   const count = await purgeResolvedAnomalies(retentionDays);
   return c.json({ success: true, data: { deleted: count, retentionDays } });
 });

@@ -2849,7 +2849,7 @@ export const topologyResponseSchema = ok(z.object({
 }));
 
 // services/control-api/src/routes/topology.ts
-export const topologyScanRequestSchema = z.object({ probeTimeoutMs: z.number().int().min(1).optional() });
+export const topologyScanRequestSchema = z.object({ probeTimeoutMs: z.number().int().min(1).max(15_000).optional() });
 
 // ── Ardent agents ──
 // services/control-api/src/routes/ardent.ts (task stream query; Last-Event-ID carries the same cursor)

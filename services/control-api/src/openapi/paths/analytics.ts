@@ -195,17 +195,17 @@ export const paths: Paths = {
       tags: ['Anomalies'], summary: 'Resolve every active anomaly of a node, or of one metric on it',
       description: write,
       security: userAuth,
-      requestBody: inlineBody({ type: 'object', required: ['nodeId'], properties: { nodeId: { type: 'string', minLength: 1 }, metric: { type: 'string', description: 'Only this metric' } } }),
-      responses: { 200: success('Number of anomalies resolved', { type: 'object', properties: { resolved: { type: 'integer' } } }), 400: err400, 401: err401, 403: err403 },
+      requestBody: inlineBody({ type: 'object', required: ['nodeId'], properties: { nodeId: { type: 'string', minLength: 1, maxLength: 128 }, metric: { type: 'string', minLength: 1, maxLength: 100, description: 'Only this metric' } } }),
+      responses: { 200: success('Number of anomalies resolved', { type: 'object', properties: { resolved: { type: 'integer' } } }), 400: { ...err400, description: 'Not JSON, or `nodeId` missing or not a string' }, 401: err401, 403: err403 },
     },
   },
   '/anomalies/purge': {
     post: {
       tags: ['Anomalies'], summary: 'Delete resolved anomalies older than a retention period',
-      description: 'Deletes anomalies resolved more than `retentionDays` ago. A missing or malformed body keeps the default of 30 days. ADMIN only.',
+      description: 'Deletes anomalies resolved more than `retentionDays` ago. A missing body (or one that is not JSON) keeps the default of 30 days. ADMIN only.',
       security: userAuth,
-      requestBody: optionalBody({ type: 'object', properties: { retentionDays: { type: 'number', default: 30 } } }),
-      responses: { 200: success('Number of anomalies deleted', { type: 'object', properties: { deleted: { type: 'integer' }, retentionDays: { type: 'number' } } }), 401: err401, 403: err403 },
+      requestBody: optionalBody({ type: 'object', properties: { retentionDays: { type: 'integer', minimum: 1, maximum: 3650, default: 30, description: 'Whole days; 0 or less would delete every resolved anomaly and answers 400' } } }),
+      responses: { 200: success('Number of anomalies deleted', { type: 'object', properties: { deleted: { type: 'integer' }, retentionDays: { type: 'integer' } } }), 400: { ...err400, description: '`retentionDays` is not a whole number from 1 to 3650' }, 401: err401, 403: err403 },
     },
   },
 
@@ -271,6 +271,7 @@ export const paths: Paths = {
       tags: ['Drift'], summary: 'Check a node against expected packages, files, services, sysctls and users',
       description: 'The node agent evaluates the checks and the result is stored. When the agent cannot be reached or answers an error, '
         + 'the route still answers 200: `data` is then `{ scan, error }`, where `scan` is the stored `error` scan with `findings` as a JSON-encoded string. '
+        + 'Both outcomes are audited as `drift.scan` (`details.status` is the scan status, or `error`). '
         + write,
       security: userAuth,
       requestBody: inlineBody({
@@ -376,7 +377,7 @@ export const paths: Paths = {
   '/nodes/{nodeId}/health/timeseries': {
     get: browserOperation('GET', '/nodes/{nodeId}/health/timeseries', {
       tags: ['Nodes'], summary: 'One metric of a node over a period', params: { nodeId: 'Node ID' },
-      description: 'Defaults: `cpu` over `1h`. Periods over 24 hours are averaged into five-minute buckets. Disk is read from the first disk entry. A node without samples (or an unknown node) answers empty arrays and zeros.',
+      description: 'Defaults: `cpu` over `1h`. Periods over 24 hours are averaged into five-minute buckets. Disk is the `usagePercent` of the first disk entry (the root mount). A node without samples (or an unknown node) answers empty arrays and zeros.',
       queryDescriptions: { metric: 'cpu (default), memory, swap or disk', period: '1h (default), 6h, 24h, 7d or 30d' },
       errors: { 400: err400 },
     }),
