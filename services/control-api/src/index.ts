@@ -56,6 +56,10 @@ const port = Number(process.env['CONTROL_API_PORT'] ?? 4000);
 const features = featureFlags();
 console.log(`[startup] security-fusion=${securityFusionMode()} hermes-registry=${features.hermesRegistry ? 'on' : 'off'} `
   + `plugin-api=${features.pluginApi ? 'on' : 'off'} iam=${features.iam ? 'on' : 'off'}`);
+if (features.iam) {
+  console.warn('[startup] IAM_CORE_URL (external Hive IAM verification) is deprecated and is removed in Magnus 4.0.0; '
+    + 'use Oathweave mode (OATHWEAVE_ISSUER). See UPGRADING.md.');
+}
 
 
 const { writeRuntimeFile } = await import('./utils/runtime-file.js');

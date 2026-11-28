@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, open, rename, unlink, lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Hono } from 'hono';
-import { matchesSha256Digest } from '../utils/safe-equal.js';
+import { matchesSha256Digest } from '@hivemagnus/hive-common/secrets';
 import { magnusHomePath } from '../utils/magnus-home.js';
 export const securityBackupRouter = new Hono();
 let receiving = false;

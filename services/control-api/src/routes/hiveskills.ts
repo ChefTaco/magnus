@@ -5,7 +5,7 @@ import { HiveSkillsTargetPostureSchema, HiveSkillsPublicationSchema } from '@hiv
 import type { AppVariables } from '../types/index.js';
 import { getDb } from '../db/index.js';
 import { HttpError } from '../middleware/error-handler.js';
-import { safeEqual } from '../utils/safe-equal.js';
+import { timingSafeEqualString as safeEqual } from '@hivemagnus/hive-common/secrets';
 import { getNodeManagerSecret } from '../utils/env.js';
 import { getNodeBaseUrl } from '../utils/node-url.js';
 import { NodeApiClient } from '../sdk/node-api-client.js';

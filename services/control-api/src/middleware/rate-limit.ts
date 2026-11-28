@@ -1,5 +1,10 @@
-import type { MiddlewareHandler } from 'hono';
+import type { Context, MiddlewareHandler } from 'hono';
 import { Redis } from 'ioredis';
+import { HiveError } from '@hivemagnus/hive-common/errors';
+import {
+  addressKey, createRateLimiter, enforceRateLimit, resolveClientAddress, trustedProxies,
+  type RateLimiter, type RateLimitResult, type RateLimitStore, type TrustedProxies,
+} from '@hivemagnus/hive-common/rate-limit';
 import { incMetric } from '../routes/metrics.js';
 import { heartbeatPeerAddress } from '../utils/heartbeat-peer.js';
 import { oathweaveRateLimitSubject } from './oathweave.js';
@@ -15,16 +20,94 @@ function getRedis(): Redis {
   if (!_redis) {
     _redis = new Redis(REDIS_URL, { maxRetriesPerRequest: 3, lazyConnect: true });
     _redis.connect().catch(() => {
-      // silently fail — rate limiter becomes permissive when Redis is unavailable
+      // Reported through getRateLimitHealth() when a request finds Redis unavailable.
     });
   }
   return _redis;
 }
 
 /**
- * Sliding-window rate limiter backed by Redis.
- * Keyed by the verified subject of an Oathweave token, otherwise by client IP
- * address. Falls through (allows) if Redis is unavailable.
+ * A HiveCommon `RateLimitStore` on a Redis sorted set: a sliding window of `max` requests per
+ * `windowMs`, shared by every server process and kept across restarts. Refused requests count too,
+ * so a client that keeps retrying stays refused. Throws when Redis is unavailable.
+ */
+function redisWindowStore(max: number, windowMs: number): RateLimitStore {
+  return {
+    async consume(key) {
+      const now = Date.now();
+      const redis = getRedis();
+      const pipe = redis.pipeline();
+      pipe.zremrangebyscore(key, '-inf', now - windowMs);
+      pipe.zadd(key, now, `${now}-${Math.random()}`);
+      pipe.zcard(key);
+      pipe.pexpire(key, windowMs);
+      const results = await pipe.exec();
+      const count = (results?.[2]?.[1] as number) ?? 0;
+      const allowed = count <= max;
+      return {
+        allowed,
+        limit: max,
+        remaining: Math.max(0, max - count),
+        retryAfterMs: allowed ? 0 : await retryAfterMs(redis, key, count, max, now, windowMs),
+        resetMs: windowMs,
+      } satisfies RateLimitResult;
+    },
+  };
+}
+
+/**
+ * Milliseconds until a client that stops now may send again. Refused requests count too, so that is
+ * when every entry but the newest max - 1 has left the window: entry (count - max) in age order.
+ * Falls back to the whole window when the entry cannot be read.
+ */
+async function retryAfterMs(redis: Redis, key: string, count: number, max: number, now: number, windowMs: number): Promise<number> {
+  try {
+    const entry = await redis.zrange(key, String(count - max), String(count - max), 'WITHSCORES');
+    const score = Number(entry[1]);
+    if (Number.isFinite(score)) return Math.min(windowMs, Math.max(1, score + windowMs - now));
+  } catch {
+    // The window is the safe answer.
+  }
+  return windowMs;
+}
+
+let proxies: { raw: string; trusted: TrustedProxies } | undefined;
+
+/**
+ * Proxies whose `X-Forwarded-For` the rate limiter believes (`MAGNUS_TRUSTED_PROXIES`: addresses,
+ * CIDR ranges and the presets `loopback`, `private`, `linklocal`). Unset trusts none, so the socket
+ * peer is the client, as before: port 4000 is directly reachable by fleet peers, and a
+ * caller-controlled forwarding header must never rotate a rate-limit identity. The env schema
+ * refuses an invalid list at startup.
+ */
+export function rateLimitTrustedProxies(): TrustedProxies {
+  const raw = process.env['MAGNUS_TRUSTED_PROXIES'] ?? '';
+  if (proxies?.raw !== raw) proxies = { raw, trusted: trustedProxies(raw) };
+  return proxies.trusted;
+}
+
+/** The client a request is charged to when it carries no verified subject. */
+function clientKey(c: Context): string {
+  const client = resolveClientAddress({
+    // The Node socket peer; adapter-free requests (tests) fall back as heartbeatPeerAddress() does.
+    peer: heartbeatPeerAddress(c) || undefined,
+    forwardedFor: c.req.header('x-forwarded-for'),
+    trusted: rateLimitTrustedProxies(),
+  });
+  // IPv6 clients are grouped by /64, since one host usually holds a whole prefix.
+  return client.decision === 'unknown_peer' ? 'unknown-peer' : addressKey(client.address);
+}
+
+function tooManyRequests(c: Context, error: HiveError): Response {
+  c.header('Retry-After', error.headers?.['retry-after'] ?? '60');
+  return c.json({ error: 'RATE_LIMITED', message: 'Too many requests. Please try again later.' }, 429);
+}
+
+/**
+ * Rate limiter on HiveCommon `/rate-limit`, backed by Redis (see `redisWindowStore()`).
+ * Keyed by the verified subject of an Oathweave token, otherwise by the client address.
+ * When Redis is unavailable, a `failClosed` route answers 503; any other route falls back to an
+ * in-process HiveCommon token bucket with the same budget.
  *
  * @param opts.windowMs  Time window in milliseconds (default: 60_000 = 1 minute)
  * @param opts.max       Maximum requests per window (default: 100)
@@ -36,49 +119,33 @@ export function rateLimitMiddleware(
 ): MiddlewareHandler {
   const windowMs = opts.windowMs ?? 60_000;
   const personMax = opts.max ?? 100;
+  const serviceMax = opts.serviceMax ?? personMax;
   const prefix = opts.keyPrefix ?? 'rl';
+  const stores = { person: redisWindowStore(personMax, windowMs), service: redisWindowStore(serviceMax, windowMs) };
+  const fallbacks: Record<'person' | 'service', RateLimiter> = {
+    person: createRateLimiter({ limit: personMax, windowMs }),
+    service: createRateLimiter({ limit: serviceMax, windowMs }),
+  };
 
   return async (c, next) => {
-    // Port 4000 is directly reachable by fleet peers. A caller-controlled
-    // forwarding header must not let login or mutation clients rotate their
-    // rate-limit identity. The helper prefers the Node socket peer and only
-    // falls back to forwarded metadata in adapter-free/test contexts.
     const authorization = c.req.header('Authorization');
     const subject = authorization?.startsWith('Bearer ')
       ? await oathweaveRateLimitSubject(authorization.slice(7))
       : undefined;
     // Behind a same-origin ingress every browser shares one peer address, so a
     // verified subject gets its own bucket. Anything else, including a token
-    // that failed verification, stays on the peer bucket.
-    const identity = subject ? `subject:${subject}` : heartbeatPeerAddress(c) || 'unknown-peer';
+    // that failed verification, stays on the client-address bucket.
+    const identity = subject ? `subject:${subject}` : clientKey(c);
     // One linked service identity carries many people's work, so it may get a larger budget.
-    const max = subject?.startsWith('service:') && opts.serviceMax !== undefined ? opts.serviceMax : personMax;
-
+    const budget = subject?.startsWith('service:') ? 'service' : 'person';
     const key = `${REDIS_PREFIX}${prefix}:${identity}`;
-    const now = Date.now();
-    const windowStart = now - windowMs;
 
     try {
-      const redis = getRedis();
-      const pipe = redis.pipeline();
-      pipe.zremrangebyscore(key, '-inf', windowStart);
-      pipe.zadd(key, now, `${now}-${Math.random()}`);
-      pipe.zcard(key);
-      pipe.pexpire(key, windowMs);
-      const results = await pipe.exec();
+      await enforceRateLimit(stores[budget], key);
       // Recovery clears the health warning; lastErrorAt keeps the history.
       lastRateLimitError = null;
-
-      const count = (results?.[2]?.[1] as number) ?? 0;
-
-      if (count > max) {
-        c.header('Retry-After', String(await retryAfterSeconds(redis, key, count, max, now, windowMs)));
-        return c.json(
-          { error: 'RATE_LIMITED', message: 'Too many requests. Please try again later.' },
-          429,
-        );
-      }
-    } catch {
+    } catch (error: unknown) {
+      if (HiveError.is(error) && error.status === 429) return tooManyRequests(c, error);
       lastRateLimitError = 'Redis unavailable for rate limiting';
       lastRateLimitErrorAt = new Date().toISOString();
       incMetric('rateLimiterFailures');
@@ -91,27 +158,17 @@ export function rateLimitMiddleware(
           503,
         );
       }
-      // Redis unavailable — fail open only for non-critical routes and tests.
+      // Redis unavailable: other routes are limited per process until it is back.
+      try {
+        await enforceRateLimit(fallbacks[budget], key);
+      } catch (fallbackError: unknown) {
+        if (HiveError.is(fallbackError) && fallbackError.status === 429) return tooManyRequests(c, fallbackError);
+        throw fallbackError;
+      }
     }
 
     return next();
   };
-}
-
-/**
- * Seconds until a client that stops now may send again. Refused requests count too, so that is when
- * every entry but the newest max - 1 has left the window: entry (count - max) in age order. Falls
- * back to the whole window when the entry cannot be read.
- */
-async function retryAfterSeconds(redis: Redis, key: string, count: number, max: number, now: number, windowMs: number): Promise<number> {
-  try {
-    const entry = await redis.zrange(key, String(count - max), String(count - max), 'WITHSCORES');
-    const score = Number(entry[1]);
-    if (Number.isFinite(score)) return Math.min(Math.ceil(windowMs / 1000), Math.max(1, Math.ceil((score + windowMs - now) / 1000)));
-  } catch {
-    // The window is the safe answer.
-  }
-  return Math.ceil(windowMs / 1000);
 }
 
 /** Per-minute budgets for one subject on the Ardent bridge. */

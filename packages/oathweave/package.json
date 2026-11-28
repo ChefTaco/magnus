@@ -42,7 +42,7 @@
     "test": "npm run build && node --test test/*.test.mjs"
   },
   "devDependencies": {
-    "@hivemagnus/hive-common": "^0.7.0",
+    "@hivemagnus/hive-common": "^0.10.0",
     "@types/node": "^24.19.2",
     "typescript": "^6.0.3",
     "jose": "^6.2.18",

@@ -9,10 +9,9 @@
  * When a full OTel collector is deployed, these headers are compatible.
  */
 
-import { randomBytes } from 'node:crypto';
 import type { Context, Next } from 'hono';
-
-const TRACEPARENT_REGEX = /^00-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$/;
+import { createRequestContext, formatTraceparent } from '@hivemagnus/hive-common/context';
+import { getHiveContext } from '@hivemagnus/hive-common/hono';
 
 interface TraceContext {
   traceId: string;
@@ -39,34 +38,27 @@ function exportSpan(span: Record<string, unknown>): void {
   }).catch(() => {});
 }
 
-/** Parse a W3C traceparent header, or generate a new trace context. */
-function parseOrCreateTrace(traceparent: string | undefined): TraceContext {
-  const spanId = randomBytes(8).toString('hex');
-
-  if (traceparent) {
-    const match = TRACEPARENT_REGEX.exec(traceparent);
-    if (match) {
-      return {
-        traceId: match[1]!,
-        spanId,
-        parentSpanId: match[2]!,
-        sampled: (parseInt(match[3]!, 16) & 0x01) === 1,
-      };
-    }
-  }
-
+/**
+ * This request's span. The request context (`middleware/correlation-id.ts`, HiveCommon
+ * `requestContext()`) already parsed the inbound `traceparent` and opened a child span; without
+ * it (a router mounted on its own), the same rules apply here.
+ */
+function traceFor(c: Context): { trace: TraceContext; tracestate: string | undefined } {
+  const context = getHiveContext(c) ?? createRequestContext(name => c.req.header(name));
   return {
-    traceId: randomBytes(16).toString('hex'),
-    spanId,
-    parentSpanId: null,
-    sampled: true,
+    trace: {
+      traceId: context.trace.traceId,
+      spanId: context.trace.spanId,
+      parentSpanId: context.parentTrace?.spanId ?? null,
+      sampled: context.trace.sampled,
+    },
+    tracestate: context.tracestate,
   };
 }
 
 /** Format a trace context as a W3C traceparent header. */
-function formatTraceparent(ctx: TraceContext): string {
-  const flags = ctx.sampled ? '01' : '00';
-  return `00-${ctx.traceId}-${ctx.spanId}-${flags}`;
+function formatTrace(ctx: TraceContext): string {
+  return formatTraceparent({ traceId: ctx.traceId, spanId: ctx.spanId, sampled: ctx.sampled });
 }
 
 /**
@@ -74,16 +66,15 @@ function formatTraceparent(ctx: TraceContext): string {
  * adds it to the response headers, and stores it on the context.
  */
 export async function tracing(c: Context, next: Next): Promise<void> {
-  const incoming = c.req.header('traceparent');
-  const trace = parseOrCreateTrace(incoming);
+  const { trace, tracestate } = traceFor(c);
 
   // Store on Hono context for use in downstream calls
   c.set('traceId', trace.traceId);
   c.set('spanId', trace.spanId);
 
   // Propagate trace to response
-  c.header('traceparent', formatTraceparent(trace));
-  const tracestate = c.req.header('tracestate');
+  c.header('traceparent', formatTrace(trace));
+  // Only a valid inbound tracestate (with a valid traceparent) is propagated.
   if (tracestate) {
     c.header('tracestate', tracestate);
   }
@@ -132,8 +123,9 @@ export function traceHeaders(c: Context): Record<string, string> {
   const spanId = c.get('spanId') as string | undefined;
   if (!traceId || !spanId) return {};
 
+  const tracestate = getHiveContext(c)?.tracestate;
   return {
     traceparent: `00-${traceId}-${spanId}-01`,
-    ...(c.req.header('tracestate') ? { tracestate: c.req.header('tracestate')! } : {}),
+    ...(tracestate ? { tracestate } : {}),
   };
 }

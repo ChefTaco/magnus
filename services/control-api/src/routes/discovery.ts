@@ -6,7 +6,7 @@ import { authMiddleware, requireRole } from '../middleware/auth.js';
 import { HttpError } from '../middleware/error-handler.js';
 import { getDb } from '../db/index.js';
 import { AGENT_DISCOVERY_SECRET, ENABLE_AGENT_DISCOVERY } from '../utils/env.js';
-import { safeEqual } from '../utils/safe-equal.js';
+import { timingSafeEqualString as safeEqual } from '@hivemagnus/hive-common/secrets';
 
 export const discoveryRouter = new Hono<AppVariables>();
 

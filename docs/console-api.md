@@ -51,7 +51,9 @@ this exact mapping, with no prefix rule: `GET /api/magnus/docs/openapi.json` to
   ends after 60 seconds: reconnect with `after` or `Last-Event-ID`, which the ingress must forward.
 
 Rate limits key on the verified Oathweave subject, so browsers behind one ingress do not share a
-bucket. Each subject still has one budget per prefix: `/hermes/*` and its deprecated alias
+bucket. Other requests key on the client address: the socket peer, or, when the peer is listed in
+`MAGNUS_TRUSTED_PROXIES`, the address that proxy reports in `X-Forwarded-For` (IPv6 clients are
+grouped by /64). Each subject still has one budget per prefix: `/hermes/*` and its deprecated alias
 `/orchestra/*` share 20 requests a minute, so poll those installation reads sparingly. `/ardent/*` has two budgets in
 separate buckets: reads (`GET` and `HEAD`, streams included) allow 600 a minute, and actions (every
 other method) allow 60. A linked Ardent service identity gets 3,000 reads and 1,200 actions.

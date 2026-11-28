@@ -19,6 +19,15 @@ The rules every upgrade path follows:
   `slow` or `one-way`). Upgrades print slow and one-way migrations and wait for confirmation
   (`--yes`). Startup auto-migrate refuses them unless `MAGNUS_AUTO_MIGRATE_ALLOW_SLOW=true` is set.
 
+## Next release (unreleased): HiveCommon 0.10.0
+
+If the server runs in Hive IAM mode (`IAM_CORE_URL`), make sure its access tokens carry a `jti`
+claim and an `aud` that is exactly `IAM_TOKEN_AUDIENCE`; Oathweave's tokens already do. Hive IAM mode
+is deprecated and is removed in 4.0.0: plan the move to Oathweave mode (`OATHWEAVE_ISSUER`). A server
+behind a proxy that should rate-limit by the real client address can list that proxy in
+`MAGNUS_TRUSTED_PROXIES`; unset keeps limiting by the socket peer. Nothing else needs action. The
+[CHANGELOG](CHANGELOG.md) upgrade notes list every change.
+
 ## Version 3.5.1: Ardent 3.6.0
 
 No Magnus code, setting or migration changes. Magnus pins Ardent 3.6.0, so node agents stage Ardent
