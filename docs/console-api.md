@@ -83,7 +83,8 @@ is never tried against another verifier.
 |---|---|---|
 | `ADMIN` | `magnus:admin` | `ADMIN` |
 | `ADMIN` or `OPERATOR` | `magnus:operate` | `OPERATOR` |
-| Any | `magnus:view` | `VIEWER` |
+| `ADMIN`, `OPERATOR` or `VIEWER` | `magnus:view` | `VIEWER` |
+| `ARDENT_SERVICE` or `HIVESKILLS_SERVICE` | | Rejected: service links never authenticate a person |
 | Anything else | | Rejected |
 
 `localUserId` becomes the audit actor, and it does not need a row in the local users table.
@@ -97,6 +98,12 @@ the client ID as the subject:
 ```json
 {"issuer": "https://identity.example.com", "subject": "ardent-studio", "localUserId": "ardent-studio", "role": "ARDENT_SERVICE"}
 ```
+
+A HiveSkills registry executor is linked the same way with role `HIVESKILLS_SERVICE`, its
+`localUserId` naming the registry in `MAGNUS_HIVESKILLS_DEPLOYMENTS_JSON`, and its tokens need the
+permission `magnus:hiveskills`. Such a link reaches only `/api/v1/hiveskills/*` for that registry
+([server README](../services/control-api/README.md#hiveskills-execution-bridge)); every other route
+answers 403, and an Ardent service link cannot use the HiveSkills routes.
 
 The token needs audience `magnus`, `actorType` `SERVICE_ACCOUNT`, `token_type` `access`, a subject equal
 to its `clientId`, no `sessionId`, a lifetime of at most 15 minutes and the permission `magnus:ardent`
@@ -605,9 +612,9 @@ Each row is a non-browser route that a broader `browser` pattern also matches. D
 | GET | `/api/v1/hermes-registry/status` | machine | `user:any` | Hermes registry, machine-only by instruction. |
 | POST | `/api/v1/hermes-registry/targets` | machine | `user:ADMIN\|OPERATOR` | Hermes registry, machine-only by instruction. |
 | POST | `/api/v1/hermes-registry/tool-surface` | machine | `service-digest:hermes-registry-client` | Hermes registry, machine-only by instruction. |
-| GET | `/api/v1/hiveskills/jobs/:id` | machine | `service-digest:hiveskills` | Registry executor with an endpoint-scoped credential. |
-| POST | `/api/v1/hiveskills/jobs/:id` | machine | `service-digest:hiveskills` | Registry executor with an endpoint-scoped credential. |
-| GET | `/api/v1/hiveskills/targets/:target` | machine | `service-digest:hiveskills` | Registry executor with an endpoint-scoped credential. |
+| GET | `/api/v1/hiveskills/jobs/:id` | machine | `oathweave-service:hiveskills\|service-digest:hiveskills` | Registry executor with an Oathweave service token, or the deprecated endpoint-scoped credential. |
+| POST | `/api/v1/hiveskills/jobs/:id` | machine | `oathweave-service:hiveskills\|service-digest:hiveskills` | Registry executor with an Oathweave service token, or the deprecated endpoint-scoped credential. |
+| GET | `/api/v1/hiveskills/targets/:target` | machine | `oathweave-service:hiveskills\|service-digest:hiveskills` | Registry executor with an Oathweave service token, or the deprecated endpoint-scoped credential. |
 | POST | `/api/v1/logs/ingest` | machine | `hmac` | Agent ingest with a per-node signed credential; the dashboard error reporter cannot supply it. |
 | GET | `/api/v1/mcp` | machine | `user:any` | Read-only MCP integration, machine-only by instruction. |
 | POST | `/api/v1/mcp` | machine | `user:any` | Read-only MCP integration, machine-only by instruction. |

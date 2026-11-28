@@ -27,11 +27,20 @@ export {
 export const OATHWEAVE_AUDIENCE = 'magnus';
 
 /**
- * A link's role is a ceiling for a person. `ARDENT_SERVICE` instead links an
- * Oathweave machine client (its subject is the client ID) to the Ardent bridge
- * permission set: it never authenticates a person and never grants a role.
+ * A link's role is a ceiling for a person. A service role instead links an Oathweave machine
+ * client (its subject is the client ID) to one fixed route set: `ARDENT_SERVICE` to the Ardent
+ * bridge, `HIVESKILLS_SERVICE` to the HiveSkills executor routes of the registry its `localUserId`
+ * names. A service link never authenticates a person and never grants a role.
  */
-export const oathweaveRoleSchema = z.enum(['ADMIN', 'OPERATOR', 'VIEWER', 'ARDENT_SERVICE']);
+export const oathweaveRoleSchema = z.enum(['ADMIN', 'OPERATOR', 'VIEWER', 'ARDENT_SERVICE', 'HIVESKILLS_SERVICE']);
+
+/** The link roles that name a machine client, never a person. */
+export const OATHWEAVE_SERVICE_LINK_ROLES: readonly OathweaveIdentityLink['role'][] = ['ARDENT_SERVICE', 'HIVESKILLS_SERVICE'];
+
+/** Whether a link names a machine client. A person must never authenticate or act through one. */
+export function isServiceLink(link: Pick<OathweaveIdentityLink, 'role'>): boolean {
+  return OATHWEAVE_SERVICE_LINK_ROLES.includes(link.role);
+}
 
 const localUserId = z.string().min(1).max(256)
   // These identifiers name server-owned actors; a link must never impersonate one.

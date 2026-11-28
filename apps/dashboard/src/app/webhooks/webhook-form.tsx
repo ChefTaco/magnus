@@ -141,7 +141,7 @@ export function WebhookForm({ endpoint }: Props) {
       {/* Secret */}
       <div>
         <label className="block text-xs uppercase tracking-wider text-text-muted mb-2">
-          Secret {isEdit && <span className="normal-case text-text-muted/60">
+          Secret {isEdit && <span className="normal-case text-text-muted">
             ({endpoint.secretConfigured ? 'configured; ' : ''}leave empty to keep current)
           </span>}
         </label>
@@ -172,7 +172,7 @@ export function WebhookForm({ endpoint }: Props) {
       {/* Events */}
       <div>
         <label className="block text-xs uppercase tracking-wider text-text-muted mb-2">
-          Events <span className="normal-case text-text-muted/60">(empty = all events)</span>
+          Events <span className="normal-case text-text-muted">(empty = all events)</span>
         </label>
         <div className="flex flex-wrap gap-2">
           {EVENT_OPTIONS.map((evt) => (
@@ -197,7 +197,7 @@ export function WebhookForm({ endpoint }: Props) {
         <label className="block text-xs uppercase tracking-wider text-text-muted mb-2">
           Custom Headers
           {isEdit && endpoint.headersConfigured && !headersTouched && (
-            <span className="normal-case text-text-muted/60"> (configured; values are write-only)</span>
+            <span className="normal-case text-text-muted"> (configured; values are write-only)</span>
           )}
         </label>
         <div className="space-y-2">

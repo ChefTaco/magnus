@@ -3110,7 +3110,7 @@ export function buildOpenApiSpec() {
     components: {
       securitySchemes: {
         embermendExecutorBearer: { type: 'http', scheme: 'bearer', description: 'Endpoint-scoped Embermend credential with exact installation, targets and action versions. Never a node or administrator credential.' },
-        skillsExecutorBearer:{type:'http',scheme:'bearer',bearerFormat:'opaque',description:'Dedicated endpoint-scoped registry credential; only configured targets and exact native sync operations, never general commands.'},
+        skillsExecutorBearer:{type:'http',scheme:'bearer',bearerFormat:'opaque',description:'An Oathweave client-credentials token (audience magnus, permission magnus:hiveskills) of a client linked with role HIVESKILLS_SERVICE to the registry, or the deprecated dedicated static registry credential; only configured targets and exact native sync operations, never general commands.'},
         cindertraceSignature: { type: 'apiKey', in: 'header', name: 'x-cindertrace-signature', description: 'Dedicated response HMAC bound to method, path, exact body, x-cindertrace-time and x-cindertrace-nonce. Responses are signed against the same request binding.' },
         apiSecret: {
           type: 'apiKey',

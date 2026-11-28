@@ -55,19 +55,31 @@ test.describe('Login', () => {
 
     await page.locator('#username').fill(TEST_USER);
     await page.locator('#password').fill(TEST_PASS);
+    // Hold the request so the pending state cannot finish before it is observed.
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    await page.route('**/api/auth/login', async (route) => { await held; await route.continue(); });
     await page.getByRole('button', { name: 'Sign In' }).click();
 
     // The button text changes to "Authenticating..." while submitting
     await expect(
       page.getByRole('button', { name: 'Authenticating...' }),
     ).toBeVisible();
+    release();
+    await expect(page).toHaveURL('/', { timeout: 15_000 });
   });
 });
 
 test.describe('Logout', () => {
+  // Signing out revokes the session, so use a fresh one rather than the shared stored state.
+  test.use({ storageState: { cookies: [], origins: [] } });
+
   test('sign out returns to login page', async ({ page }) => {
-    await page.goto('/');
-    await expect(page.getByRole('heading', { name: 'Fleet Overview' })).toBeVisible();
+    await page.goto('/login');
+    await page.locator('#username').fill(TEST_USER);
+    await page.locator('#password').fill(TEST_PASS);
+    await page.getByRole('button', { name: 'Sign In' }).click();
+    await expect(page.getByRole('heading', { name: 'Fleet Overview' })).toBeVisible({ timeout: 15_000 });
 
     // Click the Sign Out button in the header (icon-only, title attr)
     await page.getByTitle('Sign Out').click();

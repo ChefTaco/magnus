@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { api } from '@/lib/api-client';
 import { Server } from 'lucide-react';
 
@@ -46,6 +46,7 @@ export function NodeSelector({
 }: NodeSelectorProps): React.ReactElement {
   const [nodes, setNodes] = useState<NodeOption[]>([]);
   const [loading, setLoading] = useState(true);
+  const selectId = useId();
 
   useEffect(() => {
     const load = async (): Promise<void> => {
@@ -149,9 +150,11 @@ export function NodeSelector({
   return (
     <div className={className}>
       {label && (
-        <label className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-text-muted">{label}</label>
+        <label htmlFor={selectId} className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-text-muted">{label}</label>
       )}
       <select
+        id={selectId}
+        aria-label={label ? undefined : 'Node'}
         value={singleValue}
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled || loading}

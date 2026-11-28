@@ -85,7 +85,7 @@ export function Header({ onMenuToggle }: { onMenuToggle?: () => void }): React.R
                     {crumb.label}
                   </Link>
                 ) : (
-                  <span className={last ? 'truncate text-text' : i === 0 && crumbs.length > 1 ? 'truncate text-text-muted/60' : 'truncate'} aria-current={last ? 'page' : undefined}>
+                  <span className={last ? 'truncate text-text' : i === 0 && crumbs.length > 1 ? 'truncate text-text-muted' : 'truncate'} aria-current={last ? 'page' : undefined}>
                     {crumb.label}
                   </span>
                 )}

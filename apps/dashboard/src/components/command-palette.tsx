@@ -377,7 +377,7 @@ function ShortcutRow({ keys, label }: { keys: string[]; label: string }) {
         {keys.map((k, i) => (
           <span key={i}>
             <kbd className="rounded-chip border border-border bg-bg px-1.5 py-0.5 text-[11px] text-primary">{k}</kbd>
-            {i < keys.length - 1 && <span className="mx-0.5 text-[10px] text-text-muted/60">then</span>}
+            {i < keys.length - 1 && <span className="mx-0.5 text-[10px] text-text-muted">then</span>}
           </span>
         ))}
       </div>

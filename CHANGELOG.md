@@ -22,10 +22,28 @@ migration, and no new setting.
 - Leases that earlier agents left `unknown` this way are not settled by the upgrade: settle each
   with the new ADMIN decision (see below), and stop the leftover units of settled commands
   ([UPGRADING.md](UPGRADING.md#unreleased-refused-commands-and-non-ardent-reconciliation)).
+- **HiveSkills executor: Oathweave service tokens, static bearer deprecated.** Nothing changes until
+  you add a `HIVESKILLS_SERVICE` link. Add it only once the server and the fleet gateway both run
+  this release (an earlier one refuses the unknown link role at startup), and remove it before
+  rolling back. Keep `tokenSha256` until the registry sends Oathweave tokens, then drop it.
 - Upgrade the server before the console: the console's mission-control Hermes tiles read the new
   `GET /api/v1/hermes/summary` and show "Hermes Agent data unavailable" against an older server.
 
 ### Added
+
+- HiveSkills executor routes (`/api/v1/hiveskills/jobs/:id`, `/api/v1/hiveskills/targets/:target`)
+  accept an Oathweave client-credentials token: audience `magnus`, the permission
+  `magnus:hiveskills`, a service principal only, from a client linked in
+  `MAGNUS_OATHWEAVE_IDENTITIES_JSON` with the new role `HIVESKILLS_SERVICE` whose `localUserId` names
+  the registry in `MAGNUS_HIVESKILLS_DEPLOYMENTS_JSON`. A person's token, an Ardent service client,
+  another audience, a missing permission or a registry without a grant is refused before anything is
+  admitted, and a refused Oathweave token is never tried as the static credential. The link reaches
+  no other route. The audit actor stays `service:hiveskills:<registryId>`, so jobs admitted with
+  either credential reconcile with the other; `skill.push` records `authentication` (`oathweave`
+  with the client ID, or `static`). `tokenSha256` is now optional, so a registry can rely on
+  Oathweave alone ([server README](services/control-api/README.md#hiveskills-execution-bridge)).
+- `@hivemagnus/magnus-oathweave`: `isServiceLink` and `OATHWEAVE_SERVICE_LINK_ROLES`. A person never
+  authenticates or acts (`x-acting-subject`) through any service link.
 
 - `POST /api/v1/commands/{commandId}/reconcile-resource` takes an ADMIN's decision
   `{ disposition: effects_verified | no_effect_verified, reason }` for any command that is not an
@@ -72,8 +90,16 @@ migration, and no new setting.
   `GET /api/v1/hermes/summary`, from this release. The rest of `/heartbeat` and `/discovery` stays
   machine-only.
 
+### Deprecated
+
+- The static HiveSkills executor bearer (`tokenSha256` in `MAGNUS_HIVESKILLS_DEPLOYMENTS_JSON`).
+  It keeps working beside an Oathweave link; the server logs a warning the first time each registry
+  uses it.
+
 ### Fixed
 
+- HiveSkills executor routes refuse a target or a registry named like an inherited object property
+  (`constructor`, for example) with 403 instead of an internal error.
 - Agent: a supervised agent refuses a command it cannot prove finished (no completion registry
   entry, or a registered command without its fence) before its ledger claim, before the mutation
   barrier records anything and before the server is asked to confirm the claim. A managed request
@@ -81,6 +107,23 @@ migration, and no new setting.
   and records the command as failed with nothing run, instead of keeping an `unknown` lease that
   blocks every later Ardent action and the activation quiescence check. No transient unit is
   started, so none is left to hold a later enrollment drain at `supervisor-unverified`.
+- Console accessibility (found by the new axe scan): icon-only buttons on the nodes, node detail and
+  operations pages have names; the file, log and audit pickers have labels; muted text, the sidebar
+  version and the remediation buttons meet WCAG AA contrast; a meter without a value is no longer
+  announced as a meter; the security page no longer nests a second `main` landmark; the file path
+  picker is a keyboard-reachable button; node software versions sit in a description list.
+- Agent docs: the privileged unit's omitted `ProtectKernelModules`, `ProtectClock` and `MemoryMax`
+  are explained precisely (they are no boundary for a root agent and would break kernel upgrades,
+  GPU collection and running commands), and `PrivateTmp` is described as it works: commands the
+  agent starts share its private `/tmp`, emptied on restart, while supervised commands, Embermend
+  actions and Codex updates run in their own units with the host `/tmp`.
+
+### Changed
+
+- Console CI: the browser suite also runs the sign-in, navigation, overview, API docs and webhook
+  specs, a sign-in lockout test (five wrong passwords, then even the right one gets `429` with
+  `Retry-After` until the window ends) and an axe-core (`@axe-core/playwright` 4.14.0) WCAG 2.1 AA
+  scan of 28 console pages and the command palette that fails on serious or critical findings.
 
 ## [3.6.0] - 2026-11-28
 

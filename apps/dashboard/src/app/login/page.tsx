@@ -106,7 +106,7 @@ export default function LoginPage(): React.ReactElement {
           </button>
         </form>
 
-        <p className="mt-4 text-center text-xs text-text-muted/50">
+        <p className="mt-4 text-center text-xs text-text-muted">
           Secure access required
         </p>
       </div>
