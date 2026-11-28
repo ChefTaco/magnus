@@ -9,8 +9,9 @@ All notable changes to this project are documented in this file. The format is b
 
 A supervised agent no longer leaves an unknown command owner behind when it refuses a command, and
 an ADMIN can settle an unknown non-Ardent command from the API and the console. The OpenAPI document
-covers every route, and the console's mission-control Hermes counts come from a new ADMIN route. No
-migration, and no new setting.
+covers every route, and the console's mission-control Hermes counts come from a new ADMIN route. The
+standalone console re-encrypts control-node credentials left under the legacy `JWT_SECRET`-derived
+key when it starts. No migration, and no new setting.
 
 ### Upgrade notes
 
@@ -48,6 +49,15 @@ migration, and no new setting.
 - `@hivemagnus/magnus-oathweave`: `isServiceLink` and `OATHWEAVE_SERVICE_LINK_ROLES`. A person never
   authenticates or acts (`x-acting-subject`) through any service link.
 
+- **Console: legacy control-node credentials are re-encrypted at start.** Saved control-node API
+  secrets and tokens still encrypted under the old `JWT_SECRET`-derived key (and any never
+  encrypted) are re-encrypted under `CONTROL_NODE_CREDENTIAL_KEY` before the console serves a
+  request: idempotent, after a `0600` backup of `.magnus/control-nodes.json`, verified by
+  decrypting every new value, written atomically and logged without values. A value that does not
+  decrypt leaves the file unchanged, and the console keeps reading it as before. `magnus-ui
+  credentials` counts what remains (exit 1 while any legacy value does), `--reencrypt` runs the
+  step without a restart, and `magnus-ui check` warns about it
+  ([UPGRADING.md](UPGRADING.md#unreleased-legacy-control-node-credentials-re-encrypted-at-console-start)).
 - `POST /api/v1/commands/{commandId}/reconcile-resource` takes an ADMIN's decision
   `{ disposition: effects_verified | no_effect_verified, reason }` for any command that is not an
   Ardent action, as the Ardent `command-reconcile` action does for Ardent actions: the node's own
