@@ -6,8 +6,6 @@
  * integration never blocks the server from starting.
  */
 export interface FeatureFlags {
-  /** Deprecated external IAM mode verifies RS256 access tokens (`IAM_CORE_URL`). */
-  iam: boolean;
   /** Oathweave resource tokens authenticate the browser console (`OATHWEAVE_ISSUER`). */
   oathweave: boolean;
   /** Hermes Agent pages in the browser console (`MAGNUS_HERMES_ENABLED`). */
@@ -37,7 +35,6 @@ const truthy = (value: string | undefined) => (value ?? '').trim().toLowerCase()
 export function featureFlags(env: NodeJS.ProcessEnv = process.env): FeatureFlags {
   const mode = env['SECURITY_FUSION_MODE'];
   return {
-    iam: Boolean(env['IAM_CORE_URL']),
     oathweave: Boolean(env['OATHWEAVE_ISSUER']),
     hermes: truthy(env['MAGNUS_HERMES_ENABLED']),
     router: Boolean(env['MAGNUS_ROUTER_URL'] || env['HIVE_ROUTER_URL']),

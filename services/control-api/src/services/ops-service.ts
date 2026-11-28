@@ -2,7 +2,7 @@ import { statfs } from 'node:fs/promises';
 import { getDb } from '../db/index.js';
 import { getRedis } from '../queue/redis.js';
 import { withReadRetry } from '../db/read-retry.js';
-import { API_SECRET, IAM_CORE_URL, getNodeManagerSecret, getValidatedEnv } from '../utils/env.js';
+import { API_SECRET, getNodeManagerSecret, getValidatedEnv } from '../utils/env.js';
 import { secretFingerprint } from './credential-rotation-service.js';
 import { queryAuditEvents } from './audit-service.js';
 import { getRateLimitHealth } from '../middleware/rate-limit.js';
@@ -129,10 +129,6 @@ export async function getDependencyHealth(): Promise<{
   checks.push(await checkHttp(
     'hivemem',
     env.HIVEMEM_URL ? `${env.HIVEMEM_URL.replace(/\/+$/, '')}/health` : undefined,
-  ));
-  checks.push(await checkHttp(
-    'hive-iam-verifier',
-    IAM_CORE_URL ? `${IAM_CORE_URL.replace(/\/+$/, '')}/api/v1/auth/public-key` : undefined,
   ));
 
   const hermesResult = await timed(async () => db.hermesInstallation.count());
@@ -398,7 +394,6 @@ export async function getTraceDependencyMap(): Promise<Record<string, unknown>> 
       { from: 'control-api', to: 'redis', status: health.checks.find((c) => c.name === 'redis')?.status },
       { from: 'control-api', to: 'hive-router', status: health.checks.find((c) => c.name === 'hive-router')?.status },
       { from: 'control-api', to: 'hivemem', status: health.checks.find((c) => c.name === 'hivemem')?.status },
-      { from: 'control-api', to: 'hive-iam', status: health.checks.find((c) => c.name === 'hive-iam-verifier')?.status },
       { from: 'agent', to: 'hermes-cli', source: 'node-local reconciliation' },
     ],
     notes: [

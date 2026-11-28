@@ -39,7 +39,7 @@ applies to `CLAUDE.local.md`.
 4. **Integrations stay optional.** Oathweave, Emberpath, HiveMem, an external security console,
    Hermes Agent and Codex are optional. When one is not configured, the feature is off and
    everything else keeps working. Never hard-code their URLs. Some of their settings keep the
-   products' former names (Hive IAM, Hive Router): `HIVE_OAUTH_*`, `HIVE_ROUTER_*`, `IAM_*`.
+   products' former names (Hive IAM, Hive Router): `HIVE_OAUTH_*`, `HIVE_ROUTER_*`.
    Call the products by their current names, but never rename a variable operators set.
 5. **Keep commit messages and PR text generic.** Describe what changed in the code. Don't mention
    private machines, private projects, customers, or internal program names.

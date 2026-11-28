@@ -13,7 +13,6 @@ import {
   updateUserSchema,
   changePasswordSchema,
 } from '../schemas/users.js';
-import { IAM_CORE_URL } from '../utils/env.js';
 import { heartbeatPeerAddress } from '../utils/heartbeat-peer.js';
 import { passwordSessionStamp } from '../middleware/user-status.js';
 
@@ -31,11 +30,6 @@ export const authRouter = new Hono<AppVariables>();
 // ─── Auth: POST /auth/login (local Magnus HS256 mode) ──────────────────────
 
 authRouter.post('/login', async (c) => {
-  // Login is available when Magnus is using its local dashboard/API auth mode.
-  if (IAM_CORE_URL) {
-    throw new HttpError(404, 'NOT_FOUND', 'Login endpoint is not available in IAM mode');
-  }
-
   const body = await parseBody(c, loginSchema);
   const db = getDb();
 
@@ -281,7 +275,7 @@ usersRouter.put('/:id/password', async (c) => {
   });
 
   // The caller's own session ended with the old password; hand it a fresh one.
-  if (isSelf && !IAM_CORE_URL && caller.sessionStamp !== undefined) {
+  if (isSelf && caller.sessionStamp !== undefined) {
     const token = await signUserToken({ userId: user.id, email: user.email, role: user.role, sessionStamp: passwordSessionStamp(newHash) });
     return c.json({ success: true, token });
   }

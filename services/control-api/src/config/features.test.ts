@@ -11,15 +11,15 @@ afterEach(() => vi.unstubAllEnvs());
 
 describe('optional integrations default to off', () => {
   it('reports nothing enabled for an empty environment', () => {
-    expect(featureFlags({})).toEqual({ iam: false, oathweave: false, hermes: false, router: false, hivemem: false, securityFusion: 'off',
+    expect(featureFlags({})).toEqual({ oathweave: false, hermes: false, router: false, hivemem: false, securityFusion: 'off',
       securityConsoleUrl: null, pluginApi: false, hermesRegistry: false, resourceLeases: false, agentDiscovery: false, fleetGateway: false });
   });
 
   it('turns each integration on from its own variables', () => {
-    expect(featureFlags({ IAM_CORE_URL: 'https://iam.example.com', HIVE_ROUTER_URL: 'https://router.example.com',
+    expect(featureFlags({ OATHWEAVE_ISSUER: 'https://identity.example.com', HIVE_ROUTER_URL: 'https://router.example.com',
       HIVEMEM_URL: 'https://mem.example.com', SECURITY_FUSION_MODE: 'remote',
       MAGNUS_SECURITY_CONSOLE_URL: 'https://security.example.com', MAGNUS_PLUGIN_API_ENABLED: 'true' }))
-      .toMatchObject({ iam: true, router: true, hivemem: true, securityFusion: 'remote',
+      .toMatchObject({ oathweave: true, router: true, hivemem: true, securityFusion: 'remote',
         securityConsoleUrl: 'https://security.example.com', pluginApi: true });
   });
 

@@ -22,6 +22,14 @@ key when it starts. No migration, and no new setting.
   any such value remains; the 3.x console re-encrypts them when it starts. Unencrypted values from
   very old releases are still encrypted at start
   ([UPGRADING.md](UPGRADING.md#400-breaking-unreleased-the-console-reads-control-node-credentials-only-with-control_node_credential_key)).
+- **Server: the external IAM mode (`IAM_CORE_URL`) is gone**, as announced in 3.6.0. The RS256
+  verifier for IAM-issued access tokens (`middleware/iam-token.ts`), its public-key fetch and role
+  mapping, `IAM_TOKEN_ISSUER`/`IAM_TOKEN_AUDIENCE`, the `hive-iam-verifier` health check and the
+  `iam` feature flag are removed. The server **refuses to start while `IAM_CORE_URL` is set**,
+  naming the Oathweave settings that replace it, instead of silently refusing every IAM token.
+  `JWT_SECRET` is now always required, and `POST /api/v1/auth/login` is always available.
+  `magnus-server check` lists `Oathweave` instead
+  ([UPGRADING.md](UPGRADING.md#400-breaking-unreleased-external-iam-mode-removed)).
 
 ### Upgrade notes
 
@@ -161,9 +169,9 @@ key when it starts. No migration, and no new setting.
   machine-only.
 - Documentation, env examples and CLI output call the integrations by their current names:
   Oathweave (formerly Hive IAM) and Emberpath (formerly Hive Router). `magnus-server check` lists
-  `External IAM` (marked deprecated when on) and `Model router`, and `magnus-ui check` lists
-  `Emberpath admin (deprecated)` and `OIDC login`. No variable is renamed: `HIVE_OAUTH_*`,
-  `HIVE_ROUTER_*` and `IAM_*` keep working, as does the `hive-router` application-probe kind.
+  `Oathweave` and `Model router`, and `magnus-ui check` lists `Emberpath admin (deprecated)` and
+  `OIDC login`. No variable is renamed: `HIVE_OAUTH_*` and `HIVE_ROUTER_*` keep working, as does the
+  `hive-router` application-probe kind.
 - Console CI: the browser suite also runs the sign-in, navigation, overview, API docs and webhook
   specs, a sign-in lockout test (five wrong passwords, then even the right one gets `429` with
   `Retry-After` until the window ends) and an axe-core (`@axe-core/playwright` 4.14.0) WCAG 2.1 AA

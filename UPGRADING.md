@@ -44,6 +44,22 @@ the upgrade switches back to the 3.x release, which still reads them. After the 
 console's environment; the server still uses its own `JWT_SECRET`. The re-encryption tool
 `apps/dashboard/scripts/migrate-control-node-credentials.mjs` also refuses legacy values now.
 
+## 4.0.0 (breaking, unreleased): external IAM mode removed
+
+The external IAM mode deprecated in 3.6.0 is gone. A server with `IAM_CORE_URL` set refuses to
+start:
+
+```text
+IAM_CORE_URL (external IAM token verification) was removed in Magnus 4.0.0; configure Oathweave mode …
+```
+
+Before upgrading, move to Oathweave mode: set `OATHWEAVE_ISSUER`, `OATHWEAVE_JWKS_URL`,
+`OATHWEAVE_USERINFO_URL` and `MAGNUS_OATHWEAVE_IDENTITIES_JSON` (one exact issuer and subject link
+per person; see [the console API](docs/console-api.md#authentication)), then remove `IAM_CORE_URL`,
+`IAM_TOKEN_ISSUER` and `IAM_TOKEN_AUDIENCE`. Set a dedicated `JWT_SECRET` (32+ characters) if the
+server ran without one: it is now always required for local user tokens. Local logins keep working
+throughout. `x-api-secret` and service credentials are unchanged.
+
 ## Unreleased: refused commands and non-Ardent reconciliation
 
 Upgrade the node agents first, then the server and console. No setting or migration changes.

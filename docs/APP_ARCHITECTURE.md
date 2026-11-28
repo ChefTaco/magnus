@@ -145,9 +145,10 @@ Prometheus metrics are served at `/metrics` behind `METRICS_TOKEN`. Request logs
 and SSH execution logs redact values that look like secrets. Set `OTEL_EXPORTER_OTLP_ENDPOINT` to
 export traces over OTLP HTTP. See [observability](OBSERVABILITY.md).
 
-Authentication uses local users with server-issued JWTs by default. When `IAM_CORE_URL`,
-`IAM_TOKEN_ISSUER` and `IAM_TOKEN_AUDIENCE` are set, RS256 access tokens issued by that external IAM
-(Oathweave, formerly Hive IAM) are accepted instead (deprecated, removed in 4.0.0; Oathweave mode with `OATHWEAVE_ISSUER` replaces it). Services that call the server (a collector, a Hermes plugin, an approval
+Authentication uses local users with server-issued JWTs. When the Oathweave settings are present,
+Oathweave resource tokens are accepted as well. The external IAM mode (`IAM_CORE_URL`) was removed
+in 4.0.0, and the server refuses to start while `IAM_CORE_URL` is set.
+Services that call the server (a collector, a Hermes plugin, an approval
 bridge) get their own scoped credentials, which the server stores only as SHA-256 digests.
 
 ## Agent
