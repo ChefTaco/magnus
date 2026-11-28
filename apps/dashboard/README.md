@@ -81,6 +81,26 @@ Runtime state (the control-node registry, Hermes SSH bindings, terminal audit an
 authentication audit log) is written under the data directory, mostly in `.magnus/`. Keep it on
 persistent storage and readable only by the service account.
 
+### Stored control-node credentials
+
+The control-node registry (`.magnus/control-nodes.json`) keeps each saved node's API secret and
+token encrypted under `CONTROL_NODE_CREDENTIAL_KEY`. Entries saved by releases before that key
+existed are encrypted under a key derived from `JWT_SECRET` (or `SESSION_SECRET`). At every start
+the console re-encrypts those under `CONTROL_NODE_CREDENTIAL_KEY` before it serves a request: it
+first copies the file to `control-nodes.json.legacy-key-backup-<time>` (mode `0600`), checks every
+new value by decrypting it, replaces the file atomically and logs how many it changed. When there
+is nothing to change it does nothing. If a legacy value does not decrypt (the `JWT_SECRET` it was
+saved under is gone), the file is left as it is and the console logs why.
+
+```bash
+magnus-ui credentials --env-file /etc/magnus-ui/magnus-ui.env --data-dir /var/lib/magnus-ui              # count; exit 1 while legacy values remain
+magnus-ui credentials --reencrypt --env-file /etc/magnus-ui/magnus-ui.env --data-dir /var/lib/magnus-ui  # re-encrypt now, without a restart
+```
+
+`magnus-ui check` warns while legacy values remain. The legacy key is read only for this; the next
+major release drops it and refuses to start while any legacy value remains. Delete the backup once
+the console has read its control nodes without errors.
+
 ### systemd
 
 `deploy/magnus-ui.service` in the package is an example unit that runs `magnus-ui start` as a

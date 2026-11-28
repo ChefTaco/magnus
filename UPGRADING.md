@@ -57,6 +57,28 @@ route from another site with the browser's cookies now get 403 `cross_site_reque
 Hermes terminal (PTY) now closes within 30 seconds of signing out. Bookmarks of a dashboard's frame
 URL (`…/_frame/<grant>/…`) stop working after 10 minutes; bookmark `/orchestra/web-gateway` instead.
 
+## Unreleased: legacy control-node credentials re-encrypted at console start
+
+Nothing to do for most installs. The standalone console (`magnus-ui`) now re-encrypts, when it
+starts, every saved control-node credential that is still encrypted under the old key derived from
+`JWT_SECRET` (or `SESSION_SECRET`), using `CONTROL_NODE_CREDENTIAL_KEY` instead. It copies
+`.magnus/control-nodes.json` to `control-nodes.json.legacy-key-backup-<time>` first and logs how
+many values it changed; a file with nothing to change is left alone. Keep `JWT_SECRET` in the
+console's environment until this has happened once.
+
+Check an install, before or after the upgrade:
+
+```bash
+magnus-ui credentials --env-file /etc/magnus-ui/magnus-ui.env --data-dir /var/lib/magnus-ui
+```
+
+It exits 1 while values remain under the legacy key; `--reencrypt` re-encrypts them without a
+restart. If the console logs that a value did not decrypt, set the `JWT_SECRET` it used when that
+node was saved and start it again, or remove and re-add that control node. The next major release
+reads only `CONTROL_NODE_CREDENTIAL_KEY` and refuses to start while legacy values remain, so run a
+release with this step before moving to it. Once the console has read its control nodes without
+errors, delete the backup.
+
 ## Version 3.6.0: HiveCommon 0.11.1, trusted proxies and Hive IAM deprecation
 
 If the server runs in Hive IAM mode (`IAM_CORE_URL`), make sure its access tokens carry a `jti`

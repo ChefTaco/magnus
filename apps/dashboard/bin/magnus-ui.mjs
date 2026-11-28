@@ -3,7 +3,8 @@
  * magnus-ui — run the prebuilt Magnus UI (Next.js standalone server).
  *
  *   magnus-ui [start] [--env-file FILE] [--port N] [--host ADDR] [--data-dir DIR]
- *   magnus-ui check [--env-file FILE]
+ *   magnus-ui check [--env-file FILE] [--data-dir DIR]
+ *   magnus-ui credentials [--reencrypt] [--env-file FILE] [--data-dir DIR]
  *   magnus-ui env-schema [--json]
  */
 import { spawn } from 'node:child_process';
@@ -20,6 +21,10 @@ const USAGE = `Usage: magnus-ui [command] [options]
 Commands:
   start         Start the Magnus UI server (default)
   check         Validate the configuration and list enabled integrations
+  credentials   Count stored control-node credentials still under the legacy
+                JWT_SECRET-derived key (exit 1 while any remain); with
+                --reencrypt, re-encrypt them under CONTROL_NODE_CREDENTIAL_KEY
+                (the console also does this when it starts)
   env-schema    Print every supported environment variable (--json for JSON)
 
 Options:
@@ -27,6 +32,7 @@ Options:
   --port N          Listen port (PORT, default 3000)
   --host ADDR       Listen address (HOST, default 0.0.0.0)
   --data-dir DIR    Runtime state directory (MAGNUS_UI_DATA_DIR, default: current directory)
+  --reencrypt       credentials: re-encrypt legacy values (backs up the file first)
   -h, --help        Show this help
   -v, --version     Print the version`;
 
@@ -136,8 +142,53 @@ async function printIntegrations(env) {
   }
 }
 
+function dataDirectory(env) {
+  return resolve(env.MAGNUS_UI_DATA_DIR?.trim() || process.cwd());
+}
+
+/**
+ * Warnings about stored control-node credentials in the data directory.
+ * @param {Record<string, string | undefined>} env
+ * @returns {Promise<string[]>}
+ */
+export async function credentialStorageWarnings(env) {
+  const { controlNodeStateFile, credentialsNeedReencryption, describeCredentialCounts, inspectControlNodeCredentials } = await runtimeModule('runtime-control-node-credentials.mjs');
+  try {
+    const counts = inspectControlNodeCredentials(controlNodeStateFile(dataDirectory(env)));
+    if (!credentialsNeedReencryption(counts)) return [];
+    return [`${describeCredentialCounts(counts)}; the console re-encrypts them when it starts, or run \`magnus-ui credentials --reencrypt\``];
+  } catch (error) {
+    return [`control-node credentials could not be inspected: ${error instanceof Error ? error.message : String(error)}`];
+  }
+}
+
+/**
+ * `magnus-ui credentials [--reencrypt]`: 0 when nothing remains under the legacy key, 1 otherwise.
+ * @param {Record<string, string | undefined>} env
+ * @param {Set<string>} flags
+ */
+export async function commandCredentials(env, flags) {
+  const credentials = await runtimeModule('runtime-control-node-credentials.mjs');
+  const file = credentials.controlNodeStateFile(dataDirectory(env));
+  try {
+    if (flags.has('--reencrypt')) {
+      const message = credentials.describeReencryption(credentials.reencryptLegacyControlNodeCredentials(file, env));
+      console.log(message ?? 'control-node credentials: nothing to re-encrypt');
+    }
+    const counts = credentials.inspectControlNodeCredentials(file);
+    console.log(credentials.describeCredentialCounts(counts));
+    if (!credentials.credentialsNeedReencryption(counts)) return 0;
+    console.error('Run `magnus-ui credentials --reencrypt` (or restart the console) to re-encrypt them under CONTROL_NODE_CREDENTIAL_KEY.');
+    return 1;
+  } catch (error) {
+    console.error(`magnus-ui: ${error instanceof Error ? error.message : String(error)}`);
+    return 1;
+  }
+}
+
 async function commandCheck(env) {
   const { errors, warnings } = await checkEnvironment(env);
+  warnings.push(...await credentialStorageWarnings(env));
   for (const warning of warnings) console.warn(`warning: ${warning}`);
   await printIntegrations(env);
   if (errors.length) {
@@ -176,7 +227,7 @@ async function commandStart(env) {
     for (const error of errors) console.error(`  - ${error}`);
     return 1;
   }
-  const dataDir = resolve(env.MAGNUS_UI_DATA_DIR?.trim() || process.cwd());
+  const dataDir = dataDirectory(env);
   const childEnv = {
     ...env,
     NODE_ENV: 'production',
@@ -219,6 +270,7 @@ async function main(argv) {
     return 2;
   }
   if (command === 'check') return commandCheck(env);
+  if (command === 'credentials') return commandCredentials(env, flags);
   if (command === 'start') return commandStart(env);
   console.error(`magnus-ui: unknown command "${command}"\n\n${USAGE}`);
   return 2;
