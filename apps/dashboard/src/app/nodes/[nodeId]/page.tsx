@@ -1217,20 +1217,22 @@ export default function NodeDetailPage(): React.ReactElement {
             title="Software Revisions"
             description="Major runtime versions and package update status"
             action={
-              <Button variant="ghost" size="sm" onClick={() => void loadSoftwareRevisions()}>
+              <Button variant="ghost" size="sm" onClick={() => void loadSoftwareRevisions()} aria-label="Refresh software revisions" title="Refresh">
                 <RotateCw className={`h-3.5 w-3.5 ${softwareLoading ? 'animate-spin' : ''}`} />
               </Button>
             }
           >
             <div className="space-y-2 text-sm">
-              {['node', 'npm', 'python3', 'redis', 'docker', 'tailscale', 'magnus-agent'].map((pkg) => (
-                <div key={pkg} className="flex items-start justify-between gap-2">
-                  <dt className="text-text-muted uppercase text-xs tracking-wide">{pkg}</dt>
-                  <dd className="font-mono text-right text-xs break-all">
-                    {softwareVersions[pkg] ?? (softwareLoading ? 'Loading…' : '—')}
-                  </dd>
-                </div>
-              ))}
+              <dl className="space-y-2">
+                {['node', 'npm', 'python3', 'redis', 'docker', 'tailscale', 'magnus-agent'].map((pkg) => (
+                  <div key={pkg} className="flex items-start justify-between gap-2">
+                    <dt className="text-text-muted uppercase text-xs tracking-wide">{pkg}</dt>
+                    <dd className="font-mono text-right text-xs break-all">
+                      {softwareVersions[pkg] ?? (softwareLoading ? 'Loading…' : '—')}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
               {softwareError && <p className="text-xs text-danger">{softwareError}</p>}
             </div>
 
@@ -1315,7 +1317,7 @@ export default function NodeDetailPage(): React.ReactElement {
                               : step.status === 'running'
                                 ? 'text-info'
                                 : step.status === 'skipped'
-                                  ? 'text-text-muted/50'
+                                  ? 'text-text-muted'
                                   : 'text-text-muted'
                         }
                       >
@@ -1327,7 +1329,7 @@ export default function NodeDetailPage(): React.ReactElement {
                       </span>
                       <span
                         className={
-                          step.status === 'skipped' ? 'text-text-muted/50 line-through' : ''
+                          step.status === 'skipped' ? 'text-text-muted line-through' : ''
                         }
                       >
                         {step.name}

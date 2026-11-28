@@ -148,11 +148,28 @@ per node. It does four things:
 
 The unit sets `NoNewPrivileges`, `PrivateTmp`, `LockPersonality`, `RestrictRealtime`,
 `SystemCallArchitectures=native`, `TasksMax=4096` and `UMask=0077` in both modes; `--unprivileged`
-adds the full `Protect*` set. `PrivateTmp` means the commands the agent runs see a private `/tmp`,
-not the host's. Privileged mode leaves out `ProtectKernelModules` (package upgrades the agent runs
-install kernel modules), `ProtectClock` (it limits device access, and GPU collection needs the GPU
-devices) and `MemoryMax` (it would cap every command); add them in a drop-in if a host does not need
-those. Re-run `install-service` to apply a newer unit to an existing node.
+adds the full `Protect*` set.
+
+`PrivateTmp` gives the agent, and every command it starts itself, a private `/tmp` and `/var/tmp`
+instead of the host's. Those commands share that one private `/tmp` with each other, and systemd
+empties it whenever the agent stops or restarts (a self-upgrade restarts it), so a command cannot
+leave a file in `/tmp` for other services, or keep one there across a restart. Work the agent hands
+to systemd as a transient unit of its own does not inherit this sandbox: supervised commands
+(`MAGNUS_EXECUTION_SUPERVISOR_ENABLED=true`), Embermend actions and Codex updates see the host
+`/tmp`, and managed terminals get a private one of their own.
+
+Privileged mode leaves three directives out on purpose. A root agent can start anything through
+systemd (it uses `systemd-run` itself), so inside its unit they would not be a security boundary;
+they would only break work the agent and its commands do:
+
+| Directive | What it would break |
+| --- | --- |
+| `ProtectKernelModules` | It hides `/usr/lib/modules` and blocks module loading, so a kernel or `linux-modules` upgrade, a DKMS build, `update-initramfs` or `modprobe` run as a command fails. |
+| `ProtectClock` | It implies `DeviceAllow=char-rtc r`, which allows only the pseudo devices (`/dev/null`, `/dev/urandom`, ...) and blocks the rest: NVIDIA GPU collection (`nvidia-smi` needs `/dev/nvidia*`) and commands that open disks or other hardware (`smartctl`, `dd` on a block device). It also blocks every clock system call, so `date -s` and `hwclock` fail. |
+| `MemoryMax` | The agent's cgroup also holds every command it runs and the self-upgrade's `npm` install. At the limit the kernel kills a process in it, and systemd's default `OOMPolicy=stop` then stops the whole unit, killing running commands (an `apt` transaction too). No single value fits every host. |
+
+If a host does not need these, add them in a drop-in (`systemctl edit magnus-agent`); for memory,
+`MemoryHigh=` slows the unit down at the limit instead of killing it. Re-run `install-service` to apply a newer unit to an existing node.
 
 After that, the server can upgrade the agent from the console's **Upgrade agents** action or with
 `magnus-server agents upgrade`, in five steps:

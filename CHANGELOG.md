@@ -74,6 +74,23 @@ no new setting.
   and records the command as failed with nothing run, instead of keeping an `unknown` lease that
   blocks every later Ardent action and the activation quiescence check. No transient unit is
   started, so none is left to hold a later enrollment drain at `supervisor-unverified`.
+- Console accessibility (found by the new axe scan): icon-only buttons on the nodes, node detail and
+  operations pages have names; the file, log and audit pickers have labels; muted text, the sidebar
+  version and the remediation buttons meet WCAG AA contrast; a meter without a value is no longer
+  announced as a meter; the security page no longer nests a second `main` landmark; the file path
+  picker is a keyboard-reachable button; node software versions sit in a description list.
+- Agent docs: the privileged unit's omitted `ProtectKernelModules`, `ProtectClock` and `MemoryMax`
+  are explained precisely (they are no boundary for a root agent and would break kernel upgrades,
+  GPU collection and running commands), and `PrivateTmp` is described as it works: commands the
+  agent starts share its private `/tmp`, emptied on restart, while supervised commands, Embermend
+  actions and Codex updates run in their own units with the host `/tmp`.
+
+### Changed
+
+- Console CI: the browser suite also runs the sign-in, navigation, overview, API docs and webhook
+  specs, a sign-in lockout test (five wrong passwords, then even the right one gets `429` with
+  `Retry-After` until the window ends) and an axe-core (`@axe-core/playwright` 4.14.0) WCAG 2.1 AA
+  scan of 28 console pages and the command palette that fails on serious or critical findings.
 
 ## [3.6.0] - 2026-11-28
 
