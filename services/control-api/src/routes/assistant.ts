@@ -74,33 +74,91 @@ assistantRouter.use('*', authMiddleware);
 
 const ownersOf = (c: Context<AppVariables>): string[] => conversationOwners(c.get('user'));
 
+const thinkingModeSchema = z.enum(['off', 'standard', 'deep']);
+const providerSchema = z.enum(['ollama', 'llamacpp', 'openai', 'anthropic', 'openrouter', 'emberpath']);
+const actorOf = (c: Context<AppVariables>): string => getUser(c).email || getUser(c).userId;
+
+/** POST /chat and /chat/stream. Tool rounds are clamped later (1..AI_MAX_TOOL_ROUNDS). */
+const chatSchema = z.object({
+  message: z.string().refine((value) => value.trim().length > 0, 'message is required'),
+  conversationId: z.string().min(1).max(128).optional(),
+  nodeId: z.string().min(1).max(128).optional(),
+  controlNodeName: z.string().max(200).optional(),
+  controlNodeId: z.string().max(128).optional(),
+  replMode: z.boolean().optional(),
+  thinkingMode: thinkingModeSchema.optional(),
+  maxToolRounds: z.number().int().optional(),
+  attachments: z.array(z.object({
+    type: z.literal('image'),
+    data: z.string().min(1),
+    mimeType: z.string().max(100).optional(),
+  })).max(10).optional(),
+});
+
+type ChatBody = z.infer<typeof chatSchema>;
+const attachmentsOf = (body: ChatBody) => body.attachments?.map((attachment) => ({
+  type: attachment.type, data: attachment.data, ...optional('mimeType', attachment.mimeType),
+}));
+
+const messagesReadSchema = z.object({
+  messageIds: z.array(z.string().min(1).max(128), 'messageIds array is required').min(1, 'messageIds array is required').max(500),
+});
+
+const heartbeatPromptSchema = z.object({
+  content: z.string('content is required').max(100_000).refine((value) => value.trim().length > 0, 'content is required'),
+});
+
+/**
+ * PATCH /settings. The console sends a partial AiSettings, which may echo the read-only fields
+ * (defaultModel, isCustomSystemPrompt, defaultSystemPrompt); unknown fields are dropped, not stored.
+ */
+const settingsSchema = z.object({
+  model: z.string().trim().min(1).max(200).optional(),
+  maxContextTokens: z.number().int().min(1).max(10_000_000).optional(),
+  systemPrompt: z.string().max(100_000).nullable().optional(),
+  thinkingMode: thinkingModeSchema.optional(),
+  showReasoning: z.boolean().optional(),
+  maxToolRounds: z.number().int().min(1).max(1000).optional(),
+  replEnabled: z.boolean().optional(),
+  structuredOutputsEnabled: z.boolean().optional(),
+});
+
+/** PATCH /model-profiles: routes by task type, as the console's updateModelProfiles() builds them. */
+const modelRouteSchema = z.object({
+  provider: providerSchema.optional(),
+  model: z.string().max(200),
+  fallbacks: z.array(z.object({ provider: providerSchema, model: z.string().min(1).max(200) })).max(10).nullish(),
+  temperature: z.number().min(0).max(2).optional(),
+  maxTokens: z.number().int().min(1).max(1_000_000).optional(),
+  maxToolRounds: z.number().int().min(1).max(1000).optional(),
+  thinkingMode: thinkingModeSchema.optional(),
+});
+const modelProfilesSchema = z.record(z.string().trim().min(1).max(100), modelRouteSchema)
+  .refine((routes) => Object.keys(routes).length <= 100, 'At most 100 model routes');
+
 /**
  * A conversation belongs to whoever started it. ADMIN gets no exception, because no
  * console feature reads other people's conversations. Someone else's answers 404,
  * so a caller cannot tell it exists.
  */
-async function requireConversation(c: Context<AppVariables>, id: string, level: 'read' | 'own' = 'own'): Promise<void> {
+async function requireConversation(c: Context<AppVariables>, id: string, level: 'read' | 'own' = 'own'): Promise<'owner' | 'shared'> {
   const access = await getConversationAccess(id, ownersOf(c));
   if (!access || (level === 'own' && access !== 'owner')) throw new HttpError(404, 'NOT_FOUND', 'Conversation not found');
+  return access;
+}
+
+/**
+ * Read state is a single flag on each message, not per user, so marking the shared heartbeat
+ * conversation read clears it for everyone. That is an operator's call, like resolving anomalies.
+ */
+function canClearSharedReadState(c: Context<AppVariables>): boolean {
+  const role = getUser(c).role;
+  return role === 'ADMIN' || role === 'OPERATOR';
 }
 
 // ── Send a chat message ──
 assistantRouter.post('/chat', requireRole('ADMIN', 'OPERATOR'), async (c) => {
-  const body = await c.req.json<{
-    message: string;
-    conversationId?: string;
-    nodeId?: string;
-    controlNodeName?: string;
-    controlNodeId?: string;
-    replMode?: boolean;
-    thinkingMode?: 'off' | 'standard' | 'deep';
-    maxToolRounds?: number;
-    attachments?: Array<{ type: 'image'; data: string; mimeType?: string }>;
-  }>();
-
-  if (!body.message?.trim()) {
-    throw new HttpError(400, 'VALIDATION_ERROR', 'message is required');
-  }
+  const body = await parseBody(c, chatSchema);
 
   // Build controller context from frontend-provided info
   let controllerContext: string | undefined;
@@ -113,7 +171,7 @@ assistantRouter.post('/chat', requireRole('ADMIN', 'OPERATOR'), async (c) => {
   if (body.conversationId) await requireConversation(c, body.conversationId);
 
   const user = c.get('user');
-  const result = await chat({ message: body.message, ...optional("conversationId", body.conversationId), ...optional("nodeId", body.nodeId), ...optional("controllerContext", controllerContext), type: 'chat', createdBy: user?.email ?? user?.userId ?? 'unknown', ...optional("userInfo", user ? { email: user.email, role: user.role, username: user.userId } : undefined), ...optional("replMode", body.replMode), ...optional("thinkingMode", body.thinkingMode), ...optional("maxToolRounds", body.maxToolRounds), ...optional("attachments", body.attachments) });
+  const result = await chat({ message: body.message, ...optional("conversationId", body.conversationId), ...optional("nodeId", body.nodeId), ...optional("controllerContext", controllerContext), type: 'chat', createdBy: user?.email ?? user?.userId ?? 'unknown', ...optional("userInfo", user ? { email: user.email, role: user.role, username: user.userId } : undefined), ...optional("replMode", body.replMode), ...optional("thinkingMode", body.thinkingMode), ...optional("maxToolRounds", body.maxToolRounds), ...optional("attachments", attachmentsOf(body)) });
 
   return c.json({ success: true, data: result });
 });
@@ -200,7 +258,11 @@ assistantRouter.get('/shares/:token', async (c) => {
 // ── Mark conversation as read ──
 assistantRouter.post('/conversations/:id/read', async (c) => {
   const id = c.req.param('id')!;
-  await requireConversation(c, id, 'read');
+  const access = await requireConversation(c, id, 'read');
+  // Read state is one flag per message, shared by everyone; only an operator may clear it on the shared heartbeat.
+  if (access === 'shared' && !canClearSharedReadState(c)) {
+    throw new HttpError(403, 'FORBIDDEN', 'Requires one of: ADMIN, OPERATOR to mark the shared heartbeat conversation read');
+  }
   const count = await markConversationRead(id);
   return c.json({ success: true, data: { marked: count } });
 });
@@ -225,11 +287,9 @@ assistantRouter.get('/unread', async (c) => {
 
 // ── Mark specific messages as read ──
 assistantRouter.post('/messages/read', async (c) => {
-  const body = await c.req.json<{ messageIds: string[] }>();
-  if (!body.messageIds?.length) {
-    throw new HttpError(400, 'VALIDATION_ERROR', 'messageIds array is required');
-  }
-  const count = await markAiMessagesRead(body.messageIds, ownersOf(c));
+  const body = await parseBody(c, messagesReadSchema);
+  // Read state is one flag per message, shared by everyone; only an operator may clear it on the shared heartbeat.
+  const count = await markAiMessagesRead(body.messageIds, ownersOf(c), { includeShared: canClearSharedReadState(c) });
   return c.json({ success: true, data: { marked: count } });
 });
 
@@ -253,16 +313,20 @@ assistantRouter.get('/heartbeat-prompt', async (c) => {
 });
 
 assistantRouter.put('/heartbeat-prompt', requireRole('ADMIN'), async (c) => {
-  const body = await c.req.json<{ content: string }>();
-  if (!body.content?.trim()) {
-    throw new HttpError(400, 'VALIDATION_ERROR', 'content is required');
-  }
+  const body = await parseBody(c, heartbeatPromptSchema);
   await updateHeartbeatPrompt(body.content);
+  await logAuditEvent({
+    action: 'assistant.heartbeat_prompt.update', actorId: actorOf(c), targetType: 'assistant-setting', targetId: 'heartbeat_prompt',
+    details: { length: body.content.length },
+  });
   return c.json({ success: true });
 });
 
 assistantRouter.delete('/heartbeat-prompt', requireRole('ADMIN'), async (c) => {
   await resetHeartbeatPrompt();
+  await logAuditEvent({
+    action: 'assistant.heartbeat_prompt.reset', actorId: actorOf(c), targetType: 'assistant-setting', targetId: 'heartbeat_prompt',
+  });
   return c.json({ success: true });
 });
 
@@ -287,17 +351,18 @@ assistantRouter.get('/settings', async (c) => {
 });
 
 assistantRouter.patch('/settings', requireRole('ADMIN'), async (c) => {
-  const body = await c.req.json<{
-    model?: string;
-    maxContextTokens?: number;
-    systemPrompt?: string | null;
-    thinkingMode?: 'off' | 'standard' | 'deep';
-    showReasoning?: boolean;
-    maxToolRounds?: number;
-    replEnabled?: boolean;
-    structuredOutputsEnabled?: boolean;
-  }>();
-  await updateAiSettings(body);
+  const body = await parseBody(c, settingsSchema);
+  const changes = Object.fromEntries(Object.entries(body).filter(([, value]) => value !== undefined)) as Parameters<typeof updateAiSettings>[0];
+  await updateAiSettings(changes);
+  await logAuditEvent({
+    action: 'assistant.settings.update', actorId: actorOf(c), targetType: 'assistant-setting', targetId: 'ai_settings',
+    // The system prompt is free text: record that it changed, not what it says.
+    details: {
+      changedFields: Object.keys(changes).sort(),
+      ...Object.fromEntries(Object.entries(changes).filter(([key]) => key !== 'systemPrompt')),
+      ...('systemPrompt' in changes ? { systemPromptCustom: changes.systemPrompt !== null } : {}),
+    },
+  });
   const settings = await getAiSettings();
   return c.json({ success: true, data: settings });
 });
@@ -305,21 +370,7 @@ assistantRouter.patch('/settings', requireRole('ADMIN'), async (c) => {
 // ── Streaming chat (SSE) ──
 
 assistantRouter.post('/chat/stream', requireRole('ADMIN', 'OPERATOR'), async (c) => {
-  const body = await c.req.json<{
-    message: string;
-    conversationId?: string;
-    nodeId?: string;
-    controlNodeName?: string;
-    controlNodeId?: string;
-    replMode?: boolean;
-    thinkingMode?: 'off' | 'standard' | 'deep';
-    maxToolRounds?: number;
-    attachments?: Array<{ type: 'image'; data: string; mimeType?: string }>;
-  }>();
-
-  if (!body.message?.trim()) {
-    throw new HttpError(400, 'VALIDATION_ERROR', 'message is required');
-  }
+  const body = await parseBody(c, chatSchema);
 
   let controllerContext: string | undefined;
   if (body.controlNodeName) {
@@ -334,7 +385,7 @@ assistantRouter.post('/chat/stream', requireRole('ADMIN', 'OPERATOR'), async (c)
 
   return streamSSE(c, async (stream) => {
     try {
-      await chatStream({ message: body.message, ...optional("conversationId", body.conversationId), ...optional("nodeId", body.nodeId), ...optional("controllerContext", controllerContext), type: 'chat', createdBy: user?.email ?? user?.userId ?? 'unknown', ...optional("userInfo", user ? { email: user.email, role: user.role, username: user.userId } : undefined), ...optional("replMode", body.replMode), ...optional("thinkingMode", body.thinkingMode), ...optional("maxToolRounds", body.maxToolRounds), ...optional("attachments", body.attachments) }, async (event) => {
+      await chatStream({ message: body.message, ...optional("conversationId", body.conversationId), ...optional("nodeId", body.nodeId), ...optional("controllerContext", controllerContext), type: 'chat', createdBy: user?.email ?? user?.userId ?? 'unknown', ...optional("userInfo", user ? { email: user.email, role: user.role, username: user.userId } : undefined), ...optional("replMode", body.replMode), ...optional("thinkingMode", body.thinkingMode), ...optional("maxToolRounds", body.maxToolRounds), ...optional("attachments", attachmentsOf(body)) }, async (event) => {
         await stream.writeSSE({
           event: event.event,
           data: JSON.stringify(event.data),
@@ -545,29 +596,22 @@ assistantRouter.get('/model-profiles', async (c) => {
 });
 
 assistantRouter.patch('/model-profiles', requireRole('ADMIN'), async (c) => {
-  const body = await c.req.json<Record<string, {
-    provider?: 'ollama' | 'llamacpp' | 'openai' | 'anthropic' | 'openrouter' | 'emberpath';
-    model: string;
-    fallbacks?: Array<{
-      provider: 'ollama' | 'llamacpp' | 'openai' | 'anthropic' | 'openrouter' | 'emberpath';
-      model: string;
-    }>;
-    temperature?: number;
-    maxTokens?: number;
-    maxToolRounds?: number;
-    thinkingMode?: 'off' | 'standard' | 'deep';
-  }>>();
+  const body = await parseBody(c, modelProfilesSchema);
   const profilesArray = Object.entries(body).map(([taskType, p]) => ({
     taskType,
     ...optional("provider", p.provider),
     model: p.model,
-    ...optional("fallbacks", Array.isArray(p.fallbacks) ? p.fallbacks : undefined),
+    ...optional("fallbacks", p.fallbacks ?? undefined),
     temperature: p.temperature ?? 0.3,
     maxTokens: p.maxTokens ?? 4096,
     ...optional("maxToolRounds", p.maxToolRounds),
     ...optional("thinkingMode", p.thinkingMode),
   }));
   await updateModelProfiles(profilesArray);
+  await logAuditEvent({
+    action: 'assistant.model_profiles.update', actorId: actorOf(c), targetType: 'assistant-setting', targetId: 'ai_model_routes',
+    details: { routes: profilesArray.map((p) => ({ taskType: p.taskType, provider: p.provider ?? 'ollama', model: p.model })) },
+  });
   const profiles = await getModelProfiles();
   return c.json({ success: true, data: profiles });
 });

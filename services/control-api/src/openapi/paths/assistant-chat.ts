@@ -11,6 +11,8 @@ const err413 = errorResponse('Request body larger than API_BODY_LIMIT_BYTES (def
 const WRITE = 'Roles: ADMIN, OPERATOR.';
 const OWN = 'Only the conversation\'s owner (the user who started it); any other conversation answers 404, so a caller cannot tell it exists. ADMIN has no exception.';
 const READ = 'The owner, or any caller for the server\'s shared heartbeat conversation (`createdBy: system`, `type: heartbeat`); any other conversation answers 404.';
+const SHARED_READ_STATE = 'Read state is one flag per message, shared by every user, so only ADMIN and OPERATOR may mark the shared heartbeat conversation read.';
+const err400Json = { ...err400, description: 'Not JSON, or a field fails validation (`VALIDATION_ERROR`)' };
 const conversationId = pp('id', 'Conversation ID');
 const messageId = pp('id', 'Assistant message ID');
 
@@ -29,15 +31,15 @@ const chatResponse: JsonSchema = { type: 'object', required: ['conversationId', 
 } };
 const chatRequest: JsonSchema = { type: 'object', required: ['message'], properties: {
   message: { type: 'string', minLength: 1, description: 'Must contain non-whitespace text' },
-  conversationId: { type: 'string', description: 'Continue this conversation; it must be the caller\'s own (404 otherwise). Omitted: a new conversation is created for the caller.' },
-  nodeId: { type: 'string', description: 'Node the new conversation is about' },
-  controlNodeName: { type: 'string', description: 'Display name of the control node, added to the system prompt' },
-  controlNodeId: { type: 'string' },
+  conversationId: { type: 'string', minLength: 1, maxLength: 128, description: 'Continue this conversation; it must be the caller\'s own (404 otherwise). Omitted: a new conversation is created for the caller.' },
+  nodeId: { type: 'string', minLength: 1, maxLength: 128, description: 'Node the new conversation is about' },
+  controlNodeName: { type: 'string', maxLength: 200, description: 'Display name of the control node, added to the system prompt' },
+  controlNodeId: { type: 'string', maxLength: 128 },
   replMode: { type: 'boolean' },
   thinkingMode: { type: 'string', enum: ['off', 'standard', 'deep'] },
   maxToolRounds: { type: 'integer', description: 'Clamped to 1..AI_MAX_TOOL_ROUNDS (default 100); default from the AI settings or the chat model profile' },
-  attachments: { type: 'array', items: { type: 'object', required: ['type', 'data'], properties: {
-    type: { type: 'string', enum: ['image'] }, data: { type: 'string', description: 'Base64 image data' }, mimeType: { type: 'string' } } } },
+  attachments: { type: 'array', maxItems: 10, items: { type: 'object', required: ['type', 'data'], properties: {
+    type: { type: 'string', enum: ['image'] }, data: { type: 'string', minLength: 1, description: 'Base64 image data' }, mimeType: { type: 'string', maxLength: 100 } } } },
 } };
 const message: JsonSchema = { type: 'object', properties: {
   id: { type: 'string' }, conversationId: { type: 'string' }, role: { type: 'string', enum: ['system', 'user', 'assistant', 'tool'] },
@@ -55,7 +57,7 @@ export const paths: Paths = {
     post: { tags: TAGS, summary: 'Send a message to the fleet assistant and wait for its answer',
       description: `${WRITE} Runs tool calls in the same request; a tool that needs approval leaves \`pendingApproval\` on the answer. Fails with 500 when no model provider answers.`,
       security: userAuth, requestBody: inlineBody(chatRequest),
-      responses: { 200: success('Assistant answer', chatResponse), 400: err400, 401: err401, 403: err403, 404: err404, 413: err413 } },
+      responses: { 200: success('Assistant answer', chatResponse), 400: err400Json, 401: err401, 403: err403, 404: err404, 413: err413 } },
   },
   '/assistant/chat/stream': {
     post: { tags: TAGS, summary: 'Send a message to the fleet assistant and stream its answer',
@@ -64,7 +66,7 @@ export const paths: Paths = {
         '`scratchpad_update` {entries}, `token` {text}, `done` {conversationId, messageId, tokenCount} and `error`. A provider failure inside the stream is an ' +
         '`error` event with {message}; a failure of the stream itself is an `error` event with {type: "error", error}.',
       security: userAuth, requestBody: inlineBody(chatRequest),
-      responses: { 200: eventStream('Server-sent events'), 400: err400, 401: err401, 403: err403, 404: err404, 413: err413 } },
+      responses: { 200: eventStream('Server-sent events'), 400: err400Json, 401: err401, 403: err403, 404: err404, 413: err413 } },
   },
   '/assistant/conversations': {
     get: browserOperation('GET', '/assistant/conversations', { tags: TAGS, summary: 'List the caller\'s conversations',
@@ -110,8 +112,9 @@ export const paths: Paths = {
       responses: { 200: success('Cleared'), 401: err401, 403: err403, 404: err404 } },
   },
   '/assistant/conversations/{id}/read': {
-    post: { tags: TAGS, summary: 'Mark a conversation\'s assistant messages read', description: `Any role. ${READ}`, security: userAuth, parameters: [conversationId],
-      responses: { 200: marked, 401: err401, 404: err404 } },
+    post: { tags: TAGS, summary: 'Mark a conversation\'s assistant messages read', description: `Any role for the caller's own conversation. ${READ} ${SHARED_READ_STATE} A VIEWER gets 403 there.`,
+      security: userAuth, parameters: [conversationId],
+      responses: { 200: marked, 401: err401, 403: { ...err403, description: 'A VIEWER marking the shared heartbeat conversation read' }, 404: err404 } },
   },
   '/assistant/conversations/{id}/archive': {
     post: { tags: TAGS, summary: 'Archive a conversation', description: `${WRITE} ${OWN} Sets its status to \`archived\`.`, security: userAuth, parameters: [conversationId],
@@ -133,9 +136,11 @@ export const paths: Paths = {
       security: userAuth, responses: { 200: success('Unread count', { type: 'object', properties: { unread: { type: 'integer' } } }), 401: err401 } },
   },
   '/assistant/messages/read': {
-    post: { tags: TAGS, summary: 'Mark assistant messages read', description: 'Any role. Only messages in conversations the caller can read are changed; others are ignored.',
-      security: userAuth, requestBody: inlineBody({ type: 'object', required: ['messageIds'], properties: { messageIds: { type: 'array', minItems: 1, items: { type: 'string' } } } }),
-      responses: { 200: marked, 400: err400, 401: err401 } },
+    post: { tags: TAGS, summary: 'Mark assistant messages read',
+      description: `Any role. Only messages in conversations the caller can read are changed; others are ignored. ${SHARED_READ_STATE} For a VIEWER, messages of that conversation are ignored too.`,
+      security: userAuth, requestBody: inlineBody({ type: 'object', required: ['messageIds'], properties: {
+        messageIds: { type: 'array', minItems: 1, maxItems: 500, items: { type: 'string', minLength: 1, maxLength: 128 } } } }),
+      responses: { 200: marked, 400: err400Json, 401: err401 } },
   },
   '/assistant/messages/{id}/approve': {
     post: { tags: TAGS, summary: 'Approve a pending tool call and run it',

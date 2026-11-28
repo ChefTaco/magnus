@@ -40,8 +40,6 @@ const alertRuleId = pp('id', 'Alert rule ID');
 
 // ── Remediation (routes/remediation.ts) ──
 const remediationRuleId = pp('id', 'Remediation rule ID');
-/** routes/remediation.ts answers an unknown rule on GET with this body, not the ApiError envelope. */
-const remediationNotFound = body('Rule not found', { type: 'object', properties: { error: { type: 'string', enum: ['NOT_FOUND'] }, message: { type: 'string' } } });
 const remediationTags = ['Operations'];
 
 // ── Rollouts (routes/rollout.ts) ──
@@ -59,7 +57,7 @@ const fleetCheckRun: JsonSchema = {
     errors: { type: 'array', items: { type: 'string' } },
   },
 };
-const fleetCheckDirectory = { type: 'string', description: 'Server log directory (`MAGNUS_FLEET_CHECK_LOG_DIR` or the default)' };
+const fleetCheckDirectory = { type: 'string', description: 'Server log directory (`MAGNUS_FLEET_CHECK_LOG_DIR` or the default). ADMIN only: left out for other roles.' };
 const fleetCheckKind = qp('kind', 'Only runs of this kind');
 const fleetChecksTags = ['Fleet checks'];
 
@@ -118,7 +116,7 @@ export const paths: Paths = {
   '/remediation/rules/{id}': {
     get: {
       tags: remediationTags, summary: 'Get a remediation rule', description: 'Any role.', security: userAuth, parameters: [remediationRuleId],
-      responses: { 200: body('Remediation rule', zodOut(remediationRuleResponseSchema)), 401: err401, 404: remediationNotFound },
+      responses: { 200: body('Remediation rule', zodOut(remediationRuleResponseSchema)), 401: err401, 404: err404 },
     },
     patch: browserOperation('PATCH', '/remediation/rules/{id}', { tags: remediationTags, summary: 'Update a remediation rule (operator/admin)',
       description: 'Audited as `remediation.rule.update` with the changed field names.', params: { id: 'Remediation rule ID' },
@@ -167,20 +165,20 @@ export const paths: Paths = {
 
   '/fleet-checks/runs': {
     get: {
-      tags: fleetChecksTags, summary: 'List recent fleet check runs', description: 'Read from the JSONL logs in the fleet check log directory, newest first. Any role.', security: userAuth,
+      tags: fleetChecksTags, summary: 'List recent fleet check runs', description: 'Read from the JSONL logs in the fleet check log directory, newest first. Any role; `directory` (a server path) only for ADMIN.', security: userAuth,
       parameters: [qp('limit', 'Runs (1-200, default 20; clamped)', { type: 'integer' }), fleetCheckKind],
       responses: { 200: success('Fleet check runs', { type: 'object', properties: { directory: fleetCheckDirectory, runs: { type: 'array', items: fleetCheckRun } } }), 401: err401 },
     },
   },
   '/fleet-checks/latest': {
     get: {
-      tags: fleetChecksTags, summary: 'Get the newest fleet check run', description: 'Any role. `run` is null when no log has one.', security: userAuth, parameters: [fleetCheckKind],
+      tags: fleetChecksTags, summary: 'Get the newest fleet check run', description: 'Any role; `directory` (a server path) only for ADMIN. `run` is null when no log has one.', security: userAuth, parameters: [fleetCheckKind],
       responses: { 200: success('Newest run', { type: 'object', properties: { directory: fleetCheckDirectory, run: { ...fleetCheckRun, nullable: true } } }), 401: err401 },
     },
   },
   '/fleet-checks/files': {
     get: {
-      tags: fleetChecksTags, summary: 'List fleet check log files', description: 'Any role.', security: userAuth,
+      tags: fleetChecksTags, summary: 'List fleet check log files', description: 'Any role; `directory` (a server path) only for ADMIN.', security: userAuth,
       responses: {
         200: success('Log files', { type: 'object', properties: { directory: fleetCheckDirectory, files: { type: 'array', items: { type: 'object',
           properties: { file: { type: 'string' }, sizeBytes: { type: 'integer' }, modifiedAt: { type: 'string', format: 'date-time' } } } } } }),

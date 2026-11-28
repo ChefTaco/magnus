@@ -12,8 +12,11 @@ import { intQuery, pagination } from '../utils/query.js';
 
 import { Hono } from 'hono';
 import type { AppVariables } from '../types/index.js';
-import { authMiddleware, requireRole } from '../middleware/auth.js';
+import { authMiddleware, getUser, requireRole } from '../middleware/auth.js';
+import { logAuditEvent } from '../services/audit-service.js';
 import { HttpError } from '../middleware/error-handler.js';
+import { z } from 'zod';
+import { parseBody, parseInput } from '../utils/validate.js';
 import {
   listAnomalyEvents,
   getNodeAnomalySummary,
@@ -29,6 +32,17 @@ import {
 } from '../services/ai-correlation-service.js';
 
 export const anomaliesRouter = new Hono<AppVariables>();
+
+const resolveNodeSchema = z.object({
+  nodeId: z.string('nodeId is required').min(1, 'nodeId is required').max(128),
+  metric: z.string().min(1).max(100).optional(),
+});
+
+/** Ten years at most; zero or a negative value would delete every resolved anomaly. */
+const purgeSchema = z.object({
+  retentionDays: z.number().int('retentionDays must be a whole number of days').min(1, 'retentionDays must be at least 1')
+    .max(3650, 'retentionDays must be at most 3650').default(30),
+});
 
 anomaliesRouter.use('*', authMiddleware);
 
@@ -87,26 +101,38 @@ anomaliesRouter.post('/:id/resolve', requireRole('ADMIN', 'OPERATOR'), async (c)
   const id = c.req.param('id')!;
   try {
     await resolveAnomaly(id);
-    return c.json({ success: true });
   } catch {
     throw new HttpError(404, 'NOT_FOUND', 'Anomaly event not found');
   }
+  await logAuditEvent({ action: 'anomaly.resolve', actorId: getUser(c).userId, targetType: 'anomaly', targetId: id });
+  return c.json({ success: true });
 });
 
 // ── Bulk-resolve anomalies for a node ──
 anomaliesRouter.post('/resolve-node', requireRole('ADMIN', 'OPERATOR'), async (c) => {
-  const body = await c.req.json<{ nodeId: string; metric?: string }>();
-  if (!body.nodeId) {
-    throw new HttpError(400, 'VALIDATION_ERROR', 'nodeId is required');
-  }
+  const body = await parseBody(c, resolveNodeSchema);
   const count = await resolveNodeAnomalies(body.nodeId, body.metric);
+  await logAuditEvent({ action: 'anomaly.resolve_node', actorId: getUser(c).userId, targetType: 'node', targetId: body.nodeId,
+    details: { metric: body.metric ?? null, resolved: count } });
   return c.json({ success: true, data: { resolved: count } });
 });
 
 // ── Purge old resolved anomalies ──
 anomaliesRouter.post('/purge', requireRole('ADMIN'), async (c) => {
-  const body = await c.req.json().catch(() => ({})) as { retentionDays?: number };
-  const retentionDays = body.retentionDays ?? 30;
+  // Only an empty or missing body keeps the 30-day default. This route deletes, so a body that is
+  // not valid JSON is refused rather than read as the default.
+  const text = (await c.req.text()).trim();
+  let raw: unknown = {};
+  if (text) {
+    try {
+      raw = JSON.parse(text);
+    } catch {
+      throw new HttpError(400, 'VALIDATION_ERROR', 'Request body must be valid JSON');
+    }
+  }
+  const { retentionDays } = parseInput(raw, purgeSchema);
   const count = await purgeResolvedAnomalies(retentionDays);
+  await logAuditEvent({ action: 'anomaly.purge', actorId: getUser(c).userId, targetType: 'anomaly', targetId: 'resolved',
+    details: { retentionDays, deleted: count } });
   return c.json({ success: true, data: { deleted: count, retentionDays } });
 });

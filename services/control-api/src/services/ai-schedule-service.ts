@@ -13,6 +13,21 @@ import { chat } from './ai-assistant-service.js';
 import { nanoid } from 'nanoid';
 import { nextCronRun } from './cron-next-run.js';
 import { errorText } from '../utils/redact.js';
+import { logAuditEvent } from './audit-service.js';
+
+/** Who started a batch of scheduled runs: the server's scheduler, or a user through POST /ai-schedules/execute-due. */
+export interface ScheduledRunActor {
+  actorId: string;
+  actorType: 'user' | 'system';
+}
+
+const SCHEDULER_ACTOR: ScheduledRunActor = { actorId: 'ai-scheduler', actorType: 'system' };
+
+/** Audit one run. A failed audit write is logged; it must not stop the other due operations. */
+async function auditRun(actor: ScheduledRunActor, opId: string, details: Record<string, unknown>): Promise<void> {
+  await logAuditEvent({ action: 'ai_schedule.run', actorId: actor.actorId, actorType: actor.actorType, targetType: 'ai-schedule', targetId: opId, details })
+    .catch((error: unknown) => console.error(`[ai-schedule] ${opId}: audit event not written: ${errorText(error)}`));
+}
 
 /**
  * When the operation runs next. An expression that cannot be scheduled (only possible for a row
@@ -99,7 +114,7 @@ export async function getScheduledOp(id: string) {
  * the next occurrence, so concurrent callers (the scheduler, `POST /ai-schedules/execute-due`, a
  * second server) run every occurrence once. A run that fails is not retried until its next turn.
  */
-export async function executeDueOps(now: () => Date = () => new Date()): Promise<number> {
+export async function executeDueOps(now: () => Date = () => new Date(), actor: ScheduledRunActor = SCHEDULER_ACTOR): Promise<number> {
   const db = getDb();
 
   const dueOps = await db.aiScheduledOp.findMany({
@@ -137,11 +152,14 @@ export async function executeDueOps(now: () => Date = () => new Date()): Promise
         },
       });
       if (!waiting) executed++;
+      await auditRun(actor, op.id, { outcome: waiting ? 'stopped' : 'completed', conversationId: result.conversationId ?? null,
+        ...(waiting ? { toolName: waiting } : {}) });
     } catch (err) {
       await db.aiScheduledOp.update({
         where: { id: op.id },
         data: { runCount: { increment: 1 }, lastError: err instanceof Error ? err.message.slice(0, 2000) : 'Unknown error' },
       }).catch((error: unknown) => console.error(`[ai-schedule] ${op.id}: result not recorded: ${errorText(error)}`));
+      await auditRun(actor, op.id, { outcome: 'failed', error: errorText(err) });
     }
   }
 

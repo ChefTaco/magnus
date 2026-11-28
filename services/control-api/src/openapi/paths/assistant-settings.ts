@@ -11,7 +11,6 @@ const SCHEDULE_TAGS = ['AI Schedules'];
 const ADMIN_ONLY = 'Roles: ADMIN.';
 const WRITE_ROLES = 'Roles: ADMIN, OPERATOR.';
 const ANY_ROLE = 'Any role.';
-const err500 = { description: 'Unexpected error, for example a request body that is not JSON (this route reads it without validation) or an unreachable Ollama' };
 
 const thinkingMode = { type: 'string', enum: ['off', 'standard', 'deep'] };
 const providerId = { type: 'string', enum: ['ollama', 'llamacpp', 'openai', 'anthropic', 'openrouter', 'emberpath'] };
@@ -25,12 +24,12 @@ const heartbeatPrompt: JsonSchema = {
 };
 
 const settingsFields: Record<string, JsonSchema> = {
-  model: { type: 'string', description: 'Ollama model name' },
-  maxContextTokens: { type: 'integer' },
-  systemPrompt: { type: ['string', 'null'], description: 'null restores the built-in system prompt' },
+  model: { type: 'string', minLength: 1, maxLength: 200, description: 'Ollama model name' },
+  maxContextTokens: { type: 'integer', minimum: 1, maximum: 10_000_000 },
+  systemPrompt: { type: ['string', 'null'], maxLength: 100_000, description: 'null restores the built-in system prompt' },
   thinkingMode,
   showReasoning: { type: 'boolean' },
-  maxToolRounds: { type: 'integer' },
+  maxToolRounds: { type: 'integer', minimum: 1, maximum: 1000 },
   replEnabled: { type: 'boolean' },
   structuredOutputsEnabled: { type: 'boolean' },
 };
@@ -48,7 +47,7 @@ const aiSettings: JsonSchema = {
     'showReasoning', 'maxToolRounds', 'replEnabled', 'structuredOutputsEnabled'],
 };
 
-const fallback = { type: 'object', required: ['provider', 'model'], properties: { provider: providerId, model: { type: 'string' } } };
+const fallback = { type: 'object', required: ['provider', 'model'], properties: { provider: providerId, model: { type: 'string', minLength: 1, maxLength: 200 } } };
 const modelProfile: JsonSchema = {
   type: 'object', required: ['taskType', 'provider', 'model', 'fallbacks', 'temperature', 'maxTokens', 'routePurpose', 'routeReason', 'routeSource'],
   properties: {
@@ -68,16 +67,17 @@ const modelProfile: JsonSchema = {
 };
 const modelProfilePatch: JsonSchema = {
   type: 'object',
-  description: 'Routes by task type. The body replaces every saved route: a built-in task type left out returns to its default, and a custom one left out is removed.',
+  description: 'Routes by task type (keys of 1-100 characters, at most 100 routes). The body replaces every saved route: a built-in task type left out returns to its default, and a custom one left out is removed.',
+  maxProperties: 100,
   additionalProperties: {
     type: 'object', required: ['model'],
     properties: {
       provider: providerId,
-      model: { type: 'string' },
-      fallbacks: { type: 'array', items: fallback, description: 'Ignored unless an array; when absent the task type\'s default fallbacks apply' },
-      temperature: { type: 'number', default: 0.3 },
-      maxTokens: { type: 'integer', default: 4096 },
-      maxToolRounds: { type: 'integer' },
+      model: { type: 'string', maxLength: 200 },
+      fallbacks: { type: ['array', 'null'], items: fallback, maxItems: 10, description: 'When absent or null the task type\'s default fallbacks apply' },
+      temperature: { type: 'number', minimum: 0, maximum: 2, default: 0.3 },
+      maxTokens: { type: 'integer', minimum: 1, maximum: 1_000_000, default: 4096 },
+      maxToolRounds: { type: 'integer', minimum: 1, maximum: 1000 },
       thinkingMode,
     },
   },
@@ -94,10 +94,6 @@ const ollamaModel = {
 // ── MCP ──
 const mcpTool = { type: 'object', required: ['name', 'description'], properties: { name: { type: 'string' }, description: { type: 'string' } } };
 const mcpToolNames = ['magnus_dependency_health', 'magnus_fleet_readiness', 'magnus_fleet_timeline', 'magnus_retention_summary', 'magnus_codex_fleet_status'];
-const mcpError = (description: string, code: string) => body(description, {
-  type: 'object', required: ['error'],
-  properties: { error: { type: 'object', required: ['code', 'message'], properties: { code: { type: 'string', enum: [code] }, message: { type: 'string' } } } },
-});
 
 // ── AI schedules ──
 const cronExpr = {
@@ -126,9 +122,6 @@ const scheduledOp: JsonSchema = {
   },
 };
 const scheduleData = (description: string, status = 200) => ({ [status]: body(description, { type: 'object', required: ['data'], properties: { data: scheduledOp } }) });
-const scheduleNotFound = body('Scheduled operation not found. This body is `{ success: false, error: "Not found" }`, not the usual ApiError.', {
-  type: 'object', properties: { success: { type: 'boolean', enum: [false] }, error: { type: 'string', enum: ['Not found'] } },
-});
 const scheduleId = pp('id', 'Scheduled operation ID');
 
 export const paths: Paths = {
@@ -139,12 +132,14 @@ export const paths: Paths = {
       responses: { 200: success('Heartbeat prompt', heartbeatPrompt), 401: err401 },
     },
     put: {
-      tags: TAGS, summary: 'Replace the heartbeat analysis prompt', description: `Stores an override used by later heartbeat analyses. Not audited. ${ADMIN_ONLY}`, security: userAuth,
-      requestBody: inlineBody({ type: 'object', required: ['content'], properties: { content: { type: 'string', minLength: 1, description: 'Must contain more than whitespace' } } }),
-      responses: { 200: success('Stored'), 400: err400, 401: err401, 403: err403, 500: err500 },
+      tags: TAGS, summary: 'Replace the heartbeat analysis prompt',
+      description: `Stores an override used by later heartbeat analyses. Audited as \`assistant.heartbeat_prompt.update\` with the prompt's length, not its text. ${ADMIN_ONLY}`, security: userAuth,
+      requestBody: inlineBody({ type: 'object', required: ['content'], properties: { content: { type: 'string', minLength: 1, maxLength: 100_000, description: 'Must contain more than whitespace' } } }),
+      responses: { 200: success('Stored'), 400: { ...err400, description: 'Not JSON, or `content` missing, not a string or only whitespace' }, 401: err401, 403: err403 },
     },
     delete: {
-      tags: TAGS, summary: 'Restore the built-in heartbeat analysis prompt', description: `Removes the override; succeeds when there is none. Not audited. ${ADMIN_ONLY}`, security: userAuth,
+      tags: TAGS, summary: 'Restore the built-in heartbeat analysis prompt',
+      description: `Removes the override; succeeds when there is none. Audited as \`assistant.heartbeat_prompt.reset\`. ${ADMIN_ONLY}`, security: userAuth,
       responses: { 200: success('Override removed'), 401: err401, 403: err403 },
     },
   },
@@ -157,10 +152,12 @@ export const paths: Paths = {
     },
     patch: {
       tags: TAGS, summary: 'Change the assistant settings',
-      description: 'Send only the fields to change; they are merged into the saved settings. The body is not validated against this schema, and the change is not audited. ' + ADMIN_ONLY,
+      description: 'Send only the fields to change; they are merged into the saved settings. Other members (such as the read-only `defaultModel`, '
+        + '`isCustomSystemPrompt` and `defaultSystemPrompt` a client may echo back) are ignored and not stored. Audited as `assistant.settings.update` '
+        + 'with the changed field names and values, except the system prompt text. ' + ADMIN_ONLY,
       security: userAuth,
       requestBody: inlineBody({ type: 'object', properties: settingsFields }),
-      responses: { 200: success('Settings after the change', aiSettings), 401: err401, 403: err403, 500: err500 },
+      responses: { 200: success('Settings after the change', aiSettings), 400: err400, 401: err401, 403: err403 },
     },
   },
   '/assistant/models': {
@@ -186,9 +183,9 @@ export const paths: Paths = {
     },
     patch: {
       tags: TAGS, summary: 'Replace the saved model routes',
-      description: 'The body is not validated against this schema, and the change is not audited. ' + ADMIN_ONLY, security: userAuth,
+      description: 'Audited as `assistant.model_profiles.update` with each route\'s task type, provider and model. ' + ADMIN_ONLY, security: userAuth,
       requestBody: inlineBody(modelProfilePatch),
-      responses: { 200: success('Model routes after the change', { type: 'array', items: modelProfile }), 401: err401, 403: err403, 500: err500 },
+      responses: { 200: success('Model routes after the change', { type: 'array', items: modelProfile }), 400: err400, 401: err401, 403: err403 },
     },
   },
 
@@ -242,10 +239,9 @@ export const paths: Paths = {
             { type: 'object', required: ['content'], properties: { content: { type: 'array', items: { type: 'object', properties: { type: { type: 'string', enum: ['json'] }, json: {} } } } } },
           ],
         }),
-        400: { description: 'Invalid body (ApiError VALIDATION_ERROR), or an unsupported method (`{ error: { code: "UNSUPPORTED_METHOD" } }`)',
-          content: { 'application/json': { schema: { type: 'object' } } } },
+        400: { ...err400, description: 'Invalid body (`VALIDATION_ERROR`), or a method other than tools/list and tools/call (`UNSUPPORTED_METHOD`)' },
         401: err401,
-        404: mcpError('Unknown tool', 'UNKNOWN_TOOL'),
+        404: { ...err404, description: 'Unknown tool (`UNKNOWN_TOOL`)' },
       },
     },
   },
@@ -268,7 +264,7 @@ export const paths: Paths = {
     },
     post: {
       tags: SCHEDULE_TAGS, summary: 'Create a scheduled AI operation',
-      description: `The next run is computed from \`cronExpr\`; runs happen only while MAGNUS_AI_SCHEDULER_ENABLED=true or through \`POST /ai-schedules/execute-due\`. Not audited. ${WRITE_ROLES}`,
+      description: `The next run is computed from \`cronExpr\`; runs happen only while MAGNUS_AI_SCHEDULER_ENABLED=true or through \`POST /ai-schedules/execute-due\`. Audited as \`ai_schedule.create\` (without the prompt). ${WRITE_ROLES}`,
       security: userAuth,
       requestBody: inlineBody({
         type: 'object', required: ['name', 'cronExpr', 'prompt'],
@@ -287,11 +283,11 @@ export const paths: Paths = {
   '/ai-schedules/{id}': {
     get: {
       tags: SCHEDULE_TAGS, summary: 'Get a scheduled AI operation', description: ANY_ROLE, security: userAuth, parameters: [scheduleId],
-      responses: { ...scheduleData('Scheduled operation'), 401: err401, 404: scheduleNotFound },
+      responses: { ...scheduleData('Scheduled operation'), 401: err401, 404: err404 },
     },
     patch: {
       tags: SCHEDULE_TAGS, summary: 'Update a scheduled AI operation',
-      description: `Send only the fields to change; a new \`cronExpr\` recomputes the next run. \`type\` cannot change. Not audited. ${WRITE_ROLES}`, security: userAuth,
+      description: `Send only the fields to change; a new \`cronExpr\` recomputes the next run. \`type\` cannot change. Audited as \`ai_schedule.update\` with the changed field names (and \`enabled\`, \`cronExpr\` and \`nodeId\` values, never the prompt). ${WRITE_ROLES}`, security: userAuth,
       parameters: [scheduleId],
       requestBody: inlineBody({
         type: 'object',
@@ -307,7 +303,7 @@ export const paths: Paths = {
       responses: { ...scheduleData('Updated operation'), 400: err400, 401: err401, 403: err403, 404: err404 },
     },
     delete: {
-      tags: SCHEDULE_TAGS, summary: 'Delete a scheduled AI operation', description: `Not audited. ${WRITE_ROLES}`, security: userAuth, parameters: [scheduleId],
+      tags: SCHEDULE_TAGS, summary: 'Delete a scheduled AI operation', description: `Audited as \`ai_schedule.delete\`. ${WRITE_ROLES}`, security: userAuth, parameters: [scheduleId],
       responses: { 200: success('Deleted'), 401: err401, 403: err403, 404: err404 },
     },
   },
@@ -316,6 +312,7 @@ export const paths: Paths = {
       tags: SCHEDULE_TAGS, summary: 'Run the scheduled AI operations that are due now',
       description: 'Runs up to 10 enabled operations whose next run has passed, oldest first. Each occurrence is claimed first, so the scheduler, this route and '
         + 'other servers run it once; a failed run waits for its next turn. A run stops at any tool that needs approval and is not counted. '
+        + 'Every run, here or from the scheduler, is audited as `ai_schedule.run` with its outcome (completed, stopped or failed); from this route the caller is the actor, from the scheduler `ai-scheduler`. '
         + `Works whether or not MAGNUS_AI_SCHEDULER_ENABLED is set. ${ADMIN_ONLY}`,
       security: userAuth,
       responses: { 200: success('Operations that completed', { type: 'object', required: ['executed'], properties: { executed: { type: 'integer' } } }), 401: err401, 403: err403 },

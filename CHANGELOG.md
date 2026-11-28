@@ -28,6 +28,9 @@ migration, and no new setting.
   rolling back. Keep `tokenSha256` until the registry sends Oathweave tokens, then drop it.
 - Upgrade the server before the console: the console's mission-control Hermes tiles read the new
   `GET /api/v1/hermes/summary` and show "Hermes Agent data unavailable" against an older server.
+- Scripts or integrations that read the error bodies of the shared-credential, security inventory
+  and backup, MCP, AI schedule or remediation-rule routes: they now answer the standard
+  `{ success: false, error: { code, message } }` envelope, with the same status codes (see Changed).
 - **Console: reload open Hermes dashboards after the upgrade.** A dashboard tab or frame opened
   before it keeps calling the old URLs, which now redirect or need a grant; reconnecting the frame
   fixes it. Inside the sandbox, dashboard preferences (theme, language) last only until the frame
@@ -88,6 +91,36 @@ migration, and no new setting.
 
 ### Changed
 
+- **Standard error envelope.** `/api/v1/credentials/*` (400 `UNKNOWN_CREDENTIAL`, 410
+  `CREDENTIAL_ROTATION_RETIRED` and `CREDENTIAL_ROLLOUT_RETIRED`), `GET /security-integration/inventory`
+  and `POST /security-integration/backups` (401 `UNAUTHORIZED`, 400 `VALIDATION_ERROR`, 409
+  `BACKUP_UPLOAD_ACTIVE`, 503 `BACKUP_TRANSFER_FAILED`), `POST /mcp` (400 `UNSUPPORTED_METHOD`, 404
+  `UNKNOWN_TOOL`), `GET /ai-schedules/:id` and `GET /remediation/rules/:id` (404 `NOT_FOUND`) answered
+  errors as a bare string or `{ error, message }`; they now use `{ success: false, error: { code, message } }`
+  like every other route. Status codes are unchanged. Neither the console nor HiveXUI read the old shapes.
+- `GET /security-integration/inventory` skips a node that is not a valid target and lists it in a new
+  `skipped` array (`{ id, name, reason }`, reason `agent_tls_required` or `invalid_target`), instead of
+  failing the whole export with 500. Contracts: `securityInventorySkippedSchema` and an optional `skipped`
+  on `securityInventoryExportSchema`.
+- The fleet check routes (`GET /fleet-checks/runs`, `/latest`, `/files`) return the server's log
+  `directory` to ADMIN only; other roles, including the read-only plugin and fleet-check credentials,
+  get the same body without it.
+- Marking the shared heartbeat conversation read takes ADMIN or OPERATOR. Read state is one flag per
+  message, shared by everyone, so a VIEWER could clear it for every user: `POST /assistant/conversations/:id/read`
+  now answers 403 to a VIEWER for that conversation, and `POST /assistant/messages/read` leaves its
+  messages unread for a VIEWER. A caller's own conversations are unchanged.
+- `PATCH /assistant/settings` and `PATCH /assistant/model-profiles` validate their bodies (types,
+  enums and bounds; the read-only settings fields a client echoes back are ignored, and unknown
+  fields are no longer stored).
+- Audited now: assistant heartbeat prompt changes (`assistant.heartbeat_prompt.update` with the
+  length only, `.reset`), settings (`assistant.settings.update`, without the system prompt text) and
+  model routes (`assistant.model_profiles.update`); AI schedule `ai_schedule.create`, `.update`,
+  `.delete`, and every run, from the scheduler or `POST /ai-schedules/execute-due`, as
+  `ai_schedule.run` with its outcome; a `POST /drift/scan` whose agent call failed (`drift.scan`
+  with status `error`); and anomaly changes: `anomaly.resolve`, `anomaly.resolve_node` (node,
+  metric and number resolved) and `anomaly.purge` (`retentionDays` and number deleted).
+- Shared-credential status: `configured` (false for `NODE_MANAGER_SECRET` in node-key enforce mode
+  without one), and `activeFingerprint` is null then.
 - Console route inventory: `POST /api/v1/discovery/scan` (ADMIN or OPERATOR) and
   `GET /api/v1/heartbeat/stream/stats` (any role) move from `machine` to `browser`, with the same
   authentication as before, so a static console can offer the nodes page's network scan and the
@@ -128,6 +161,24 @@ migration, and no new setting.
 
 ### Fixed
 
+- Invalid JSON answered 500 instead of 400 `VALIDATION_ERROR` on `POST /assistant/chat`,
+  `/assistant/chat/stream` and `/assistant/messages/read`, `PATCH /assistant/settings` and
+  `/assistant/model-profiles`, `POST /anomalies/resolve-node`, and on `PUT /assistant/heartbeat-prompt`
+  (also when `content` is not a string).
+- `POST /anomalies/purge` accepts only a whole `retentionDays` from 1 to 3650 (default 30); zero or a
+  negative value deleted every resolved anomaly. A body that is not valid JSON answers 400 instead of
+  purging with the default; only an empty body keeps it.
+- `GET /nodes/:nodeId/health/timeseries?metric=disk` was always 0: it read `usePercent`, but agents
+  report `usagePercent`.
+- `GET /credentials/NODE_MANAGER_SECRET/status` and `POST …/retire-previous` answered 500 in node-key
+  enforce mode without a shared node secret; they now answer `configured: false` (retire still removes
+  a previous value left from an earlier rotation), and `GET /credentials/rotations` lists a leftover
+  record of it the same way.
+- `GET /hermes/profiles/:id/api-server/status` (and its `/orchestra` alias) answers 404 for an unknown
+  profile instead of 500.
+- Browser contract: `topologyScanRequestSchema` caps `probeTimeoutMs` at 15000, as the server does.
+- Console: the discovery scan result is typed with the server's `version` field (it was typed as
+  `agentVersion`).
 - Console: the router admin proxy no longer rewrites an asset URL twice (`/assets/` became
   `…/dashboard/api/hive-router/dashboard/assets/`).
 - Console: the `/dashboard-plugins/*` and `/kanban` rewrites into the Hermes proxy are gone; they

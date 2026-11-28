@@ -28,6 +28,7 @@ import { enforceIdempotencyFromHeader } from '../utils/idempotency.js';
 import { nodeCredentialStore } from '../services/node-credential-store.js';
 import { nodeSoftwareRouter } from './nodes-software.js';
 import { heartbeatPeerAddress } from '../utils/heartbeat-peer.js';
+import { extractMetric, type MetricName } from '../services/health-metrics.js';
 import {
   parseTailscaleNodeKeyPosture,
   summarizeTailscaleNodeKeys,
@@ -1012,29 +1013,6 @@ const PERIOD_MS: Record<string, number> = {
   '7d': 7 * 24 * 60 * 60 * 1000,
   '30d': 30 * 24 * 60 * 60 * 1000,
 };
-
-type MetricName = 'cpu' | 'memory' | 'swap' | 'disk';
-
-function extractMetric(snapshot: Record<string, unknown>, metric: MetricName): number {
-  switch (metric) {
-    case 'cpu': return Number(snapshot.cpuUsagePercent ?? 0);
-    case 'memory': return Number(snapshot.memoryPercent ?? 0);
-    case 'swap': {
-      const total = Number(snapshot.swapTotalBytes ?? 0);
-      const used = Number(snapshot.swapUsedBytes ?? 0);
-      return total > 0 ? (used / total) * 100 : 0;
-    }
-    case 'disk': {
-      try {
-        const disks = typeof snapshot.disks === 'string' ? JSON.parse(snapshot.disks) : snapshot.disks;
-        if (Array.isArray(disks) && disks.length > 0) {
-          return disks[0].usePercent ?? 0;
-        }
-      } catch { /* ignore */ }
-      return 0;
-    }
-  }
-}
 
 nodesRouter.get('/:nodeId/health/timeseries', async (c) => {
   const db = getDb();

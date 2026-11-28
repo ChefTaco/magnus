@@ -23,7 +23,7 @@ import {
   Server,
   ArrowUpCircle,
 } from 'lucide-react';
-import type { DiskInfo, SystemUpdateInfo, TailscaleExpirySummary } from '@/types/contracts';
+import type { DiscoveredAgent, DiskInfo, SystemUpdateInfo, TailscaleExpirySummary } from '@/types/contracts';
 import { getUserDiskSeverity, getWorstPersistentDisk } from '@/lib/user-disk';
 import Link from 'next/link';
 import { EditNodeModal, RegisterNodeModal, AssignRoleModal } from '@/components/nodes/node-modals';
@@ -72,15 +72,6 @@ interface SystemUpdateSummary {
   actionNeeded: number;
   rebootRequired: number;
   nodes: Array<{ id: string; systemUpdates: SystemUpdateInfo | null }>;
-}
-
-interface DiscoveredAgent {
-  hostname: string;
-  fqdn: string;
-  ip: string;
-  port: number;
-  version: string;
-  registered: boolean;
 }
 
 function getNodeError(metadata: string): { label: string; message: string } | null {
@@ -278,7 +269,7 @@ export default function NodesPageClient({
     try {
       const res = await api.discovery.scan(5000);
       if (res.success && Array.isArray(res.data)) {
-        setDiscovered(res.data as DiscoveredAgent[]);
+        setDiscovered(res.data);
       }
     } catch {
       // scan failed

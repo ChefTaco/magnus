@@ -794,3 +794,17 @@ export interface SharedAiConversation {
 }
 
 export type ExportFormat = 'markdown' | 'json' | 'csv';
+
+// ─── Agent discovery ───
+
+/** One agent that answered POST /discovery/scan (services/control-api/src/routes/discovery.ts). */
+export interface DiscoveredAgent {
+  hostname: string;
+  fqdn: string;
+  ip: string;
+  port: number;
+  /** The agent's version; the server sends `version`, not `agentVersion`. */
+  version: string;
+  /** A node with this address, hostname or FQDN is already registered. */
+  registered: boolean;
+}

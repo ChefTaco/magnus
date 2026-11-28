@@ -33,6 +33,7 @@ const { alertsRouter } = await import('./alerts.js');
 const { topologyRouter } = await import('./topology.js');
 const { driftRouter } = await import('./drift.js');
 const { pinInsight } = await import('../services/ai-insights-service.js');
+const { topologyScanRequestSchema } = await import('@hivemagnus/magnus-contracts/browser');
 const app = new Hono().route('/webhooks', webhooksRouter).route('/alerts', alertsRouter)
   .route('/topology', topologyRouter).route('/drift', driftRouter).onError(errorHandler);
 
@@ -73,6 +74,11 @@ describe('request bodies are validated before use', () => {
 
   it('bounds the topology probe timeout and keeps an empty body working', async () => {
     expect((await send('/topology/scan', { probeTimeoutMs: 600_000 })).status).toBe(400);
+    // The browser contract carries the same bound as the route.
+    expect((await send('/topology/scan', { probeTimeoutMs: 15_001 })).status).toBe(400);
+    expect(topologyScanRequestSchema.safeParse({ probeTimeoutMs: 15_001 }).success).toBe(false);
+    expect(topologyScanRequestSchema.safeParse({ probeTimeoutMs: 15_000 }).success).toBe(true);
+    expect((await send('/topology/scan', { probeTimeoutMs: 15_000 })).status).toBe(200);
     expect((await send('/topology/scan', '{oops')).status).toBe(400);
     expect((await app.request('/topology/scan', { method: 'POST' })).status).toBe(200);
     expect(mocks.scan).toHaveBeenLastCalledWith(3000);

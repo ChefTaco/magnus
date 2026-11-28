@@ -13,12 +13,19 @@ vi.mock('../utils/env.js', async (original) => ({ ...await original<object>(),
   JWT_SECRET: 'hermes-secrets-jwt-fixture-at-least-32-characters', API_SECRET: 'hermes-secrets-api-fixture-at-least-32-characters',
   IAM_CORE_URL: '', IAM_TOKEN_ISSUER: '', IAM_TOKEN_AUDIENCE: '' }));
 const profile = { id: 'profile-1', installationId: 'install-1', name: 'default', apiServerKeyFingerprint: FINGERPRINT };
-vi.mock('../services/hermes-service.js', async (original) => ({ ...await original<object>(),
-  listHermesInstallations: async () => [{ id: 'install-1', profiles: [profile] }],
-  getHermesInstallation: async () => ({ id: 'install-1', profiles: [profile] }),
-  listHermesProfiles: async () => [profile],
-  getHermesApiServerStatus: async () => ({ profileId: 'profile-1', enabled: true, keyFingerprint: FINGERPRINT }),
-}));
+vi.mock('../db/index.js', () => ({ getDb: () => ({ hermesProfile: { findUnique: async () => null } }) }));
+vi.mock('../services/hermes-service.js', async (original) => {
+  const actual = await original<typeof import('../services/hermes-service.js')>();
+  return { ...actual,
+    listHermesInstallations: async () => [{ id: 'install-1', profiles: [profile] }],
+    getHermesInstallation: async () => ({ id: 'install-1', profiles: [profile] }),
+    listHermesProfiles: async () => [profile],
+    // Known profile from the fixture; any other id reaches the real lookup (the database has none).
+    getHermesApiServerStatus: async (id: string) => id === 'profile-1'
+      ? { profileId: 'profile-1', enabled: true, keyFingerprint: FINGERPRINT }
+      : actual.getHermesApiServerStatus(id),
+  };
+});
 
 const { hermesRouter } = await import('./hermes.js');
 const { signUserToken } = await import('../middleware/auth.js');
@@ -34,5 +41,14 @@ describe.each(ROLES)('Hermes API-server key fingerprints as %s', (role) => {
     const text = await response.text();
     expect(text.includes(FINGERPRINT)).toBe(role === 'ADMIN');
     expect(text).toMatch(/"(?:apiServerKeyConfigured|keyConfigured)":true/u);
+  });
+});
+
+describe('Hermes API-server status for an unknown profile', () => {
+  it('answers 404 NOT_FOUND, not 500', async () => {
+    const token = await signUserToken({ userId: 'VIEWER', email: 'alice@example.com', role: 'VIEWER' });
+    const response = await app.request('/hermes/profiles/no-such-profile/api-server/status', { headers: { authorization: `Bearer ${token}` } });
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ success: false, error: { code: 'NOT_FOUND', message: 'Hermes profile not found' } });
   });
 });

@@ -244,7 +244,7 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('console API follow-ups', () 
           messages: { create: [{ id: `${conversationOf(role)}-message`, role: 'assistant', content: `private to ${role}` }] },
         } });
       }
-      await db.aiConversation.create({ data: { id: conversationOf('ADMIN', 'heartbeat'), title: `${prefix} heartbeat`, type: 'heartbeat', createdBy: 'system', messages: { create: [{ role: 'assistant', content: 'fleet heartbeat' }] } } });
+      await db.aiConversation.create({ data: { id: conversationOf('ADMIN', 'heartbeat'), title: `${prefix} heartbeat`, type: 'heartbeat', createdBy: 'system', messages: { create: [{ id: `${conversationOf('ADMIN', 'heartbeat')}-message`, role: 'assistant', content: 'fleet heartbeat' }] } } });
       await db.aiConversation.create({ data: { id: conversationOf('ADMIN', 'analysis'), title: `${prefix} analysis`, type: 'analysis', createdBy: 'system' } });
     });
 
@@ -313,6 +313,19 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('console API follow-ups', () 
       expect((await db.aiMessage.findUnique({ where: { id: `${conversationOf('ADMIN')}-message` } }))?.isRead).toBe(false);
       const own = await call('VIEWER', 'POST', '/assistant/messages/read', { messageIds: [`${conversationOf('VIEWER')}-message`] });
       expect(own.json.data.marked).toBe(1);
+    });
+
+    it('lets only ADMIN and OPERATOR mark the shared heartbeat read, since read state is shared', async () => {
+      const heartbeat = conversationOf('ADMIN', 'heartbeat');
+      const message = `${heartbeat}-message`;
+      expect((await call('VIEWER', 'POST', `/assistant/conversations/${heartbeat}/read`)).status).toBe(403);
+      expect((await call('VIEWER', 'POST', '/assistant/messages/read', { messageIds: [message] })).json.data.marked).toBe(0);
+      expect((await db.aiMessage.findUnique({ where: { id: message } }))?.isRead).toBe(false);
+      expect((await call('OPERATOR', 'POST', '/assistant/messages/read', { messageIds: [message] })).json.data.marked).toBe(1);
+      await db.aiMessage.update({ where: { id: message }, data: { isRead: false, readAt: null } });
+      const marked = await call('OPERATOR', 'POST', `/assistant/conversations/${heartbeat}/read`);
+      expect(marked.status).toBe(200);
+      expect(marked.json.data.marked).toBe(1);
     });
   });
 

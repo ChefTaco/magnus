@@ -173,12 +173,20 @@ export const securityInventoryTargetSchema = z.object({
   tags: z.string(),
   metadata: z.string(),
 });
+/** A node left out of the export, so one bad target cannot fail the whole inventory. */
+export const securityInventorySkippedSchema = z.object({
+  id: z.string().min(1),
+  name: z.string(),
+  reason: z.enum(["agent_tls_required", "invalid_target"]),
+});
 export const securityInventoryExportSchema = z.object({
   data: z.array(securityInventoryTargetSchema).max(10000),
+  skipped: z.array(securityInventorySkippedSchema).max(10000).optional(),
 });
 export type SecurityInventoryTarget = z.infer<
   typeof securityInventoryTargetSchema
 >;
+export type SecurityInventorySkipped = z.infer<typeof securityInventorySkippedSchema>;
 export type SecurityInventoryExport = z.infer<
   typeof securityInventoryExportSchema
 >;
