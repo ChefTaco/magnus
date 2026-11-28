@@ -37,6 +37,19 @@ All notable changes to this project are documented in this file. The format is b
   uses `/rate-limit` (`enforceRateLimit()` over a Redis store, `createRateLimiter()` as the fallback,
   `resolveClientAddress()`).
 - Server: the Hive IAM verifier requires `jti` and an exact single audience.
+- Server: adopt `@hivemagnus/hive-common` 0.11.0 (fleet gateway and Oathweave package bumped too).
+  The rate limiter's Redis window is now `/rate-limit` `createRedisSlidingWindowStore()` (same keys,
+  budgets, `Retry-After` and `429` body). Each window keeps at most the newest `max + 1` entries, so a
+  flood of refused requests no longer grows the sorted set, and an error reply from Redis is now
+  treated as Redis unavailable (503 on fail-closed routes, the per-process fallback elsewhere); it
+  used to be read as allowed.
+- Server: redaction uses `/log` `redact()` with Magnus's key names (`keyPattern`,
+  `maskNonStrings: 'listed'`) and the 0.11.0 `redactText()`, which masks names that only end in a
+  secret word. Such a pair now keeps its name: `NODE_TOKEN=[REDACTED]` instead of `NODE_[REDACTED]`,
+  `token=[REDACTED]` instead of `[REDACTED]`, and a short bearer credential shows as
+  `Bearer [REDACTED]`. Every value masked before is still masked; Magnus keeps three text rules
+  HiveCommon does not cover (an `sk-` key or `Bearer` glued to a word character, a bearer of under
+  four characters, and a secret value that continues after `&`).
 
 ## [3.5.1] - 2026-11-28
 

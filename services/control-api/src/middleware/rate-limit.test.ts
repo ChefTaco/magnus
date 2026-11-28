@@ -5,31 +5,47 @@ import type { AppVariables } from '../types/index.js';
 
 /** Each bucket's request times, oldest first, as the sorted set holds them. */
 const buckets = vi.hoisted(() => new Map<string, number[]>());
-const redisState = vi.hoisted(() => ({ down: false }));
+const redisState = vi.hoisted(() => ({ down: false, replyError: false }));
 
+/** The sorted-set commands HiveCommon's sliding window queues, run in order on `buckets`. */
 vi.mock('ioredis', () => ({
   Redis: class {
     connect = async () => undefined;
     pipeline() {
-      let key = '';
-      let score = 0;
-      let windowStart = 0;
+      const queued: Array<() => unknown> = [];
       const chain = {
-        zremrangebyscore: (_name: string, _min: string, max: number) => { windowStart = max; return chain; },
-        zadd: (name: string, at: number) => { key = name; score = at; return chain; },
-        zcard: () => chain,
-        pexpire: () => chain,
+        zremrangebyscore: (key: string, _min: string, max: number) => {
+          queued.push(() => { const kept = (buckets.get(key) ?? []).filter((at) => at > max); buckets.set(key, kept); return 0; });
+          return chain;
+        },
+        zadd: (key: string, at: number) => { queued.push(() => { buckets.set(key, [...(buckets.get(key) ?? []), at]); return 1; }); return chain; },
+        zremrangebyrank: (key: string, start: number, stop: number) => {
+          queued.push(() => {
+            const entries = buckets.get(key) ?? [];
+            const end = stop < 0 ? entries.length + stop : stop;
+            buckets.set(key, entries.filter((_, index) => index < start || index > end));
+            return 0;
+          });
+          return chain;
+        },
+        zcard: (key: string) => { queued.push(() => (buckets.get(key) ?? []).length); return chain; },
+        pexpire: () => { queued.push(() => 1); return chain; },
+        zrange: (key: string, start: string, stop: string) => {
+          queued.push(() => {
+            const entries = buckets.get(key) ?? [];
+            const from = Number(start) < 0 ? entries.length + Number(start) : Number(start);
+            const to = Number(stop) < 0 ? entries.length + Number(stop) : Number(stop);
+            return entries.slice(from, to + 1).flatMap((at) => [`${at}-member`, String(at)]);
+          });
+          return chain;
+        },
         exec: async () => {
           if (redisState.down) throw new Error('connect ECONNREFUSED');
-          const entries = [...(buckets.get(key) ?? []).filter((at) => at > windowStart), score];
-          buckets.set(key, entries);
-          return [[null, 0], [null, 1], [null, entries.length], [null, 1]];
+          if (redisState.replyError) return queued.map(() => [new Error('OOM command not allowed'), null]);
+          return queued.map((command) => [null, command()]);
         },
       };
       return chain;
-    }
-    async zrange(name: string, start: string, stop: string) {
-      return (buckets.get(name) ?? []).slice(Number(start), Number(stop) + 1).flatMap((at) => [`${at}-member`, String(at)]);
     }
   },
 }));
@@ -93,6 +109,7 @@ async function exhaust(token?: string): Promise<void> {
 beforeEach(() => {
   buckets.clear();
   redisState.down = false;
+  redisState.replyError = false;
   revoked = new Set();
   userinfoCalls = 0;
   resetOathweaveVerifier();
@@ -300,5 +317,37 @@ describe('when Redis is unavailable', () => {
     expect(await refused.json()).toEqual({ error: 'RATE_LIMITED', message: 'Too many requests. Please try again later.' });
     expect(Number(refused.headers.get('Retry-After'))).toBeGreaterThanOrEqual(1);
     expect(getRateLimitHealth()).toMatchObject({ status: 'warn' });
+  });
+
+  it('treats an error reply as unavailable, never as allowed', async () => {
+    redisState.replyError = true;
+    // Another peer than the test above, whose fallback bucket this process still holds.
+    const peer = { incoming: { socket: { remoteAddress: '192.0.2.20', remotePort: 44321, remoteFamily: 'IPv4' } } };
+    for (let attempt = 0; attempt < MAX; attempt += 1) expect((await call(undefined, {}, peer)).status).toBe(200);
+    expect((await call(undefined, {}, peer)).status).toBe(429);
+    expect(buckets.size).toBe(0);
+    expect(getRateLimitHealth()).toMatchObject({ status: 'warn', message: 'Redis unavailable for rate limiting' });
+  });
+
+  it('answers 503 on a fail-closed route, for a connection failure and for an error reply', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    const strict = new Hono<AppVariables>();
+    strict.use('/agent/*', rateLimitMiddleware({ windowMs: 60_000, max: MAX, keyPrefix: 'rl:agent', failClosed: true }));
+    strict.get('/agent/ping', (c) => c.text('ok'));
+    for (const failure of ['down', 'replyError'] as const) {
+      redisState.down = failure === 'down';
+      redisState.replyError = failure === 'replyError';
+      const response = await strict.request('/agent/ping', {}, INGRESS as object);
+      expect(response.status, failure).toBe(503);
+      expect(await response.json()).toEqual({ error: 'RATE_LIMIT_UNAVAILABLE', message: 'Rate limiter is unavailable for this sensitive endpoint.' });
+    }
+  });
+});
+
+describe('the Redis window', () => {
+  it('keeps at most max + 1 entries per key, so a flood of refusals cannot grow it', async () => {
+    await exhaust();
+    for (let attempt = 0; attempt < MAX * 5; attempt += 1) expect((await call()).status).toBe(429);
+    expect([...buckets.values()].map((entries) => entries.length)).toEqual([MAX + 1]);
   });
 });
