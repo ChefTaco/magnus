@@ -32,7 +32,13 @@ esac
 TERMS_FILE="$ROOT_DIR/.private-terms"
 TERMS_PATTERN=""
 if [[ -f "$TERMS_FILE" ]]; then
-  TERMS_PATTERN="$(grep -vE '^[[:space:]]*(#|$)' "$TERMS_FILE" | paste -sd '|' - || true)"
+  terms_status=0
+  terms="$(grep -vE '^[[:space:]]*(#|$)' -- "$TERMS_FILE")" || terms_status=$?
+  if [[ "$terms_status" -gt 1 ]]; then
+    echo 'private-data check: cannot read .private-terms' >&2
+    exit 2
+  fi
+  TERMS_PATTERN="$(paste -sd '|' - <<< "$terms")"
 fi
 
 if [[ -n "$TERMS_PATTERN" ]]; then
@@ -51,10 +57,40 @@ fail() {
   printf 'private-data check: %s\n' "$1" >&2
   failures=$((failures + 1))
 }
+# A path that itself contains a private term is never printed.
+shown() {
+  if [[ -n "$TERMS_PATTERN" ]] && grep -qiE -- "$TERMS_PATTERN" <<< "$1"; then printf '(path redacted)'; else printf '%s' "$1"; fi
+}
+
+# Scratch space for staged blobs, filtered messages and search results; removed on exit.
+scratch="$(mktemp -d)"
+trap 'rm -rf "$scratch"' EXIT
+
+# Prints the numbers of the lines in file $1 that contain a private term. grep reads the whole
+# file into a file of its own (no -q early exit and no pipe, where under pipefail an early exit
+# can surface as SIGPIPE, exit 141, and pass as "no match"), and any grep error stops the check.
+term_lines() {
+  local status=0
+  grep -naiE -- "$TERMS_PATTERN" "$1" > "$scratch/hits" || status=$?
+  case "$status" in
+    0) cut -d: -f1 -- "$scratch/hits" ;;
+    1) ;;
+    *) echo 'private-data check: could not search for private terms' >&2; exit 2 ;;
+  esac
+}
 
 if [[ "$MODE" == "message" ]]; then
-  if [[ -n "$TERMS_PATTERN" ]] && grep -vE '^#' "$MESSAGE_FILE" | grep -qiE -- "$TERMS_PATTERN"; then
-    fail "commit message contains a term listed in .private-terms"
+  if [[ -n "$TERMS_PATTERN" ]]; then
+    filter_status=0
+    grep -vE '^#' -- "$MESSAGE_FILE" > "$scratch/message" || filter_status=$?
+    if [[ "$filter_status" -gt 1 ]]; then
+      echo 'private-data check: could not read the commit message file' >&2
+      exit 2
+    fi
+    message_lines="$(term_lines "$scratch/message")"
+    if [[ -n "$message_lines" ]]; then
+      fail "commit message contains a term listed in .private-terms"
+    fi
   fi
   [[ "$failures" -eq 0 ]] || exit 1
   exit 0
@@ -69,13 +105,12 @@ fi
 for file in "${files[@]}"; do
   [[ -n "$file" ]] || continue
   if [[ "$file" =~ $FORBIDDEN_PATHS && ! "$file" =~ $ALLOWED_PATHS ]]; then
-    fail "forbidden file: $file"
+    fail "forbidden file: $(shown "$file")"
   fi
 done
 
 if [[ -n "$TERMS_PATTERN" && "${#files[@]}" -gt 0 ]]; then
-  index_file="$(mktemp)"
-  trap 'rm -f "$index_file"' EXIT
+  index_file="$scratch/index"
   for file in "${files[@]}"; do
     [[ -n "$file" ]] || continue
     if [[ "$MODE" == "staged" ]]; then
@@ -85,13 +120,15 @@ if [[ -n "$TERMS_PATTERN" && "${#files[@]}" -gt 0 ]]; then
       [[ -f "$file" ]] || continue
       content_file="$file"
     fi
-    if matches="$(grep -naiE -- "$TERMS_PATTERN" "$content_file" | cut -d: -f1)"; then
-      while IFS= read -r line; do
-        fail "private term in $file:$line [redacted]"
-      done <<< "$matches"
-    fi
-    if grep -qiE -- "$TERMS_PATTERN" <<< "$file"; then
-      fail "private term in file name: $file"
+    display="$(shown "$file")"
+    # A plain assignment, so a search error (exit 2 from term_lines) stops the check.
+    content_lines="$(term_lines "$content_file")"
+    while IFS= read -r line; do
+      [[ -n "$line" ]] || continue
+      fail "private term in $display:$line [redacted]"
+    done <<< "$content_lines"
+    if [[ "$display" != "$file" ]]; then
+      fail "private term in file name: $display"
     fi
   done
 fi
