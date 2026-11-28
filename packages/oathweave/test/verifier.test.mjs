@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { runOathweaveConformance } from '@hivemagnus/hive-common/oathweave/conformance';
 import {
-  createOathweaveServiceVerifier, createOathweaveVerifier, hasOathweavePermission, isOathweaveEndpoint, parseOathweaveLinks, uniqueOathweaveLink,
+  createOathweaveServiceVerifier, createOathweaveVerifier, hasOathweavePermission, isOathweaveEndpoint, isServiceLink, parseOathweaveLinks, uniqueOathweaveLink,
 } from '../dist/index.js';
 
 const ISSUER = 'https://identity.example.com';
@@ -131,6 +131,14 @@ test('a duplicate identity link grants nothing', () => {
 test('a link may not name a system actor', () => {
   assert.throws(() => parseOathweaveLinks(JSON.stringify([{ issuer: ISSUER, subject: 's', localUserId: 'system', role: 'ADMIN' }])));
   assert.throws(() => parseOathweaveLinks(JSON.stringify([{ issuer: ISSUER, subject: 's', localUserId: 'service:x', role: 'ADMIN' }])));
+});
+
+test('service link roles name machine clients only', () => {
+  const service = { issuer: ISSUER, subject: 'hiveskills-executor', localUserId: 'fixture-registry', role: 'HIVESKILLS_SERVICE' };
+  assert.equal(parseOathweaveLinks(JSON.stringify([service]))[0].role, 'HIVESKILLS_SERVICE');
+  assert.equal(isServiceLink(service), true);
+  assert.equal(isServiceLink({ role: 'ARDENT_SERVICE' }), true);
+  for (const role of ['ADMIN', 'OPERATOR', 'VIEWER']) assert.equal(isServiceLink({ role }), false);
 });
 
 test('links keep their four-field contract and a free-form local actor label', () => {

@@ -11,28 +11,55 @@ import { getNodeBaseUrl } from '../utils/node-url.js';
 import { NodeApiClient } from '../sdk/node-api-client.js';
 import { logAuditEvent } from '../services/audit-service.js';
 import { httpIdentity } from '../security/managed-http.js';
+import { OathweaveAccessDenied, oathweaveHiveSkillsService } from '../middleware/oathweave.js';
 
 const slug=z.string().regex(/^[a-z0-9][a-z0-9-]{1,62}$/);
-export const skillsExecutorConfig=z.record(slug,z.object({tokenSha256:z.string().regex(/^[a-f0-9]{64}$/),targets:z.record(slug,z.object({nodeId:z.string().min(1).max(128),agentTarget:slug}).strict())}).strict());
+/**
+ * MAGNUS_HIVESKILLS_DEPLOYMENTS_JSON: registry ID -> its exact target bindings. A registry executor
+ * authenticates with an Oathweave client-credentials token (a HIVESKILLS_SERVICE link whose
+ * localUserId is the registry ID, and the permission magnus:hiveskills), or with the static bearer
+ * whose SHA-256 is `tokenSha256`. The static bearer is deprecated; it keeps working for now.
+ */
+export const skillsExecutorConfig=z.record(slug,z.object({tokenSha256:z.string().regex(/^[a-f0-9]{64}$/).optional(),targets:z.record(slug,z.object({nodeId:z.string().min(1).max(128),agentTarget:slug}).strict())}).strict());
 export const skillJobRequest=z.object({target:slug,publicationSha256:z.string().regex(/^[a-f0-9]{64}$/),manifest:HiveSkillsPublicationSchema,approvedBy:z.string().min(1).max(200)}).strict();
 export const hiveskillsRouter=new Hono<AppVariables>();
-function authorize(header:string|undefined){
+type ExecutorGrant=z.infer<typeof skillsExecutorConfig>[string];
+type Registry=ExecutorGrant&{registryId:string;authentication:{method:'oathweave';clientId:string}|{method:'static'}};
+const staticWarned=new Set<string>();
+async function authorize(header:string|undefined):Promise<Registry>{
  let raw:unknown;try{raw=JSON.parse(process.env['MAGNUS_HIVESKILLS_DEPLOYMENTS_JSON']??'{}')}catch{throw new HttpError(503,'HIVESKILLS_UNCONFIGURED','Invalid Skills executor configuration')}
  const configured=skillsExecutorConfig.safeParse(raw);
  if(!configured.success)throw new HttpError(503,'HIVESKILLS_UNCONFIGURED','Invalid Skills executor configuration');
- if(!header?.startsWith('Bearer ')||header.length<39||/[\r\n]/.test(header))throw new HttpError(401,'UNAUTHORIZED','Endpoint-scoped Skills credential required');
- const digest=createHash('sha256').update(header.slice(7)).digest('hex');
- for(const [registryId,entry] of Object.entries(configured.data))if(safeEqual(entry.tokenSha256,digest))return {registryId,...entry};
+ if(!header?.startsWith('Bearer ')||/[\r\n]/.test(header))throw new HttpError(401,'UNAUTHORIZED','Endpoint-scoped Skills credential required');
+ const token=header.slice(7);
+ // An Oathweave token is decided here; a refused one never falls through to the static bearer.
+ let service:Awaited<ReturnType<typeof oathweaveHiveSkillsService>>;
+ try{service=await oathweaveHiveSkillsService(token)}catch(error){
+  if(error instanceof OathweaveAccessDenied)throw new HttpError(403,'FORBIDDEN','This service identity has no HiveSkills executor link or permission');
+  throw new HttpError(401,'UNAUTHORIZED','Endpoint-scoped Skills credential required');
+ }
+ if(service){
+  if(!Object.hasOwn(configured.data,service.registryId))throw new HttpError(403,'FORBIDDEN','This service identity has no HiveSkills executor grant');
+  return {registryId:service.registryId,...configured.data[service.registryId]!,authentication:{method:'oathweave',clientId:service.clientId}};
+ }
+ if(token.length<32)throw new HttpError(401,'UNAUTHORIZED','Endpoint-scoped Skills credential required');
+ const digest=createHash('sha256').update(token).digest('hex');
+ for(const [registryId,entry] of Object.entries(configured.data))if(entry.tokenSha256&&safeEqual(entry.tokenSha256,digest)){
+  if(!staticWarned.has(registryId)){staticWarned.add(registryId);console.warn(`[hiveskills] registry ${registryId} used the deprecated static executor credential; link an Oathweave client with role HIVESKILLS_SERVICE instead`)}
+  return {registryId,...entry,authentication:{method:'static'}};
+ }
  throw new HttpError(401,'UNAUTHORIZED','Endpoint-scoped Skills credential required');
 }
+/** Audit details naming how the executor authenticated. */
+function authenticationDetails(registry:Registry){return registry.authentication.method==='oathweave'?{authentication:'oathweave',clientId:registry.authentication.clientId}:{authentication:'static'}}
 function commandId(registryId:string,id:string){if(!z.uuid().safeParse(id).success)throw new HttpError(400,'VALIDATION_ERROR','Job UUID required');return 'hiveskills-'+createHash('sha256').update(registryId+':'+id).digest('hex')}
-async function targetClient(registry:ReturnType<typeof authorize>,target:string){
- const binding=registry.targets[target];if(!binding)throw new HttpError(403,'FORBIDDEN','Target is outside this registry executor grant');
+async function targetClient(registry:Registry,target:string){
+ const binding=Object.hasOwn(registry.targets,target)?registry.targets[target]:undefined;if(!binding)throw new HttpError(403,'FORBIDDEN','Target is outside this registry executor grant');
  const node=await getDb().node.findUnique({where:{id:binding.nodeId}});
  if(!node||node.status==='DECOMMISSIONED')throw new HttpError(409,'TARGET_UNAVAILABLE','Configured target is unavailable');
  return {binding,node,client:new NodeApiClient({baseUrl:getNodeBaseUrl(node.ipAddress,node.port),resourceNodeId:node.id,resourceActorId:'service:hiveskills:'+registry.registryId,nodeToken:getNodeManagerSecret()})};
 }
-async function observed(registry:ReturnType<typeof authorize>,target:string,id:string){
+async function observed(registry:Registry,target:string,id:string){
  const {node,client}=await targetClient(registry,target),jobId=commandId(registry.registryId,id);
  const row=await getDb().remoteCommand.findUnique({where:{id:jobId}});
  if(!row)throw new HttpError(404,'NOT_FOUND','Job has not been admitted');
@@ -46,15 +73,15 @@ async function observed(registry:ReturnType<typeof authorize>,target:string,id:s
  }catch{return {jobId,status:'unknown',result:'Receipt unavailable; original operation retained'}}
 }
 hiveskillsRouter.get('/targets/:target',async c=>{
- const registry=authorize(c.req.header('authorization')),target=slug.safeParse(c.req.param('target'));if(!target.success)throw new HttpError(400,'VALIDATION_ERROR','Exact logical target required');
+ const registry=await authorize(c.req.header('authorization')),target=slug.safeParse(c.req.param('target'));if(!target.success)throw new HttpError(400,'VALIDATION_ERROR','Exact logical target required');
  const {binding,node,client}=await targetClient(registry,target.data),enrollment=await getDb().resourceEnrollment.findUnique({where:{nodeId:node.id}});
  const base={registryId:registry.registryId,target:target.data,nodeId:node.id,agentTarget:binding.agentTarget};
  if(enrollment?.state!=='enrolled'||enrollment.nodeFqdn!==node.hostname||node.status!=='ONLINE'||!node.lastHeartbeatAt||Date.now()-node.lastHeartbeatAt.getTime()>120000||await getDb().commandResourceLease.count({where:{nodeId:node.id,state:{in:['reserved','running','unknown']}}}))return c.json({...base,ready:false,reason:'Node enrollment, health or retained ownership requires operator review'});
  try{const reply=await client.hiveSkillsTargetPosture(binding.agentTarget,registry.registryId),posture=HiveSkillsTargetPostureSchema.parse(reply.data);if(!reply.success||posture.registryId!==registry.registryId||posture.target!==binding.agentTarget)throw new Error('Native target binding differs');return c.json({...base,ready:posture.ready,reason:posture.reason,configurationSha256:posture.configurationSha256,clientSha256:posture.clientSha256})}catch{return c.json({...base,ready:false,reason:'Native target posture unavailable'})}
 });
-hiveskillsRouter.get('/jobs/:id',async c=>{const registry=authorize(c.req.header('authorization'));const target=slug.safeParse(c.req.query('target'));if(!target.success)throw new HttpError(400,'VALIDATION_ERROR','Exact target required');return c.json(await observed(registry,target.data,c.req.param('id')))});
+hiveskillsRouter.get('/jobs/:id',async c=>{const registry=await authorize(c.req.header('authorization'));const target=slug.safeParse(c.req.query('target'));if(!target.success)throw new HttpError(400,'VALIDATION_ERROR','Exact target required');return c.json(await observed(registry,target.data,c.req.param('id')))});
 hiveskillsRouter.post('/jobs/:id',async c=>{
- const registry=authorize(c.req.header('authorization')),parsed=skillJobRequest.safeParse(await c.req.json().catch(()=>null));
+ const registry=await authorize(c.req.header('authorization')),parsed=skillJobRequest.safeParse(await c.req.json().catch(()=>null));
  if(!parsed.success)throw new HttpError(400,'VALIDATION_ERROR','Exact approved Skills publication required');
  const body=parsed.data,jobId=commandId(registry.registryId,c.req.param('id'));
  if(createHash('sha256').update(JSON.stringify(body.manifest)).digest('hex')!==body.publicationSha256)throw new HttpError(409,'PUBLICATION_CONFLICT','Publication digest differs');
@@ -66,10 +93,10 @@ hiveskillsRouter.post('/jobs/:id',async c=>{
   if(prior.nodeId!==node.id||prior.createdBy!=='service:hiveskills:'+registry.registryId||prior.command!==identity.command||prior.args!==JSON.stringify(identity.args))throw new HttpError(409,'JOB_BINDING_CONFLICT','Existing job has another target or publication');
   return c.json(await observed(registry,body.target,c.req.param('id')));
  }
- await logAuditEvent({action:'skill.push',actorId:'service:hiveskills:'+registry.registryId,targetType:'node',targetId:node.id,details:{jobId,target:body.target,publicationSha256:body.publicationSha256,approvedBy:body.approvedBy,outcome:'requested'}});
+ await logAuditEvent({action:'skill.push',actorId:'service:hiveskills:'+registry.registryId,targetType:'node',targetId:node.id,details:{jobId,target:body.target,publicationSha256:body.publicationSha256,approvedBy:body.approvedBy,outcome:'requested',...authenticationDetails(registry)}});
  try {
   const result=await client.syncHiveSkills(request,jobId);
-  await logAuditEvent({action:'skill.push',actorId:'service:hiveskills:'+registry.registryId,targetType:'node',targetId:node.id,details:{jobId,target:body.target,publicationSha256:body.publicationSha256,approvedBy:body.approvedBy,commandSha256:result.evidence.commandSha256}});
+  await logAuditEvent({action:'skill.push',actorId:'service:hiveskills:'+registry.registryId,targetType:'node',targetId:node.id,details:{jobId,target:body.target,publicationSha256:body.publicationSha256,approvedBy:body.approvedBy,commandSha256:result.evidence.commandSha256,...authenticationDetails(registry)}});
   return c.json({jobId,status:result.response.success?'completed':'failed',result:result.response.success?'Exact approved publication synchronized':'Node completed with a bounded failure'});
  }catch{
   const row=await getDb().remoteCommand.findUnique({where:{id:jobId}});

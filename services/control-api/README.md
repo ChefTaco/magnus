@@ -167,8 +167,27 @@ configure the optional managed response adapter.
 
 ## HiveSkills execution bridge
 
-`MAGNUS_HIVESKILLS_DEPLOYMENTS_JSON` maps each registry to a dedicated token SHA-256
-and exact logical-target bindings (`nodeId`, `agentTarget`). This optional integration
+`MAGNUS_HIVESKILLS_DEPLOYMENTS_JSON` maps each registry ID to exact logical-target bindings
+(`nodeId`, `agentTarget`) and, optionally, the SHA-256 of a static executor token. The registry's
+executor authenticates with either credential:
+
+- **An Oathweave service token (preferred).** Create an Oathweave machine client for the registry
+  whose `client_credentials` tokens have audience `magnus` and the permission `magnus:hiveskills`,
+  and link it in `MAGNUS_OATHWEAVE_IDENTITIES_JSON` with role `HIVESKILLS_SERVICE`, the client ID as
+  `subject` and the registry ID as `localUserId`:
+  `{"issuer":"https://identity.example.com","subject":"hiveskills-executor","localUserId":"fixture-registry","role":"HIVESKILLS_SERVICE"}`.
+  Only a service token (`actorType` `SERVICE_ACCOUNT`, no session, at most 15 minutes) of the
+  configured issuer is accepted, and only for the registry its link names. A person's token, an
+  `ARDENT_SERVICE` client, another audience, a missing permission or a registry without a grant are
+  refused (401 for a token that fails verification, 403 otherwise), and a refused Oathweave token is
+  never tried as a static credential. The link reaches nothing outside these routes.
+- **The static bearer (deprecated).** `tokenSha256` is the SHA-256 of a dedicated random token of at
+  least 32 characters. It keeps working beside the Oathweave link, so a registry can move without a
+  gap, and Magnus logs a warning the first time each registry uses it. Drop `tokenSha256` once the
+  registry sends Oathweave tokens.
+
+Either way the audit actor is `service:hiveskills:<registryId>`, so jobs admitted with one
+credential are read back with the other; `skill.push` records which one was used. This optional integration
 accepts only POST/GET `/api/v1/hiveskills/jobs/:id`, with exact publication digests
 and a durable registry-owned UUID. It cannot submit general commands. Nodes must
 already have completed managed resource enrollment. Repeated requests inspect the

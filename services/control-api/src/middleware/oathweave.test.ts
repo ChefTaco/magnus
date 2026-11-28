@@ -24,7 +24,7 @@ vi.mock('../services/credential-rotation-service.js', () => ({
 const { authMiddleware, signUserToken } = await import('./auth.js');
 const { errorHandler } = await import('./error-handler.js');
 const { createOathweaveVerifier, OATHWEAVE_SESSION_CACHE_TTL_MS, resetOathweaveVerifier } = await import('./oathweave-verifier.js');
-const { linkedMagnusIdentity, OATHWEAVE_STREAM_RECHECK_MS, watchOathweaveStream } = await import('./oathweave.js');
+const { actingOathweaveLink, linkedMagnusIdentity, linkedMagnusService, OATHWEAVE_STREAM_RECHECK_MS, watchOathweaveStream } = await import('./oathweave.js');
 const { consoleRouter } = await import('../routes/console.js');
 const { consoleSessionResponseSchema } = await import('@hivemagnus/magnus-contracts/browser');
 
@@ -226,6 +226,18 @@ describe('explicit Oathweave account links', () => {
     ['ADMIN', ['cindertrace:admin', 'magnus:terminal']],
   ])('%s link with %j is denied by the ceiling', (role, permissions) => {
     expect(() => linkedMagnusIdentity({ ...identity, permissions }, JSON.stringify([{ ...LINK, role }]))).toThrow(/permission required/);
+  });
+
+  it.each(['ARDENT_SERVICE', 'HIVESKILLS_SERVICE'])('a person matching a %s link is denied whatever the token grants', (role) => {
+    const links = JSON.stringify([{ ...LINK, role }]);
+    expect(() => linkedMagnusIdentity({ ...identity, permissions: ['magnus:admin', 'magnus:operate', 'magnus:view'] }, links)).toThrow(/service link/);
+    expect(actingOathweaveLink(ISSUER, SUBJECT, links)).toBeUndefined();
+  });
+
+  it('a HIVESKILLS_SERVICE link never reaches the Ardent bridge', () => {
+    const service = { issuer: ISSUER, clientId: SUBJECT, tokenId: 't', issuedAt: 1, expiresAt: 2 };
+    const links = JSON.stringify([{ ...LINK, localUserId: 'fixture-registry', role: 'HIVESKILLS_SERVICE' }]);
+    expect(() => linkedMagnusService({ ...service, permissions: ['magnus:ardent', 'magnus:hiveskills'] }, links)).toThrow(/service link is required/);
   });
 
   it('never promotes from identity role names', () => {

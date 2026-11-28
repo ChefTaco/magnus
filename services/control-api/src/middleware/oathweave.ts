@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { decodeJwt, decodeProtectedHeader } from 'jose';
-import { hasOathweavePermission, uniqueOathweaveLink, watchStreamAuthorization } from '@hivemagnus/magnus-oathweave';
+import { hasOathweavePermission, isServiceLink, uniqueOathweaveLink, watchStreamAuthorization } from '@hivemagnus/magnus-oathweave';
 import { parseOathweaveLinks, type OathweaveIdentityLink } from '../config/oathweave.js';
 import {
   configuredOathweaveServiceVerifier,
@@ -20,6 +20,9 @@ export class OathweaveAccessDenied extends Error {}
 
 /** The token permission a linked service identity needs for the Ardent bridge. */
 export const OATHWEAVE_ARDENT_SERVICE_PERMISSION = 'magnus:ardent';
+
+/** The token permission a linked HiveSkills registry executor needs for the /hiveskills routes. */
+export const OATHWEAVE_HIVESKILLS_SERVICE_PERMISSION = 'magnus:hiveskills';
 
 let parsedLinks: { raw: string; links: OathweaveIdentityLink[] } | undefined;
 
@@ -45,7 +48,7 @@ export function linkedMagnusIdentity(
   }
   const link = uniqueOathweaveLink(links, identity.issuer, identity.subject);
   if (!link) throw new OathweaveAccessDenied('An explicit unique account link is required');
-  if (link.role === 'ARDENT_SERVICE') throw new OathweaveAccessDenied('A service link cannot authenticate a person');
+  if (isServiceLink(link)) throw new OathweaveAccessDenied('A service link cannot authenticate a person');
 
   let role: UserRole;
   if (link.role === 'ADMIN' && hasOathweavePermission(identity, 'magnus:admin')) role = 'ADMIN';
@@ -102,7 +105,43 @@ export function actingOathweaveLink(
   let links: OathweaveIdentityLink[];
   try { links = identityLinks(raw); } catch { return undefined; }
   const link = uniqueOathweaveLink(links, issuer, subject);
-  return link?.role !== 'ARDENT_SERVICE' ? link : undefined;
+  return link && !isServiceLink(link) ? link : undefined;
+}
+
+/** A verified HiveSkills registry executor: the registry its service link names, and the client. */
+export interface OathweaveHiveSkillsService {
+  registryId: string;
+  issuer: string;
+  clientId: string;
+  tokenId: string;
+}
+
+/**
+ * Authenticate a HiveSkills registry executor's client-credentials token for the /hiveskills
+ * routes. Undefined means the token is not an Oathweave token (Oathweave is off, or it is not an
+ * RS256 JWT), so the caller may try the static executor credential. Any throw is final:
+ * OathweaveAccessDenied for a verified client without a unique HIVESKILLS_SERVICE link or the
+ * magnus:hiveskills permission, any other error for a token that is not a valid service token.
+ * The link's localUserId names the registry, a key of MAGNUS_HIVESKILLS_DEPLOYMENTS_JSON.
+ */
+export async function oathweaveHiveSkillsService(
+  token: string,
+  raw = process.env['MAGNUS_OATHWEAVE_IDENTITIES_JSON'] ?? '[]',
+): Promise<OathweaveHiveSkillsService | undefined> {
+  if (!isOathweaveToken(token)) return undefined;
+  // A person's token never reaches the executor routes, whatever its links.
+  if (!isServiceToken(token)) throw new Error('A service token is required');
+  const identity = await configuredOathweaveServiceVerifier()(token);
+  let links: OathweaveIdentityLink[];
+  try {
+    links = identityLinks(raw);
+  } catch {
+    throw new OathweaveAccessDenied('Identity links are unreadable');
+  }
+  const link = uniqueOathweaveLink(links, identity.issuer, identity.clientId);
+  if (link?.role !== 'HIVESKILLS_SERVICE') throw new OathweaveAccessDenied('An explicit unique HiveSkills service link is required');
+  if (!hasOathweavePermission(identity, OATHWEAVE_HIVESKILLS_SERVICE_PERMISSION)) throw new OathweaveAccessDenied('HiveSkills executor permission required');
+  return { registryId: link.localUserId, issuer: identity.issuer, clientId: identity.clientId, tokenId: identity.tokenId };
 }
 
 /** Routing only: the chosen verifier checks the signature and every claim. */

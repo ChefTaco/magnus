@@ -41,5 +41,6 @@ otherwise. A consumer that requires recent identity verification treats undefine
 `createOathweaveServiceVerifier({ issuer, jwksUrl, audience })` verifies another product's
 client-credentials token instead: `actorType` `SERVICE_ACCOUNT`, `token_type` `access`, a subject equal
 to its `clientId`, no `sessionId`, and a lifetime of at most 15 minutes. Such a token can only match a
-link whose role is `ARDENT_SERVICE`, and that link's subject is the client ID. The person verifier
-keeps refusing service tokens.
+link with a service role (`ARDENT_SERVICE` or `HIVESKILLS_SERVICE`, see `isServiceLink`), and that
+link's subject is the client ID. A person never matches a service link, and the person verifier keeps
+refusing service tokens.
