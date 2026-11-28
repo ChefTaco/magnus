@@ -37,7 +37,7 @@ All notable changes to this project are documented in this file. The format is b
   uses `/rate-limit` (`enforceRateLimit()` over a Redis store, `createRateLimiter()` as the fallback,
   `resolveClientAddress()`).
 - Server: the Hive IAM verifier requires `jti` and an exact single audience.
-- Server: adopt `@hivemagnus/hive-common` 0.11.0 (fleet gateway and Oathweave package bumped too).
+- Server: adopt `@hivemagnus/hive-common` 0.11.1 (fleet gateway and Oathweave package bumped too).
   The rate limiter's Redis window is now `/rate-limit` `createRedisSlidingWindowStore()` (same keys,
   budgets, `Retry-After` and `429` body). Each window keeps at most the newest `max + 1` entries, so a
   flood of refused requests no longer grows the sorted set, and an error reply from Redis is now
