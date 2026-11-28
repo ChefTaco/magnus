@@ -2052,10 +2052,16 @@ export async function getUnreadAiMessageCount(owners: string[]): Promise<number>
   });
 }
 
-export async function markAiMessagesRead(messageIds: string[], owners: string[]): Promise<number> {
+/**
+ * Mark messages read in the conversations the caller can read. Read state is one flag per message,
+ * so `includeShared: false` leaves the shared heartbeat conversation alone (only an operator may
+ * clear it for everyone).
+ */
+export async function markAiMessagesRead(messageIds: string[], owners: string[], options: { includeShared?: boolean } = {}): Promise<number> {
   const db = getDb();
+  const conversation = options.includeShared === false ? { createdBy: { in: owners } } : readableConversations(owners);
   const result = await db.aiMessage.updateMany({
-    where: { id: { in: messageIds }, isRead: false, conversation: readableConversations(owners) },
+    where: { id: { in: messageIds }, isRead: false, conversation },
     data: { isRead: true, readAt: new Date() },
   });
   return result.count;

@@ -62,6 +62,14 @@ driftRouter.post('/scan', requireRole('ADMIN', 'OPERATOR'), async (c) => {
       },
     });
 
+    await logAuditEvent({
+      action: 'drift.scan',
+      actorId: user.userId,
+      targetType: 'node',
+      targetId: body.nodeId,
+      details: { status: 'error', checks: body.checks.length, scanId: scan.id },
+    });
+
     return c.json({ success: true, data: { scan, error: msg } });
   }
 

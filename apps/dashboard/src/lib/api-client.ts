@@ -41,6 +41,7 @@ import type {
   RemediationExecution,
   DiskForecast,
   TailscaleExpirySummary,
+  DiscoveredAgent,
 } from '../types/contracts';
 import type { HermesConfigFile, HermesInstallation, HermesOperationJob, HermesProfile } from '../types/orchestra';
 import type { CodexDeviceAuthSession, CodexInstallation } from '../types/codex';
@@ -466,7 +467,7 @@ class DashboardApiClient {
 
   discovery = {
     scan: (timeoutMs?: number) =>
-      this.post<Array<{ ip: string; port: number; hostname?: string; agentVersion?: string }>>('discovery/scan', { timeoutMs }),
+      this.post<DiscoveredAgent[]>('discovery/scan', { timeoutMs }),
   };
 
   stats = {

@@ -16,11 +16,14 @@ import {
   getScheduledOp,
   executeDueOps,
 } from '../services/ai-schedule-service.js';
-import { authMiddleware, requireRole } from '../middleware/auth.js';
+import type { AppVariables } from '../types/index.js';
+import { authMiddleware, getUser, requireRole } from '../middleware/auth.js';
+import { HttpError } from '../middleware/error-handler.js';
+import { logAuditEvent } from '../services/audit-service.js';
 import { parseBody } from '../utils/validate.js';
 import { isCronExpression } from '../services/cron-next-run.js';
 
-export const aiScheduleRouter = new Hono();
+export const aiScheduleRouter = new Hono<AppVariables>();
 
 aiScheduleRouter.use('*', authMiddleware);
 
@@ -60,7 +63,7 @@ aiScheduleRouter.get('/', async (c) => {
 // Get single scheduled op
 aiScheduleRouter.get('/:id', async (c) => {
   const op = await getScheduledOp(c.req.param('id'));
-  if (!op) return c.json({ success: false, error: 'Not found' }, 404);
+  if (!op) throw new HttpError(404, 'NOT_FOUND', 'Scheduled operation not found');
   return c.json({ data: op });
 });
 
@@ -70,6 +73,8 @@ aiScheduleRouter.post('/', requireRole('ADMIN', 'OPERATOR'), async (c) => {
   const user = c.get('user');
 
   const op = await createScheduledOp({ "name": body.name, "cronExpr": body.cronExpr, "prompt": body.prompt, ...optional("description", body.description), ...optional("type", body.type), ...optional("nodeId", body.nodeId), createdBy: user?.email ?? user?.userId ?? 'unknown' });
+  await logAuditEvent({ action: 'ai_schedule.create', actorId: getUser(c).userId, targetType: 'ai-schedule', targetId: op.id,
+    details: { name: body.name, cronExpr: body.cronExpr, type: body.type ?? 'chat', nodeId: body.nodeId ?? null } });
 
   return c.json({ data: op }, 201);
 });
@@ -78,18 +83,25 @@ aiScheduleRouter.post('/', requireRole('ADMIN', 'OPERATOR'), async (c) => {
 aiScheduleRouter.patch('/:id', requireRole('ADMIN', 'OPERATOR'), async (c) => {
   const body = await parseBody(c, UpdateSchema);
 
-  const op = await updateScheduledOp(c.req.param('id')!, { ...optional("name", body.name), ...optional("description", body.description), ...optional("cronExpr", body.cronExpr), ...optional("prompt", body.prompt), ...optional("enabled", body.enabled), ...optional("nodeId", body.nodeId) });
+  const id = c.req.param('id')!;
+  const op = await updateScheduledOp(id, { ...optional("name", body.name), ...optional("description", body.description), ...optional("cronExpr", body.cronExpr), ...optional("prompt", body.prompt), ...optional("enabled", body.enabled), ...optional("nodeId", body.nodeId) });
+  // The prompt is free text: record that it changed, not what it says.
+  await logAuditEvent({ action: 'ai_schedule.update', actorId: getUser(c).userId, targetType: 'ai-schedule', targetId: id,
+    details: { changedFields: Object.keys(body).sort(), ...optional('enabled', body.enabled), ...optional('cronExpr', body.cronExpr), ...optional('nodeId', body.nodeId) } });
   return c.json({ data: op });
 });
 
 // Delete scheduled op
 aiScheduleRouter.delete('/:id', requireRole('ADMIN', 'OPERATOR'), async (c) => {
-  await deleteScheduledOp(c.req.param('id')!);
+  const id = c.req.param('id')!;
+  const op = await deleteScheduledOp(id);
+  await logAuditEvent({ action: 'ai_schedule.delete', actorId: getUser(c).userId, targetType: 'ai-schedule', targetId: id, details: { name: op.name } });
   return c.json({ success: true });
 });
 
 // Manually trigger all due ops (admin/cron endpoint)
 aiScheduleRouter.post('/execute-due', requireRole('ADMIN'), async (c) => {
-  const executed = await executeDueOps();
+  // Each run is audited as ai_schedule.run with this user as the actor.
+  const executed = await executeDueOps(undefined, { actorId: getUser(c).userId, actorType: 'user' });
   return c.json({ success: true, data: { executed } });
 });

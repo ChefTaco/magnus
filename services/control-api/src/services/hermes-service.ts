@@ -9,6 +9,7 @@ import type {
   HermesRuntimeConfiguration,
 } from '../types/index.js';
 import { getDb } from '../db/index.js';
+import { HttpError } from '../middleware/error-handler.js';
 import { normalizeServiceStatus, type ParsedHermesDetection } from './hermes-cli-parser.js';
 
 // SSH-backed Hermes mutations (deploy, configure, profile, gateway, dashboard,
@@ -588,7 +589,7 @@ export interface HermesApiServerStatus {
 
 export async function getHermesApiServerStatus(profileId: string): Promise<HermesApiServerStatus> {
   const profile = await getDb().hermesProfile.findUnique({ where: { id: profileId } });
-  if (!profile) throw new Error('Hermes profile not found');
+  if (!profile) throw new HttpError(404, 'NOT_FOUND', 'Hermes profile not found');
   return {
     profileId: profile.id,
     installationId: profile.installationId,

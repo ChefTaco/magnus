@@ -10,12 +10,12 @@ securityBackupRouter.post('/', async (c) => {
   const digest = process.env['SECURITY_BACKUP_TOKEN_SHA256'];
   const token = c.req.header('Authorization')?.replace(/^Bearer /, '') ?? '';
   if (!matchesSha256Digest(token, digest))
-    return c.json({ error: 'Unauthorized' }, 401);
-  if (receiving) return c.json({ error: 'Backup upload already active' }, 409);
+    return c.json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Unauthorized' } }, 401);
+  if (receiving) return c.json({ success: false, error: { code: 'BACKUP_UPLOAD_ACTIVE', message: 'Backup upload already active' } }, 409);
   const name = c.req.header('x-backup-name') ?? '';
   const expected = c.req.header('x-backup-sha256') ?? '';
   if (!/^security-\d{8}T\d{6}Z\.aes$/.test(name) || !/^[a-f0-9]{64}$/.test(expected))
-    return c.json({ error: 'Invalid backup metadata' }, 400);
+    return c.json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid backup metadata' } }, 400);
   const base = process.env['SECURITY_BACKUP_DIRECTORY'] ?? magnusHomePath('security-backups');
   const path = join(base, `.partial-${randomUUID()}`);
   let file: Awaited<ReturnType<typeof open>> | undefined;
@@ -41,7 +41,7 @@ securityBackupRouter.post('/', async (c) => {
     await rename(path, join(base, name));
     return c.json({ success: true, data: { name, bytes, sha256: expected } }, 201);
   } catch {
-    return c.json({ error: 'Backup transfer failed' }, 503);
+    return c.json({ success: false, error: { code: 'BACKUP_TRANSFER_FAILED', message: 'Backup transfer failed' } }, 503);
   } finally {
     await file?.close().catch(() => undefined);
     await unlink(path).catch(() => undefined);

@@ -3,6 +3,7 @@ import type { AppVariables } from '../types/index.js';
 import { z } from 'zod';
 import { authMiddleware } from '../middleware/auth.js';
 import { parseBody } from '../utils/validate.js';
+import { HttpError } from '../middleware/error-handler.js';
 import {
   getDependencyHealth,
   getFleetReadiness,
@@ -53,8 +54,8 @@ mcpRouter.post('/', async (c) => {
       name === 'magnus_retention_summary' ? await getRetentionSummary() :
       name === 'magnus_codex_fleet_status' ? getCodexFleetPosture() :
       null;
-    if (!result) return c.json({ error: { code: 'UNKNOWN_TOOL', message: `Unknown tool: ${name}` } }, 404);
+    if (!result) throw new HttpError(404, 'UNKNOWN_TOOL', `Unknown tool: ${name}`);
     return c.json({ content: [{ type: 'json', json: result }] });
   }
-  return c.json({ error: { code: 'UNSUPPORTED_METHOD', message: 'Supported methods: tools/list, tools/call' } }, 400);
+  throw new HttpError(400, 'UNSUPPORTED_METHOD', 'Supported methods: tools/list, tools/call');
 });

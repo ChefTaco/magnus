@@ -17,6 +17,7 @@ import { z } from 'zod';
 import type { AppVariables } from '../types/index.js';
 import { authMiddleware, requireRole, getUser } from '../middleware/auth.js';
 import { parseBody } from '../utils/validate.js';
+import { HttpError } from '../middleware/error-handler.js';
 import { logAuditEvent } from '../services/audit-service.js';
 import {
   approveRemediation,
@@ -77,7 +78,7 @@ remediationRouter.get('/rules', async (c) => {
 
 remediationRouter.get('/rules/:id', async (c) => {
   const rule = await getRule(c.req.param('id')!);
-  if (!rule) return c.json({ error: 'NOT_FOUND', message: 'Rule not found' }, 404);
+  if (!rule) throw new HttpError(404, 'NOT_FOUND', 'Rule not found');
   return c.json({ data: rule });
 });
 

@@ -2,21 +2,18 @@
  * Fleet reads and writes: command history, the live event stream, shared-secret status, the external
  * security console's integration routes, and node tags, Wazuh, Linux users and system updates.
  */
-import { securityInventoryTargetSchema } from '@hivemagnus/magnus-contracts';
+import { securityInventorySkippedSchema, securityInventoryTargetSchema } from '@hivemagnus/magnus-contracts';
 import { bulkNodeTagsSchema } from '../../schemas/nodes.js';
 import {
   type JsonSchema, type Paths, browserOperation, err400, err401, err403, err404, err410, errorResponse,
   pp, requestBody, success, userAuth, zodOut,
 } from '../helpers.js';
 
-/** These routes answer errors as `{ success: false, error: "<message>" }` (or `{ error }`), not the ApiError shape. */
-const plainError = (description: string) => ({ description, content: { 'application/json': { schema: {
-  type: 'object', required: ['error'], properties: { success: { type: 'boolean', enum: [false] }, error: { type: 'string' } } } } } });
-
-const sharedCredentialName = pp('name', 'Shared credential: `API_SECRET` or `NODE_MANAGER_SECRET`; any other name answers 400');
+const sharedCredentialName = pp('name', 'Shared credential: `API_SECRET` or `NODE_MANAGER_SECRET`; any other name answers 400 `UNKNOWN_CREDENTIAL`');
 const rotationStatus: JsonSchema = { type: 'object', description: 'Fingerprints only; secret values are never returned.', properties: {
   name: { type: 'string' },
-  activeFingerprint: { type: 'string' },
+  configured: { type: 'boolean', description: 'False when the server has no value for the credential: `NODE_MANAGER_SECRET` in node-key enforce mode, where nothing sends or accepts it' },
+  activeFingerprint: { type: 'string', nullable: true, description: 'Null when `configured` is false' },
   previousFingerprint: { type: 'string', nullable: true, description: 'The previous value, while it is still accepted' },
   rotatedAt: { type: 'string', format: 'date-time', nullable: true },
   expiresAt: { type: 'string', format: 'date-time', nullable: true, description: 'When the previous value stops being accepted' },
@@ -63,20 +60,22 @@ export const paths: Paths = {
     post: {
       tags: ['Credentials'], summary: 'Retired: online credential rotation',
       description: `${adminCredentialNote} Always answers 410; use the reviewed coordinated fleet rollout.`, security: userAuth,
-      responses: { 401: err401, 403: err403, 410: plainError('Online credential rotation is retired') },
+      responses: { 401: err401, 403: err403, 410: { ...err410, description: '`CREDENTIAL_ROTATION_RETIRED`: online credential rotation is retired' } },
     },
   },
   '/credentials/rotations': {
     get: {
-      tags: ['Credentials'], summary: 'List recorded shared-credential rotations', description: adminCredentialNote, security: userAuth,
+      tags: ['Credentials'], summary: 'List recorded shared-credential rotations',
+      description: `${adminCredentialNote} A stored record of a credential the server has no value for (\`NODE_MANAGER_SECRET\` in node-key enforce mode) is listed as \`configured: false\` with null fingerprints, as its status route reports it.`, security: userAuth,
       responses: { 200: success('Rotation status per recorded credential', { type: 'array', items: rotationStatus }), 401: err401, 403: err403 },
     },
   },
   '/credentials/{name}/status': {
     get: {
-      tags: ['Credentials'], summary: 'Rotation status of one shared credential', description: adminCredentialNote, security: userAuth,
+      tags: ['Credentials'], summary: 'Rotation status of one shared credential',
+      description: `${adminCredentialNote} In node-key enforce mode without a shared node secret, \`NODE_MANAGER_SECRET\` answers \`configured: false\` with null fingerprints.`, security: userAuth,
       parameters: [sharedCredentialName],
-      responses: { 200: success('Rotation status', rotationStatus), 400: plainError('Unknown credential'), 401: err401, 403: err403 },
+      responses: { 200: success('Rotation status', rotationStatus), 400: { ...err400, description: '`UNKNOWN_CREDENTIAL`' }, 401: err401, 403: err403 },
     },
   },
   '/credentials/{name}/rollout': {
@@ -84,18 +83,20 @@ export const paths: Paths = {
       tags: ['Credentials'], summary: 'Retired: online fleet secret rollout',
       description: `${adminCredentialNote} Always answers 410; use the inventory-pinned deploy-agent workflow.`, security: userAuth,
       parameters: [pp('name', 'Credential name (ignored)')],
-      responses: { 401: err401, 403: err403, 410: plainError('Online fleet secret rollout is retired') },
+      responses: { 401: err401, 403: err403, 410: { ...err410, description: '`CREDENTIAL_ROLLOUT_RETIRED`: online fleet secret rollout is retired' } },
     },
   },
   '/credentials/{name}/retire-previous': {
     post: {
       tags: ['Credentials'], summary: 'Stop accepting the previous value of a shared credential',
-      description: `${adminCredentialNote} Ends the grace period at once. Audited as \`credentials.rotate\` with both fingerprints.`, security: userAuth,
+      description: `${adminCredentialNote} Ends the grace period at once. Audited as \`credentials.rotate\` with both fingerprints. `
+        + 'For `NODE_MANAGER_SECRET` in node-key enforce mode without a shared node secret, a previous value left from an earlier rotation is removed and the answer has `configured: false`.',
+      security: userAuth,
       parameters: [sharedCredentialName],
       responses: {
         200: success('Status after retirement', { ...rotationStatus, properties: { ...(rotationStatus['properties'] as JsonSchema),
           retiredPreviousFingerprint: { type: 'string', nullable: true, description: 'Null when there was no previous value' } } }),
-        400: plainError('Unknown credential'), 401: err401, 403: err403,
+        400: { ...err400, description: '`UNKNOWN_CREDENTIAL`' }, 401: err401, 403: err403,
       },
     },
   },
@@ -104,9 +105,20 @@ export const paths: Paths = {
   '/security-integration/inventory': {
     get: {
       tags: ['Cindertrace'], summary: 'Node inventory for the external security console',
-      description: 'Bearer token whose SHA-256 is `SECURITY_INVENTORY_TOKEN_SHA256`; no user session. Every node with an agent, without sentinel nodes. `metadata` carries only the security isolation keys, JSON-encoded.',
+      description: 'Bearer token whose SHA-256 is `SECURITY_INVENTORY_TOKEN_SHA256`; no user session. Every node with an agent, without sentinel nodes. `metadata` carries only the security isolation keys, JSON-encoded. '
+        + 'A node that is not a valid target is listed in `skipped` instead of failing the export: `agent_tls_required` when its agent URL is not HTTPS (the server has no agent TLS), `invalid_target` otherwise (for example a blank name).',
       security: [{ securityInventoryBearer: [] }],
-      responses: { 200: success('Inventory targets', { type: 'array', items: zodOut(securityInventoryTargetSchema) }), 401: plainError('Missing or wrong token') },
+      responses: {
+        200: { description: 'Inventory targets', content: { 'application/json': { schema: {
+          type: 'object', required: ['success', 'data', 'skipped'],
+          properties: {
+            success: { type: 'boolean', enum: [true] },
+            data: { type: 'array', items: zodOut(securityInventoryTargetSchema) },
+            skipped: { type: 'array', items: zodOut(securityInventorySkippedSchema) },
+          },
+        } } } },
+        401: { ...err401, description: '`UNAUTHORIZED`: missing or wrong token' },
+      },
     },
   },
   '/security-integration/summary': {
@@ -133,8 +145,10 @@ export const paths: Paths = {
       requestBody: { required: true, content: { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } } },
       responses: {
         201: success('Stored backup', { type: 'object', properties: { name: { type: 'string' }, bytes: { type: 'integer' }, sha256: { type: 'string' } } }),
-        400: plainError('Invalid backup metadata'), 401: plainError('Missing or wrong token'), 409: plainError('Another upload is in progress'),
-        503: plainError('Transfer failed: empty, too large, digest mismatch or unsafe directory'),
+        400: { ...err400, description: '`VALIDATION_ERROR`: invalid `x-backup-name` or `x-backup-sha256`' },
+        401: { ...err401, description: '`UNAUTHORIZED`: missing or wrong token' },
+        409: errorResponse('`BACKUP_UPLOAD_ACTIVE`: another upload is in progress'),
+        503: errorResponse('`BACKUP_TRANSFER_FAILED`: empty, too large, digest mismatch or unsafe directory'),
       },
     },
   },
