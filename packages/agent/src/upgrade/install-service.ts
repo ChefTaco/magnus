@@ -82,17 +82,26 @@ export function renderUnit(options: Pick<InstallServiceOptions, 'dir' | 'unprivi
     'StandardError=journal',
     'UMask=0077',
     'NoNewPrivileges=true',
-    '# Commands the agent runs get this private /tmp too, not the host /tmp.',
+    '# Commands the agent starts itself share this private /tmp (not the host /tmp).',
     'PrivateTmp=true',
     'LockPersonality=true',
     'RestrictRealtime=true',
     'SystemCallArchitectures=native',
     'TasksMax=4096',
   ];
-  // Privileged mode leaves out ProtectKernelModules (it hides /usr/lib/modules
-  // from the package upgrades the agent runs), ProtectClock (it limits device
-  // access, and GPU collection needs /dev/nvidia*) and MemoryMax (it would cap
-  // every command the agent runs). Operators can add them in a drop-in.
+  // Privileged mode leaves three directives out on purpose (README, Upgrades).
+  // The root agent can start anything through PID 1 (it runs systemd-run
+  // itself), so they are no boundary here; they would only break the work it
+  // and its directly run commands do:
+  // - ProtectKernelModules hides /usr/lib/modules and blocks module syscalls:
+  //   kernel/linux-modules upgrades, DKMS, update-initramfs and modprobe fail.
+  // - ProtectClock implies DeviceAllow=char-rtc r, a closed device policy:
+  //   nvidia-smi (/dev/nvidia*) and commands opening disks fail, and every
+  //   clock syscall is blocked (date -s, hwclock).
+  // - MemoryMax caps the cgroup holding every command and the self-upgrade's
+  //   npm; at the limit the kernel kills inside it and OOMPolicy=stop then
+  //   stops the unit, killing running commands (apt transactions included).
+  // Operators can add them in a drop-in.
   const hardening = options.unprivileged ? [
     `User=${options.user}`,
     `Group=${options.user}`,

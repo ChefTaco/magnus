@@ -424,6 +424,16 @@ describe('install-service', () => {
     expect(privileged).not.toMatch(/^(ProtectKernelModules|ProtectClock|MemoryMax)=/m);
     expect(() => parseInstallServiceArgs(['--bogus'], {})).toThrow(/unknown option/);
   });
+  it('ships an example privileged unit with the same sandbox as the generated one', () => {
+    const directives = (unit: string) => unit.split('\n')
+      .filter(line => /^(NoNewPrivileges|PrivateTmp|UMask|LockPersonality|RestrictRealtime|SystemCallArchitectures|TasksMax|Protect\w+|MemoryMax|Private\w+|Restrict\w+|CapabilityBoundingSet)=/.test(line))
+      .sort();
+    const example = readFileSync(new URL('../../deploy/magnus-agent.service', import.meta.url), 'utf8');
+    const generated = renderUnit({ dir: '/opt/magnus-agent', unprivileged: false, user: 'x', nodePath: '/usr/bin/node' });
+    expect(directives(example)).toEqual(directives(generated));
+    // Kept off in privileged mode on purpose: see the README's Upgrades section.
+    expect(example).not.toMatch(/^(ProtectKernelModules|ProtectClock|MemoryMax)=/m);
+  });
   it('links last-good and hands root-owned upgrade leftovers to the service account', async () => {
     const dir = versionedInstall();
     mkdirSync(join(dir, 'staging'));
