@@ -71,6 +71,17 @@ const RENEW = `<!doctype html><html><head><meta charset="utf-8"></head><body><pr
 })();
 </script></body></html>`;
 
+/** In its own tab: calls its API five seconds after loading and shows the answer. */
+const STANDALONE = `<!doctype html><html><head><meta charset="utf-8"></head><body><pre id="probe"></pre>
+<script>
+setTimeout(async function () {
+  var who = await fetch("/api/whoami", { credentials: 'include' });
+  var pre = document.getElementById('probe');
+  pre.textContent = who.status + ' ' + (await who.text());
+  pre.setAttribute('data-done', '1');
+}, 5000);
+</script></body></html>`;
+
 let server: Server;
 const routerCookies: string[] = [];
 const exfiltrated: string[] = [];
@@ -103,6 +114,9 @@ test.beforeAll(async () => {
       exfiltrated.push(String(req.headers.origin));
       res.writeHead(200, { 'access-control-allow-origin': '*' });
       res.end('leaked');
+    } else if (req.url === '/standalone') {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(STANDALONE);
     } else if (req.url === '/renew') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       res.end(RENEW);
@@ -272,4 +286,42 @@ test('a reload inside the console frame after its grant expired reconnects throu
   await embedded.evaluate((first) => { location.href = location.href.replace(/(\/_frame\/)[^/?#]+/, '$1' + first); }, ending);
   await expect(page.frameLocator('#embedded').locator('#probe[data-done]')).toBeAttached({ timeout: 15_000 });
   expect(page.frames().find((f) => f.url().includes('/_frame/'))!.url()).not.toContain(ending);
+});
+
+test('a dashboard in its own tab reloads itself onto a re-minted grant when its grant expires', async ({ page }) => {
+  await signIn(page);
+  const { grant } = await mint(page);
+  const ending = await regrant(grant, Math.floor(Date.now() / 1000) + 3);
+  await page.goto(`/api/hive-router/dashboard/_frame/${ending}/standalone`);
+  // Five seconds in, its API call is refused as expired; the page reloads, and the reload, a
+  // top-level navigation with the console cookie, is re-minted.
+  await expect.poll(() => page.url(), { timeout: 15_000 }).not.toContain(ending);
+  expect(new URL(page.url()).pathname).toMatch(/^\/api\/hive-router\/dashboard\/_frame\/[\w.-]+\/standalone$/);
+  await expect(page.locator('#probe[data-done]')).toHaveText('200 anonymous', { timeout: 15_000 });
+});
+
+test('the in-frame reconnect page keeps asking until the console frame answers', async ({ page }) => {
+  await signIn(page);
+  const { grant } = await mint(page);
+  const expired = await regrant(grant, Math.floor(Date.now() / 1000) - 5);
+  await page.addScriptTag({ content: `window.__installRelay = ${installFrameGrantRelay.toString()};` });
+  // The frame opens normally, then navigates itself (no console cookie) to an expired grant
+  // before the console's relay is listening.
+  await page.evaluate(([url, sandbox]) => {
+    const frame = document.createElement('iframe');
+    frame.id = 'embedded';
+    frame.setAttribute('sandbox', sandbox!);
+    frame.src = url!;
+    document.body.appendChild(frame);
+  }, [`/api/hive-router/dashboard/_frame/${grant}`, 'allow-scripts allow-forms allow-popups allow-downloads']);
+  await expect(page.frameLocator('#embedded').locator('#probe[data-done]')).toBeAttached({ timeout: 15_000 });
+  const embedded = page.frames().find((f) => f.url().includes('/_frame/'))!;
+  await embedded.evaluate((old) => { location.href = location.href.replace(/(\/_frame\/)[^/?#]+/, '$1' + old); }, expired);
+  await expect(page.frameLocator('#embedded').locator('#state')).toContainText('Reconnecting', { timeout: 10_000 });
+  await page.waitForTimeout(4_000);
+  await page.evaluate((first) => {
+    (window as unknown as { __installRelay: (f: HTMLIFrameElement, m: string, g: string) => void })
+      .__installRelay(document.getElementById('embedded') as HTMLIFrameElement, '/api/hive-router/dashboard?mint=json', first);
+  }, expired);
+  await expect(page.frameLocator('#embedded').locator('#probe[data-done]')).toBeAttached({ timeout: 15_000 });
 });

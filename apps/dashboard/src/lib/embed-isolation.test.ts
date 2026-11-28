@@ -84,7 +84,13 @@ describe('expired frame grants', () => {
     expect((await decide(grant, 'GET', '/api/status')).action).toBe('refuse');
     expect((await decide(grant, 'POST', '/api/status', { 'sec-fetch-mode': 'navigate' })).action).toBe('refuse');
     expect((await decide(grant, 'GET', '/assets/index-abc.js')).action).toBe('allow');
-    expect((await decide(grant, 'GET', '/assets/../api/status')).action).toBe('refuse');
+    // Traversal in any spelling never counts as a static file (the path as decided is the path as
+    // forwarded, so each of these reaches only the API rule and is refused).
+    for (const path of ['/assets/../api/status', '/assets/%2e%2e/api/status', '/assets/%252e%252e/api/status',
+      '/assets/..%2fapi/status', '/assets/%2E%2e/api/status', '/assets/%5c..%5capi', '/assets/a\\b.js',
+      '/assets/./x.js', '/assets//x.js', '/assets/%2fapi.js']) {
+      expect((await decide(grant, 'GET', path)).action, path).toBe('refuse');
+    }
     expect((await decide(grant, 'GET', '/dashboard-plugins/kanban/index.js')).action).toBe('allow');
     expect((await decide(grant, 'GET', '/dashboard-plugins/kanban/api/items')).action).toBe('refuse');
     expect((await decide(grant, 'GET', '/sessions', { 'sec-fetch-mode': 'navigate' })).action).toBe('remint');
@@ -95,17 +101,45 @@ describe('expired frame grants', () => {
   });
 });
 
+describe('upstream paths', () => {
+  it('encodes decoded segments so no parser can turn them into a traversal', () => {
+    expect(isolation.frameUpstreamPath(['assets', 'index.js'])).toBe('/assets/index.js');
+    expect(isolation.frameUpstreamPath([])).toBe('/');
+    expect(isolation.frameUpstreamPath(['api', 'sessions', 'a b'])).toBe('/api/sessions/a%20b');
+    // `%252e%252e` arrives decoded once as `%2e%2e` and goes on as a literal name, never as `..`.
+    expect(isolation.frameUpstreamPath(['assets', '%2e%2e', 'api'])).toBe('/assets/%252e%252e/api');
+    expect(new URL(`https://router.example.com/base${isolation.frameUpstreamPath(['assets', '%2e%2e', 'api'])}`).pathname)
+      .toBe('/base/assets/%252e%252e/api');
+    for (const segments of [['assets', '..', 'api'], ['assets', '.', 'x'], ['assets', '../api'], ['assets', '..\\api'],
+      ['assets', 'a\0b'], ['assets', '', 'x']]) {
+      expect(isolation.frameUpstreamPath(segments), JSON.stringify(segments)).toBeNull();
+    }
+  });
+});
+
 describe('server-side dashboard state', () => {
   it('keeps tokens per console session and forgets them on sign-out', () => {
     const exp = Math.floor(Date.now() / 1000) + 600;
-    isolation.frameSessionState({ sessionId: 'session-a', sessionExpiresAt: exp }).hermesTokens.set('install-a', 'token-a');
-    isolation.frameSessionState({ sessionId: 'session-b', sessionExpiresAt: exp }).routerCookies.set('admin', 'b');
+    isolation.frameSessionState({ sessionId: 'session-a', username: 'admin', sessionExpiresAt: exp }).hermesTokens.set('install-a', 'token-a');
+    isolation.frameSessionState({ sessionId: 'session-b', username: 'admin', sessionExpiresAt: exp }).routerCookies.set('admin', 'b');
     expect(isolation.peekFrameSessionState('session-b')?.hermesTokens.size).toBe(0);
     isolation.clearFrameSessionState('session-a');
     expect(isolation.peekFrameSessionState('session-a')).toBeNull();
     expect(isolation.peekFrameSessionState('session-b')?.routerCookies.get('admin')).toBe('b');
-    isolation.clearFrameSessionState();
+    isolation.resetFrameState();
     expect(isolation.peekFrameSessionState('session-b')).toBeNull();
+  });
+
+  it('signs one user out of every session without touching another user', () => {
+    const exp = Math.floor(Date.now() / 1000) + 600;
+    isolation.frameSessionState({ sessionId: 'alice-1', username: 'alice', sessionExpiresAt: exp });
+    isolation.frameSessionState({ sessionId: 'alice-2', username: 'alice', sessionExpiresAt: exp });
+    isolation.frameSessionState({ sessionId: 'bob-1', username: 'bob', sessionExpiresAt: exp }).routerCookies.set('admin', 'b');
+    isolation.clearFrameUserState('alice');
+    expect(isolation.peekFrameSessionState('alice-1')).toBeNull();
+    expect(isolation.peekFrameSessionState('alice-2')).toBeNull();
+    expect(isolation.peekFrameSessionState('bob-1')?.routerCookies.get('admin')).toBe('b');
+    isolation.resetFrameState();
   });
 
   it('swaps only the placeholder token for the real one', () => {
@@ -183,6 +217,10 @@ describe('embedded dashboard paths and headers', () => {
     const body = isolation.FRAME_COMPAT_SCRIPT.slice(open.length, -close.length);
     expect(() => new Function(body)).not.toThrow();
     expect(body).toContain('magnus-frame-refresh');
+    const page = isolation.FRAME_RECONNECT_PAGE;
+    const reconnect = page.slice(page.indexOf(open) + open.length, page.indexOf(close));
+    expect(() => new Function(reconnect)).not.toThrow();
+    expect(reconnect).toContain('magnus-frame-refused');
   });
 
   it('puts the storage stand-in before the page scripts', () => {

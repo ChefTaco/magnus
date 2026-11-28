@@ -99,8 +99,9 @@ async function proxyHandler(
   if (!frame) return enterFrame(req, path);
 
   // Frame request: the grant is the only authority. Console cookies are ignored.
-  const grant = await authorizeFrame(req, { app: 'router', grant: frame.grant, rest: frame.rest });
-  if (grant instanceof NextResponse) return grant;
+  const authorized = await authorizeFrame(req, { app: 'router', grant: frame.grant, rest: frame.rest });
+  if (authorized instanceof NextResponse) return authorized;
+  const { grant, upstreamPath } = authorized;
 
   const routerBase = hiveRouterAdminUrl();
   if (!routerBase) {
@@ -109,7 +110,14 @@ async function proxyHandler(
 
   const frameBase = `${PROXY_BASE}/${FRAME_SEGMENT}/${frame.grant}`;
   const search = req.nextUrl.searchParams.toString();
-  const targetUrl = `${routerBase}/${frame.rest.join('/')}${search ? `?${search}` : ''}`;
+  // Built and re-checked with the WHATWG parser the router client uses: the normalised path must
+  // be exactly the router base plus the checked upstream path.
+  const target = new URL(`${routerBase}${upstreamPath}`);
+  if (target.pathname !== `${new URL(routerBase).pathname.replace(/\/$/, '')}${upstreamPath}`) {
+    return frameJson(req, { error: 'frame_path_invalid' }, 400);
+  }
+  target.search = search;
+  const targetUrl = target.toString();
 
   const headers: Record<string, string> = {};
   for (const header of ['accept', 'content-type', 'x-trace-id']) {

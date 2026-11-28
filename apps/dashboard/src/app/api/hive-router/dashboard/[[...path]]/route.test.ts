@@ -17,7 +17,7 @@ vi.mock('../../../../../../runtime-local-sessions.mjs', () => ({
 
 process.env['SESSION_SECRET'] ??= 'test-only-session-secret-0123456789abcdef';
 const { GET, POST } = await import('./route');
-const { mintFrameGrant, clearFrameSessionState } = await import('../../../../../../runtime-embed-isolation.mjs');
+const { mintFrameGrant, clearFrameSessionState, FRAME_GRANT_TTL_SECONDS } = await import('../../../../../../runtime-embed-isolation.mjs');
 const session = { username: 'admin', sessionId: SESSION_ID, exp: Math.floor(Date.now() / 1000) + 3600 };
 const grant = await mintFrameGrant({ app: 'router', session });
 
@@ -73,6 +73,34 @@ describe('Hive Router admin proxy', () => {
     const hermes = await mintFrameGrant({ app: 'hermes', installationId: 'install-a', session });
     const refused = await GET(request('GET'), { params: Promise.resolve({ path: ['_frame', hermes, 'api', 'x'] }) });
     expect(refused.status).toBe(401);
+  });
+
+  it('never lets an expired grant reach the router API through an encoded traversal', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.now() - (FRAME_GRANT_TTL_SECONDS + 60) * 1000);
+    const expired = await mintFrameGrant({ app: 'router', session });
+    vi.useRealTimers();
+    mocks.fetch.mockResolvedValue(new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } }));
+    const get = (segments: string[]) => GET(request('GET'), { params: Promise.resolve({ path: ['_frame', expired, ...segments] }) });
+    // Segments as Next.js hands them over, decoded once: `%252e%252e` arrives as `%2e%2e`, and so on.
+    for (const segments of [['assets', '%2e%2e', 'api', 'x'], ['assets', '%2E%2e', 'api', 'x'], ['assets', '%5c..%5capi', 'x']]) {
+      expect((await get(segments)).status, segments.join('/')).toBe(401);
+    }
+    for (const segments of [['assets', '..', 'api', 'x'], ['assets', '../api', 'x'], ['assets', '..\\api', 'x'], ['assets', '.', 'x.js']]) {
+      expect((await get(segments)).status, segments.join('/')).toBe(400);
+    }
+    expect(mocks.fetch).not.toHaveBeenCalled();
+    // A real static file still loads with the expired grant.
+    expect((await get(['assets', 'index.js'])).status).toBe(200);
+    expect(String(mocks.fetch.mock.calls[0]![0])).toBe('https://router.example.com/assets/index.js');
+  });
+
+  it('forwards an odd segment as a literal name that the router cannot normalise away', async () => {
+    mocks.fetch.mockResolvedValue(new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } }));
+    await GET(request('GET'), context(['assets', '%2e%2e', 'api', 'x']));
+    expect(String(mocks.fetch.mock.calls[0]![0])).toBe('https://router.example.com/assets/%252e%252e/api/x');
+    expect((await GET(request('GET'), context(['assets', '..', 'api', 'x']))).status).toBe(400);
+    expect(mocks.fetch).toHaveBeenCalledOnce();
   });
 
   it('refuses a request body over the proxy limit without calling the router', async () => {

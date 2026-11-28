@@ -4,6 +4,9 @@
  * parent, the console frame, for a new one by posting the grant it holds. The console, which has
  * the session cookie, mints a new grant from the entry URL and posts it back.
  *
+ * A request that arrives while one is in flight is dropped; the page asks again (the
+ * compatibility script every 15 seconds, the reconnect page every 3).
+ *
  * Only the console's own iframe may ask, only while it shows a sandboxed (opaque-origin) page,
  * and only with a grant of the same console session, dashboard and installation as the one the
  * console last issued: a foreign page navigated into the frame gets nothing.
@@ -31,7 +34,15 @@ export function installFrameGrantRelay(frame: HTMLIFrameElement, mintUrl: string
     const source = event.source as Window;
     busy = true;
     void fetch(mintUrl, { credentials: 'same-origin', cache: 'no-store' })
-      .then((response) => (response.ok ? response.json() : null))
+      .then((response) => {
+        // A definite refusal (signed out, installation gone): tell the page to stop asking.
+        // Anything else (network, 5xx) stays silent; the page asks again.
+        if (response.status >= 400 && response.status < 500) {
+          source.postMessage({ type: 'magnus-frame-refused' }, '*');
+          return null;
+        }
+        return response.ok ? response.json() : null;
+      })
       .then((body: { grant?: unknown } | null) => {
         if (!body || typeof body.grant !== 'string') return;
         current = body.grant;

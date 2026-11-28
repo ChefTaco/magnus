@@ -28,9 +28,16 @@ host. Because the pages come from the console's host, they are isolated from it
   (`postMessage`, echoing its grant); the console mints it with its cookie (`?mint=json` on the entry
   URL) and posts it back, and the page sends its later requests, sockets and link navigations with
   it (`src/lib/frame-grant-relay.ts` and the compatibility script). A reload in a tab carries the
-  console cookie and is re-minted directly; a reload inside the frame, which carries no cookie,
-  gets a page that asks the console frame first. An expired grant alone reaches nothing but the
-  dashboard's static build files, so a URL copied from a log or the history is useless.
+  console cookie and is re-minted directly, and a dashboard in its own tab reloads itself (at most
+  once a minute) when a call is refused with `frame_grant_expired`. A reload inside the frame,
+  which carries no cookie, gets a page that asks the console frame every 3 seconds until it gets a
+  grant or a refusal. An expired grant alone reaches nothing but the dashboard's static build
+  files, so a URL copied from a log or the history is useless.
+- **Paths.** The static-file exemption and the forwarded request use one path: the decoded
+  segments, each re-encoded, refused outright when a segment is `.`, `..` or empty or holds a slash,
+  backslash or NUL, and refused for the exemption when it holds any `%`. The router request is
+  built with the WHATWG URL parser and must normalise to exactly the router base plus that path, so
+  double-encoded traversals (`%252e%252e`) cannot turn an asset path into an API call.
 - **Open sockets.** The WebSocket bridge checks the grant at the upgrade and then re-checks the
   console session every 30 seconds, closing the socket (a PTY included) once the session is signed
   out, revoked or its credentials change. It does not close a socket when the grant that opened it
@@ -43,7 +50,8 @@ host. Because the pages come from the console's host, they are isolated from it
   kept in the console process per console session and installation, and the page sees a
   placeholder instead (`magnus-frame`); the proxy sends the real token as the upstream bearer and
   swaps it into the `token` parameter of sockets and downloads. The router's cookies are kept per
-  console session too. Signing out clears both. The browser never holds a console-scoped credential
+  console session too. Signing out clears both; signing out everywhere clears that user's sessions
+  only. The browser never holds a console-scoped credential
   or the dashboard's own token.
 - **Compatibility.** The proxy rewrites the dashboard's root-relative URLs onto the frame path and
   adds per-document stand-ins for `localStorage`, `sessionStorage` and `document.cookie`, which throw

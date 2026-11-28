@@ -18,6 +18,7 @@ export interface FrameGrant {
   sessionExpiresAt: number;
 }
 export interface FrameSessionState {
+  username: string;
   expiresAt: number;
   hermesTokens: Map<string, string>;
   routerCookies: Map<string, string>;
@@ -54,7 +55,10 @@ export function frameEntryAllowed(headers: { get(name: string): string | null })
 export function applyFrameHeaders(headers: Headers, requestOrigin: string | null): Headers;
 export function framePreflightHeaders(requestHeaders: { get(name: string): string | null }): Headers;
 export function swapFrameToken(search: string, token: string | null | undefined): string;
-export function frameSessionState(grant: { sessionId: string; sessionExpiresAt: number }): FrameSessionState;
+export function frameSessionState(grant: { sessionId: string; sessionExpiresAt: number; username: string }): FrameSessionState;
 export function peekFrameSessionState(sessionId: string): FrameSessionState | null;
-export function clearFrameSessionState(sessionId?: string): void;
+export function clearFrameSessionState(sessionId: string): void;
+export function clearFrameUserState(username: string): void;
+export function resetFrameState(): void;
+export function frameUpstreamPath(segments: string[]): string | null;
 export function injectFrameCompat(html: string): string;

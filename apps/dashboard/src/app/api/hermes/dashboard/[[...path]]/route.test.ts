@@ -23,7 +23,7 @@ vi.mock('../../../../../../runtime-local-sessions.mjs', () => ({
 
 process.env['SESSION_SECRET'] ??= 'test-only-session-secret-0123456789abcdef';
 const { GET, POST, OPTIONS } = await import('./route');
-const { mintFrameGrant, clearFrameSessionState, FRAME_GRANT_TTL_SECONDS, FRAME_TOKEN_PLACEHOLDER } = await import('../../../../../../runtime-embed-isolation.mjs');
+const { mintFrameGrant, clearFrameSessionState, resetFrameState, FRAME_GRANT_TTL_SECONDS, FRAME_TOKEN_PLACEHOLDER } = await import('../../../../../../runtime-embed-isolation.mjs');
 
 const context = (path: string[] = []) => ({ params: Promise.resolve({ path }) });
 const base = 'https://magnus.example.com/api/hermes/dashboard';
@@ -36,7 +36,7 @@ function upstream(body: string, contentType: string) {
 }
 
 describe('Hermes dashboard proxy isolation', () => {
-  beforeEach(() => { mocks.ssh.mockReset(); mocks.live = true; clearFrameSessionState(); vi.useRealTimers(); });
+  beforeEach(() => { mocks.ssh.mockReset(); mocks.live = true; resetFrameState(); vi.useRealTimers(); });
 
   async function expiredGrant(installationId = 'install-a') {
     vi.useFakeTimers({ toFake: ['Date'] });
@@ -124,6 +124,21 @@ describe('Hermes dashboard proxy isolation', () => {
     expect(framed.headers.get('content-security-policy')).toMatch(/^sandbox /);
     expect(await framed.text()).toContain('magnus-frame-refresh');
     expect(mocks.ssh).not.toHaveBeenCalled();
+  });
+
+  it('never lets an expired grant reach the dashboard API through an encoded traversal', async () => {
+    const grant = await expiredGrant();
+    mocks.ssh.mockResolvedValue(upstream('x', 'application/javascript'));
+    const get = (segments: string[]) => GET(new NextRequest(`${base}/_frame/${grant}/x`), context(['_frame', grant, ...segments]));
+    for (const segments of [['assets', '%2e%2e', 'api', 'status'], ['assets', '%2E%2e', 'api', 'status']]) {
+      expect((await get(segments)).status).toBe(401);
+    }
+    for (const segments of [['assets', '..', 'api', 'status'], ['assets', '../api', 'status'], ['assets', '..\\api']]) {
+      expect((await get(segments)).status).toBe(400);
+    }
+    expect(mocks.ssh).not.toHaveBeenCalled();
+    expect((await get(['assets', 'index.js'])).status).toBe(200);
+    expect(mocks.ssh.mock.calls[0]![0].upstreamPath).toBe('/assets/index.js');
   });
 
   it('refuses an expired grant for API calls', async () => {

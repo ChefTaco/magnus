@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import ts from 'typescript';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createBoundedMessageQueue, createWebSocketBackpressureController, resolveHermesDashboardForwardTarget } from '../../runtime-hermes-security.mjs';
-import { FRAME_TOKEN_PLACEHOLDER, clearFrameSessionState, frameSessionState, peekFrameSessionState, swapFrameToken } from '../../runtime-embed-isolation.mjs';
+import { FRAME_TOKEN_PLACEHOLDER, resetFrameState, frameSessionState, peekFrameSessionState, swapFrameToken } from '../../runtime-embed-isolation.mjs';
 const fixture = vi.hoisted(() => ({ begin: vi.fn(), finish: vi.fn(), approved: vi.fn(), clients: [] as any[], requests: [] as any[] }));
 vi.mock('../../runtime-resource-participant.mjs', async original => ({ ...(await original<any>()), beginManagedSshWork: fixture.begin }));
 vi.mock('../../runtime-dashboard-credentials.mjs', () => ({ resolveDashboardSshCredentials: () => ({ username: 'fixture', password: 'fixture' }) }));
@@ -113,13 +113,13 @@ describe('actual Hermes HTTP/WebSocket forwarding selection', () => {
     await vi.waitFor(() => expect(ws.client.close).toHaveBeenCalledWith(1011, 'Console session unverifiable'));
   });
   it('WebSocket bridge sends the real dashboard token upstream, never the placeholder', async () => {
-    clearFrameSessionState();
-    frameSessionState({ sessionId: 'session-fixture', sessionExpiresAt: Math.floor(Date.now() / 1000) + 600 }).hermesTokens.set(installation.id, 'real-token');
+    resetFrameState();
+    frameSessionState({ sessionId: 'session-fixture', username: 'admin', sessionExpiresAt: Math.floor(Date.now() / 1000) + 600 }).hermesTokens.set(installation.id, 'real-token');
     const ws = websocketFixture(installation, true, { open: true, path: `/api/pty?token=${FRAME_TOKEN_PLACEHOLDER}&cols=80` });
     await vi.waitFor(() => expect(ws.upstreams).toHaveLength(1));
     expect(ws.upstreams[0]!.url).toBe('ws://127.0.0.1:9119/api/pty?token=real-token&cols=80');
     ws.client.close(1000);
-    clearFrameSessionState();
+    resetFrameState();
   });
   it('HTTP forwards to approved observed private listener after durable admission', async () => {
     const response = await requestHermesDashboardOverSsh({ installation: installation as any, req: { headers: new Headers(), nextUrl: { protocol: 'https:' }, method: 'GET' } as any, upstreamPath: '/', search: '' });

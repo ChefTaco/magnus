@@ -195,10 +195,30 @@ export function splitFrameSegments(segments) {
  * @param {string} upstreamPath
  */
 export function frameStaticAsset(upstreamPath) {
-  if (upstreamPath.includes('..')) return false;
+  // Decided on the path exactly as it will be forwarded: no percent-encoding (the proxies decode
+  // once, and an upstream URL parser may decode and normalise again), no backslash, and no `.`,
+  // `..` or empty segments, in any spelling.
+  if (/[%\\?#]/.test(upstreamPath)) return false;
+  if (upstreamPath.slice(1).split('/').some((segment) => segment === '' || segment === '.' || segment === '..')) return false;
   return /^\/(?:assets|fonts-terminal)\/[^?#]+$/.test(upstreamPath)
     || upstreamPath === '/favicon.ico'
     || /^\/dashboard-plugins\/[^?#]+\.(?:js|mjs|css|map|svg|png|woff2?)$/.test(upstreamPath);
+}
+
+/**
+ * The upstream path for a frame request's decoded path segments, encoded so that no parser along
+ * the way can reinterpret it, or null when a segment is `.`, `..` or empty, or holds a slash,
+ * a backslash or a NUL (a traversal, once encoded or not). Every proxied request goes through it.
+ * @param {string[]} segments
+ */
+export function frameUpstreamPath(segments) {
+  for (const segment of segments) {
+    if (segment === '.' || segment === '..' || /[/\\\0]/.test(segment)) return null;
+  }
+  if (segments.slice(0, -1).some((segment) => segment === '')) return null;
+  const path = `/${segments.map((segment) => encodeURIComponent(segment)).join('/')}`;
+  // WHATWG URL parsing (undici, the Hermes HTTP client) must leave it exactly as it is.
+  return new URL(path, 'http://upstream.invalid').pathname === path ? path : null;
 }
 
 /**
@@ -285,7 +305,7 @@ export function swapFrameToken(search, token) {
 const STATE = Symbol.for('magnus.embeddedDashboardState');
 const MAX_STATE_SESSIONS = 256;
 
-/** @returns {Map<string, { expiresAt: number, hermesTokens: Map<string, string>, routerCookies: Map<string, string> }>} */
+/** @returns {Map<string, { username: string, expiresAt: number, hermesTokens: Map<string, string>, routerCookies: Map<string, string> }>} */
 function stateStore() {
   const holder = /** @type {Record<symbol, any>} */ (globalThis);
   return (holder[STATE] ??= new Map());
@@ -298,7 +318,7 @@ function purgeExpiredState(store) {
 
 /**
  * The server-side state of one console session's embedded dashboards, created on first use.
- * @param {{ sessionId: string, sessionExpiresAt: number }} grant
+ * @param {{ sessionId: string, sessionExpiresAt: number, username: string }} grant
  */
 export function frameSessionState(grant) {
   const store = stateStore();
@@ -307,7 +327,7 @@ export function frameSessionState(grant) {
   if (entry) {
     store.delete(grant.sessionId);
   } else {
-    entry = { expiresAt: grant.sessionExpiresAt, hermesTokens: new Map(), routerCookies: new Map() };
+    entry = { username: grant.username, expiresAt: grant.sessionExpiresAt, hermesTokens: new Map(), routerCookies: new Map() };
     while (store.size >= MAX_STATE_SESSIONS) store.delete(store.keys().next().value);
   }
   entry.expiresAt = Math.max(entry.expiresAt, grant.sessionExpiresAt);
@@ -325,12 +345,25 @@ export function peekFrameSessionState(sessionId) {
 }
 
 /**
- * Forget a console session's dashboard state on sign-out; without an id, every session's.
- * @param {string} [sessionId]
+ * Forget a console session's dashboard state on sign-out.
+ * @param {string} sessionId
  */
 export function clearFrameSessionState(sessionId) {
-  if (sessionId === undefined) stateStore().clear();
-  else stateStore().delete(sessionId);
+  stateStore().delete(sessionId);
+}
+
+/**
+ * Forget every session of one console user (sign-out of all sessions); other users keep theirs.
+ * @param {string} username
+ */
+export function clearFrameUserState(username) {
+  const store = stateStore();
+  for (const [sessionId, entry] of store) if (entry.username === username) store.delete(sessionId);
+}
+
+/** Forget all dashboard state (tests). */
+export function resetFrameState() {
+  stateStore().clear();
 }
 
 /**
@@ -339,8 +372,9 @@ export function clearFrameSessionState(sessionId) {
  *   page per-document stand-ins;
  * - renew the frame grant before it expires: ask the console frame (`postMessage` to the parent,
  *   echoing the current grant) and, once a new one arrives, send every later fetch, XHR,
- *   WebSocket and EventSource with it. In its own tab there is no console frame; the page then
- *   reloads (re-minted with the console cookie) when its API calls start failing.
+ *   WebSocket and EventSource with it. In its own tab there is no console frame: when a fetch or
+ *   XHR is refused with `frame_grant_expired`, the page reloads itself (a top-level navigation
+ *   carries the console cookie, so the grant is re-minted), at most once a minute.
  */
 export const FRAME_COMPAT_SCRIPT = '<script>(function(){'
   + 'function m(){var d=Object.create(null);return{get length(){return Object.keys(d).length},'
@@ -355,11 +389,18 @@ export const FRAME_COMPAT_SCRIPT = '<script>(function(){'
   + "var g=(location.pathname.match(/\\/_frame\\/([^/?#]+)/)||[])[1];if(!g)return;"
   + "function x(t){try{return JSON.parse(atob(t.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'))).exp||0}catch(e){return 0}}"
   + "function s(u){return typeof u==='string'?u.replace(/(\\/_frame\\/)[^/?#]+/,'$1'+g):u}"
+  + 'var T=window.parent===window;'
+  // In its own tab: reload on an expired grant, rate-limited across reloads through window.name.
+  + "function q(b){if(!T||String(b).indexOf('frame_grant_expired')<0)return;"
+  + "var k='magnus-frame-reload:',n=String(window.name||''),t=n.indexOf(k)===0?+n.slice(k.length):0;"
+  + 'if(Date.now()-t<60000)return;window.name=k+Date.now();location.reload()}'
   + 'var F=window.fetch;if(F)window.fetch=function(i,o){'
   + "if(typeof i==='string')i=s(i);else if(i instanceof URL)i=s(i.href);"
-  + 'else if(i instanceof Request&&s(i.url)!==i.url)i=new Request(s(i.url),i);return F.call(this,i,o)};'
+  + 'else if(i instanceof Request&&s(i.url)!==i.url)i=new Request(s(i.url),i);'
+  + 'return F.call(this,i,o).then(function(r){if(T&&r.status===401)r.clone().text().then(q,function(){});return r})};'
   + 'var O=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(){'
-  + 'var a=[].slice.call(arguments);a[1]=s(String(a[1]));return O.apply(this,a)};'
+  + "var a=[].slice.call(arguments);a[1]=s(String(a[1]));if(T)this.addEventListener('load',function(){"
+  + 'try{if(this.status===401)q(this.responseText)}catch(_){}});return O.apply(this,a)};'
   + "['WebSocket','EventSource'].forEach(function(n){var C=window[n];if(!C)return;"
   + 'var P=function(u,p){return arguments.length>1?new C(s(String(u)),p):new C(s(String(u)))};'
   + "P.prototype=C.prototype;['CONNECTING','OPEN','CLOSING','CLOSED'].forEach(function(k){if(k in C)P[k]=C[k]});"
@@ -367,7 +408,7 @@ export const FRAME_COMPAT_SCRIPT = '<script>(function(){'
   // Links baked with an older grant follow the current one.
   + "document.addEventListener('click',function(e){var a=e.target&&e.target.closest&&e.target.closest('a[href]');"
   + 'if(a&&a.href&&s(a.href)!==a.href)a.href=s(a.href)},true);'
-  + 'if(window.parent===window)return;'
+  + 'if(T)return;'
   + "window.addEventListener('message',function(e){var d=e.data;"
   + "if(e.source!==window.parent||!d||d.type!=='magnus-frame-grant'||typeof d.grant!=='string')return;"
   + "g=d.grant;try{history.replaceState(history.state,'',s(location.href))}catch(_){}"
@@ -380,15 +421,21 @@ export const FRAME_COMPAT_SCRIPT = '<script>(function(){'
 /**
  * Page for a navigation inside the console frame whose grant has expired (the frame's own
  * reload carries no console cookie): ask the console frame for a new grant, then load the same
- * address with it. Without a console frame to answer, it stays on the notice.
+ * address with it. It asks again every 3 seconds, up to 20 times, until a grant arrives or the
+ * console answers that it cannot mint one; then it says so.
  */
 export const FRAME_RECONNECT_PAGE = '<!doctype html><html><head><meta charset="utf-8"><title>Reconnecting</title>'
   + '<script>(function(){var g=(location.pathname.match(/\\/_frame\\/([^/?#]+)/)||[])[1];'
-  + "if(!g||window.parent===window)return;window.addEventListener('message',function(e){var d=e.data;"
-  + "if(e.source!==window.parent||!d||d.type!=='magnus-frame-grant'||typeof d.grant!=='string')return;"
+  + "if(!g||window.parent===window)return;var n=0,i;function stop(m){clearInterval(i);"
+  + "var p=document.getElementById('state');if(p)p.textContent=m}"
+  + "window.addEventListener('message',function(e){var d=e.data;if(e.source!==window.parent||!d)return;"
+  + "if(d.type==='magnus-frame-refused'){stop('The console could not renew the dashboard session. Reconnect the frame from the console.');return}"
+  + "if(d.type!=='magnus-frame-grant'||typeof d.grant!=='string')return;clearInterval(i);"
   + "location.replace(location.href.replace(/(\\/_frame\\/)[^/?#]+/,'$1'+d.grant))});"
-  + "window.parent.postMessage({type:'magnus-frame-refresh',grant:g},'*')})();</script></head>"
-  + '<body><p>The dashboard session expired. Reconnecting; if nothing happens, reconnect the frame from the console.</p></body></html>';
+  + "function ask(){if(++n>20){stop('The dashboard session expired. Reconnect the frame from the console.');return}"
+  + "window.parent.postMessage({type:'magnus-frame-refresh',grant:g},'*')}"
+  + "ask();i=setInterval(ask,3000)})();</script></head>"
+  + '<body><p id="state">The dashboard session expired. Reconnecting.</p></body></html>';
 
 /**
  * Insert {@link FRAME_COMPAT_SCRIPT} before any of the page's own scripts.

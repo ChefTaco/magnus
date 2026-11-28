@@ -9,7 +9,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { COOKIE_NAME, verifySessionToken } from '@/lib/auth';
 import { cookies } from 'next/headers';
 import { revokeHiveSession } from '@/lib/hive-login';
-import { clearFrameSessionState } from '../../../../../runtime-embed-isolation.mjs';
+import { clearFrameSessionState, clearFrameUserState } from '../../../../../runtime-embed-isolation.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -39,7 +39,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         const all = request.nextUrl.searchParams.get('all') === 'true';
         await revokeLocalSession(session, all);
         // The embedded dashboards' server-side state (Hermes tokens, router cookies) goes too.
-        clearFrameSessionState(all ? undefined : session.sessionId);
+        // (All of this user's sessions with `all=true`; other users keep theirs.)
+        if (all) clearFrameUserState(session.username);
+        else if (session.sessionId) clearFrameSessionState(session.sessionId);
       }
     } catch {
       return NextResponse.json(

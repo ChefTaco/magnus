@@ -89,6 +89,9 @@ describe('embedded dashboard isolation', () => {
     await expect(api.json()).resolves.toEqual({ error: 'frame_grant_expired' });
     expect((await get(`${base}/sessions`, { 'sec-fetch-mode': 'navigate' })).headers.get('x-middleware-next')).toBe('1');
     expect((await get(`${base}/assets/index.js`, {})).headers.get('x-middleware-next')).toBe('1');
+    for (const path of ['/assets/%2e%2e/api/status', '/assets/%252e%252e/api/status', '/assets/..%2fapi/status', '/assets/%5c..%5capi', '/assets/%2E%2e/api']) {
+      expect((await get(`${base}${path}`, {})).status, path).toBe(401);
+    }
   });
 
   it('refuses console API reads from a sandboxed page or another site', async () => {

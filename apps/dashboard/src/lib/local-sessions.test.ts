@@ -86,6 +86,18 @@ it('ends the embedded dashboards with the console session on logout', async () =
   await expect(isolation.frameSessionAlive(verified)).resolves.toBe(false);
   expect(isolation.peekFrameSessionState(session.sessionId!)).toBeNull();
 });
+it('signing out everywhere forgets only this user\'s dashboard state', async () => {
+  const isolation = await import('../../runtime-embed-isolation.mjs');
+  state.token = await auth.createSessionToken('admin');
+  const session = (await auth.verifySessionToken(state.token))!;
+  const exp = Math.floor(Date.now() / 1000) + 600;
+  isolation.frameSessionState({ sessionId: session.sessionId!, username: 'admin', sessionExpiresAt: exp });
+  isolation.frameSessionState({ sessionId: 'other-user-session', username: 'operator', sessionExpiresAt: exp }).routerCookies.set('admin', 'kept');
+  await logout.POST(new NextRequest('https://example.test/api/auth/logout?all=true', { method: 'POST' }));
+  expect(isolation.peekFrameSessionState(session.sessionId!)).toBeNull();
+  expect(isolation.peekFrameSessionState('other-user-session')?.routerCookies.get('admin')).toBe('kept');
+  isolation.resetFrameState();
+});
 it('revokes all sessions while allowing a subsequent login', async () => {
   const first = await auth.createSessionToken('admin'),
     second = await auth.createSessionToken('admin');

@@ -111,7 +111,10 @@ migration, and no new setting.
   open Hermes WebSocket (the PTY included) re-checks its console session every 30 seconds and closes
   when it is signed out or revoked. The frame policy adds `connect-src 'self'`. The Hermes session
   token stays on the server per console session and installation (the page sees a placeholder), the
-  router's cookies likewise, and signing out clears both.
+  router's cookies likewise, and signing out clears both (signing out everywhere, only that
+  user's). An expired grant still loads static build files; that exemption and every forwarded
+  path are decided on one re-encoded, traversal-free path, so encoded traversals
+  (`%2e%2e`, `%252e%252e`, `..%2f`, `%5c`) never reach an API.
 - **Console: cross-site API reads are refused.** Any `/api` request with `Origin: null`, and any
   cross-site or same-site `/api` request that is not a navigation, gets 403
   `cross_site_request_refused`, as cross-site writes already did. Navigations (the sign-in callback)

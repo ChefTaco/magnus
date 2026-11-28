@@ -10,6 +10,7 @@ import {
   FRAME_SEGMENT,
   applyFrameHeaders,
   frameGrantDecision,
+  frameUpstreamPath,
   mintFrameGrant,
   type EmbeddedDashboard,
   type FrameGrant,
@@ -28,9 +29,10 @@ export async function requireConsoleSession(req: NextRequest): Promise<SessionPa
   return session ?? NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 }
 
-function frameUrl(req: NextRequest, app: EmbeddedDashboard, grant: string, path: string[], search: string): URL {
+function frameUrl(req: NextRequest, app: EmbeddedDashboard, grant: string, path: string[] | string, search: string): URL {
   const url = req.nextUrl.clone();
-  url.pathname = `${EMBEDDED_DASHBOARDS[app]}/${FRAME_SEGMENT}/${grant}/${path.join('/')}`;
+  const tail = typeof path === 'string' ? path.slice(1) : path.join('/');
+  url.pathname = `${EMBEDDED_DASHBOARDS[app]}/${FRAME_SEGMENT}/${grant}/${tail}`;
   url.search = search;
   return url;
 }
@@ -64,20 +66,25 @@ export async function enterFrame(req: NextRequest, input: {
  * (307 to the same path with a new grant) when it also carries the console cookie of the same
  * session, as a reload of a tab does; inside the console frame, whose reloads carry no cookie, the
  * frame is asked to renew it instead. Anything else expired or invalid gets 401.
+ *
+ * Returns the grant and the upstream path, encoded by {@link frameUpstreamPath}: the decision and
+ * the forwarded request use that same path, and a path that could traverse is refused with 400.
  */
 export async function authorizeFrame(req: NextRequest, input: {
   app: EmbeddedDashboard;
   grant: string;
   rest: string[];
-}): Promise<FrameGrant | NextResponse> {
+}): Promise<{ grant: FrameGrant; upstreamPath: string } | NextResponse> {
+  const upstreamPath = frameUpstreamPath(input.rest);
+  if (!upstreamPath) return frameJson(req, { error: 'frame_path_invalid' }, 400);
   const decision = await frameGrantDecision({
     grant: input.grant,
     app: input.app,
     method: req.method,
     headers: req.headers,
-    upstreamPath: `/${input.rest.join('/')}`,
+    upstreamPath,
   });
-  if (decision.action === 'allow') return decision.grant;
+  if (decision.action === 'allow') return { grant: decision.grant, upstreamPath };
   if (decision.action === 'remint') {
     const sessionToken = req.cookies.get(COOKIE_NAME)?.value;
     const session = sessionToken ? await verifySessionToken(sessionToken) : null;
@@ -87,7 +94,7 @@ export async function authorizeFrame(req: NextRequest, input: {
         status: 307,
         headers: applyFrameHeaders(new Headers({ 'cache-control': 'no-store' }), req.headers.get('origin')),
       });
-      response.headers.set('location', frameUrl(req, input.app, grant, input.rest, req.nextUrl.search).toString());
+      response.headers.set('location', frameUrl(req, input.app, grant, upstreamPath, req.nextUrl.search).toString());
       return response;
     }
     // Inside the console frame a reload carries no console cookie: let the frame renew it.

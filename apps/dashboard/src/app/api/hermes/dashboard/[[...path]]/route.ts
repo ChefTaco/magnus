@@ -174,14 +174,14 @@ async function proxyHandler(
 
   // Frame request: the grant is the only authority. Console cookies are ignored (except to
   // re-mint an expired grant on a navigation, see authorizeFrame).
-  const grant = await authorizeFrame(req, { app: 'hermes', grant: frame.grant, rest: frame.rest });
-  if (grant instanceof NextResponse) return grant;
+  const authorized = await authorizeFrame(req, { app: 'hermes', grant: frame.grant, rest: frame.rest });
+  if (authorized instanceof NextResponse) return authorized;
+  const { grant, upstreamPath } = authorized;
   if (!grant.installationId) return frameJson(req, { error: 'frame_grant_invalid' }, 401);
   if (!hermesEnabled()) {
     return frameJson(req, { error: 'Hermes Agent integration is not enabled. Set MAGNUS_HERMES_ENABLED=true to enable it.' }, 503);
   }
   const frameBase = `${PROXY_BASE}/${FRAME_SEGMENT}/${frame.grant}`;
-  const upstreamPath = `/${frame.rest.join('/')}`;
 
   let installation: HermesInstallation | null;
   try {
