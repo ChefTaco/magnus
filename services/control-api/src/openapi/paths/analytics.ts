@@ -184,7 +184,7 @@ export const paths: Paths = {
   },
   '/anomalies/{id}/resolve': {
     post: {
-      tags: ['Anomalies'], summary: 'Mark one anomaly resolved', description: `Takes no body. ${write}`,
+      tags: ['Anomalies'], summary: 'Mark one anomaly resolved', description: `Takes no body. Audited as \`anomaly.resolve\`. ${write}`,
       security: userAuth,
       parameters: [pp('id', 'Anomaly event ID')],
       responses: { 200: { description: 'Resolved', content: { 'application/json': { schema: { type: 'object', properties: { success: { type: 'boolean', enum: [true] } } } } } }, 401: err401, 403: err403, 404: err404 },
@@ -193,7 +193,7 @@ export const paths: Paths = {
   '/anomalies/resolve-node': {
     post: {
       tags: ['Anomalies'], summary: 'Resolve every active anomaly of a node, or of one metric on it',
-      description: write,
+      description: `Audited as \`anomaly.resolve_node\` with the node, the metric and the number resolved. ${write}`,
       security: userAuth,
       requestBody: inlineBody({ type: 'object', required: ['nodeId'], properties: { nodeId: { type: 'string', minLength: 1, maxLength: 128 }, metric: { type: 'string', minLength: 1, maxLength: 100, description: 'Only this metric' } } }),
       responses: { 200: success('Number of anomalies resolved', { type: 'object', properties: { resolved: { type: 'integer' } } }), 400: { ...err400, description: 'Not JSON, or `nodeId` missing or not a string' }, 401: err401, 403: err403 },
@@ -202,7 +202,7 @@ export const paths: Paths = {
   '/anomalies/purge': {
     post: {
       tags: ['Anomalies'], summary: 'Delete resolved anomalies older than a retention period',
-      description: 'Deletes anomalies resolved more than `retentionDays` ago. A missing body (or one that is not JSON) keeps the default of 30 days. ADMIN only.',
+      description: 'Deletes anomalies resolved more than `retentionDays` ago. A missing body (or one that is not JSON) keeps the default of 30 days. Audited as `anomaly.purge` with `retentionDays` and the number deleted. ADMIN only.',
       security: userAuth,
       requestBody: optionalBody({ type: 'object', properties: { retentionDays: { type: 'integer', minimum: 1, maximum: 3650, default: 30, description: 'Whole days; 0 or less would delete every resolved anomaly and answers 400' } } }),
       responses: { 200: success('Number of anomalies deleted', { type: 'object', properties: { deleted: { type: 'integer' }, retentionDays: { type: 'integer' } } }), 400: { ...err400, description: '`retentionDays` is not a whole number from 1 to 3650' }, 401: err401, 403: err403 },

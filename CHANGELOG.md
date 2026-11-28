@@ -111,8 +111,9 @@ migration, and no new setting.
   length only, `.reset`), settings (`assistant.settings.update`, without the system prompt text) and
   model routes (`assistant.model_profiles.update`); AI schedule `ai_schedule.create`, `.update`,
   `.delete`, and every run, from the scheduler or `POST /ai-schedules/execute-due`, as
-  `ai_schedule.run` with its outcome; and a `POST /drift/scan` whose agent call failed (`drift.scan`
-  with status `error`).
+  `ai_schedule.run` with its outcome; a `POST /drift/scan` whose agent call failed (`drift.scan`
+  with status `error`); and anomaly changes: `anomaly.resolve`, `anomaly.resolve_node` (node,
+  metric and number resolved) and `anomaly.purge` (`retentionDays` and number deleted).
 - Shared-credential status: `configured` (false for `NODE_MANAGER_SECRET` in node-key enforce mode
   without one), and `activeFingerprint` is null then.
 - Console route inventory: `POST /api/v1/discovery/scan` (ADMIN or OPERATOR) and

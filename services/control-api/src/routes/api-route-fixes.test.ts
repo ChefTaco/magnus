@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const m = vi.hoisted(() => ({
   role: 'ADMIN',
   audit: vi.fn(),
-  resolveNodeAnomalies: vi.fn(), purgeResolvedAnomalies: vi.fn(),
+  resolveAnomaly: vi.fn(), resolveNodeAnomalies: vi.fn(), purgeResolvedAnomalies: vi.fn(),
   createScheduledOp: vi.fn(), updateScheduledOp: vi.fn(), deleteScheduledOp: vi.fn(), getScheduledOp: vi.fn(), executeDueOps: vi.fn(),
   getRule: vi.fn(),
   nodeFindUnique: vi.fn(), driftScanCreate: vi.fn(), kyPost: vi.fn(),
@@ -23,7 +23,7 @@ vi.mock('../middleware/auth.js', () => ({
 }));
 vi.mock('../services/audit-service.js', () => ({ logAuditEvent: m.audit }));
 vi.mock('../services/anomaly-detector.js', () => ({
-  listAnomalyEvents: vi.fn(), getNodeAnomalySummary: vi.fn(), resolveAnomaly: vi.fn(), getFleetAnomalySummary: vi.fn(),
+  listAnomalyEvents: vi.fn(), getNodeAnomalySummary: vi.fn(), resolveAnomaly: m.resolveAnomaly, getFleetAnomalySummary: vi.fn(),
   resolveNodeAnomalies: m.resolveNodeAnomalies, purgeResolvedAnomalies: m.purgeResolvedAnomalies,
 }));
 vi.mock('../services/ai-correlation-service.js', () => ({ correlateAnomalies: vi.fn(), getAnomalyCorrelationDetails: vi.fn(), getAnomalyTimeline: vi.fn() }));
@@ -64,6 +64,7 @@ const apiError = (code: string) => ({ success: false, error: { code, message: ex
 beforeEach(() => {
   vi.clearAllMocks();
   m.role = 'ADMIN';
+  m.resolveAnomaly.mockResolvedValue(undefined);
   m.resolveNodeAnomalies.mockResolvedValue(3);
   m.purgeResolvedAnomalies.mockResolvedValue(5);
   m.createScheduledOp.mockResolvedValue({ id: 'op-1', name: 'disks' });
@@ -101,6 +102,33 @@ describe('anomalies', () => {
     expect(await response.json()).toEqual({ success: true, data: { deleted: 5, retentionDays: 30 } });
     expect((await send('/anomalies/purge', { retentionDays: 7 })).status).toBe(200);
     expect(m.purgeResolvedAnomalies).toHaveBeenLastCalledWith(7);
+  });
+});
+
+describe('anomaly audit events', () => {
+  it('audits resolving one anomaly, and not an unknown one', async () => {
+    m.role = 'OPERATOR';
+    expect((await send('/anomalies/anomaly-1/resolve')).status).toBe(200);
+    expect(m.audit).toHaveBeenCalledWith({ action: 'anomaly.resolve', actorId: 'operator-1', targetType: 'anomaly', targetId: 'anomaly-1' });
+    m.audit.mockClear();
+    m.resolveAnomaly.mockRejectedValueOnce(new Error('Record to update not found'));
+    expect((await send('/anomalies/missing/resolve')).status).toBe(404);
+    expect(m.audit).not.toHaveBeenCalled();
+  });
+
+  it('audits resolving a node\'s anomalies with the node, metric and count', async () => {
+    expect((await send('/anomalies/resolve-node', { nodeId: 'node-1' })).status).toBe(200);
+    expect(m.audit).toHaveBeenCalledWith({ action: 'anomaly.resolve_node', actorId: 'admin-1', targetType: 'node', targetId: 'node-1',
+      details: { metric: null, resolved: 3 } });
+  });
+
+  it('audits a purge with the retention and the number deleted, and not a refused one', async () => {
+    expect((await send('/anomalies/purge', { retentionDays: 7 })).status).toBe(200);
+    expect(m.audit).toHaveBeenCalledWith({ action: 'anomaly.purge', actorId: 'admin-1', targetType: 'anomaly', targetId: 'resolved',
+      details: { retentionDays: 7, deleted: 5 } });
+    m.audit.mockClear();
+    expect((await send('/anomalies/purge', { retentionDays: -1 })).status).toBe(400);
+    expect(m.audit).not.toHaveBeenCalled();
   });
 });
 

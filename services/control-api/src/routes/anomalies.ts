@@ -12,7 +12,8 @@ import { intQuery, pagination } from '../utils/query.js';
 
 import { Hono } from 'hono';
 import type { AppVariables } from '../types/index.js';
-import { authMiddleware, requireRole } from '../middleware/auth.js';
+import { authMiddleware, getUser, requireRole } from '../middleware/auth.js';
+import { logAuditEvent } from '../services/audit-service.js';
 import { HttpError } from '../middleware/error-handler.js';
 import { z } from 'zod';
 import { parseBody, parseInput } from '../utils/validate.js';
@@ -100,16 +101,19 @@ anomaliesRouter.post('/:id/resolve', requireRole('ADMIN', 'OPERATOR'), async (c)
   const id = c.req.param('id')!;
   try {
     await resolveAnomaly(id);
-    return c.json({ success: true });
   } catch {
     throw new HttpError(404, 'NOT_FOUND', 'Anomaly event not found');
   }
+  await logAuditEvent({ action: 'anomaly.resolve', actorId: getUser(c).userId, targetType: 'anomaly', targetId: id });
+  return c.json({ success: true });
 });
 
 // ── Bulk-resolve anomalies for a node ──
 anomaliesRouter.post('/resolve-node', requireRole('ADMIN', 'OPERATOR'), async (c) => {
   const body = await parseBody(c, resolveNodeSchema);
   const count = await resolveNodeAnomalies(body.nodeId, body.metric);
+  await logAuditEvent({ action: 'anomaly.resolve_node', actorId: getUser(c).userId, targetType: 'node', targetId: body.nodeId,
+    details: { metric: body.metric ?? null, resolved: count } });
   return c.json({ success: true, data: { resolved: count } });
 });
 
@@ -119,5 +123,7 @@ anomaliesRouter.post('/purge', requireRole('ADMIN'), async (c) => {
   const raw: unknown = await c.req.json().catch(() => ({}));
   const { retentionDays } = parseInput(raw ?? {}, purgeSchema);
   const count = await purgeResolvedAnomalies(retentionDays);
+  await logAuditEvent({ action: 'anomaly.purge', actorId: getUser(c).userId, targetType: 'anomaly', targetId: 'resolved',
+    details: { retentionDays, deleted: count } });
   return c.json({ success: true, data: { deleted: count, retentionDays } });
 });
