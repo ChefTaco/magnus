@@ -37,7 +37,7 @@ export function repositoryConfig() {
 }
 
 const PRODUCTS = ['Hive', 'Magnus', 'Ardent', 'ArdentStudio', 'Oathweave', 'Emberpath', 'HiveMem', 'HiveSkills',
-  'HiveXUI', 'Cindertrace', 'ChatterMost', 'Emberfold', 'Embermend', 'HiveCommon', 'hive-common', 'Proser'];
+  'HiveXUI', 'Cindertrace', 'Emberfold', 'Embermend', 'HiveCommon', 'hive-common'];
 const VERSION = String.raw`v?(\d+\.\d+\.\d+)`;
 const escape = (value) => value.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
 const any = (values) => values.map(escape).join('|');
