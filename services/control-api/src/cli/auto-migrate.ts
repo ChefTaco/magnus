@@ -17,6 +17,8 @@ import {
   backupDatabase,
   backupKeep,
   backupKeepDays,
+  backupPruneEnabled,
+  managedRollbackDumps,
   describeMigration,
   failedMigrationAdvice,
   findReusableBackup,
@@ -61,11 +63,14 @@ export interface AutoMigrateLimits {
   keepBackups: number;
   /** Dumps younger than this many days are kept too (MAGNUS_BACKUP_KEEP_DAYS). */
   keepBackupDays: number;
+  /** Dumps never pruned: the managed project's rollback dumps (MAGNUS_PROJECT_DIR). */
+  protectBackups: string[];
 }
 
 export function autoMigrateLimits(env: NodeJS.ProcessEnv = process.env): AutoMigrateLimits {
   const seconds = Number(env['MAGNUS_AUTO_MIGRATE_LOCK_TIMEOUT'] ?? '');
-  return { lockTimeoutMs: (Number.isFinite(seconds) && seconds > 0 ? seconds : 600) * 1000, keepBackups: backupKeep(env), keepBackupDays: backupKeepDays(env) };
+  return { lockTimeoutMs: (Number.isFinite(seconds) && seconds > 0 ? seconds : 600) * 1000, keepBackups: backupPruneEnabled(env) ? backupKeep(env) : 0, keepBackupDays: backupKeepDays(env),
+    protectBackups: managedRollbackDumps(env) };
 }
 
 /**
@@ -150,7 +155,7 @@ export async function autoMigrate(options: AutoMigrateOptions): Promise<AutoMigr
         backup = { file: recent, metadataFile: `${recent}.json`, restoreCommand: restoreCommand(recent), reused: true };
         log(`[auto-migrate] reusing the dump of the same database state from the last attempt: ${recent}`);
       } else {
-        backup = await backupDatabase({ databaseUrl: options.databaseUrl, backupDir: options.backupDir, label, client, ...optional("pgDump", options.pgDump), lastApplied: state.lastApplied, keep: limits.keepBackups, keepDays: limits.keepBackupDays, now: now() }).catch((error: unknown) => {
+        backup = await backupDatabase({ databaseUrl: options.databaseUrl, backupDir: options.backupDir, label, client, ...optional("pgDump", options.pgDump), lastApplied: state.lastApplied, keep: limits.keepBackups, keepDays: limits.keepBackupDays, protect: limits.protectBackups, now: now() }).catch((error: unknown) => {
           throw new Error(`Auto-migrate stopped before migrating: the backup failed. ${error instanceof Error ? error.message : String(error)}`);
         });
         log(`[auto-migrate] backup written to ${backup.file}`);

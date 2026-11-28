@@ -58,6 +58,12 @@ covers the tables it missed, and the audit log can be given an opt-in retention.
 - **`magnus-server prune-backups [--dry-run]`**: the same pruning of `MAGNUS_BACKUP_DIR` for installs
   without a managed project, by `MAGNUS_BACKUP_KEEP` and the new `MAGNUS_BACKUP_KEEP_DAYS` (default
   7; `0` turns the age rule off). Prints JSON.
+- **`MAGNUS_BACKUP_PRUNE`** (server, default `true`): `false` makes `magnus-server backup` and startup
+  auto-migrate write dumps without pruning. `magnus` sets it when it has the server dump an external
+  database and prunes afterwards itself. Whatever the setting, no server-side prune (backup, startup
+  auto-migrate, `prune-backups`) deletes a dump that the managed project in `MAGNUS_PROJECT_DIR`
+  would restore on rollback. Protected dumps are matched by file name, so a project reached through
+  a symlinked path stays protected.
 - **`MAGNUS_AUDIT_RETENTION_DAYS`** (server, unset by default): at least 90; once a day the daily audit
   files older than that are deleted and the deletion is audited as `audit.retention` in today's file.
   Each day is its own HMAC chain, so later days still verify. Unset, the audit log is kept forever:

@@ -359,7 +359,9 @@ off), the newest good dump (non-empty, with its `.json` metadata, not marked unv
 the last upgrade's rollback would restore. Everything else is deleted with its metadata. Change the
 two numbers in `magnus-project.json`; the server's own startup and `magnus-server backup` dumps
 follow the same rules through `MAGNUS_BACKUP_KEEP` and `MAGNUS_BACKUP_KEEP_DAYS`, which `magnus`
-passes to it.
+passes to it, and never delete the dump this project's rollback would restore. When `magnus` has the
+server dump an external database during an upgrade, the server does not prune
+(`MAGNUS_BACKUP_PRUNE=false`); `magnus` prunes once the upgrade succeeded.
 
 ```bash
 magnus backups                          # list the dumps and why each one stays

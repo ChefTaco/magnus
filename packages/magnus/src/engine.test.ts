@@ -1,9 +1,9 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { backups } from './backups.js';
-import { planBackupPrune, pruneBackups } from './database.js';
+import { backupDatabase, planBackupPrune, pruneBackups } from './database.js';
 import { appendMissing, quoteEnvValue, readEnvFile, renderEnv } from './env-file.js';
 import { init, type InitOptions } from './init.js';
 import type { Io, RunOptions, RunResult } from './io.js';
@@ -698,6 +698,37 @@ describe('magnus backups', () => {
     expect(existsSync(project.path('run', 'upgrade.lock'))).toBe(false);
 
     await expect(backups(host.io, { dir: project.dir, prune: true, dryRun: true, json: false, keep: 0 })).rejects.toThrow(/--keep/);
+  });
+
+  it('protects the rollback dump when the project is reached through a symlink', () => {
+    const real = mkdtempSync(join(tmpdir(), 'magnus-real-'));
+    const linked = join(mkdtempSync(join(tmpdir(), 'magnus-link-')), 'project');
+    symlinkSync(real, linked);
+    const dir = join(real, 'backups');
+    mkdirSync(dir);
+    dumpAt(dir, 'rollback.dump', '2026-01-01T00:00:00Z');
+    dumpAt(dir, 'b.dump', '2026-02-01T00:00:00Z');
+    dumpAt(dir, 'c.dump', '2026-03-01T00:00:00Z');
+    const plan = planBackupPrune(join(linked, 'backups'), { keep: 1, keepDays: 0 }, [join(linked, 'backups', 'rollback.dump')], Date.parse('2026-11-28T00:00:00Z'));
+    expect(plan.remove.map((dump) => dump.file.split('/').pop())).toEqual(['b.dump']);
+    expect(planBackupPrune(dir, { keep: 1, keepDays: 0 }, [join(linked, 'backups', 'rollback.dump')]).keep.map((dump) => dump.file.split('/').pop()).sort())
+      .toEqual(['c.dump', 'rollback.dump']);
+  });
+
+  it('asks the server not to prune when it dumps an external database, so the rollback dump survives failed attempts', async () => {
+    const project = makeProject();
+    const host = makeHost(project, {});
+    const seen: Array<NodeJS.ProcessEnv | undefined> = [];
+    const run = host.io.run;
+    host.io.run = async (command, args, options = {}) => {
+      if (args.some((arg) => arg.endsWith(join('magnus-server', 'dist', 'cli.js'))) && args.includes('backup')) seen.push(options.env);
+      return run(command, args, options);
+    };
+    const backup = await backupDatabase(host.io, project, '1.0.3', 'pre-upgrade-1.0.3-to-1.0.4');
+    expect(backup.file).toBe(join(project.dir, 'backups', 'x.dump'));
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.['MAGNUS_BACKUP_PRUNE']).toBe('false');
+    expect(seen[0]?.['MAGNUS_BACKUP_DIR']).toBe(project.path('backups'));
   });
 
   it('parses backups prune and its options', () => {

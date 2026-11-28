@@ -1,6 +1,6 @@
 /** Pre-migration dumps and restores for both database kinds a project can use. */
 import { closeSync, chmodSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { compareVersions, restoreAsideSchema, restoreFinishSql, restoreRevertSql, restoreSwapSql } from '@hivemagnus/magnus-contracts';
 import { readEnvFile } from './env-file.js';
 import { mustRun, type Io } from './io.js';
@@ -111,13 +111,15 @@ export function planBackupPrune(dir: string, retention: BackupRetention, protect
   const dumps = listDumps(dir);
   if (!Number.isInteger(retention.keep) || retention.keep < 1) return { keep: dumps.map((dump) => ({ ...dump, reasons: ['pruning off'] })), remove: [] };
   const newestGood = dumps.find((dump) => dump.good)?.file;
+  // Every dump lives in `dir`, so compare names: a project reached through a symlink records other paths.
+  const protectedNames = new Set(protect.map((file) => basename(file)));
   const maxAgeMs = Math.max(0, retention.keepDays) * 86_400_000;
   const plan: BackupPrunePlan = { keep: [], remove: [] };
   dumps.forEach((dump, index) => {
     const reasons: string[] = [];
     if (index < retention.keep) reasons.push(`newest ${retention.keep}`);
     if (maxAgeMs > 0 && now - dump.at < maxAgeMs) reasons.push(`younger than ${retention.keepDays}d`);
-    if (protect.includes(dump.file)) reasons.push('rollback dump');
+    if (protectedNames.has(basename(dump.file))) reasons.push('rollback dump');
     if (dump.file === newestGood) reasons.push('newest good dump');
     if (reasons.length) plan.keep.push({ ...dump, reasons });
     else plan.remove.push(dump);
@@ -153,7 +155,9 @@ export function rollbackDumps(project: Project): string[] {
 export async function backupDatabase(io: Io, project: Project, version: string, label: string): Promise<Backup> {
   const db = project.state.database;
   if (db.kind === 'external') {
-    const { stdout } = await serverCli(io, project, version, ['backup', '--label', label], { capture: true });
+    // The server must not prune here: it cannot know which dump this project's rollback needs.
+    // magnus prunes with that protection once the upgrade succeeded (and `magnus backups prune`).
+    const { stdout } = await serverCli(io, project, version, ['backup', '--label', label], { capture: true, env: { MAGNUS_BACKUP_PRUNE: 'false' } });
     const result = JSON.parse(stdout.trim().split('\n').pop() ?? '{}') as { file?: string };
     if (!result.file) throw new Error('magnus-server backup did not report a dump file');
     return { file: result.file, restoreCommand: restoreCommandFor(project, result.file) };

@@ -1,11 +1,11 @@
-import { existsSync, mkdtempSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { upgradeSettings, envSwitch } from '../config/features.js';
 import { autoMigrateLimits, decideAutoMigrate, migrateDatabaseUrl, poolerWarning } from './auto-migrate.js';
 import {
-  backupDatabase, findReusableBackup, packagedMigrations, pruneBackups, readMigrationImpact, restoreCommand, restoreDatabase, splitPassword,
+  backupDatabase, backupPruneEnabled, findReusableBackup, managedRollbackDumps, packagedMigrations, pruneBackups, readMigrationImpact, restoreCommand, restoreDatabase, splitPassword,
   type MigrationState,
 } from './migrations.js';
 
@@ -41,8 +41,9 @@ describe('auto-migrate decision', () => {
     expect(refused.action === 'refuse' && refused.reason).toMatch(/b failed earlier.*prisma migrate resolve/s);
   });
   it('reads its limits and the migrate connection from the environment', () => {
-    expect(autoMigrateLimits({})).toEqual({ lockTimeoutMs: 600_000, keepBackups: 5, keepBackupDays: 7 });
-    expect(autoMigrateLimits({ MAGNUS_AUTO_MIGRATE_LOCK_TIMEOUT: '30', MAGNUS_BACKUP_KEEP: '2', MAGNUS_BACKUP_KEEP_DAYS: '0' })).toEqual({ lockTimeoutMs: 30_000, keepBackups: 2, keepBackupDays: 0 });
+    expect(autoMigrateLimits({})).toEqual({ lockTimeoutMs: 600_000, keepBackups: 5, keepBackupDays: 7, protectBackups: [] });
+    expect(autoMigrateLimits({ MAGNUS_BACKUP_PRUNE: 'false' }).keepBackups).toBe(0);
+    expect(autoMigrateLimits({ MAGNUS_AUTO_MIGRATE_LOCK_TIMEOUT: '30', MAGNUS_BACKUP_KEEP: '2', MAGNUS_BACKUP_KEEP_DAYS: '0' })).toEqual({ lockTimeoutMs: 30_000, keepBackups: 2, keepBackupDays: 0, protectBackups: [] });
     expect(autoMigrateLimits({ MAGNUS_BACKUP_KEEP_DAYS: 'soon' }).keepBackupDays).toBe(7);
     expect(migrateDatabaseUrl({ MAGNUS_MIGRATE_DATABASE_URL: 'postgresql://direct/db' }, 'postgresql://pool/db')).toBe('postgresql://direct/db');
     expect(migrateDatabaseUrl({}, 'postgresql://pool/db')).toBe('postgresql://pool/db');
@@ -154,6 +155,31 @@ describe('migration files and backups', () => {
     for (let i = 0; i < 8; i++) writeDump(dir, `v${i}.dump`, { createdAt: `2026-11-0${i + 1}T00:00:00Z`, label: `pre-migrate-3.3.${i}` });
     const removed = pruneBackups(dir, 5);
     expect(removed.map(file => file.slice(dir.length + 1)).sort()).toEqual(['v0.dump', 'v1.dump', 'v2.dump']);
+  });
+
+  it('never prunes the dump a managed project would roll back to, also through a symlinked path', () => {
+    const real = mkdtempSync(join(tmpdir(), 'magnus-project-'));
+    const linked = join(mkdtempSync(join(tmpdir(), 'magnus-link-')), 'project');
+    symlinkSync(real, linked);
+    const dir = join(real, 'backups');
+    mkdirSync(dir);
+    writeDump(dir, 'rollback.dump', { createdAt: '2026-09-01T00:00:00Z', label: 'pre-upgrade-3.3.0-to-3.4.0', verified: true });
+    for (let i = 0; i < 6; i++) writeDump(dir, `later-${i}.dump`, { createdAt: `2026-10-0${i + 1}T00:00:00Z`, label: `pre-upgrade-attempt-${i}`, verified: true });
+    // The project records the dump under its symlinked directory.
+    writeFileSync(join(real, 'magnus-project.json'), JSON.stringify({ history: [
+      { action: 'upgrade', result: 'ok', backup: join(linked, 'backups', 'rollback.dump') },
+      { action: 'upgrade', result: 'failed', backup: join(linked, 'backups', 'later-0.dump') },
+    ] }));
+    const protect = managedRollbackDumps({ MAGNUS_PROJECT_DIR: linked });
+    expect(protect).toEqual([join(linked, 'backups', 'rollback.dump')]);
+    expect(autoMigrateLimits({ MAGNUS_PROJECT_DIR: linked }).protectBackups).toEqual(protect);
+    const removed = pruneBackups(dir, 5, { keepDays: 7, now: new Date('2026-11-28T00:00:00Z'), protect }).map(file => file.slice(dir.length + 1));
+    expect(removed).toEqual(['later-0.dump']);
+    expect(existsSync(join(dir, 'rollback.dump'))).toBe(true);
+    expect(managedRollbackDumps({})).toEqual([]);
+    expect(managedRollbackDumps({ MAGNUS_PROJECT_DIR: join(real, 'missing') })).toEqual([]);
+    expect(backupPruneEnabled({})).toBe(true);
+    expect(backupPruneEnabled({ MAGNUS_BACKUP_PRUNE: 'false' })).toBe(false);
   });
 
   it('keeps dumps younger than keepDays and the newest verified one; a dry run deletes nothing', () => {
