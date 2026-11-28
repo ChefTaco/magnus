@@ -68,16 +68,33 @@ describe('control-node protected state', () => {
     expect(dto).not.toHaveProperty('nodeManagerSecret');
   });
 
-  it('migrates legacy ciphertext through an authenticated atomic rewrite', async () => {
+  it('refuses legacy ciphertext without rewriting the state', async () => {
     const directory = process.env['MAGNUS_CONTROL_NODES_CONFIG_DIR']!;
     await mkdir(directory, { mode: 0o700 });
     const file = path.join(directory, 'control-nodes.json');
-    const plaintext = 'legacy-control-api-secret';
-    await writeFile(file, JSON.stringify([{
+    const legacy = `${JSON.stringify([{
       id: 'legacy',
       name: 'Legacy',
       url: 'https://legacy.example.test:4000',
-      apiSecret: legacyEncrypt(plaintext, process.env['SESSION_SECRET']!),
+      apiSecret: legacyEncrypt('legacy-control-api-secret', process.env['SESSION_SECRET']!),
+      createdAt: '2026-08-07T00:00:00.000Z',
+    }])}\n`;
+    await writeFile(file, legacy, { mode: 0o600 });
+    const store = await freshStore();
+    await expect(store.readNodes()).rejects.toThrow(/legacy JWT_SECRET-derived key/);
+    expect(await readFile(file, 'utf8')).toBe(legacy);
+  });
+
+  it('encrypts unencrypted values and drops retired fields through an atomic rewrite', async () => {
+    const directory = process.env['MAGNUS_CONTROL_NODES_CONFIG_DIR']!;
+    await mkdir(directory, { mode: 0o700 });
+    const file = path.join(directory, 'control-nodes.json');
+    const plaintext = 'plain-control-api-secret';
+    await writeFile(file, JSON.stringify([{
+      id: 'plain',
+      name: 'Plain',
+      url: 'https://plain.example.test:4000',
+      apiSecret: plaintext,
       nodeManagerSecret: 'retired-node-manager-secret',
       createdAt: '2026-08-07T00:00:00.000Z',
     }]), { mode: 0o600 });
@@ -86,7 +103,6 @@ describe('control-node protected state', () => {
     const migrated = await readFile(file, 'utf8');
     expect(migrated).toContain('enc2:');
     expect(migrated).not.toContain(plaintext);
-    expect(migrated).not.toContain('nodeManagerSecret');
     expect(migrated).not.toContain('retired-node-manager-secret');
   });
 

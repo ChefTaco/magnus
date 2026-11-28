@@ -14,6 +14,16 @@ standalone console re-encrypts control-node credentials left under the legacy `J
 key when it starts. Dump pruning also keeps recent dumps and the newest good one, history retention
 covers the tables it missed, and the audit log can be given an opt-in retention. No migration.
 
+### Breaking changes (4.0.0)
+
+- **Console: the legacy control-node credential key is gone.** Control-node credentials are
+  decrypted only with `CONTROL_NODE_CREDENTIAL_KEY`; the fallback that derived a key from
+  `JWT_SECRET` (or `SESSION_SECRET`) for `enc:` values is removed from the console and the
+  re-encryption tool. The console refuses to start, and `magnus-ui check` reports an error, while
+  any such value remains; the 3.x console re-encrypts them when it starts. Unencrypted values from
+  very old releases are still encrypted at start
+  ([UPGRADING.md](UPGRADING.md#400-breaking-unreleased-the-console-reads-control-node-credentials-only-with-control_node_credential_key)).
+
 ### Upgrade notes
 
 - **Upgrade the node agents, then the server and console.** A supervised agent

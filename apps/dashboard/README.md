@@ -84,33 +84,24 @@ persistent storage and readable only by the service account.
 ### Stored control-node credentials
 
 The control-node registry (`.magnus/control-nodes.json`) keeps each saved node's API secret and
-token encrypted under `CONTROL_NODE_CREDENTIAL_KEY`. Entries saved by releases before that key
-existed are encrypted under a key derived from `JWT_SECRET` (or `SESSION_SECRET`). At every start
-the console re-encrypts those under `CONTROL_NODE_CREDENTIAL_KEY` before it serves a request: it
-first copies the file to `control-nodes.json.legacy-key-backup-<time>` (mode `0600`), checks every
-new value by decrypting it, replaces the file atomically and logs how many it changed. When there
-is nothing to change it does nothing. If a legacy value does not decrypt (the `JWT_SECRET` it was
-saved under is gone), or `CONTROL_NODE_CREDENTIAL_KEY` does not decrypt the values already stored
-under it, the file is left as it is and the console logs why.
+token encrypted under `CONTROL_NODE_CREDENTIAL_KEY`, and only that key is read. Entries saved
+before that key existed, under a key derived from `JWT_SECRET`, were re-encrypted by the 3.x
+console at start; if any remain, this release refuses to start and `magnus-ui check` reports an
+error (see [UPGRADING.md](../../UPGRADING.md)). A value saved unencrypted by a very old release is
+encrypted at start, after the file is copied to `control-nodes.json.legacy-key-backup-<time>`
+(mode `0600`).
 
-Run the command as the account the console runs as (`magnus` with the example unit), so the file
-stays readable by the console:
+Run the command as the account the console runs as (`magnus` with the example unit):
 
 ```bash
-sudo -u magnus magnus-ui credentials --env-file /etc/magnus-ui/magnus-ui.env --data-dir /var/lib/magnus-ui              # count
-sudo -u magnus magnus-ui credentials --reencrypt --env-file /etc/magnus-ui/magnus-ui.env --data-dir /var/lib/magnus-ui  # re-encrypt now, without a restart
+sudo -u magnus magnus-ui credentials --env-file /etc/magnus-ui/magnus-ui.env --data-dir /var/lib/magnus-ui   # count by key
 ```
 
-It prints the file it checked and exits 0 when nothing is left under the legacy key, 1 while
-something is (or on an error) and 3 when there is no state file at that path (no control node was
-ever saved there, or `--data-dir` is wrong). `--reencrypt` refuses to rewrite a file another account
-owns; run as root, it first becomes the file's owner (user and group). It takes the same
-lock file (`control-nodes.json.lock`) as the console's own saves, so it is safe while the console
-runs. Variables already exported in the shell win over `--env-file`.
-
-`magnus-ui check` warns while legacy values remain. The legacy key is read only for this; the next
-major release drops it and refuses to start while any legacy value remains. Delete the backup once
-the console has read its control nodes without errors.
+It prints the file it checked and exits 0 when every value is under `CONTROL_NODE_CREDENTIAL_KEY`,
+1 while one is not (or on an error) and 3 when there is no state file at that path (no control
+node was ever saved there, or `--data-dir` is wrong). Rewrites run only as the file's owner (run as
+root, `--reencrypt` first becomes that user and group) and take the same lock file
+(`control-nodes.json.lock`) as the console's own saves.
 
 ### systemd
 

@@ -10,10 +10,13 @@ export interface ControlNodeCredentialCounts {
 }
 export interface ReencryptionResult {
   status: 'absent' | 'current' | 'reencrypted';
-  reencrypted: number;
   encrypted: number;
   retired: number;
   backup: string | null;
+}
+export class LegacyControlNodeCredentialsError extends Error {
+  readonly count: number;
+  constructor(count: number);
 }
 export function controlNodeStateFile(root: string): string;
 export function classifyStoredCredential(value: unknown): StoredCredentialKind;
