@@ -10,8 +10,6 @@
 
 import Link from 'next/link';
 import { fleetFetch, fleetSystemFetch } from '@/lib/fleet-fetch';
-import { orchestraFetch } from '@/lib/orchestra-fetch';
-import { summarizeHermesInventory } from '@/lib/hermes-inventory';
 import {
   Server, Bot, DollarSign, Brain, Activity, Shield, Compass,
   AlertTriangle, CheckCircle2, Siren,
@@ -26,7 +24,6 @@ import { StatusDot } from '@/components/ui/status-dot';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Badge } from '@/components/ui/badge';
 import { TONE_BORDER, TONE_GLOW_TEXT, TONE_TEXT, latencyTone, type Tone } from '@/lib/theme-colors';
-import type { HermesInstallation, HermesProfile } from '@/types/orchestra';
 
 export const dynamic = 'force-dynamic';
 
@@ -37,6 +34,7 @@ interface FleetOverview {
   cron: { total: number; active: number };
 }
 
+/** GET /api/v1/hermes/summary: the Control API counts the inventory. */
 interface OrchestraStats {
   installations: number;
   healthyInstallations: number;
@@ -71,12 +69,8 @@ async function loadFleet(): Promise<FleetOverview | null> {
 
 async function loadOrchestra(): Promise<OrchestraStats | null> {
   try {
-    const [installations, profiles] = await Promise.all([
-      orchestraFetch<{ data?: HermesInstallation[] }>('installations').catch(() => ({ data: [] as HermesInstallation[] })),
-      orchestraFetch<{ data?: HermesProfile[] }>('profiles').catch(() => ({ data: [] as HermesProfile[] })),
-    ]);
-
-    return summarizeHermesInventory(installations.data ?? [], profiles.data ?? []);
+    const res = await fleetFetch<{ success: boolean; data: OrchestraStats }>('hermes/summary');
+    return res.success ? res.data : null;
   } catch {
     return null;
   }

@@ -84,13 +84,26 @@ describe('console API route inventory', () => {
     for (const path of CATCH_ALLS) expect(app.routes.some((route) => route.method === 'ALL' && route.path === path)).toBe(true);
   });
 
+  /**
+   * Reviewed browser routes under a machine prefix. Owner decision (2026-11-28): the console's nodes page may
+   * run a discovery scan (ADMIN or OPERATOR, with the authenticated UDP exchange) and mission control may read
+   * the retired heartbeat stream's stats (any role, read-only counts). Agent ingestion stays machine-only.
+   */
+  const BROWSER_UNDER_MACHINE_PREFIX = new Set(['POST /api/v1/discovery/scan', 'GET /api/v1/heartbeat/stream/stats']);
+
+  it('opens exactly the reviewed routes under the heartbeat and discovery prefixes', () => {
+    const browser = rows.filter((entry) => entry.class === 'browser' && /^\/api\/v1\/(?:heartbeat|discovery)(?:\/|$)/u.test(entry.path));
+    expect(browser.map((entry) => key(entry.method, entry.path)).sort()).toEqual([...BROWSER_UNDER_MACHINE_PREFIX].sort());
+    expect(rows.find((entry) => key(entry.method, entry.path) === 'POST /api/v1/heartbeat')?.class).toBe('machine');
+  });
+
   it.each([
     '/api/v1/heartbeat', '/api/v1/discovery', '/api/v1/logs/ingest', '/api/v1/resource-leases/enrollment',
     '/api/v1/embermend', '/api/v1/shared-resource-leases', '/api/v1/mcp', '/api/v1/security-integration', '/api/v1/hiveskills', '/api/v1/hermes-registry',
   ])('never allows machine surface %s', (prefix) => {
     const matching = rows.filter((row) => row.path.startsWith(prefix) && row.method !== 'ALL');
     expect(matching.length).toBeGreaterThan(0);
-    expect(matching.filter((row) => row.class === 'browser')).toEqual([]);
+    expect(matching.filter((row) => row.class === 'browser' && !BROWSER_UNDER_MACHINE_PREFIX.has(key(row.method, row.path)))).toEqual([]);
   });
 
   it('allows no terminal, password login, ssh-admission or enrollment route', () => {
