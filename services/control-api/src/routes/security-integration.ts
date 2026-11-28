@@ -1,5 +1,5 @@
 import { SENTINEL_NODE_IDS } from '../utils/sentinel-nodes.js';
-import { securityInventoryTargetSchema } from '@hivemagnus/magnus-contracts';
+import { securityInventoryTargetSchema, type SecurityInventorySkipped, type SecurityInventoryTarget } from '@hivemagnus/magnus-contracts';
 import { Hono } from 'hono';
 import { getDb } from '../db/index.js';
 import { authMiddleware, requirePermission } from '../middleware/auth.js';
@@ -11,7 +11,7 @@ securityIntegrationRouter.get('/inventory', async (c) => {
   const token = c.req.header('Authorization')?.replace(/^Bearer /, '') ?? '';
   const expected = process.env['SECURITY_INVENTORY_TOKEN_SHA256'];
   if (!matchesSha256Digest(token, expected))
-    return c.json({ error: 'Unauthorized' }, 401);
+    return c.json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Unauthorized' } }, 401);
   const nodes = await getDb().node.findMany({
     where: {id: {notIn: SENTINEL_NODE_IDS}, agent: {isNot: null}},
     select: {
@@ -24,31 +24,36 @@ securityIntegrationRouter.get('/inventory', async (c) => {
       metadata: true,
     },
   });
-  return c.json({
-    success: true,
-    data: nodes.map((n) => {
-      let metadata: Record<string, unknown> = {};
-      try {
-        metadata = JSON.parse(n.metadata);
-      } catch {}
-      return securityInventoryTargetSchema.parse({
-        id: n.id,
-        name: n.name,
-        hostname: n.hostname,
-        baseUrl: getNodeBaseUrl(n.ipAddress, n.port),
-        tags: n.tags,
-        metadata: JSON.stringify(
-          Object.fromEntries(
-            [
-              'securityIsolationPolicy',
-              'securityIsolationCapable',
-              'securityAegisChannelVerified',
-            ].map((k) => [k, metadata[k]]),
-          ),
+  // A node that is not a valid target (no agent TLS, or a blank name) is listed in `skipped`
+  // instead of failing the whole export.
+  const data: SecurityInventoryTarget[] = [];
+  const skipped: SecurityInventorySkipped[] = [];
+  for (const n of nodes) {
+    let metadata: Record<string, unknown> = {};
+    try {
+      metadata = JSON.parse(n.metadata);
+    } catch {}
+    const baseUrl = getNodeBaseUrl(n.ipAddress, n.port);
+    const parsed = securityInventoryTargetSchema.safeParse({
+      id: n.id,
+      name: n.name,
+      hostname: n.hostname,
+      baseUrl,
+      tags: n.tags,
+      metadata: JSON.stringify(
+        Object.fromEntries(
+          [
+            'securityIsolationPolicy',
+            'securityIsolationCapable',
+            'securityAegisChannelVerified',
+          ].map((k) => [k, metadata[k]]),
         ),
-      });
-    }),
-  });
+      ),
+    });
+    if (parsed.success) data.push(parsed.data);
+    else skipped.push({ id: n.id, name: n.name, reason: baseUrl.startsWith('https://') ? 'invalid_target' : 'agent_tls_required' });
+  }
+  return c.json({ success: true, data, skipped });
 });
 securityIntegrationRouter.get(
   '/summary',

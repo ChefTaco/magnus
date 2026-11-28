@@ -68,7 +68,12 @@ export interface RotationResult {
 
 export interface RotationStatus {
   name: string;
-  activeFingerprint: string;
+  /**
+   * False when the server has no value for this credential: NODE_MANAGER_SECRET in node-key
+   * enforce mode. Nothing sends or accepts it then, so there is no active fingerprint.
+   */
+  configured: boolean;
+  activeFingerprint: string | null;
   previousFingerprint: string | null;
   rotatedAt: string | null;
   expiresAt: string | null;
@@ -369,6 +374,14 @@ export function credentialRotationStoreReads(): number {
   return storeReads;
 }
 
+/**
+ * Status of a shared credential the server has no value for (NODE_MANAGER_SECRET in node-key
+ * enforce mode). Nothing sends or accepts it, so there is no active or previous fingerprint.
+ */
+export function unconfiguredCredentialStatus(name: CredentialName): RotationStatus {
+  return { name, configured: false, activeFingerprint: null, previousFingerprint: null, rotatedAt: null, expiresAt: null, gracePeriodMs: null };
+}
+
 export function getCredentialStatus(name: CredentialName, currentValue: string): RotationStatus {
   assertCredentialSecret(name, currentValue);
   const store = readStore();
@@ -376,6 +389,7 @@ export function getCredentialStatus(name: CredentialName, currentValue: string):
   if (!record) {
     return {
       name,
+      configured: true,
       activeFingerprint: secretFingerprint(currentValue),
       previousFingerprint: null,
       rotatedAt: null,
@@ -388,12 +402,28 @@ export function getCredentialStatus(name: CredentialName, currentValue: string):
   const previous = record.previous && !isExpired(record.previous) ? record.previous : undefined;
   return {
     name,
+    configured: true,
     activeFingerprint: record.active.fingerprint,
     previousFingerprint: previous?.fingerprint ?? null,
     rotatedAt: record.rotatedAt ?? null,
     expiresAt: previous?.expiresAt ?? null,
     gracePeriodMs: record.gracePeriodMs ?? null,
   };
+}
+
+/**
+ * Retire for a credential the server has no value for: a previous value left in the store from an
+ * earlier rotation is removed, and nothing is created.
+ */
+export function retireUnconfiguredPreviousCredential(name: CredentialName): RetirePreviousResult {
+  const store = readStore();
+  const record = store.credentials[name];
+  const retiredPreviousFingerprint = record?.previous?.fingerprint ?? null;
+  if (record?.previous) {
+    delete record.previous;
+    writeStore(store);
+  }
+  return { ...unconfiguredCredentialStatus(name), retiredPreviousFingerprint };
 }
 
 export function retirePreviousCredential(name: CredentialName, currentValue: string): RetirePreviousResult {
@@ -405,6 +435,7 @@ export function retirePreviousCredential(name: CredentialName, currentValue: str
   }
   return {
     name,
+    configured: true,
     activeFingerprint: record.active.fingerprint,
     previousFingerprint: null,
     retiredPreviousFingerprint,
@@ -424,6 +455,7 @@ export function listActiveRotations(): RotationStatus[] {
     const previous = record.previous && !isExpired(record.previous) ? record.previous : undefined;
     return {
       name,
+      configured: true,
       activeFingerprint: record.active.fingerprint,
       previousFingerprint: previous?.fingerprint ?? null,
       rotatedAt: record.rotatedAt ?? null,
