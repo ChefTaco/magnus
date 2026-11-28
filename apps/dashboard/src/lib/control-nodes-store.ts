@@ -8,7 +8,9 @@ import 'server-only';
  * and `app/api/proxy/allowed-targets.ts`.
  *
  * `withNodesMutex` serialises all read-modify-write operations to prevent
- * TOCTOU races between concurrent API requests.
+ * TOCTOU races between concurrent API requests, and every write holds the
+ * state lock file that `magnus-ui credentials --reencrypt` also takes, so the
+ * two never overwrite each other.
  */
 
 import { createHash, randomBytes } from 'node:crypto';
@@ -24,6 +26,7 @@ import {
 import path from 'node:path';
 import type { ControlNode, StoredControlNode } from '@/lib/control-nodes';
 import { encryptSecret, decryptSecret, requiresCredentialMigration } from '@/lib/secret-cipher';
+import { withControlNodeStateLock } from '../../runtime-control-node-credentials.mjs';
 
 const CONFIG_DIR = process.env['NODE_ENV'] === 'test' && process.env['MAGNUS_CONTROL_NODES_CONFIG_DIR']
   ? path.resolve(process.env['MAGNUS_CONTROL_NODES_CONFIG_DIR'])
@@ -34,6 +37,20 @@ const CONFIG_FILE = path.join(CONFIG_DIR, 'control-nodes.json');
 let mutexChain: Promise<void> = Promise.resolve();
 
 /**
+ * Run `job` after every earlier write in this process, holding the state lock
+ * that other processes (`magnus-ui credentials --reencrypt`) take too.
+ */
+function serialised<T>(job: () => Promise<T>): Promise<T> {
+  const run = mutexChain.then(async () => {
+    await ensureConfigDirectory(true);
+    return withControlNodeStateLock(CONFIG_FILE, job);
+  });
+  // Ensure chain never rejects — errors propagate only to the caller
+  mutexChain = run.then(() => undefined, () => undefined);
+  return run;
+}
+
+/**
  * Serialise a read-modify-write operation against the control-nodes file.
  * `fn` receives the current list and must return the (possibly mutated) list
  * to be persisted. Returns whatever `fn` returns after writing.
@@ -41,9 +58,9 @@ let mutexChain: Promise<void> = Promise.resolve();
 export async function withNodesMutex<T>(
   fn: (nodes: StoredControlNode[]) => StoredControlNode[] | { nodes: StoredControlNode[]; result: T },
 ): Promise<T> {
-  // Chain operations to serialise access
-  const job = mutexChain.then(async () => {
-    const nodes = await readNodes();
+  return serialised(async () => {
+    // The write below re-encrypts everything, so a pending migration needs no separate write.
+    const { nodes } = await readStoredNodes();
     const out = fn(nodes);
     if (Array.isArray(out)) {
       await writeNodes(out);
@@ -52,9 +69,6 @@ export async function withNodesMutex<T>(
     await writeNodes(out.nodes);
     return out.result;
   });
-  // Ensure chain never rejects — errors propagate only to the caller
-  mutexChain = job.then(() => undefined, () => undefined);
-  return job;
 }
 
 function isMissing(error: unknown): boolean {
@@ -147,8 +161,20 @@ export function toControlNodeDto(node: StoredControlNode): ControlNode {
 
 /** Read every saved control node (returns `[]` when no file exists). */
 export async function readNodes(): Promise<StoredControlNode[]> {
+  const first = await readStoredNodes();
+  if (!first.migrationRequired) return first.nodes;
+  // Migrate in the write queue and under the state lock, from a fresh read, so neither a
+  // concurrent save here nor a rewrite by another process is undone.
+  return serialised(async () => {
+    const fresh = await readStoredNodes();
+    if (fresh.migrationRequired) await writeNodes(fresh.nodes);
+    return fresh.nodes;
+  });
+}
+
+async function readStoredNodes(): Promise<{ nodes: StoredControlNode[]; migrationRequired: boolean }> {
   if (!(await ensureConfigDirectory(false))) {
-    return [];
+    return { nodes: [], migrationRequired: false };
   }
 
   let pathMetadata;
@@ -156,7 +182,7 @@ export async function readNodes(): Promise<StoredControlNode[]> {
     pathMetadata = await lstat(CONFIG_FILE);
   } catch (error) {
     if (!isMissing(error)) throw error;
-    return [];
+    return { nodes: [], migrationRequired: false };
   }
   assertPrivateFile(pathMetadata);
 
@@ -182,8 +208,7 @@ export async function readNodes(): Promise<StoredControlNode[]> {
     apiSecret: decryptStoredCredential(node.apiSecret, 'apiSecret'),
     token: decryptStoredCredential(node.token, 'token'),
   }));
-  if (migrationRequired) await writeNodes(nodes);
-  return nodes.map((node) => ({ ...node }));
+  return { nodes: nodes.map((node) => ({ ...node })), migrationRequired };
 }
 
 /** Persist the full control-node list, creating the config dir if needed. */

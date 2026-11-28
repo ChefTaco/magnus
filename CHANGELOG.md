@@ -9,8 +9,9 @@ All notable changes to this project are documented in this file. The format is b
 
 A supervised agent no longer leaves an unknown command owner behind when it refuses a command, and
 an ADMIN can settle an unknown non-Ardent command from the API and the console. The OpenAPI document
-covers every route, and the console's mission-control Hermes counts come from a new ADMIN route. No
-migration, and no new setting.
+covers every route, and the console's mission-control Hermes counts come from a new ADMIN route. The
+standalone console re-encrypts control-node credentials left under the legacy `JWT_SECRET`-derived
+key when it starts. No migration, and no new setting.
 
 ### Upgrade notes
 
@@ -51,7 +52,21 @@ migration, and no new setting.
   Oathweave alone ([server README](services/control-api/README.md#hiveskills-execution-bridge)).
 - `@hivemagnus/magnus-oathweave`: `isServiceLink` and `OATHWEAVE_SERVICE_LINK_ROLES`. A person never
   authenticates or acts (`x-acting-subject`) through any service link.
-
+- **Console: legacy control-node credentials are re-encrypted at start.** Saved control-node API
+  secrets and tokens still encrypted under the old `JWT_SECRET`-derived key (and any never
+  encrypted) are re-encrypted under `CONTROL_NODE_CREDENTIAL_KEY` before the console serves a
+  request: idempotent, after a `0600` backup of `.magnus/control-nodes.json`, verified by
+  decrypting every new value, written atomically and logged without values. A value that does not
+  decrypt, or a `CONTROL_NODE_CREDENTIAL_KEY` that does not decrypt the values already stored under
+  it, leaves the file unchanged, and the console keeps reading it as before. `magnus-ui
+  credentials` prints the file it checked and counts what remains (exit 1 while any legacy value
+  does, 3 when there is no state file), `--reencrypt` runs the step without a restart, and
+  `magnus-ui check` warns about it. The rewrite runs only as the file's owner (`magnus-ui
+  credentials` run as root first drops to that user and group; any other account is refused) and
+  holds `control-nodes.json.lock`, which the console's control-node saves and read-time migrations
+  now take as well, inside the store's write queue. The lock carries the holder's pid and a nonce;
+  only a lock whose holder is gone is taken over, and only its holder removes it
+  ([UPGRADING.md](UPGRADING.md#unreleased-legacy-control-node-credentials-re-encrypted-at-console-start)).
 - `POST /api/v1/commands/{commandId}/reconcile-resource` takes an ADMIN's decision
   `{ disposition: effects_verified | no_effect_verified, reason }` for any command that is not an
   Ardent action, as the Ardent `command-reconcile` action does for Ardent actions: the node's own
@@ -134,6 +149,15 @@ migration, and no new setting.
   mission-control heartbeat stream panel. An ingress that follows the inventory allows them, and
   `GET /api/v1/hermes/summary`, from this release. The rest of `/heartbeat` and `/discovery` stays
   machine-only.
+- Documentation, env examples and CLI output call the integrations by their current names:
+  Oathweave (formerly Hive IAM) and Emberpath (formerly Hive Router). `magnus-server check` lists
+  `External IAM` (marked deprecated when on) and `Model router`, and `magnus-ui check` lists
+  `Emberpath admin (deprecated)` and `OIDC login`. No variable is renamed: `HIVE_OAUTH_*`,
+  `HIVE_ROUTER_*` and `IAM_*` keep working, as does the `hive-router` application-probe kind.
+- Console CI: the browser suite also runs the sign-in, navigation, overview, API docs and webhook
+  specs, a sign-in lockout test (five wrong passwords, then even the right one gets `429` with
+  `Retry-After` until the window ends) and an axe-core (`@axe-core/playwright` 4.14.0) WCAG 2.1 AA
+  scan of 28 console pages and the command palette that fails on serious or critical findings.
 
 ### Security
 
@@ -209,13 +233,6 @@ migration, and no new setting.
   GPU collection and running commands), and `PrivateTmp` is described as it works: commands the
   agent starts share its private `/tmp`, emptied on restart, while supervised commands, Embermend
   actions and Codex updates run in their own units with the host `/tmp`.
-
-### Changed
-
-- Console CI: the browser suite also runs the sign-in, navigation, overview, API docs and webhook
-  specs, a sign-in lockout test (five wrong passwords, then even the right one gets `429` with
-  `Retry-After` until the window ends) and an axe-core (`@axe-core/playwright` 4.14.0) WCAG 2.1 AA
-  scan of 28 console pages and the command palette that fails on serious or critical findings.
 
 ## [3.6.0] - 2026-11-28
 

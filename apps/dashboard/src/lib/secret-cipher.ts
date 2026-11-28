@@ -4,8 +4,10 @@ import 'server-only';
  * AES-256-GCM encryption helpers for secrets stored at rest on disk.
  *
  * New records use the dedicated CONTROL_NODE_CREDENTIAL_KEY. Legacy `enc:`
- * records are decrypted with the historical JWT/SESSION derivation and are
- * atomically rewritten by control-nodes-store as `enc2:` records.
+ * records are decrypted with the historical JWT/SESSION derivation. The
+ * console re-encrypts them at start (`runtime-control-node-credentials.mjs`,
+ * with a backup), and control-nodes-store rewrites any it still reads as
+ * `enc2:` records. The next major removes this legacy decrypt path.
  *
  * Encrypted format: `enc2:<iv_b64>:<authTag_b64>:<ciphertext_b64>`
  *   - iv        — 12-byte random IV (standard for GCM)

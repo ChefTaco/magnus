@@ -36,7 +36,7 @@ export function securityConsoleUrl(env = process.env) {
 }
 
 /**
- * Hive Router admin-plane base URL (HIVE_ROUTER_ADMIN_URL), or null.
+ * Admin-plane base URL of an older Emberpath release (HIVE_ROUTER_ADMIN_URL), or null. Deprecated.
  * @param {Record<string, string | undefined>} [env]
  */
 export function hiveRouterAdminUrl(env = process.env) {
@@ -44,7 +44,7 @@ export function hiveRouterAdminUrl(env = process.env) {
 }
 
 /**
- * Named Hive IAM (OIDC) login is configured.
+ * Named OIDC login (for example Oathweave) is configured.
  * @param {Record<string, string | undefined>} [env]
  */
 export function hiveLoginConfigured(env = process.env) {
@@ -81,8 +81,8 @@ export function describeIntegrations(env = process.env) {
   const flags = readIntegrations(env);
   return [
     { name: 'Security console', enabled: flags.securityConsoleUrl !== null, via: 'MAGNUS_SECURITY_CONSOLE_URL' },
-    { name: 'Hive Router admin', enabled: flags.hiveRouter, via: 'HIVE_ROUTER_ADMIN_URL' },
-    { name: 'Hive IAM login (OIDC)', enabled: flags.hiveLogin, via: 'HIVE_OAUTH_* + DASHBOARD_PUBLIC_ORIGIN' },
+    { name: 'Emberpath admin (deprecated)', enabled: flags.hiveRouter, via: 'HIVE_ROUTER_ADMIN_URL' },
+    { name: 'OIDC login', enabled: flags.hiveLogin, via: 'HIVE_OAUTH_* + DASHBOARD_PUBLIC_ORIGIN' },
     { name: 'Hermes Agent', enabled: flags.hermes, via: 'MAGNUS_HERMES_ENABLED=true' },
   ];
 }

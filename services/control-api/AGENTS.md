@@ -21,7 +21,7 @@ tokens) and the standalone console in `apps/dashboard`.
 | ORM | Prisma 7 on PostgreSQL with the `pg` adapter; client generated into `src/db/generated` and compiled into `dist` |
 | Queue | BullMQ on Redis |
 | Validation | Zod 4 schemas and `parseBody()` helpers |
-| Auth | Purpose-specific API and node credentials; local HS256 user JWTs or Hive IAM RS256 tokens |
+| Auth | Purpose-specific API and node credentials; local HS256 user JWTs, Oathweave resource tokens, or (deprecated) external IAM RS256 tokens |
 
 ## Commands
 
@@ -64,7 +64,7 @@ scripts/                build helpers, the Compose check, legacy data migrations
 
 ## Optional integrations
 
-Hive IAM, Emberpath (model routing, formerly Hive Router), HiveMem, Cindertrace (an external security console), the Hermes Agent plugin API, the Hermes registry sync and the AI
+Oathweave (formerly Hive IAM), Emberpath (model routing, formerly Hive Router), HiveMem, Cindertrace (an external security console), the Hermes Agent plugin API, the Hermes registry sync and the AI
 assistant providers are optional. Each is off until its environment variables
 are set (`src/config/features.ts`), and the server must start and work without
 any of them. Never hard-code their URLs, hosts or tokens; add new settings to

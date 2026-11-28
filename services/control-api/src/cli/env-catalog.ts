@@ -86,8 +86,8 @@ export const ENV_CATALOG: readonly EnvVariable[] = [
   { name: 'MAGNUS_DOCKER_USER', group: 'agents', description: 'Account whose docker group membership the server checks on its own host.' },
   { name: 'MAGNUS_RESOURCE_LEASES_ENABLED', group: 'agents', default: 'false', description: 'Enable durable node and shared-resource lease coordination.' },
 
-  // ── Hive IAM ──
-  { name: 'IAM_CORE_URL', group: 'iam', description: 'Deprecated (removed in 4.0.0; use OATHWEAVE_ISSUER). Hive IAM base URL. When set, RS256 tokens from Hive IAM replace local JWTs; each must carry `jti` and exactly the configured audience. Must be HTTPS; HTTP is accepted only for a loopback host (or with ALLOW_INSECURE_HTTP in development).' },
+  // ── External IAM (deprecated) ──
+  { name: 'IAM_CORE_URL', group: 'iam', description: 'Deprecated (removed in 4.0.0; use OATHWEAVE_ISSUER). External IAM base URL (Oathweave, formerly Hive IAM). When set, its RS256 access tokens replace local JWTs; each must carry `jti` and exactly the configured audience. Must be HTTPS; HTTP is accepted only for a loopback host (or with ALLOW_INSECURE_HTTP in development).' },
   { name: 'IAM_TOKEN_ISSUER', group: 'iam', requiredWhen: 'IAM_CORE_URL set', description: 'Exact `iss` claim required on IAM access tokens.' },
   { name: 'IAM_TOKEN_AUDIENCE', group: 'iam', requiredWhen: 'IAM_CORE_URL set', description: 'Exact `aud` claim required on IAM access tokens.' },
 
@@ -102,8 +102,8 @@ export const ENV_CATALOG: readonly EnvVariable[] = [
   { name: 'FLEET_GATEWAY_TOKEN_SHA256', group: 'iam', requiredWhen: 'FLEET_GATEWAY_URL set', description: 'SHA-256 digest of the credential the fleet gateway presents to resolve nodes and record terminal audit events.' },
   { name: 'RESOURCE_ENROLLMENT_DASHBOARD_PARTICIPANT', group: 'iam', description: '`gateway` (default) sends console drain challenges to FLEET_GATEWAY_URL. `absent` declares no console participant exists: drain evidence is accepted only while the node has no console work rows, in any state.' },
 
-  // ── Hive Router ──
-  { name: 'MAGNUS_ROUTER_URL', group: 'router', description: 'OpenAI-compatible model router (for example Hive Router) for managed Hermes Agents. HIVE_ROUTER_URL is accepted as an alias.' },
+  // ── Model router (Emberpath) ──
+  { name: 'MAGNUS_ROUTER_URL', group: 'router', description: 'OpenAI-compatible model router (for example Emberpath) for managed Hermes Agents. HIVE_ROUTER_URL is accepted as an alias.' },
   { name: 'MAGNUS_ROUTER_MODEL', group: 'router', description: 'Default model served by the router. HIVE_ROUTER_MODEL is accepted as an alias.' },
   { name: 'MAGNUS_ROUTER_API_KEY', group: 'router', secret: true, description: 'Router API key. HIVE_ROUTER_API_KEY is accepted as an alias.' },
   { name: 'HIVE_ROUTER_HEALTH_URL', group: 'router', description: 'Optional router health endpoint.' },
