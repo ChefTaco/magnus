@@ -96,10 +96,22 @@ describe('anomalies', () => {
     expect(m.purgeResolvedAnomalies).not.toHaveBeenCalled();
   });
 
+  it('refuses a purge body that is not valid JSON instead of using the default', async () => {
+    for (const body of ['{"retentionDays":365,}', '{oops', 'retentionDays=365']) {
+      const response = await send('/anomalies/purge', body);
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Request body must be valid JSON' } });
+    }
+    expect(m.purgeResolvedAnomalies).not.toHaveBeenCalled();
+    expect(m.audit).not.toHaveBeenCalled();
+  });
+
   it('keeps the 30-day default for an empty body', async () => {
     const response = await send('/anomalies/purge');
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ success: true, data: { deleted: 5, retentionDays: 30 } });
+    expect((await send('/anomalies/purge', '')).status).toBe(200);
+    expect(m.purgeResolvedAnomalies).toHaveBeenLastCalledWith(30);
     expect((await send('/anomalies/purge', { retentionDays: 7 })).status).toBe(200);
     expect(m.purgeResolvedAnomalies).toHaveBeenLastCalledWith(7);
   });

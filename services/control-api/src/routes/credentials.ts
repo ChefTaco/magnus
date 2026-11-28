@@ -43,7 +43,7 @@ credentialsRouter.post('/rotate', async (c) => {
 
 /** List active credential rotations. */
 credentialsRouter.get('/rotations', (c) => {
-  return c.json({ success: true, data: listActiveRotations() });
+  return c.json({ success: true, data: listActiveRotations(retirableCredentialFallbacks) });
 });
 
 credentialsRouter.get('/:name/status', (c) => {

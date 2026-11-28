@@ -66,6 +66,16 @@ describe('shared credential routes in node-key enforce mode', () => {
     expect(((await again.json()) as { data: Record<string, unknown> }).data['retiredPreviousFingerprint']).toBeNull();
   });
 
+  it('lists a leftover NODE_MANAGER_SECRET record as not configured, as its status does', async () => {
+    rotateCredential('NODE_MANAGER_SECRET', 'earlier-node-secret-that-is-at-least-32-chars', 60_000);
+    const status = ((await (await app.request('/credentials/NODE_MANAGER_SECRET/status')).json()) as { data: unknown }).data;
+    const response = await app.request('/credentials/rotations');
+    expect(response.status).toBe(200);
+    const rotations = ((await response.json()) as { data: Array<{ name: string }> }).data;
+    expect(rotations).toEqual([status]);
+    expect(rotations[0]).toMatchObject({ name: 'NODE_MANAGER_SECRET', configured: false, activeFingerprint: null, previousFingerprint: null });
+  });
+
   it('keeps API_SECRET status working', async () => {
     const response = await app.request('/credentials/API_SECRET/status');
     expect(response.status).toBe(200);

@@ -119,9 +119,18 @@ anomaliesRouter.post('/resolve-node', requireRole('ADMIN', 'OPERATOR'), async (c
 
 // ── Purge old resolved anomalies ──
 anomaliesRouter.post('/purge', requireRole('ADMIN'), async (c) => {
-  // An empty or missing body keeps the 30-day default.
-  const raw: unknown = await c.req.json().catch(() => ({}));
-  const { retentionDays } = parseInput(raw ?? {}, purgeSchema);
+  // Only an empty or missing body keeps the 30-day default. This route deletes, so a body that is
+  // not valid JSON is refused rather than read as the default.
+  const text = (await c.req.text()).trim();
+  let raw: unknown = {};
+  if (text) {
+    try {
+      raw = JSON.parse(text);
+    } catch {
+      throw new HttpError(400, 'VALIDATION_ERROR', 'Request body must be valid JSON');
+    }
+  }
+  const { retentionDays } = parseInput(raw, purgeSchema);
   const count = await purgeResolvedAnomalies(retentionDays);
   await logAuditEvent({ action: 'anomaly.purge', actorId: getUser(c).userId, targetType: 'anomaly', targetId: 'resolved',
     details: { retentionDays, deleted: count } });

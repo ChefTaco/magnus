@@ -684,7 +684,7 @@ Each row is a non-browser route that a broader `browser` pattern also matches. D
 | GET | `/api/v1/anomalies/:nodeId` | exclude | `user:any` | No dashboard call site. Add when a console feature needs it. |
 | GET | `/api/v1/anomalies/:nodeId/summary` | exclude | `user:any` | No call site: an unused client wrapper only. Add when a console feature needs it. |
 | GET | `/api/v1/anomalies/correlations` | exclude | `user:any` | No dashboard call site. Add when a console feature needs it. |
-| POST | `/api/v1/anomalies/purge` | exclude | `user:ADMIN` | Bulk destructive maintenance with no console caller. |
+| POST | `/api/v1/anomalies/purge` | exclude | `user:ADMIN` | Bulk destructive maintenance with no console caller. A body that is not valid JSON answers 400; only an empty body keeps the 30-day default. |
 | POST | `/api/v1/anomalies/resolve-node` | exclude | `user:ADMIN\|OPERATOR` | No call site: an unused client wrapper only. Add when a console feature needs it. |
 | GET | `/api/v1/anomalies/timeline` | exclude | `user:any` | No dashboard call site. Add when a console feature needs it. |
 | GET | `/api/v1/ardent/installations/:nodeId/profiles/:name/context-adoptions/:releaseId` | exclude | `user:ADMIN` | No dashboard call site. Add when a console feature needs it. |

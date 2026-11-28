@@ -65,7 +65,8 @@ export const paths: Paths = {
   },
   '/credentials/rotations': {
     get: {
-      tags: ['Credentials'], summary: 'List recorded shared-credential rotations', description: adminCredentialNote, security: userAuth,
+      tags: ['Credentials'], summary: 'List recorded shared-credential rotations',
+      description: `${adminCredentialNote} A stored record of a credential the server has no value for (\`NODE_MANAGER_SECRET\` in node-key enforce mode) is listed as \`configured: false\` with null fingerprints, as its status route reports it.`, security: userAuth,
       responses: { 200: success('Rotation status per recorded credential', { type: 'array', items: rotationStatus }), 401: err401, 403: err403 },
     },
   },

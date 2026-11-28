@@ -445,11 +445,17 @@ export function retirePreviousCredential(name: CredentialName, currentValue: str
   };
 }
 
-/** List active credential rotations for admin visibility. */
-export function listActiveRotations(): RotationStatus[] {
+/**
+ * List recorded credential rotations for admin visibility. `currentValues` holds the server's
+ * value for each credential it knows; one that is empty there (NODE_MANAGER_SECRET in node-key
+ * enforce mode) is reported as not configured, as getCredentialStatus's caller reports it, even
+ * when a record from an earlier rotation is still stored.
+ */
+export function listActiveRotations(currentValues: Partial<Record<CredentialName, string>> = {}): RotationStatus[] {
   const store = readStore();
   return Object.entries(store.credentials).map(([name, record]) => {
     const credentialName = name as CredentialName;
+    if (currentValues[credentialName] === '') return unconfiguredCredentialStatus(credentialName);
     decryptValidatedSecret(credentialName, record.active);
     if (record.previous) decryptValidatedSecret(credentialName, record.previous, true);
     const previous = record.previous && !isExpired(record.previous) ? record.previous : undefined;

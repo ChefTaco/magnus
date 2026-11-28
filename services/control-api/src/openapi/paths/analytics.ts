@@ -202,10 +202,10 @@ export const paths: Paths = {
   '/anomalies/purge': {
     post: {
       tags: ['Anomalies'], summary: 'Delete resolved anomalies older than a retention period',
-      description: 'Deletes anomalies resolved more than `retentionDays` ago. A missing body (or one that is not JSON) keeps the default of 30 days. Audited as `anomaly.purge` with `retentionDays` and the number deleted. ADMIN only.',
+      description: 'Deletes anomalies resolved more than `retentionDays` ago. An empty or missing body keeps the default of 30 days; a body that is not valid JSON answers 400 and deletes nothing. Audited as `anomaly.purge` with `retentionDays` and the number deleted. ADMIN only.',
       security: userAuth,
       requestBody: optionalBody({ type: 'object', properties: { retentionDays: { type: 'integer', minimum: 1, maximum: 3650, default: 30, description: 'Whole days; 0 or less would delete every resolved anomaly and answers 400' } } }),
-      responses: { 200: success('Number of anomalies deleted', { type: 'object', properties: { deleted: { type: 'integer' }, retentionDays: { type: 'integer' } } }), 400: { ...err400, description: '`retentionDays` is not a whole number from 1 to 3650' }, 401: err401, 403: err403 },
+      responses: { 200: success('Number of anomalies deleted', { type: 'object', properties: { deleted: { type: 'integer' }, retentionDays: { type: 'integer' } } }), 400: { ...err400, description: 'Not valid JSON, or `retentionDays` is not a whole number from 1 to 3650' }, 401: err401, 403: err403 },
     },
   },
 

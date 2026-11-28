@@ -136,12 +136,14 @@ migration, and no new setting.
   `/assistant/model-profiles`, `POST /anomalies/resolve-node`, and on `PUT /assistant/heartbeat-prompt`
   (also when `content` is not a string).
 - `POST /anomalies/purge` accepts only a whole `retentionDays` from 1 to 3650 (default 30); zero or a
-  negative value deleted every resolved anomaly.
+  negative value deleted every resolved anomaly. A body that is not valid JSON answers 400 instead of
+  purging with the default; only an empty body keeps it.
 - `GET /nodes/:nodeId/health/timeseries?metric=disk` was always 0: it read `usePercent`, but agents
   report `usagePercent`.
 - `GET /credentials/NODE_MANAGER_SECRET/status` and `POST …/retire-previous` answered 500 in node-key
   enforce mode without a shared node secret; they now answer `configured: false` (retire still removes
-  a previous value left from an earlier rotation).
+  a previous value left from an earlier rotation), and `GET /credentials/rotations` lists a leftover
+  record of it the same way.
 - `GET /hermes/profiles/:id/api-server/status` (and its `/orchestra` alias) answers 404 for an unknown
   profile instead of 500.
 - Browser contract: `topologyScanRequestSchema` caps `probeTimeoutMs` at 15000, as the server does.
