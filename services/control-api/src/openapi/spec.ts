@@ -30,7 +30,11 @@ import { lessonSchema } from '../services/incident-lessons.js';
  * @see https://spec.openapis.org/oas/v3.1.0
  */
 
-import type { ZodSchema } from 'zod';
+import {
+  type JsonSchema, apiSecretAuth, err400, err401, err403, err404, err409, err503, browserOperation, hoistedSchemas, inlineBody, jsonBody, mergePaths, nodeAuthSecurity, nodeTokenAuth,
+  paginated, pp, qp, ref, requestBody, sharedResourceAuth, success, zod,
+} from './helpers.js';
+import { documentedPaths } from './paths/index.js';
 import {
   dispatchCommandSchema,
   cancelCommandSchema,
@@ -75,92 +79,7 @@ import {
 import { CONTROL_API_VERSION } from '../config/version.js';
 import { enrollRequestSchema, legacyUpgradeRequestSchema, rotateRequestSchema } from '../schemas/node-enrollment.js';
 
-// ─── Helpers ────────────────────────────────────────────────────────
-
-type JsonSchema = Record<string, unknown>;
-
-/** Convert a Zod schema to OpenAPI 3.1-compatible JSON Schema (strips $schema). */
-function zod(schema: ZodSchema): JsonSchema {
-  const js = zSchema.toJSONSchema(schema, { target: 'openapi-3.0', io: 'input', reused: 'inline', unrepresentable: 'any' }) as JsonSchema;
-  delete js['$schema'];
-  return js;
-}
-
-/** Shorthand for a $ref pointer. */
-const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
-
-/** JSON request body referencing a component schema. */
-function jsonBody(schemaName: string, description?: string) {
-  return {
-    required: true,
-    ...(description && { description }),
-    content: { 'application/json': { schema: ref(schemaName) } },
-  };
-}
-
-/** Standard success response with optional data schema. */
-function success(description: string, dataSchema?: JsonSchema | { $ref: string }) {
-  const props: Record<string, unknown> = { success: { type: 'boolean', enum: [true] } };
-  if (dataSchema) props['data'] = dataSchema;
-  return {
-    description,
-    content: {
-      'application/json': {
-        schema: { type: 'object', properties: props },
-      },
-    },
-  };
-}
-
-/** Paginated success response. */
-function paginated(description: string, itemSchema?: JsonSchema | { $ref: string }) {
-  return {
-    description,
-    content: {
-      'application/json': {
-        schema: {
-          type: 'object',
-          properties: {
-            success: { type: 'boolean', enum: [true] },
-            data: { type: 'array', items: itemSchema ?? { type: 'object' } },
-            meta: ref('PaginationMeta'),
-          },
-        },
-      },
-    },
-  };
-}
-
-/** Shorthand error responses. */
-const err400 = { description: 'Validation error', content: { 'application/json': { schema: ref('ApiError') } } };
-const err401 = { description: 'Unauthorized — missing or invalid credentials', content: { 'application/json': { schema: ref('ApiError') } } };
-const err403 = { description: 'Forbidden — insufficient role/permissions', content: { 'application/json': { schema: ref('ApiError') } } };
-const err404 = { description: 'Resource not found', content: { 'application/json': { schema: ref('ApiError') } } };
-const err409 = { description: 'Conflict — duplicate or conflicting resource', content: { 'application/json': { schema: ref('ApiError') } } };
-
-/** Standard query-string parameter. */
-function qp(name: string, description: string, opts?: { type?: string; required?: boolean; format?: string; enum?: string[] }) {
-  return {
-    name,
-    in: 'query' as const,
-    description,
-    required: opts?.required ?? false,
-    schema: {
-      type: opts?.type ?? 'string',
-      ...(opts?.format && { format: opts.format }),
-      ...(opts?.enum && { enum: opts.enum }),
-    },
-  };
-}
-
-/** Standard path parameter. */
-function pp(name: string, description: string) {
-  return { name, in: 'path' as const, required: true, schema: { type: 'string' }, description };
-}
-
-const apiSecretAuth = [{ apiSecret: [] }];
-/** Agent routes: a node signature, or the shared node secret while NODE_AUTH_MODE is not enforce. */
-const nodeAuthSecurity = [{ nodeSignature: [] }, { nodeToken: [] }];
+// Helpers live in ./helpers.ts.
 const nodeCredentialView = { type: 'object', description: 'Per-node credential state. `none`: shared node secret only; `active`: the node has its own key and the shared secret is refused for it; `revoked`: it must be enrolled again.',
   properties: { state: { type: 'string', enum: ['none', 'active', 'revoked'] }, origin: { type: 'string', nullable: true, enum: ['ENROLLMENT_TOKEN', 'LEGACY_UPGRADE', 'ROTATION', null] },
     boundAt: { type: 'string', format: 'date-time', nullable: true }, lastUsedAt: { type: 'string', format: 'date-time', nullable: true },
@@ -185,9 +104,6 @@ const pendingBindingView = { type: 'object', properties: { id: { type: 'string' 
 const nodeBinding = { type: 'object', properties: { nodeId: { type: 'string' }, nodeName: { type: 'string' }, keyId: { type: 'string', description: 'SHA-256 of the bound public key (SPKI DER), hex.' },
   serverKeys: { type: 'array', description: 'Server keys the agent pins.', items: { type: 'object', properties: { keyId: { type: 'string' }, publicKey: { type: 'string', description: 'Ed25519 SPKI DER, base64.' }, status: { type: 'string', enum: ['active', 'next'] } } } },
   mode: { type: 'string', enum: ['compat', 'warn', 'enforce'] } } };
-const requestBody = (schema: ZodSchema) => ({ required: true, content: { 'application/json': { schema: zod(schema) } } });
-const sharedResourceAuth = [{ sharedResourceBearer: [] }, { apiSecret: [] }, { bearerAuth: [] }];
-const nodeTokenAuth = [{ nodeToken: [] }];
 
 // ─── Tags ───────────────────────────────────────────────────────────
 
@@ -224,6 +140,22 @@ const tags = [
   { name: 'Codex Agent', description: 'Fleet Codex CLI version and ChatGPT OAuth lifecycle management' },
   { name: 'Magnus Ardent', description: 'Node-scoped Ardent profile inventory and managed actions' },
   { name: 'Agent identity', description: 'How the products of a suite name one agent profile: fleet reference, runtime and HiveMem actor' },
+  { name: 'Assistant', description: 'Fleet assistant: conversations, chat, tool-call approvals, share links, settings, model routes and insights' },
+  { name: 'AI Schedules', description: 'Recurring AI operations run on a cron schedule' },
+  { name: 'MCP', description: 'Read-only MCP-compatible fleet tools' },
+  { name: 'Anomalies', description: 'Anomaly detection events, cross-fleet correlation and timeline' },
+  { name: 'Predictions', description: 'Resource predictions and disk-full forecasts' },
+  { name: 'Drift', description: 'Configuration drift scans against expected packages, files, services, sysctls and users' },
+  { name: 'Topology', description: 'Network topology and service dependency maps' },
+  { name: 'Profiling', description: 'Node agent runtime profiles (heap, CPU, process)' },
+  { name: 'Alerts', description: 'Threshold alert rules and their violations' },
+  { name: 'Fleet checks', description: 'Results of scheduled fleet check runs, read from their JSONL logs' },
+  { name: 'Events', description: 'Live fleet event stream (server-sent events)' },
+  { name: 'Credentials', description: 'Shared-secret rotation status and retirement (ADMIN)' },
+  { name: 'Webhooks', description: 'Outbound webhook endpoints and their deliveries (ADMIN)' },
+  { name: 'Updates', description: 'Release updates of this server and its installed dependency versions' },
+  { name: 'Agent upgrades', description: 'Fleet agent upgrade eligibility and runs' },
+  { name: 'Cindertrace', description: 'Optional external security console: inventory, backups and approved responses' },
 ];
 
 // ─── Component Schemas ──────────────────────────────────────────────
@@ -545,10 +477,6 @@ const componentSchemas: Record<string, JsonSchema> = {
 
 // ─── Paths ──────────────────────────────────────────────────────────
 
-/** Inline JSON request body, for routes whose schema has no component of its own. */
-function inlineBody(schema: JsonSchema, description?: string) {
-  return { required: true, ...(description && { description }), content: { 'application/json': { schema } } };
-}
 const csvExport = (description: string) => ({ description, content: { 'text/csv': { schema: { type: 'string' } } } });
 const linuxAccountBody = (description: string) => inlineBody({
   type: 'object', required: ['username', 'password'], additionalProperties: false,
@@ -564,6 +492,13 @@ const webhookFields: Record<string, JsonSchema> = {
   retries: { type: 'integer', minimum: 0, maximum: 10, default: 3 },
   timeoutMs: { type: 'integer', minimum: 1000, maximum: 60000, default: 10000 },
 };
+
+/** POST /discovery/scan from the browser contract; the body is optional. */
+function discoveryScanOperation() {
+  const operation = browserOperation('POST', '/discovery/scan', { tags: ['Discovery'], summary: 'Scan the local network for agents',
+    errors: { 503: { ...err503, description: '`DISCOVERY_DISABLED`: authenticated agent discovery is not configured' } } });
+  return { ...operation, requestBody: { ...operation.requestBody, required: false } };
+}
 
 const paths: Record<string, Record<string, unknown>> = {
   '/shared-resource-leases/reserve': {
@@ -714,7 +649,7 @@ const paths: Record<string, Record<string, unknown>> = {
   '/ops/lessons/{id}/supersede': { post: { tags: ['Operations'], summary: 'Invalidate a reviewed lesson (operator/admin)', parameters: [pp('id','Lesson ID')], security: apiSecretAuth, responses: { '200': success('Invalidation status'), '403': err403 } } },
   '/ops/storage-evidence/{nodeId}': { get: { tags: ['Operations'], summary: 'On-demand bounded read-only mount investigation (operator/admin)', parameters: [pp('nodeId','Inventory node ID'), qp('mount','Exact persistent mount path',{required:true})], security: apiSecretAuth, responses: { '200': success('Storage evidence'), '400': err400, '403': err403 } } },
   '/ops/applications/{id}/canary': { post: { tags: ['Operations'], summary: 'Explicit one-token eight-second Hive inference canary (operator/admin)', parameters: [pp('id','Configured application ID')], security: apiSecretAuth, responses: { '200': success('Normalized canary evidence'), '403': err403, '409': err409 } } },
-  '/rollouts': { post: { tags: ['Operations'], summary: 'Admit a recoverable command rollout (operator/admin)', security: apiSecretAuth, requestBody: { required: true, content: { 'application/json': { schema: zod(rolloutInputSchema) } } }, responses: { '200': success('Durable rollout'), '400': err400, '403': err403, '409': err409 } } },
+  '/rollouts': { post: { tags: ['Operations'], summary: 'Admit a recoverable command rollout (operator/admin)', security: apiSecretAuth, requestBody: { required: true, content: { 'application/json': { schema: zod(rolloutInputSchema) } } }, responses: { '202': success('Durable rollout'), '400': err400, '403': err403, '409': err409 } } },
   '/remediation/executions/{id}/approve': { post: { tags: ['Operations'], summary: 'Retired approval path; use the signed approval bridge', parameters: [pp('id','Remediation execution ID')], security: apiSecretAuth, responses: { '403': err403 } } },
 
   '/team-approvals/plans': { get: { tags: ['Operations'], summary: 'List up to 20 unexpired backend-owned plans for approval-bridge review', security: [{ bearerAuth: [] }], responses: { '200': success('Validated pending plans'), '403': err403 } } },
@@ -2505,34 +2440,7 @@ const paths: Record<string, Record<string, unknown>> = {
 
   // ──────────────── Discovery ────────────────
   '/discovery/scan': {
-    post: {
-      tags: ['Discovery'],
-      summary: 'Network scan',
-      description: 'Broadcast a UDP discovery packet on the local network and collect agent responses. Default timeout 5 seconds.',
-      security: apiSecretAuth,
-      requestBody: {
-        required: false,
-        content: {
-          'application/json': {
-            schema: {
-              type: 'object',
-              properties: { timeoutMs: { type: 'integer', description: 'Scan timeout in milliseconds (default 5000)' } },
-            },
-          },
-        },
-      },
-      responses: {
-        200: success('Discovered agents', {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: { hostname: { type: 'string' }, ip: { type: 'string' }, port: { type: 'integer' }, version: { type: 'string' } },
-          },
-        }),
-        401: err401,
-        403: err403,
-      },
-    },
+    post: discoveryScanOperation(),
   },
 
   // ──────────────── Scan ────────────────
@@ -3166,6 +3074,7 @@ const paths: Record<string, Record<string, unknown>> = {
 
 /** Build the complete OpenAPI 3.1 specification. */
 export function buildOpenApiSpec() {
+  const documented = mergePaths(paths, documentedPaths, inlinePaths());
   return {
     openapi: '3.1.0',
     info: {
@@ -3191,7 +3100,7 @@ export function buildOpenApiSpec() {
         'Mutating endpoints that support retries accept an `x-idempotency-key` header. ' +
         'Keys are scoped to the route and authenticated actor, claimed only after validation, ' +
         'preview, and preflight checks, and deduplicated via Redis with a 24-hour TTL.',
-      license: { name: 'Proprietary' },
+      license: { name: 'Apache-2.0', identifier: 'Apache-2.0' },
     },
     servers: [
       { url: '/api/v1', description: 'Current server' },
@@ -3213,7 +3122,7 @@ export function buildOpenApiSpec() {
           type: 'http',
           scheme: 'bearer',
           bearerFormat: 'JWT',
-          description: 'HS256 JWT obtained from `POST /auth/login`.',
+          description: 'A user session: an HS256 JWT from `POST /auth/login`, or an Oathweave (RS256) resource token when Oathweave is configured. Roles come from the token.',
         },
         sharedResourceBearer: {
           type: 'http',
@@ -3235,20 +3144,31 @@ export function buildOpenApiSpec() {
           name: 'x-magnus-signature',
           description: 'Ed25519 signature of a node key over `magnus.node-request.v1`, method, path and query, audience (`server:<server key id>`), node id, timestamp, nonce and the SHA-256 of the body. Sent with `x-magnus-node-id`, `x-magnus-key-id`, `x-magnus-timestamp` (Unix milliseconds, within 60 seconds) and `x-magnus-nonce` (single use). See docs/NODE_CREDENTIALS.md.',
         },
+        fleetGatewayToken: { type: 'apiKey', in: 'header', name: 'x-fleet-gateway-token',
+          description: 'Fleet gateway service credential; its SHA-256 must equal `FLEET_GATEWAY_TOKEN_SHA256`. Never a user or node credential.' },
+        securityInventoryBearer: { type: 'http', scheme: 'bearer', bearerFormat: 'opaque',
+          description: 'Security inventory collector token; its SHA-256 must equal `SECURITY_INVENTORY_TOKEN_SHA256`. Accepted only by the security inventory and summary reads.' },
+        securityBackupBearer: { type: 'http', scheme: 'bearer', bearerFormat: 'opaque',
+          description: 'Security backup upload token; its SHA-256 must equal `SECURITY_BACKUP_TOKEN_SHA256`. Accepted only by the backup upload.' },
         hermesRegistryToken: { type: 'apiKey', in: 'header', name: 'x-hermes-registry-token',
           description: 'Distinct bearer bound to one enrolled node and Hermes installation; hosts in `MAGNUS_REGISTRY_SUBMIT_ONLY_HOSTS` have submission-only scope.' },
       },
-      schemas: componentSchemas,
+      schemas: { ...componentSchemas, ...hoistedSchemas() },
     },
-    paths: { ...paths,
+    paths: documented,
+  };
+}
+
+/** Entries written inline when their routes were added. */
+function inlinePaths(): Record<string, Record<string, unknown>> {
+  return {
       '/hiveskills/targets/{target}':{get:{summary:'Verify exact enrolled native target and immutable client without dispatch',tags:['Skills'],security:[{skillsExecutorBearer:[]}],parameters:[{name:'target',in:'path',required:true,schema:{type:'string'}}],responses:{200:{description:'Read-only enrolled target posture; ready false retains operator review'},401:{description:'Dedicated executor credential required'},403:{description:'Target outside exact registry grant'}}}},
       '/embermend/capabilities': { get: { summary: 'Read enrolled Embermend target capabilities within an exact product grant', tags: ['Operations'], security: [{embermendExecutorBearer:[]}], responses: {200:{description:'Installation identity, compatible targets and supported action versions'},401:{description:'Endpoint-scoped credential required'}} } },
-      '/embermend/operations': { post: { summary: 'Dispatch an exact authorized Embermend operation or separately approved quiescent-owner settlement', tags: ['Operations'], security: [{embermendExecutorBearer:[]}], requestBody: {required:true,content:{'application/json':{schema:zSchema.toJSONSchema(embermendOperationSchema)}}}, responses:{202:{description:'Durable original operation queued for managed admission'},200:{description:'Original receipt, request binding and retained outcome; success is not security verification'},403:{description:'Target or action outside product grant'},409:{description:'Incompatible enrollment, changed identity or uncertain execution'}} } },
+      '/embermend/operations': { post: { summary: 'Dispatch an exact authorized Embermend operation or separately approved quiescent-owner settlement', tags: ['Operations'], security: [{embermendExecutorBearer:[]}], requestBody: {required:true,content:{'application/json':{schema:zod(embermendOperationSchema)}}}, responses:{202:{description:'Durable original operation queued for managed admission'},200:{description:'Original receipt, request binding and retained outcome; success is not security verification'},403:{description:'Target or action outside product grant'},409:{description:'Incompatible enrollment, changed identity or uncertain execution'}} } },
       '/embermend/operations/{id}': { get: { summary: 'Reconcile the original signed Embermend operation without replay', tags: ['Operations'], security: [{embermendExecutorBearer:[]}], parameters:[{name:'id',in:'path',required:true,schema:{type:'string'}}], responses:{200:{description:'Original signed completion and ownership state'},404:{description:'No operation reserved for this integration'}} } },
       '/hiveskills/jobs/{id}': { post: { summary: 'Execute one exact approved HiveSkills publication through enrolled native admission', tags:['Skills'], requestBody:{required:true,content:{'application/json':{schema:zSchema.toJSONSchema(skillJobRequest)}}}, security: [{skillsExecutorBearer:[]}], parameters:[{name:'id',in:'path',required:true,schema:{type:'string',format:'uuid'}}], responses:{200:{description:'Bounded durable outcome; admitted operations are never replayed'},409:{description:'Publication conflict, not admitted or uncertain'}} }, get:{summary:'Reconcile only the original signed HiveSkills operation receipt',tags:['Skills'],security:[{skillsExecutorBearer:[]}],parameters:[{name:'id',in:'path',required:true,schema:{type:'string',format:'uuid'}},{name:'target',in:'query',required:true,schema:{type:'string'}}],responses:{200:{description:'Existing durable outcome'}}} },
       '/security-integration/response/execute': { post: { summary: 'Execute an exact Cindertrace-approved response through managed node admission', tags: ['Cindertrace'], security: [{cindertraceSignature:[]}], requestBody: {required:true,content:{'application/json':{schema:zSchema.toJSONSchema(responseRequestSchema)}}}, responses: { 200: { description: 'Signed completion receipt' }, 409: { description: 'Expired, already claimed, blocked, or uncertain execution' } } } },
       '/security-integration/response/{id}': { get: { summary: 'Read an existing Cindertrace execution without replay', tags: ['Cindertrace'], security: [{cindertraceSignature:[]}], parameters:[{name:'id',in:'path',required:true,schema:{type:'string'}}], responses: { 200: { description: 'Signed existing execution status' } } } },
       '/security-integration/response/targets/{id}/health': { get: { summary: 'Read fresh target health for Cindertrace', tags: ['Cindertrace'], security: [{cindertraceSignature:[]}], parameters:[{name:'id',in:'path',required:true,schema:{type:'string'}}], responses: { 200: { description: 'Signed minimal health snapshot' } } } },
-    },
   };
 }

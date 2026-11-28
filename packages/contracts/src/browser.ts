@@ -823,6 +823,53 @@ export const hermesInstallationsResponseSchema = ok(z.array(hermesInstallationSc
 // services/control-api/src/routes/hermes.ts
 export const hermesProfilesResponseSchema = ok(z.array(hermesProfileSchema));
 
+// services/control-api/src/services/hermes-summary.ts, GET /hermes/summary (ADMIN)
+export const hermesSummarySchema = z.object({
+  /** Installations on hosts that still have Hermes. */
+  installations: z.number().int().nonnegative(),
+  /** Of those, the ones whose status is `running` or `detected`. */
+  healthyInstallations: z.number().int().nonnegative(),
+  /** Profiles of installations that still have Hermes. */
+  profiles: z.number().int().nonnegative(),
+  /** Of those, the ones whose gateway is `running`. */
+  runningGateways: z.number().int().nonnegative(),
+});
+export const hermesSummaryResponseSchema = ok(hermesSummarySchema);
+
+// ── Heartbeat stream and discovery ──
+// services/control-api/src/services/heartbeat-stream.ts, GET /heartbeat/stream/stats
+export const heartbeatStreamStatsSchema = z.object({
+  /** False when Redis could not be read; the counts are then zero. */
+  enabled: z.boolean(),
+  streamKey: z.string(),
+  length: z.number().int().nonnegative(),
+  consumerGroup: z.string(),
+  pending: z.number().int().nonnegative(),
+  lastDeliveredId: z.string().nullable(),
+  consumers: z.array(z.object({ name: z.string(), pending: z.number().int().nonnegative(), idleMs: z.number().nonnegative() })),
+});
+export const heartbeatStreamStatsResponseSchema = ok(heartbeatStreamStatsSchema);
+
+// services/control-api/src/routes/discovery.ts, POST /discovery/scan
+export const discoveryScanRequestSchema = z.object({
+  /** How long to listen for answers, in milliseconds; clamped to 250-10000, default 5000. */
+  timeoutMs: z.number().optional(),
+});
+export const discoveredAgentSchema = z.object({
+  hostname: z.string(),
+  fqdn: z.string(),
+  ip: z.string(),
+  port: z.number().int().min(1).max(65_535),
+  version: z.string(),
+  /** A node with this address, hostname or FQDN is already registered. */
+  registered: z.boolean(),
+});
+export const discoveryScanResponseSchema = z.object({
+  success: z.literal(true),
+  data: z.array(discoveredAgentSchema),
+  meta: z.object({ total: z.number().int().nonnegative(), newAgents: z.number().int().nonnegative() }),
+});
+
 // ── AI insights ──
 // services/control-api/src/services/ai-insights-service.ts
 export const aiInsightSchema = z.object({
@@ -3294,6 +3341,8 @@ export const magnusBrowserRoutes: readonly MagnusBrowserRoute[] = [
   { method: 'GET', path: '/ops/dependency-health', response: dependencyHealthResponseSchema, roles: ANY_ROLE },
   { method: 'GET', path: '/orchestra/installations', response: hermesInstallationsResponseSchema, roles: ANY_ROLE },
   { method: 'GET', path: '/orchestra/profiles', response: hermesProfilesResponseSchema, roles: ANY_ROLE },
+  { method: 'GET', path: '/hermes/summary', response: hermesSummaryResponseSchema, roles: ANY_ROLE, note: 'The installation, health, profile and gateway counts over the lists GET /hermes/installations and GET /hermes/profiles return. Not served under the deprecated /orchestra alias.' },
+  { method: 'GET', path: '/heartbeat/stream/stats', response: heartbeatStreamStatsResponseSchema, roles: ANY_ROLE, note: 'Residual state of the retired Redis stream heartbeat transport. enabled is false, with zero counts, when Redis cannot be read.' },
 
   // Fleet readiness
   { method: 'GET', path: '/ops/readiness', response: fleetReadinessResponseSchema, roles: ANY_ROLE },
@@ -3301,6 +3350,7 @@ export const magnusBrowserRoutes: readonly MagnusBrowserRoute[] = [
   // Nodes list
   { method: 'GET', path: '/nodes', query: nodeListQuerySchema, response: nodeListResponseSchema, roles: ANY_ROLE, note: 'tags, metadata, agent.capabilities and health.disks are JSON-encoded strings. health is null for a node with no snapshot, so a list needs no request per row. An unknown status answers 400.' },
   { method: 'GET', path: '/nodes/system-updates/summary', response: systemUpdatesSummaryResponseSchema, roles: ANY_ROLE },
+  { method: 'POST', path: '/discovery/scan', request: discoveryScanRequestSchema, response: discoveryScanResponseSchema, roles: WRITE_ROLES, note: 'Broadcasts an authenticated UDP probe from the server and lists the agents that answer with a valid signature. 503 DISCOVERY_DISABLED unless ENABLE_AGENT_DISCOVERY is on with an AGENT_DISCOVERY_SECRET of at least 32 characters. The body may be empty.' },
   { method: 'POST', path: '/nodes/register', request: registerNodeRequestSchema, response: registerNodeResponseSchema, roles: WRITE_ROLES, successStatus: 201, note: 'The raw body also carries the per-node token. It is shown once, with Cache-Control: no-store, and this schema strips it.' },
   { method: 'GET', path: '/health', response: publicHealthResponseSchema, roles: [] },
   { method: 'GET', path: '/self-update/version', response: selfUpdateVersionResponseSchema, roles: ANY_ROLE },

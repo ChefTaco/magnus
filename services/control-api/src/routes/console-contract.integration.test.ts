@@ -186,6 +186,8 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('browser contract against rea
     '/ops/dependency-health': '/ops/dependency-health',
     '/orchestra/installations': '/orchestra/installations',
     '/orchestra/profiles': '/orchestra/profiles',
+    '/hermes/summary': '/hermes/summary',
+    '/heartbeat/stream/stats': '/heartbeat/stream/stats',
     '/ops/readiness': '/ops/readiness',
     '/nodes': '/nodes?pageSize=100',
     '/nodes/system-updates/summary': '/nodes/system-updates/summary',

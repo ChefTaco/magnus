@@ -13,8 +13,19 @@ import {
   listHermesJobs,
   listHermesProfiles,
 } from '../services/hermes-service.js';
+import { getHermesInventorySummary } from '../services/hermes-summary.js';
 
 export const hermesRouter = new Hono<AppVariables>();
+
+/**
+ * GET /hermes/summary (any role, like the lists it counts): the installation, health, profile and gateway counts the console's
+ * mission-control page shows. Mounted on its own, ahead of `hermesRouter`, so the deprecated
+ * `/orchestra` alias does not gain it.
+ */
+export const hermesSummaryRouter = new Hono<AppVariables>();
+hermesSummaryRouter.get('/', authMiddleware, async (c) => {
+  return c.json({ success: true, data: await getHermesInventorySummary() });
+});
 
 hermesRouter.use('*', authMiddleware);
 

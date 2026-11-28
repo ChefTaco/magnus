@@ -10,8 +10,8 @@ moved without updating it.
 
 | Class | Meaning | Rows | At the ingress |
 |---|---|---|---|
-| `browser` | A person's console drives it with a user token | 164 | Allow the exact method and path |
-| `machine` | Agents, services and integrations, with their own credentials | 86 | Deny |
+| `browser` | A person's console drives it with a user token | 167 | Allow the exact method and path |
+| `machine` | Agents, services and integrations, with their own credentials | 84 | Deny |
 | `exclude` | Reachable with a user token, but no console needs it, or it was written for a server-side caller | 148 | Deny until a feature needs it and it is reviewed |
 | `retired` | Always answers 404 or 410 | 10 | Deny |
 
@@ -374,14 +374,18 @@ describes the fleet and the anomaly page checks for it. The tool approval routes
 
 The standalone dashboard computes these in its own server, so a static console needs another source or must drop them:
 
-- `/api/federation` (fan-out over several control nodes) and `/api/control-nodes`
+- `/api/federation` (fan-out over several control nodes) and `/api/control-nodes`. Federation stays in
+  the console: HiveXUI implements its own.
 - `/api/terminal/*`, replaced by the [fleet gateway](../services/fleet-gateway/README.md)
 - The Hermes dashboard proxy and the router admin proxy
-- The mission-control Hermes tiles, computed from `/hermes/installations` in a server component
 
-The dashboard's nodes page calls `POST /api/v1/discovery/scan` and its mission-control page reads
-`GET /api/v1/heartbeat/stream/stats`. Both are `machine` here, so a console should not offer them
-unless these rows change. `POST /api/v1/hermes/deploy` is retired and always answers 410.
+The mission-control Hermes tiles come from `GET /api/v1/hermes/summary` (any role), which counts
+installations, healthy installations, profiles and running gateways over the same lists
+`GET /api/v1/hermes/installations` and `GET /api/v1/hermes/profiles` return. The dashboard reads it
+too. It is not served under the deprecated `/orchestra` alias. The nodes page's
+`POST /api/v1/discovery/scan` (ADMIN or OPERATOR; 503 `DISCOVERY_DISABLED` unless discovery is
+configured) and mission control's `GET /api/v1/heartbeat/stream/stats` (any role) are browser routes
+with published contracts. `POST /api/v1/hermes/deploy` is retired and always answers 410.
 
 ## Browser-facing
 
@@ -444,14 +448,17 @@ unless these rows change. `POST /api/v1/hermes/deploy` is retired and always ans
 | GET | `/api/v1/cron/:cronId` | browser | `user:any` | yes |
 | PATCH | `/api/v1/cron/:cronId` | browser | `user:ADMIN\|OPERATOR` | yes |
 | GET | `/api/v1/dependencies` | browser | `user:any` | yes |
+| POST | `/api/v1/discovery/scan` | browser | `user:ADMIN\|OPERATOR` | yes |
 | GET | `/api/v1/events/stream` | browser | `user:any` | yes Stream |
 | GET | `/api/v1/files/read` | browser | `user:ADMIN\|OPERATOR` | yes |
 | POST | `/api/v1/files/update` | browser | `user:ADMIN\|OPERATOR` | yes |
 | GET | `/api/v1/health` | browser | `public` | yes |
 | GET | `/api/v1/health/:nodeId/forecast` | browser | `user:any` | yes |
+| GET | `/api/v1/heartbeat/stream/stats` | browser | `user:any` | yes |
 | GET | `/api/v1/hermes/installations` | browser | `user:any` | yes |
 | GET | `/api/v1/hermes/installations/:id/profiles` | browser | `user:any` |  |
 | GET | `/api/v1/hermes/profiles` | browser | `user:any` |  |
+| GET | `/api/v1/hermes/summary` | browser | `user:any` | yes |
 | GET | `/api/v1/hive/events` | browser | `user:any` | yes |
 | GET | `/api/v1/library/categories` | browser | `user:any` |  |
 | POST | `/api/v1/library/categories` | browser | `user:ADMIN\|OPERATOR` |  |
@@ -581,10 +588,8 @@ Each row is a non-browser route that a broader `browser` pattern also matches. D
 | POST | `/api/v1/cron/managed-occurrences/status` | machine | `node-token` | Agent scheduler coordination with the node credential. |
 | POST | `/api/v1/fleet-gateway/audit` | machine | `fleet-gateway-token` | Fleet gateway records terminal session metadata. |
 | POST | `/api/v1/fleet-gateway/target` | machine | `fleet-gateway-token` | Fleet gateway resolves a node id to inventory facts. |
-| POST | `/api/v1/discovery/scan` | machine | `user:ADMIN\|OPERATOR` | Discovery kept machine-only by instruction, though the nodes page calls it. |
 | GET | `/api/v1/health/watchdog` | machine | `public` | Public off-host watchdog signal. |
 | POST | `/api/v1/heartbeat` | machine | `node-token` | Agent heartbeat with the shared node credential. |
-| GET | `/api/v1/heartbeat/stream/stats` | machine | `user:any` | Heartbeat surface kept machine-only by instruction, though mission-control reads it server-side and tolerates its absence. |
 | POST | `/api/v1/node-enrollment/enroll` | machine | `enrollment-token` | An agent binds its node key with a one-time enrollment token. See [NODE_CREDENTIALS.md](NODE_CREDENTIALS.md). |
 | POST | `/api/v1/node-enrollment/legacy-upgrade` | machine | `node-token` | An existing agent binds its first node key with the shared node credential. |
 | POST | `/api/v1/node-enrollment/rotate` | machine | `node-signature` | An agent replaces its node key, signed with the key it replaces. |
