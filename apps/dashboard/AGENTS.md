@@ -58,10 +58,11 @@ deploy/magnus-ui.service   Example systemd unit
   never add a fallback to a real host. Add every new variable to `runtime-environment.mjs` and
   `.env.example`.
 - **Integrations are optional.** The security console, the deprecated Emberpath admin proxy, OIDC
-  login (Oathweave) and Hermes Agent are detected in `runtime-integrations.mjs`. When one is not configured, hide its navigation
-  (`visibleNavGroups` in `src/lib/routes.ts`), show a clear "not configured" state on its pages and
-  return 503 (proxies) or 404 (deep links). Read integration state at request time, never at build
-  time: the published build is configured by whoever installs it.
+  login (Oathweave) and Hermes Agent are detected in `runtime-integrations.mjs`. When one is not
+  configured, hide its navigation (`visibleNavGroups` in `src/lib/routes.ts`), show a clear "not
+  configured" state on its pages and return 503 (proxies) or 404 (deep links). Read integration
+  state at request time, never at build time: the published build is configured by whoever
+  installs it.
 - Browser code calls same-origin routes only. Secrets (`API_SECRET`, session and credential keys)
   stay server-side; never expose them through `NEXT_PUBLIC_*`.
 - Keep login fail-closed: Redis-backed throttling and the authentication audit log are required.
