@@ -9,6 +9,11 @@ import { webhookTypeAliases } from '../services/webhook-types.js';
 const portSchema = z.coerce.number().int().min(1).max(65535);
 import { isConsoleBasePath } from './console-path.js';
 import { oathweaveConfigurationIssues } from './oathweave.js';
+
+/** Why a configuration that still sets IAM_CORE_URL is refused, and what replaces it. */
+export const IAM_CORE_URL_REMOVED = 'IAM_CORE_URL (external IAM token verification) was removed in Magnus 4.0.0; configure Oathweave mode '
+  + '(OATHWEAVE_ISSUER, OATHWEAVE_JWKS_URL, OATHWEAVE_USERINFO_URL, MAGNUS_OATHWEAVE_IDENTITIES_JSON), set a dedicated JWT_SECRET '
+  + 'for local user tokens, and remove IAM_CORE_URL, IAM_TOKEN_ISSUER and IAM_TOKEN_AUDIENCE. See UPGRADING.md.';
 import { emberpathConfigurationIssues } from '../services/llm-providers/emberpath.js';
 
 const booleanEnvSchema = z.enum(['true', 'false']).default('false').transform((value) => value === 'true');
@@ -299,13 +304,7 @@ export const envSchema = z.object({
 
   if (env.IAM_CORE_URL) {
     // Ignoring it would silently turn every external-IAM sign-in into a refusal; say why instead.
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['IAM_CORE_URL'],
-      message: 'IAM_CORE_URL (external IAM token verification) was removed in Magnus 4.0.0; configure Oathweave mode '
-        + '(OATHWEAVE_ISSUER, OATHWEAVE_JWKS_URL, OATHWEAVE_USERINFO_URL, MAGNUS_OATHWEAVE_IDENTITIES_JSON) and remove IAM_CORE_URL, '
-        + 'IAM_TOKEN_ISSUER and IAM_TOKEN_AUDIENCE. See UPGRADING.md.',
-    });
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['IAM_CORE_URL'], message: IAM_CORE_URL_REMOVED });
   }
 
   if (env.NODE_ENV === 'production' && env.MAGNUS_SECRET) {

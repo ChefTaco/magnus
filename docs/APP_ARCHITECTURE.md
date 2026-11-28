@@ -91,6 +91,10 @@ Register its client with the provider either as a public client
 (no secret; leave `HIVE_OAUTH_CLIENT_SECRET` unset) or as a confidential client, in which case
 `HIVE_OAUTH_CLIENT_SECRET` must hold its secret: the provider refuses a confidential client's code
 exchange without it (`invalid_client`), and the dashboard logs that reason when it happens.
+A named user's API calls carry that user's own access token, not the console's credential, so the
+Control API must verify it: since 4.0.0 only Oathweave mode does (`OATHWEAVE_ISSUER` and the other
+Oathweave settings, an identity link for each user, and tokens for the audience `magnus`, so
+`HIVE_OAUTH_API_AUDIENCE=magnus`). `magnus-ui check` warns about any other audience.
 
 ### Terminals and SSH
 

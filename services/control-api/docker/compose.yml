@@ -82,6 +82,8 @@ services:
       METRICS_TOKEN: ${METRICS_TOKEN:?METRICS_TOKEN is required}
       WEBHOOK_ENCRYPTION_KEY: ${WEBHOOK_ENCRYPTION_KEY:?WEBHOOK_ENCRYPTION_KEY is required}
       # Optional integrations stay off unless set (see README.md).
+      # Removed in 4.0.0; passed through only so the server can refuse it with an explanation.
+      IAM_CORE_URL: ${IAM_CORE_URL:-}
       OATHWEAVE_ISSUER: ${OATHWEAVE_ISSUER:-}
       OATHWEAVE_JWKS_URL: ${OATHWEAVE_JWKS_URL:-}
       OATHWEAVE_USERINFO_URL: ${OATHWEAVE_USERINFO_URL:-}

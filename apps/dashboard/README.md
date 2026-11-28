@@ -124,7 +124,7 @@ current state.
 | --- | --- | --- |
 | External security console | `MAGNUS_SECURITY_CONSOLE_URL` | Security navigation, fleet security summary, links and redirects to the console |
 | Emberpath admin UI (deprecated, removed in 4.0.0) | `HIVE_ROUTER_ADMIN_URL` (optional `HIVE_ROUTER_CA_PATH`) | Embedded admin UI of an older Emberpath (formerly Hive Router) release at `/api/hive-router/dashboard`; current Emberpath has none |
-| OIDC login | `HIVE_OAUTH_DISCOVERY_URL`, `HIVE_OAUTH_CLIENT_ID`, `HIVE_OAUTH_ISSUER`, `HIVE_OAUTH_API_AUDIENCE` (+ `DASHBOARD_PUBLIC_ORIGIN`) | Named-user sign-in through an OIDC provider such as Oathweave (formerly Hive IAM), next to the local administrator |
+| OIDC login | `HIVE_OAUTH_DISCOVERY_URL`, `HIVE_OAUTH_CLIENT_ID`, `HIVE_OAUTH_ISSUER`, `HIVE_OAUTH_API_AUDIENCE` (+ `DASHBOARD_PUBLIC_ORIGIN`) | Named-user sign-in through an OIDC provider such as Oathweave (formerly Hive IAM), next to the local administrator. Named users' API calls carry their own token: the Control API must run in Oathweave mode with an identity link for each user, and `HIVE_OAUTH_API_AUDIENCE` must be `magnus` |
 | Hermes Agent | `MAGNUS_HERMES_ENABLED=true`, `HERMES_SSH_AUTHORIZATIONS_FILE`, `DASHBOARD_SSH_*` | Hermes installation, profile, drift and proxy-security pages, and the embedded Hermes dashboard over SSH |
 
 ## Environment reference
@@ -172,7 +172,7 @@ Every variable the runtime configuration accepts. `magnus-ui env-schema` prints 
 | `HIVE_OAUTH_CLIENT_ID` | Optional | None | Registered Magnus dashboard OAuth client ID. |
 | `HIVE_OAUTH_CLIENT_SECRET` | Optional | None | OAuth client secret, kept server-side. Required when the client is registered as confidential; leave unset for a public PKCE client. |
 | `HIVE_OAUTH_ISSUER` | Optional | None | Exact trusted Hive access-token issuer. |
-| `HIVE_OAUTH_API_AUDIENCE` | Optional | None | Exact access-token audience accepted by the Control API. |
+| `HIVE_OAUTH_API_AUDIENCE` | Optional | None | Exact access-token audience accepted by the Control API: magnus, the audience its Oathweave mode verifies. |
 | `HIVE_OAUTH_SCOPE` | Optional | `openid profile email` | Registered named-user OAuth scopes. |
 | `HIVE_ROUTER_ADMIN_URL` | Optional | None | Deprecated: admin plane of an Emberpath (formerly Hive Router) release that still bundles an admin UI; enables the embedded router dashboard proxy. |
 | `HIVE_ROUTER_CA_PATH` | Optional | None | Optional private CA bundle for hostname-verified TLS to HIVE_ROUTER_ADMIN_URL. |

@@ -60,6 +60,13 @@ per person; see [the console API](docs/console-api.md#authentication)), then rem
 server ran without one: it is now always required for local user tokens. Local logins keep working
 throughout. `x-api-secret` and service credentials are unchanged.
 
+**Named OIDC sign-in to the standalone console** (`HIVE_OAUTH_*`) depends on this too: the console
+sends each named user's own access token to the Control API, which the external IAM mode used to
+verify. Move the server to Oathweave mode with an identity link for each of those users, have the
+provider issue their tokens for the audience `magnus`, and set `HIVE_OAUTH_API_AUDIENCE=magnus` on
+the console. Otherwise named users can sign in to the console but every API call they make is
+refused. `magnus-ui check` warns while `HIVE_OAUTH_API_AUDIENCE` is anything else.
+
 ## Unreleased: refused commands and non-Ardent reconciliation
 
 Upgrade the node agents first, then the server and console. No setting or migration changes.

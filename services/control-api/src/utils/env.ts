@@ -9,7 +9,7 @@
  * At startup, `validateSecrets()` performs both fail-fast missing-secret
  * checks AND full Zod schema validation via `config/env.ts`.
  */
-import { loadEnv, type Env } from '../config/env.js';
+import { IAM_CORE_URL_REMOVED, loadEnv, type Env } from '../config/env.js';
 import { resolveCredentialSecret } from '../services/credential-rotation-service.js';
 import { nodeAuthMode } from '../services/node-auth-config.js';
 
@@ -98,7 +98,12 @@ export const SHARED_NODE_SECRET_NAMES = ['NODE_MANAGER_SECRET', 'RESULT_SIGNING_
 export function listMissingSecrets(): string[] {
   const missing: string[] = [];
 
-  if (JWT_SECRET.length < 32) missing.push('JWT_SECRET (dedicated, min 32 chars)');
+  // A former external-IAM server never needed JWT_SECRET: say why it is missing now.
+  if (JWT_SECRET.length < 32) {
+    missing.push(process.env['IAM_CORE_URL']
+      ? 'JWT_SECRET (dedicated, min 32 chars; required since the external IAM mode was removed in 4.0.0)'
+      : 'JWT_SECRET (dedicated, min 32 chars)');
+  }
   if (API_SECRET.length < 32) missing.push('API_SECRET (dedicated, min 32 chars)');
   // Only the shared-secret modes need the fleet-wide node credentials (docs/NODE_CREDENTIALS.md).
   const sharedSecrets = nodeAuthMode() !== 'enforce';
@@ -128,6 +133,12 @@ export function listMissingSecrets(): string[] {
  */
 export function validateSecrets(): void {
   if (process.env['NODE_ENV'] === 'test') return;
+
+  // The removed mode is the root cause of what else would be reported missing, so name it first.
+  if (process.env['IAM_CORE_URL']) {
+    console.error(`\n❌ ${IAM_CORE_URL_REMOVED}\n`);
+    process.exit(1);
+  }
 
   const missing = listMissingSecrets();
   if (missing.length > 0) {

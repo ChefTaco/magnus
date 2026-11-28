@@ -28,7 +28,9 @@ key when it starts. No migration, and no new setting.
   `iam` feature flag are removed. The server **refuses to start while `IAM_CORE_URL` is set**,
   naming the Oathweave settings that replace it, instead of silently refusing every IAM token.
   `JWT_SECRET` is now always required, and `POST /api/v1/auth/login` is always available.
-  `magnus-server check` lists `Oathweave` instead
+  `magnus-server check` lists `Oathweave` instead. Named OIDC sign-in to the standalone console
+  (`HIVE_OAUTH_*`) now needs the server in Oathweave mode, because the console forwards each named
+  user's own token: `magnus-ui check` warns while `HIVE_OAUTH_API_AUDIENCE` is not `magnus`
   ([UPGRADING.md](UPGRADING.md#400-breaking-unreleased-external-iam-mode-removed)).
 
 ### Upgrade notes

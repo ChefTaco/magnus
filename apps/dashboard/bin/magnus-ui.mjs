@@ -122,6 +122,11 @@ export async function checkEnvironment(env) {
   if (!present(env, 'DASHBOARD_SSH_USERNAME') || !(present(env, 'DASHBOARD_SSH_PRIVATE_KEY_PATH') || present(env, 'DASHBOARD_SSH_PASSWORD'))) {
     warnings.push('DASHBOARD_SSH_USERNAME with DASHBOARD_SSH_PRIVATE_KEY_PATH (or DASHBOARD_SSH_PASSWORD) is not set; the node terminal and Hermes proxy are unavailable');
   }
+  // Named users' API calls carry their own token, which only the server's Oathweave mode verifies.
+  if (present(env, 'HIVE_OAUTH_API_AUDIENCE') && env.HIVE_OAUTH_API_AUDIENCE.trim() !== 'magnus') {
+    warnings.push(`HIVE_OAUTH_API_AUDIENCE is "${env.HIVE_OAUTH_API_AUDIENCE.trim()}": named users' API calls carry their own access token, `
+      + 'which the Control API verifies only in Oathweave mode, for the audience "magnus" (the external IAM mode was removed in 4.0.0)');
+  }
   const cert = env.TLS_CERT_PATH?.trim();
   const key = env.TLS_KEY_PATH?.trim();
   if (cert || key) {

@@ -46,7 +46,7 @@ export const dashboardEnvironmentSchema = Object.freeze({
   HIVE_OAUTH_CLIENT_ID: string({ optional: true, purpose: 'Registered Magnus dashboard OAuth client ID.' }),
   HIVE_OAUTH_CLIENT_SECRET: string({ optional: true, sensitive: true, purpose: 'OAuth client secret, kept server-side. Required when the client is registered as confidential; leave unset for a public PKCE client.' }),
   HIVE_OAUTH_ISSUER: url({ optional: true, purpose: 'Exact trusted Hive access-token issuer.' }),
-  HIVE_OAUTH_API_AUDIENCE: string({ optional: true, purpose: 'Exact access-token audience accepted by the Control API.' }),
+  HIVE_OAUTH_API_AUDIENCE: string({ optional: true, purpose: 'Exact access-token audience accepted by the Control API: magnus, the audience its Oathweave mode verifies.' }),
   HIVE_OAUTH_SCOPE: string({ default: 'openid profile email', purpose: 'Registered named-user OAuth scopes.' }),
   HIVE_ROUTER_ADMIN_URL: url({ optional: true, purpose: 'Deprecated: admin plane of an Emberpath (formerly Hive Router) release that still bundles an admin UI; enables the embedded router dashboard proxy.' }),
   HIVE_ROUTER_CA_PATH: path({ optional: true, purpose: 'Optional private CA bundle for hostname-verified TLS to HIVE_ROUTER_ADMIN_URL.' }),
