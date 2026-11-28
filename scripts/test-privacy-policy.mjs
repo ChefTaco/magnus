@@ -173,3 +173,9 @@ test('package builds remove outputs for deleted source files', { timeout: 60_000
     }
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test('the private-data check and the pre-push hook fail closed on large inputs', () => {
+  // 50 MB messages and 3000-commit pushes with a fake term; a removal-only push must pass.
+  const result = spawnSync('bash', [resolve(import.meta.dirname, 'privacy-fail-closed.test.sh')], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+});

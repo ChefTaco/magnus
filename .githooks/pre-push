@@ -10,9 +10,12 @@ bash "$ROOT_DIR/scripts/gitleaks.sh" --pre-push < "$GITLEAKS_PUSH_INPUT"
 zero=0000000000000000000000000000000000000000
 while read -r _local_ref local_sha _remote_ref remote_sha; do
   [[ "$local_sha" == "$zero" ]] && continue
-  if [[ "$remote_sha" == "$zero" ]]; then range="$local_sha"; else range="$remote_sha..$local_sha"; fi
+  # Outgoing commits only. A new branch is compared with every remote-tracking branch, so
+  # history that is already published is not re-read: one old match would otherwise block
+  # every new branch, including the one that removes it.
+  if [[ "$remote_sha" == "$zero" ]]; then range=("$local_sha" --not --remotes); else range=("$remote_sha..$local_sha"); fi
   msg_file="$(mktemp)"
-  git log --format='%B' "$range" > "$msg_file"
+  git log --format='%B' "${range[@]}" > "$msg_file"
   bash "$ROOT_DIR/scripts/check-private-data.sh" --message "$msg_file" || { rm -f "$msg_file"; exit 1; }
   rm -f "$msg_file"
 done < "$GITLEAKS_PUSH_INPUT"

@@ -192,6 +192,18 @@ key when it starts. No migration, and no new setting.
 
 ### Fixed
 
+- The private-data check (`scripts/check-private-data.sh`) fails closed. A commit-message input
+  large enough to fill a pipe, such as a new branch's whole history at pre-push, passed even when
+  it named a private term: `grep -q` exited early and the resulting SIGPIPE read as "no match". An
+  unreadable denylist, message file or staged file, or an invalid pattern, now stops the check
+  (exit 2) instead of passing.
+- Private-data findings no longer print a file path that itself contains a private term; it is
+  shown as `(path redacted)`.
+- The pre-push hook checks outgoing commits only: a new branch is compared with the
+  remote-tracking branches, so a commit that removes an already-published term can be pushed
+  without bypassing the hooks.
+- `scripts/privacy-fail-closed.test.sh` (run in CI) covers 50 MB messages, 3000-commit pushes and
+  a removal-only push with a test-only term. Repository tooling only; nothing to do when upgrading.
 - Invalid JSON answered 500 instead of 400 `VALIDATION_ERROR` on `POST /assistant/chat`,
   `/assistant/chat/stream` and `/assistant/messages/read`, `PATCH /assistant/settings` and
   `/assistant/model-profiles`, `POST /anomalies/resolve-node`, and on `PUT /assistant/heartbeat-prompt`
