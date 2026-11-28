@@ -48,7 +48,6 @@ key when it starts. No migration, and no new setting.
   Oathweave alone ([server README](services/control-api/README.md#hiveskills-execution-bridge)).
 - `@hivemagnus/magnus-oathweave`: `isServiceLink` and `OATHWEAVE_SERVICE_LINK_ROLES`. A person never
   authenticates or acts (`x-acting-subject`) through any service link.
-
 - **Console: legacy control-node credentials are re-encrypted at start.** Saved control-node API
   secrets and tokens still encrypted under the old `JWT_SECRET`-derived key (and any never
   encrypted) are re-encrypted under `CONTROL_NODE_CREDENTIAL_KEY` before the console serves a
@@ -132,6 +131,14 @@ key when it starts. No migration, and no new setting.
   mission-control heartbeat stream panel. An ingress that follows the inventory allows them, and
   `GET /api/v1/hermes/summary`, from this release. The rest of `/heartbeat` and `/discovery` stays
   machine-only.
+
+### Changed
+
+- Documentation, env examples and CLI output call the integrations by their current names:
+  Oathweave (formerly Hive IAM) and Emberpath (formerly Hive Router). `magnus-server check` lists
+  `External IAM` (marked deprecated when on) and `Model router`, and `magnus-ui check` lists
+  `Emberpath admin (deprecated)` and `OIDC login`. No variable is renamed: `HIVE_OAUTH_*`,
+  `HIVE_ROUTER_*` and `IAM_*` keep working, as does the `hive-router` application-probe kind.
 
 ### Deprecated
 

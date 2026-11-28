@@ -6,13 +6,13 @@
  * integration never blocks the server from starting.
  */
 export interface FeatureFlags {
-  /** External Hive IAM verifies RS256 access tokens (`IAM_CORE_URL`). */
+  /** Deprecated external IAM mode verifies RS256 access tokens (`IAM_CORE_URL`). */
   iam: boolean;
   /** Oathweave resource tokens authenticate the browser console (`OATHWEAVE_ISSUER`). */
   oathweave: boolean;
   /** Hermes Agent pages in the browser console (`MAGNUS_HERMES_ENABLED`). */
   hermes: boolean;
-  /** Hive Router (or any OpenAI-compatible router) for managed Hermes Agents. */
+  /** Emberpath (or any OpenAI-compatible router) for managed Hermes Agents. */
   router: boolean;
   /** HiveMem shared agent memory. */
   hivemem: boolean;

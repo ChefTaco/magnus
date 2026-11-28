@@ -142,8 +142,8 @@ and SSH execution logs redact values that look like secrets. Set `OTEL_EXPORTER_
 export traces over OTLP HTTP. See [observability](OBSERVABILITY.md).
 
 Authentication uses local users with server-issued JWTs by default. When `IAM_CORE_URL`,
-`IAM_TOKEN_ISSUER` and `IAM_TOKEN_AUDIENCE` are set, RS256 access tokens issued by the retired Hive IAM are
-accepted instead (deprecated, removed in 4.0.0; Oathweave mode with `OATHWEAVE_ISSUER` replaces it). Services that call the server (a collector, a Hermes plugin, an approval
+`IAM_TOKEN_ISSUER` and `IAM_TOKEN_AUDIENCE` are set, RS256 access tokens issued by that external IAM
+(Oathweave, formerly Hive IAM) are accepted instead (deprecated, removed in 4.0.0; Oathweave mode with `OATHWEAVE_ISSUER` replaces it). Services that call the server (a collector, a Hermes plugin, an approval
 bridge) get their own scoped credentials, which the server stores only as SHA-256 digests.
 
 ## Agent
@@ -178,7 +178,7 @@ context-adoption bundle and the generated Ardent client in `@hivemagnus/magnus-c
 
 ## Integrations
 
-Hive IAM, Emberpath, HiveMem, an external security console, Hermes Agent and Codex are all
+Oathweave, Emberpath, HiveMem, an external security console, Hermes Agent and Codex are all
 optional. Each one is off until its environment variables are set, and nothing falls back to a
 built-in host. See the integration tables in the [root README](../README.md#optional-integrations)
 and in each package README.

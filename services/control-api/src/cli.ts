@@ -119,8 +119,8 @@ async function commandCheck(format: 'json' | 'table'): Promise<number> {
 
   const onOff = (value: boolean) => (value ? 'on' : 'off');
   console.log('Integrations:');
-  console.log(`  Hive IAM           ${onOff(features.iam)}`);
-  console.log(`  Hive Router        ${onOff(features.router)}`);
+  console.log(`  External IAM       ${onOff(features.iam)}${features.iam ? ' (deprecated)' : ''}`);
+  console.log(`  Model router       ${onOff(features.router)}`);
   console.log(`  HiveMem            ${onOff(features.hivemem)}`);
   console.log(`  Security Fusion    ${features.securityFusion}${features.securityFusion === 'remote' && features.securityConsoleUrl ? ` (${features.securityConsoleUrl})` : ''}`);
   console.log(`  Hermes plugin API  ${onOff(features.pluginApi)}`);
