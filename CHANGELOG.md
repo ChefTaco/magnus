@@ -38,6 +38,17 @@ no new setting.
   decision for a scheduler occurrence or skill publication (`reconcilable: false` on the owner).
 - Contracts: `CommandReconcileDecisionSchema`, `CommandReconcileDecisionResultSchema` and the optional
   `reconcilable` flag on `ArdentCommandOwnerSchema`.
+- **The OpenAPI document covers every mounted route.** The 123 routes that had no entry (assistant,
+  AI schedules, MCP, anomalies, predictions, drift, topology, profiling, alerts, remediation,
+  rollouts, fleet checks, credentials, security integration, node utilities, managed cron, resource
+  leases, fleet gateway and the Hermes reads) are documented from their handlers: roles, parameters,
+  request and response schemas and the errors they return. Routes the browser contract publishes take
+  their schemas from `@hivemagnus/magnus-contracts/browser`. `undocumented-routes.json` is gone: the
+  route test now fails for any mounted route without an entry.
+- `npm run openapi:check` validates the document as OpenAPI 3.1 (every `$ref` resolves), fails on an
+  undeclared tag or an unknown security scheme, and generates TypeScript types from it with
+  `openapi-typescript`, so a client can always be generated. The repository ships no generated
+  client of its own API.
 
 ### Fixed
 

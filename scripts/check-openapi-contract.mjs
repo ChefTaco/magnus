@@ -1,6 +1,8 @@
 #!/usr/bin/env node
-import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import SwaggerParser from '@apidevtools/swagger-parser';
 
 const specPath = resolve('services/control-api/dist/openapi/spec.js');
@@ -35,6 +37,19 @@ try {
   await SwaggerParser.validate(structuredClone(spec));
 } catch (error) {
   failures.push(`spec is not valid OpenAPI: ${error instanceof Error ? error.message : String(error)}`);
+}
+
+// A typed client must be generable from the document (the repository ships none; consumers generate their own).
+if (failures.length === 0) {
+  const directory = mkdtempSync(join(tmpdir(), 'magnus-openapi-'));
+  try {
+    writeFileSync(join(directory, 'magnus.json'), JSON.stringify(spec));
+    execFileSync(resolve('node_modules/.bin/openapi-typescript'), [join(directory, 'magnus.json'), '-o', join(directory, 'magnus.ts')], { stdio: 'pipe', timeout: 60_000 });
+  } catch (error) {
+    failures.push(`openapi-typescript cannot generate types: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 }
 
 if (failures.length > 0) {
