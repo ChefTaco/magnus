@@ -160,8 +160,9 @@ export default function LogsPage(): React.ReactElement {
       <Card>
         <div className="flex flex-wrap items-end gap-3">
           <div className="flex-1">
-            <label className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Search</label>
+            <label htmlFor="log-search" className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Search</label>
             <input
+              id="log-search"
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -180,8 +181,9 @@ export default function LogsPage(): React.ReactElement {
             />
           </div>
           <div className="w-28">
-            <label className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Level</label>
+            <label htmlFor="log-level" className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Level</label>
             <select
+              id="log-level"
               value={levelFilter}
               onChange={(e) => setLevelFilter(e.target.value)}
               className="w-full rounded border border-border bg-bg px-3 py-2 text-xs outline-none focus:border-primary focus:shadow-[0_0_8px_var(--color-glow)] transition-all"

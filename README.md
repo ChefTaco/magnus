@@ -202,7 +202,8 @@ them, and `magnus-server check` and `magnus-ui check` print which ones are on.
 Optional HiveSkills deployments use a dedicated server-owned registry grant and an
 explicit already-enrolled node/profile map. Before enabling a registry, its
 operator may read `GET /api/v1/hiveskills/targets/{target}` with that registry's
-endpoint-scoped credential. This performs no dispatch: it checks current
+executor credential: an Oathweave service token linked with role `HIVESKILLS_SERVICE`, or the
+deprecated static bearer. This performs no dispatch: it checks current
 resource enrollment, heartbeat, retained ownership and the authenticated native
 client's configuration and file digests. An unavailable or changed target stays
 held for operator review. It does not enroll nodes or install software.

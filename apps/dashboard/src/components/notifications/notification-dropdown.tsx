@@ -244,7 +244,7 @@ export function NotificationDropdown(): React.ReactElement {
                     </span>
                   </div>
                   <p className="mt-0.5 text-xs text-text-muted line-clamp-2">{n.message}</p>
-                  <span className="mt-1 block text-[10px] text-text-muted/60">{timeAgo(n.createdAt)}</span>
+                  <span className="mt-1 block text-[10px] text-text-muted">{timeAgo(n.createdAt)}</span>
                 </div>
                 {!n.isRead && (
                   <button

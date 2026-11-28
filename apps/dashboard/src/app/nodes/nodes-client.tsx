@@ -598,10 +598,10 @@ export default function NodesPageClient({
                               View
                             </Button>
                           </Link>
-                          <Button variant="ghost" size="sm" onClick={() => setEditNode(node)}>
+                          <Button variant="ghost" size="sm" onClick={() => setEditNode(node)} aria-label={`Edit ${node.name}`} title="Edit node">
                             <Pencil className="h-3.5 w-3.5" />
                           </Button>
-                          <Button variant="ghost" size="sm" onClick={() => void deleteNode(node)}>
+                          <Button variant="ghost" size="sm" onClick={() => void deleteNode(node)} aria-label={`Delete ${node.name}`} title="Delete node">
                             <Trash2 className="h-3.5 w-3.5 text-danger" />
                           </Button>
                         </div>

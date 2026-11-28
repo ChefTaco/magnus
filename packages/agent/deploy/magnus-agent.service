@@ -31,17 +31,24 @@ RestartSec=5
 StandardOutput=journal
 StandardError=journal
 NoNewPrivileges=true
-# Commands the agent runs get this private /tmp too, not the host /tmp.
+# Commands the agent starts itself share this private /tmp and /var/tmp (not
+# the host's), emptied whenever the agent stops or restarts.
 PrivateTmp=true
 UMask=0077
 LockPersonality=true
 RestrictRealtime=true
 SystemCallArchitectures=native
 TasksMax=4096
-# Not set in privileged mode on purpose: ProtectKernelModules hides
-# /usr/lib/modules from package upgrades the agent runs, and ProtectClock
-# limits device access (GPU collection needs /dev/nvidia*). MemoryMax would
-# also cap the commands the agent runs; add one in a drop-in if you want it.
+# Not set in privileged mode on purpose. A root agent can start anything
+# through systemd, so they are no boundary here; they would only break its work:
+# - ProtectKernelModules hides /usr/lib/modules and blocks module loading
+#   (kernel upgrades, DKMS, update-initramfs and modprobe fail).
+# - ProtectClock implies DeviceAllow=char-rtc r, which blocks every physical
+#   device (nvidia-smi needs /dev/nvidia*) and all clock system calls.
+# - MemoryMax caps every command too; at the limit the kernel kills inside the
+#   unit and the default OOMPolicy=stop stops it, killing running commands.
+# Add any of them in a drop-in if a host does not need that (MemoryHigh=
+# throttles instead of killing).
 
 [Install]
 WantedBy=multi-user.target

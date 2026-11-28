@@ -19,6 +19,7 @@
         "magnus-ui": "bin/magnus-ui.mjs"
       },
       "devDependencies": {
+        "@axe-core/playwright": "4.14.0",
         "@hivemagnus/magnus-contracts": "3.6.0",
         "@playwright/test": "^1.65.1",
         "@tailwindcss/postcss": "^4.3.5",

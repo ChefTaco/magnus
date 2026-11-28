@@ -178,7 +178,12 @@ npm run dev             # https://localhost:3000, expects ../../certs/server.{cr
 ```
 
 Checks: `npm run typecheck`, `npm run lint`, `npm test`, `npm run build`. Browser tests use
-Playwright (`npm run test:e2e`, credentials in `TEST_USERNAME` and `TEST_PASSWORD`).
+Playwright (`npm run test:e2e`, credentials in `TEST_USERNAME` and `TEST_PASSWORD`). CI runs
+`npm run verify:ui:ci` from the repository root instead: a disposable API and console
+(`scripts/start-ui-ci.mjs`, which needs a local `magnus_ideas_*` PostgreSQL database in
+`TEST_DATABASE_URL` and Redis in `UI_TEST_REDIS_URL`) and `playwright.ci.config.ts`, which includes
+an axe-core accessibility scan of the main pages that fails on serious or critical WCAG 2.1 AA
+findings.
 
 To build the package locally: `npm run build && npm pack`. `npm pack` runs `scripts/stage-package.mjs`,
 which assembles the standalone server, static assets, the TLS wrapper and its runtime helpers in

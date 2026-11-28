@@ -3,6 +3,7 @@ import { createServer, type Server } from 'node:http';
 import { test, expect, type Page } from '@playwright/test';
 import { SignJWT, decodeJwt } from 'jose';
 import { installFrameGrantRelay } from '../src/lib/frame-grant-relay';
+import { resetLoginLimiter } from './ci-login-limiter';
 
 /**
  * A proxied third-party dashboard must not act with console authority. The harness points the
@@ -90,6 +91,10 @@ async function mint(page: Page): Promise<{ grant: string; frameUrl: string }> {
   expect(response.status()).toBe(200);
   return await response.json() as { grant: string; frameUrl: string };
 }
+
+// Each test signs in afresh (its own console session, so its own router cookie jar).
+test.beforeAll(resetLoginLimiter);
+test.afterAll(resetLoginLimiter);
 
 test.beforeAll(async () => {
   server = createServer((req, res) => {
