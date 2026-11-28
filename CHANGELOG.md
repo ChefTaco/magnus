@@ -53,9 +53,13 @@ key when it starts. No migration, and no new setting.
   encrypted) are re-encrypted under `CONTROL_NODE_CREDENTIAL_KEY` before the console serves a
   request: idempotent, after a `0600` backup of `.magnus/control-nodes.json`, verified by
   decrypting every new value, written atomically and logged without values. A value that does not
-  decrypt leaves the file unchanged, and the console keeps reading it as before. `magnus-ui
-  credentials` counts what remains (exit 1 while any legacy value does), `--reencrypt` runs the
-  step without a restart, and `magnus-ui check` warns about it
+  decrypt, or a `CONTROL_NODE_CREDENTIAL_KEY` that does not decrypt the values already stored under
+  it, leaves the file unchanged, and the console keeps reading it as before. `magnus-ui
+  credentials` prints the file it checked and counts what remains (exit 1 while any legacy value
+  does, 3 when there is no state file), `--reencrypt` runs the step without a restart, and
+  `magnus-ui check` warns about it. The rewrite keeps the file's owner (as root it hands the files
+  back; as another account it refuses) and holds `control-nodes.json.lock`, which the console's
+  control-node saves now take as well
   ([UPGRADING.md](UPGRADING.md#unreleased-legacy-control-node-credentials-re-encrypted-at-console-start)).
 - `POST /api/v1/commands/{commandId}/reconcile-resource` takes an ADMIN's decision
   `{ disposition: effects_verified | no_effect_verified, reason }` for any command that is not an

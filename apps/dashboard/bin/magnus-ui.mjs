@@ -22,9 +22,11 @@ Commands:
   start         Start the Magnus UI server (default)
   check         Validate the configuration and list enabled integrations
   credentials   Count stored control-node credentials still under the legacy
-                JWT_SECRET-derived key (exit 1 while any remain); with
-                --reencrypt, re-encrypt them under CONTROL_NODE_CREDENTIAL_KEY
-                (the console also does this when it starts)
+                JWT_SECRET-derived key in DIR/.magnus/control-nodes.json: exit 0
+                when none remain, 1 while any do (or on an error), 3 when there
+                is no state file there. With --reencrypt, re-encrypt them under
+                CONTROL_NODE_CREDENTIAL_KEY (the console also does this when it
+                starts). Run it as the account the console runs as.
   env-schema    Print every supported environment variable (--json for JSON)
 
 Options:
@@ -154,16 +156,22 @@ function dataDirectory(env) {
 export async function credentialStorageWarnings(env) {
   const { controlNodeStateFile, credentialsNeedReencryption, describeCredentialCounts, inspectControlNodeCredentials } = await runtimeModule('runtime-control-node-credentials.mjs');
   try {
-    const counts = inspectControlNodeCredentials(controlNodeStateFile(dataDirectory(env)));
+    const file = controlNodeStateFile(dataDirectory(env));
+    const counts = inspectControlNodeCredentials(file);
     if (!credentialsNeedReencryption(counts)) return [];
-    return [`${describeCredentialCounts(counts)}; the console re-encrypts them when it starts, or run \`magnus-ui credentials --reencrypt\``];
+    return [`${describeCredentialCounts(counts, file)}; the console re-encrypts them when it starts, or run \`magnus-ui credentials --reencrypt\``];
   } catch (error) {
     return [`control-node credentials could not be inspected: ${error instanceof Error ? error.message : String(error)}`];
   }
 }
 
+/** Exit code of `magnus-ui credentials` when the data directory holds no control-node state. */
+export const CREDENTIALS_NO_STATE_EXIT = 3;
+
 /**
- * `magnus-ui credentials [--reencrypt]`: 0 when nothing remains under the legacy key, 1 otherwise.
+ * `magnus-ui credentials [--reencrypt]`: 0 when the state file holds nothing under the legacy key,
+ * 1 while something does or on an error, CREDENTIALS_NO_STATE_EXIT when there is no state file (a
+ * wrong --data-dir must not read as all clear).
  * @param {Record<string, string | undefined>} env
  * @param {Set<string>} flags
  */
@@ -176,7 +184,8 @@ export async function commandCredentials(env, flags) {
       console.log(message ?? 'control-node credentials: nothing to re-encrypt');
     }
     const counts = credentials.inspectControlNodeCredentials(file);
-    console.log(credentials.describeCredentialCounts(counts));
+    console.log(credentials.describeCredentialCounts(counts, file));
+    if (!counts.present) return CREDENTIALS_NO_STATE_EXIT;
     if (!credentials.credentialsNeedReencryption(counts)) return 0;
     console.error('Run `magnus-ui credentials --reencrypt` (or restart the console) to re-encrypt them under CONTROL_NODE_CREDENTIAL_KEY.');
     return 1;

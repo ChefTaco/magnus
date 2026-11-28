@@ -55,14 +55,16 @@ starts, every saved control-node credential that is still encrypted under the ol
 many values it changed; a file with nothing to change is left alone. Keep `JWT_SECRET` in the
 console's environment until this has happened once.
 
-Check an install, before or after the upgrade:
+Check an install, before or after the upgrade, as the account the console runs as:
 
 ```bash
-magnus-ui credentials --env-file /etc/magnus-ui/magnus-ui.env --data-dir /var/lib/magnus-ui
+sudo -u magnus magnus-ui credentials --env-file /etc/magnus-ui/magnus-ui.env --data-dir /var/lib/magnus-ui
 ```
 
-It exits 1 while values remain under the legacy key; `--reencrypt` re-encrypts them without a
-restart. If the console logs that a value did not decrypt, set the `JWT_SECRET` it used when that
+It prints the file it checked and exits 0 when nothing is left under the legacy key, 1 while
+something is, and 3 when there is no state file at that path (nothing saved, or a wrong
+`--data-dir`). `--reencrypt` re-encrypts them without a restart; it takes the console's state lock
+and refuses a key that does not decrypt the values already stored. If the console logs that a value did not decrypt, set the `JWT_SECRET` it used when that
 node was saved and start it again, or remove and re-add that control node. The next major release
 reads only `CONTROL_NODE_CREDENTIAL_KEY` and refuses to start while legacy values remain, so run a
 release with this step before moving to it. Once the console has read its control nodes without
