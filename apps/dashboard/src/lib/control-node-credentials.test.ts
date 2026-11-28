@@ -1,23 +1,32 @@
 import { createCipheriv, createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { readdirSync, readFileSync } from 'node:fs';
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   controlNodeStateFile,
+  controlNodeStateLockFile,
   credentialsNeedReencryption,
   describeCredentialCounts,
   describeReencryption,
   inspectControlNodeCredentials,
   reencryptLegacyControlNodeCredentials,
 } from '../../runtime-control-node-credentials.mjs';
-import { commandCredentials, credentialStorageWarnings } from '../../bin/magnus-ui.mjs';
+import { commandCredentials, CREDENTIALS_NO_STATE_EXIT, credentialStorageWarnings } from '../../bin/magnus-ui.mjs';
 
 const KEY = 'fixture-dedicated-control-node-key-0123456789';
 const JWT = 'fixture-legacy-jwt-secret-0123456789abcdef';
 const SESSION = 'fixture-session-secret-0123456789abcdef';
 const env = { CONTROL_NODE_CREDENTIAL_KEY: KEY, JWT_SECRET: JWT, SESSION_SECRET: SESSION };
+
+function currentEncrypt(plaintext: string, secret: string): string {
+  const key = createHash('sha256').update(secret).digest();
+  const iv = Buffer.alloc(12, 5);
+  const cipher = createCipheriv('aes-256-gcm', key, iv);
+  const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+  return `enc2:${iv.toString('base64')}:${cipher.getAuthTag().toString('base64')}:${ciphertext.toString('base64')}`;
+}
 
 function legacyEncrypt(plaintext: string, secret: string): string {
   const key = createHash('sha256').update(secret).digest();
@@ -72,7 +81,7 @@ describe('control-node credential re-encryption', () => {
   it('does nothing without a state file', () => {
     expect(inspectControlNodeCredentials(file)).toMatchObject({ present: false, legacy: 0 });
     expect(reencryptLegacyControlNodeCredentials(file, env)).toMatchObject({ status: 'absent', backup: null });
-    expect(describeCredentialCounts(inspectControlNodeCredentials(file))).toBe('control-node credentials: none stored');
+    expect(describeCredentialCounts(inspectControlNodeCredentials(file))).toBe('control-node credentials: no state file');
   });
 
   it('re-encrypts legacy values under the dedicated key, backs up the original and keeps every credential', async () => {
@@ -170,6 +179,103 @@ describe('control-node credential re-encryption', () => {
     expect(await credentialStorageWarnings(cliEnv)).toEqual([]);
     expect(await commandCredentials({ ...cliEnv, CONTROL_NODE_CREDENTIAL_KEY: '' }, new Set())).toBe(0);
     for (const call of [...log.mock.calls, ...error.mock.calls]) expect(String(call[0])).not.toContain('jwt-api-secret-value');
+  });
+
+  it('refuses a key that does not decrypt the values already under the dedicated key', async () => {
+    const original = await writeState([
+      node('saved', { apiSecret: currentEncrypt('saved-api-secret-value', KEY) }),
+      node('jwt', { apiSecret: legacyEncrypt('jwt-api-secret-value', JWT) }),
+    ]);
+    expect(() => reencryptLegacyControlNodeCredentials(file, { ...env, CONTROL_NODE_CREDENTIAL_KEY: 'fixture-stray-exported-key-0123456789abc' }))
+      .toThrow(/does not decrypt control-node entry 0 apiSecret.*nothing was changed/);
+    expect(await readFile(file, 'utf8')).toBe(original);
+    expect(await readdir(directory)).toEqual(['control-nodes.json']);
+    // The right key re-encrypts the legacy value and keeps the one already stored.
+    expect(reencryptLegacyControlNodeCredentials(file, env)).toMatchObject({ status: 'reencrypted', reencrypted: 1 });
+    expect((await readWithStore()).map((entry) => entry.apiSecret)).toEqual(['saved-api-secret-value', 'jwt-api-secret-value']);
+  });
+
+  it('refuses to rewrite a file another account owns', async () => {
+    const original = await writeState([node('jwt', { apiSecret: legacyEncrypt('jwt-api-secret-value', JWT) })]);
+    const owner = (await stat(file)).uid;
+    expect(() => reencryptLegacyControlNodeCredentials(file, env, { euid: owner + 1 }))
+      .toThrow(new RegExp(`belongs to uid ${owner}.*sudo -u magnus`));
+    expect(await readFile(file, 'utf8')).toBe(original);
+    expect(await readdir(directory)).toEqual(['control-nodes.json']);
+  });
+
+  it('run as root, hands the backup and the new file back to the owner before writing them', async () => {
+    await writeState([node('jwt', { apiSecret: legacyEncrypt('jwt-api-secret-value', JWT) })]);
+    const { uid, gid } = await stat(file);
+    const fchown = vi.fn((fd: number, ownerUid: number, ownerGid: number) => { void fd; void ownerUid; void ownerGid; });
+    const result = reencryptLegacyControlNodeCredentials(file, env, { euid: 0, fchown });
+    expect(result.status).toBe('reencrypted');
+    expect(fchown).toHaveBeenCalledTimes(2);
+    for (const call of fchown.mock.calls) expect(call.slice(1)).toEqual([uid, gid]);
+    // As the owner itself nothing is chowned.
+    await writeState([node('jwt', { apiSecret: legacyEncrypt('jwt-api-secret-value', JWT) })]);
+    const asOwner = vi.fn();
+    reencryptLegacyControlNodeCredentials(file, env, { euid: uid, fchown: asOwner });
+    expect(asOwner).not.toHaveBeenCalled();
+    // The real fchown to the owner's own uid and gid works without privileges too.
+    await writeState([node('jwt', { apiSecret: legacyEncrypt('jwt-api-secret-value', JWT) })]);
+    expect(reencryptLegacyControlNodeCredentials(file, env, { euid: 0 }).status).toBe('reencrypted');
+    expect(await stat(file)).toMatchObject({ uid, gid });
+  });
+
+  it('waits for the state lock another process holds and changes nothing', async () => {
+    const original = await writeState([node('jwt', { apiSecret: legacyEncrypt('jwt-api-secret-value', JWT) })]);
+    // The parent process is alive, so its lock is not stale.
+    await writeFile(controlNodeStateLockFile(file), `${process.ppid}\n`, { mode: 0o600 });
+    expect(() => reencryptLegacyControlNodeCredentials(file, env, { lockWaitMs: 100 })).toThrow(/locked by another process/);
+    expect(await readFile(file, 'utf8')).toBe(original);
+  });
+
+  it('takes over a lock its holder abandoned', async () => {
+    await writeState([node('jwt', { apiSecret: legacyEncrypt('jwt-api-secret-value', JWT) })]);
+    const lock = controlNodeStateLockFile(file);
+    await writeFile(lock, '2147483646\n', { mode: 0o600 });
+    expect(reencryptLegacyControlNodeCredentials(file, env, { lockWaitMs: 100 }).status).toBe('reencrypted');
+    await writeState([node('jwt', { apiSecret: legacyEncrypt('jwt-api-secret-value', JWT) })]);
+    await writeFile(lock, `${process.ppid}\n`, { mode: 0o600 });
+    await utimes(lock, new Date(Date.now() - 120_000), new Date(Date.now() - 120_000));
+    expect(reencryptLegacyControlNodeCredentials(file, env, { lockWaitMs: 100 }).status).toBe('reencrypted');
+    expect(await readdir(directory)).not.toContain('control-nodes.json.lock');
+  });
+
+  it('the console store holds the same lock for its writes and releases it', async () => {
+    vi.resetModules();
+    vi.stubEnv('NODE_ENV', 'test');
+    vi.stubEnv('MAGNUS_CONTROL_NODES_CONFIG_DIR', directory);
+    vi.stubEnv('CONTROL_NODE_CREDENTIAL_KEY', KEY);
+    const store = await import('@/lib/control-nodes-store');
+    const lock = controlNodeStateLockFile(file);
+    let seen = false;
+    await store.withNodesMutex((nodes) => {
+      seen = readdirSync(directory).includes(path.basename(lock));
+      return [...nodes, node('added', { apiSecret: 'added-api-secret-value' })];
+    });
+    expect(seen).toBe(true);
+    expect(await readdir(directory)).not.toContain(path.basename(lock));
+    // While another process holds it, a store write waits instead of overwriting.
+    await writeFile(lock, `${process.ppid}\n`, { mode: 0o600 });
+    const pending = store.withNodesMutex((nodes) => nodes);
+    let settled = false;
+    void pending.then(() => { settled = true; }, () => { settled = true; });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 200));
+    expect(settled).toBe(false);
+    await rm(lock);
+    await pending;
+  });
+
+  it('magnus-ui credentials names the file it checked and does not report a missing one as clear', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    expect(await commandCredentials({ ...env, MAGNUS_UI_DATA_DIR: root }, new Set())).toBe(CREDENTIALS_NO_STATE_EXIT);
+    expect(log).toHaveBeenLastCalledWith(`control-node credentials: no state file at ${file} (nothing is stored there; check --data-dir)`);
+    await writeState([node('saved', { apiSecret: currentEncrypt('saved-api-secret-value', KEY) })]);
+    expect(await commandCredentials({ ...env, MAGNUS_UI_DATA_DIR: root }, new Set())).toBe(0);
+    expect(log).toHaveBeenLastCalledWith(expect.stringContaining(`in ${file}: 1 under CONTROL_NODE_CREDENTIAL_KEY, 0 under the legacy`));
   });
 
   it('runs at console start before the Next.js server can read the store', () => {

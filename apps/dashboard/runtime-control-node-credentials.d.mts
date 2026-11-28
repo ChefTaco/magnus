@@ -19,6 +19,13 @@ export function controlNodeStateFile(root: string): string;
 export function classifyStoredCredential(value: unknown): StoredCredentialKind;
 export function inspectControlNodeCredentials(file: string): ControlNodeCredentialCounts;
 export function credentialsNeedReencryption(counts: Pick<ControlNodeCredentialCounts, 'legacy' | 'plaintext' | 'retired'>): boolean;
-export function reencryptLegacyControlNodeCredentials(file: string, env?: Env, options?: { now?: Date }): ReencryptionResult;
+export function reencryptLegacyControlNodeCredentials(file: string, env?: Env, options?: {
+  now?: Date;
+  euid?: number | null;
+  fchown?: (fd: number, uid: number, gid: number) => void;
+  lockWaitMs?: number;
+}): ReencryptionResult;
+export function controlNodeStateLockFile(file: string): string;
+export function withControlNodeStateLock<T>(file: string, fn: () => Promise<T>): Promise<T>;
 export function describeReencryption(result: ReencryptionResult): string | null;
-export function describeCredentialCounts(counts: ControlNodeCredentialCounts): string;
+export function describeCredentialCounts(counts: ControlNodeCredentialCounts, file?: string): string;

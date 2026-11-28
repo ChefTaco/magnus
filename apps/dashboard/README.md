@@ -90,12 +90,23 @@ the console re-encrypts those under `CONTROL_NODE_CREDENTIAL_KEY` before it serv
 first copies the file to `control-nodes.json.legacy-key-backup-<time>` (mode `0600`), checks every
 new value by decrypting it, replaces the file atomically and logs how many it changed. When there
 is nothing to change it does nothing. If a legacy value does not decrypt (the `JWT_SECRET` it was
-saved under is gone), the file is left as it is and the console logs why.
+saved under is gone), or `CONTROL_NODE_CREDENTIAL_KEY` does not decrypt the values already stored
+under it, the file is left as it is and the console logs why.
+
+Run the command as the account the console runs as (`magnus` with the example unit), so the file
+stays readable by the console:
 
 ```bash
-magnus-ui credentials --env-file /etc/magnus-ui/magnus-ui.env --data-dir /var/lib/magnus-ui              # count; exit 1 while legacy values remain
-magnus-ui credentials --reencrypt --env-file /etc/magnus-ui/magnus-ui.env --data-dir /var/lib/magnus-ui  # re-encrypt now, without a restart
+sudo -u magnus magnus-ui credentials --env-file /etc/magnus-ui/magnus-ui.env --data-dir /var/lib/magnus-ui              # count
+sudo -u magnus magnus-ui credentials --reencrypt --env-file /etc/magnus-ui/magnus-ui.env --data-dir /var/lib/magnus-ui  # re-encrypt now, without a restart
 ```
+
+It prints the file it checked and exits 0 when nothing is left under the legacy key, 1 while
+something is (or on an error) and 3 when there is no state file at that path (no control node was
+ever saved there, or `--data-dir` is wrong). `--reencrypt` refuses to rewrite a file another account
+owns; run as root, it hands the new file and the backup back to the file's owner. It takes the same
+lock file (`control-nodes.json.lock`) as the console's own saves, so it is safe while the console
+runs. Variables already exported in the shell win over `--env-file`.
 
 `magnus-ui check` warns while legacy values remain. The legacy key is read only for this; the next
 major release drops it and refuses to start while any legacy value remains. Delete the backup once
