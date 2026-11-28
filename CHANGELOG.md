@@ -7,6 +7,37 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Upgrade notes
+
+- **Hive IAM mode (`IAM_CORE_URL`) is deprecated** and is removed in 4.0.0; move to Oathweave mode
+  (`OATHWEAVE_ISSUER`). Until then its tokens must also carry a `jti` claim and an `aud` that is
+  exactly `IAM_TOKEN_AUDIENCE` (a single string, not a list that contains it). Oathweave's
+  `/api/v1/auth/public-key` tokens already do; the server logs a deprecation warning at startup.
+- **Request IDs are validated.** An inbound `x-request-id` is reused only when it is 1-128
+  characters of `A-Z a-z 0-9 . _ : @ / + = -`; anything else gets a generated UUID. `x-hive-request-id`
+  and `x-correlation-id` are accepted as aliases. Generated IDs are UUIDs instead of nanoid strings.
+- **Rate limits** keep their budgets, keys, Redis store and `429` body. When Redis is unavailable,
+  routes that are not fail-closed are now limited per process with the same budget instead of
+  unlimited, and an IPv6 client is keyed by its canonical address.
+
+### Added
+
+- `MAGNUS_TRUSTED_PROXIES` (optional): proxies whose `X-Forwarded-For` the rate limiter believes
+  (addresses, CIDR ranges, `loopback`, `private`, `linklocal`), read from the right past every
+  trusted hop. Unset keeps the current behaviour: the socket peer is the client. An invalid entry is
+  refused at startup.
+
+### Changed
+
+- Server: adopt `@hivemagnus/hive-common` 0.10.0 (fleet gateway and Oathweave package bumped too).
+  The HiveMem service token uses `/oathweave` `createServiceTokenProvider()` (a failed token request
+  now backs off for 5 seconds); request IDs and trace context use `/hono` `requestContext()`, and
+  `tracing` reuses its span; secret comparisons use `/secrets`; redaction runs `/log` `redact()`
+  plus Magnus's own key and text rules, so everything masked before is still masked; the rate limiter
+  uses `/rate-limit` (`enforceRateLimit()` over a Redis store, `createRateLimiter()` as the fallback,
+  `resolveClientAddress()`).
+- Server: the Hive IAM verifier requires `jti` and an exact single audience.
+
 ## [3.5.1] - 2026-11-28
 
 Magnus pins Ardent 3.6.0. No Magnus code, route or setting changes, and no migration.

@@ -143,7 +143,7 @@ export traces over OTLP HTTP. See [observability](OBSERVABILITY.md).
 
 Authentication uses local users with server-issued JWTs by default. When `IAM_CORE_URL`,
 `IAM_TOKEN_ISSUER` and `IAM_TOKEN_AUDIENCE` are set, RS256 access tokens issued by the retired Hive IAM are
-accepted instead. Services that call the server (a collector, a Hermes plugin, an approval
+accepted instead (deprecated, removed in 4.0.0; Oathweave mode with `OATHWEAVE_ISSUER` replaces it). Services that call the server (a collector, a Hermes plugin, an approval
 bridge) get their own scoped credentials, which the server stores only as SHA-256 digests.
 
 ## Agent

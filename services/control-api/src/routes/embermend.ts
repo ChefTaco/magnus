@@ -8,7 +8,7 @@ import { getDb } from '../db/index.js';
 import { NodeApiClient } from '../sdk/node-api-client.js';
 import { getNodeBaseUrl } from '../utils/node-url.js';
 import { getNodeManagerSecret } from '../utils/env.js';
-import { safeEqual } from '../utils/safe-equal.js';
+import { timingSafeEqualString as safeEqual } from '@hivemagnus/hive-common/secrets';
 import { HttpError } from '../middleware/error-handler.js';
 import { parseBody } from '../utils/validate.js';
 import { logAuditEvent } from '../services/audit-service.js';

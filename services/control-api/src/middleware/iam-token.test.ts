@@ -18,12 +18,15 @@ async function sign(overrides: {
   algorithm?: 'RS256' | 'PS256';
   expiresIn?: string | null;
   issuedAt?: number | null;
+  jti?: string | null;
+  audiences?: string[];
 } = {}): Promise<string> {
   const algorithm = overrides.algorithm ?? 'RS256';
   let jwt = new jose.SignJWT({ roles: ['VIEWER'] })
     .setProtectedHeader({ alg: algorithm })
     .setIssuer(overrides.issuer ?? issuer)
-    .setAudience(overrides.audience ?? audience);
+    .setAudience(overrides.audiences ?? overrides.audience ?? audience);
+  if (overrides.jti !== null) jwt = jwt.setJti(overrides.jti ?? 'fixture-jti');
   if (overrides.issuedAt !== null) jwt = jwt.setIssuedAt(overrides.issuedAt);
   if (overrides.expiresIn !== null) jwt = jwt.setExpirationTime(overrides.expiresIn ?? '5m');
   if (overrides.subject !== null) jwt = jwt.setSubject(overrides.subject ?? 'user-1');
@@ -48,6 +51,15 @@ describe('verifyIamAccessToken', () => {
       issuer,
       audience,
     )).rejects.toThrow();
+  });
+
+  it('rejects a token whose audience list merely contains Magnus', async () => {
+    await expect(verifyIamAccessToken(await sign({ audiences: [audience, 'collector'] }), publicKey, issuer, audience)).rejects.toThrow(/exactly/);
+    await expect(verifyIamAccessToken(await sign({ audiences: [audience] }), publicKey, issuer, audience)).rejects.toThrow(/exactly/);
+  });
+
+  it('rejects a token without a jti', async () => {
+    await expect(verifyIamAccessToken(await sign({ jti: null }), publicKey, issuer, audience)).rejects.toThrow(/jti/);
   });
 
   it('rejects a token from another issuer', async () => {
@@ -85,6 +97,7 @@ describe('verifyIamAccessToken', () => {
       .setIssuer(issuer)
       .setAudience(audience)
       .setSubject('user-1')
+      .setJti('fixture-jti')
       .setIssuedAt()
       .setExpirationTime('5m')
       .sign(keys.privateKey);

@@ -5,6 +5,7 @@ import type { AppVariables } from '../types/index.js';
 
 /** Each bucket's request times, oldest first, as the sorted set holds them. */
 const buckets = vi.hoisted(() => new Map<string, number[]>());
+const redisState = vi.hoisted(() => ({ down: false }));
 
 vi.mock('ioredis', () => ({
   Redis: class {
@@ -19,6 +20,7 @@ vi.mock('ioredis', () => ({
         zcard: () => chain,
         pexpire: () => chain,
         exec: async () => {
+          if (redisState.down) throw new Error('connect ECONNREFUSED');
           const entries = [...(buckets.get(key) ?? []).filter((at) => at > windowStart), score];
           buckets.set(key, entries);
           return [[null, 0], [null, 1], [null, entries.length], [null, 1]];
@@ -33,7 +35,8 @@ vi.mock('ioredis', () => ({
 }));
 vi.mock('../routes/metrics.js', () => ({ incMetric: vi.fn() }));
 
-const { ARDENT_RATE_LIMITS, ardentRateLimitMiddleware, rateLimitMiddleware } = await import('./rate-limit.js');
+const { ARDENT_RATE_LIMITS, ardentRateLimitMiddleware, getRateLimitHealth, rateLimitMiddleware } = await import('./rate-limit.js');
+const { loadEnv } = await import('../config/env.js');
 const { resetOathweaveVerifier } = await import('./oathweave-verifier.js');
 
 const ISSUER = 'https://identity.example.com';
@@ -89,6 +92,7 @@ async function exhaust(token?: string): Promise<void> {
 
 beforeEach(() => {
   buckets.clear();
+  redisState.down = false;
   revoked = new Set();
   userinfoCalls = 0;
   resetOathweaveVerifier();
@@ -249,5 +253,52 @@ describe('the Ardent bridge budgets', () => {
     expect((await act(service)).status).toBe(429);
     for (let attempt = 0; attempt < ARDENT_RATE_LIMITS.action.serviceMax + 1; attempt += 1) expect((await read(service)).status).toBe(200);
     expect(ARDENT_RATE_LIMITS.read.serviceMax).toBeGreaterThan(ARDENT_RATE_LIMITS.action.serviceMax);
+  });
+});
+
+describe('trusted proxies (MAGNUS_TRUSTED_PROXIES)', () => {
+  const PROXY = { incoming: { socket: { remoteAddress: '10.0.0.5', remotePort: 44321, remoteFamily: 'IPv4' } } };
+
+  it('reads X-Forwarded-For only from a configured proxy, from the right', async () => {
+    vi.stubEnv('MAGNUS_TRUSTED_PROXIES', '10.0.0.0/8');
+    await call(undefined, { 'x-forwarded-for': '203.0.113.50' }, PROXY);
+    // A client-written prefix left of the address the proxy appended changes nothing.
+    await call(undefined, { 'x-forwarded-for': '198.51.100.1, 203.0.113.50' }, PROXY);
+    // The ingress peer itself is not a trusted proxy: its header is ignored.
+    await call(undefined, { 'x-forwarded-for': '203.0.113.51' });
+    expect([...buckets.keys()].map((key) => key.split(':').at(-1)).sort()).toEqual(['192.0.2.10', '203.0.113.50']);
+    expect(buckets.get([...buckets.keys()].find((key) => key.endsWith('203.0.113.50'))!)).toHaveLength(2);
+  });
+
+  it('gives clients behind the proxy separate budgets, and charges the proxy when it sends no header', async () => {
+    vi.stubEnv('MAGNUS_TRUSTED_PROXIES', 'private');
+    for (let attempt = 0; attempt < MAX; attempt += 1) expect((await call(undefined, { 'x-forwarded-for': '203.0.113.60' }, PROXY)).status).toBe(200);
+    expect((await call(undefined, { 'x-forwarded-for': '203.0.113.60' }, PROXY)).status).toBe(429);
+    expect((await call(undefined, { 'x-forwarded-for': '203.0.113.61' }, PROXY)).status).toBe(200);
+    await call(undefined, {}, PROXY);
+    expect([...buckets.keys()].some((key) => key.endsWith(':10.0.0.5'))).toBe(true);
+  });
+
+  it('keys every IPv6 address separately, in canonical form', async () => {
+    const v6 = (address: string) => ({ incoming: { socket: { remoteAddress: address, remotePort: 44321, remoteFamily: 'IPv6' } } });
+    await call(undefined, {}, v6('2001:db8:1:2::10'));
+    await call(undefined, {}, v6('2001:DB8:1:2:0::11'));
+    expect([...buckets.keys()].sort()).toEqual([expect.stringMatching(/rl:hermes:2001:db8:1:2::10$/), expect.stringMatching(/rl:hermes:2001:db8:1:2::11$/)]);
+  });
+
+  it('is refused at startup when an entry is not an address or range', () => {
+    expect(() => loadEnv({ MAGNUS_TRUSTED_PROXIES: '10.0.0.0/8, proxy.example.com' })).toThrow(/proxy\.example\.com/);
+  });
+});
+
+describe('when Redis is unavailable', () => {
+  it('limits ordinary routes per process with the same budget and reports the failure', async () => {
+    redisState.down = true;
+    for (let attempt = 0; attempt < MAX; attempt += 1) expect((await call()).status).toBe(200);
+    const refused = await call();
+    expect(refused.status).toBe(429);
+    expect(await refused.json()).toEqual({ error: 'RATE_LIMITED', message: 'Too many requests. Please try again later.' });
+    expect(Number(refused.headers.get('Retry-After'))).toBeGreaterThanOrEqual(1);
+    expect(getRateLimitHealth()).toMatchObject({ status: 'warn' });
   });
 });

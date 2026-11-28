@@ -35,13 +35,10 @@ import {
 import { verifyWithRotation } from '../services/credential-rotation-service.js';
 import { verifyIamAccessToken } from './iam-token.js';
 import { getCurrentUserStatus } from './user-status.js';
-import { matchesSha256Digest, safeEqual } from '../utils/safe-equal.js';
+import { matchesSha256Digest, timingSafeEqualString as safeEqual } from '@hivemagnus/hive-common/secrets';
 import { OathweaveAccessDenied, oathweaveAuthentication } from './oathweave.js';
 import { iamCoreUrlProblem } from '../config/iam.js';
 import { normalizeIpAddress } from '../utils/ip.js';
-
-/** Constant-time string comparison (re-exported for existing callers). */
-export { safeEqual };
 
 // ──────────────────────────────────────────────────────────
 // RS256 public-key cache (external Hive IAM verification mode)

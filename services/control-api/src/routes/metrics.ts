@@ -3,7 +3,7 @@ import type { AppVariables } from '../types/index.js';
 import { getDb } from '../db/index.js';
 import { getRedis } from '../queue/redis.js';
 import { getHeartbeatStreamStats } from '../services/heartbeat-stream.js';
-import { safeEqual } from '../utils/safe-equal.js';
+import { timingSafeEqualString as safeEqual } from '@hivemagnus/hive-common/secrets';
 import { SENTINEL_NODE_IDS } from '../utils/sentinel-nodes.js';
 
 export const metricsRouter = new Hono<AppVariables>();

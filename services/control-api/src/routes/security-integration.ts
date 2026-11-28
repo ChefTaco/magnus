@@ -3,7 +3,7 @@ import { securityInventoryTargetSchema } from '@hivemagnus/magnus-contracts';
 import { Hono } from 'hono';
 import { getDb } from '../db/index.js';
 import { authMiddleware, requirePermission } from '../middleware/auth.js';
-import { matchesSha256Digest } from '../utils/safe-equal.js';
+import { matchesSha256Digest } from '@hivemagnus/hive-common/secrets';
 import { getNodeBaseUrl } from '../utils/node-url.js';
 import type { AppVariables } from '../types/index.js';
 export const securityIntegrationRouter = new Hono<AppVariables>();

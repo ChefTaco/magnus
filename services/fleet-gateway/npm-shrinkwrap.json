@@ -12,7 +12,7 @@
       ],
       "license": "Apache-2.0",
       "dependencies": {
-        "@hivemagnus/hive-common": "^0.7.0",
+        "@hivemagnus/hive-common": "^0.10.0",
         "@hivemagnus/magnus-oathweave": "3.5.1",
         "@hono/node-server": "^2.1.11",
         "hono": "4.13.19",
@@ -34,9 +34,9 @@
       }
     },
     "node_modules/@hivemagnus/hive-common": {
-      "version": "0.7.0",
-      "resolved": "https://registry.npmjs.org/@hivemagnus/hive-common/-/hive-common-0.7.0.tgz",
-      "integrity": "sha512-Bx098iWXtmZzT6axQ85KLMeHutuoS3YxX1eUpesz5B4lGzqCv51dqr6o/CJ8mSYdY5rFvzJoWqDZn5DzrFAjKA==",
+      "version": "0.10.0",
+      "resolved": "https://registry.npmjs.org/@hivemagnus/hive-common/-/hive-common-0.10.0.tgz",
+      "integrity": "sha512-NYngiEoGEVUfZUaxev0t3iB+uFPHIsAdBALo3NZEYJIKBJ4mgWjR5V96poXPvW+hMKXtWw5ZIZcC+nTcYhHx0w==",
       "license": "Apache-2.0",
       "dependencies": {
         "jose": "^6.2.15"

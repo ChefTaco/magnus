@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { getDb } from '../db/index.js';
 import { HttpError } from '../middleware/error-handler.js';
 import { parseBody } from '../utils/validate.js';
-import { matchesSha256Digest } from '../utils/safe-equal.js';
+import { matchesSha256Digest } from '@hivemagnus/hive-common/secrets';
 import { logAuditEvent } from '../services/audit-service.js';
 import type { AppVariables } from '../types/index.js';
 

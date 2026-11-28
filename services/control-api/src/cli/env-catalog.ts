@@ -50,6 +50,7 @@ export const ENV_CATALOG: readonly EnvVariable[] = [
   { name: 'TLS_CERT_PATH', group: 'listener', requiredWhen: 'NODE_ENV=production', description: 'PEM certificate. Relative paths resolve against the working directory.' },
   { name: 'TLS_KEY_PATH', group: 'listener', requiredWhen: 'NODE_ENV=production', secret: true, description: 'PEM private key matching TLS_CERT_PATH.' },
   { name: 'ALLOW_INSECURE_HTTP', group: 'listener', default: 'false', description: 'Development only: serve cleartext HTTP on loopback when no certificate is configured.' },
+  { name: 'MAGNUS_TRUSTED_PROXIES', group: 'listener', description: 'Comma-separated proxies whose X-Forwarded-For the rate limiter believes: IP addresses, CIDR ranges and the presets loopback, private and linklocal. The header is read from the right, past every trusted hop. Unset trusts none: the socket peer is the client, and a forwarding header is never read.' },
   { name: 'CORS_ORIGIN', group: 'listener', default: 'https://localhost:3000', description: 'Comma-separated browser origins allowed to call the API (the dashboard).' },
   { name: 'DASHBOARD_PUBLIC_ORIGIN', group: 'listener', description: 'Public HTTPS origin of the dashboard, used for links in notifications.' },
   { name: 'MAGNUS_CONSOLE_BASE_PATH', group: 'listener', description: 'Path the console is served under on DASHBOARD_PUBLIC_ORIGIN (for example /fleet), prefixed to links in notifications. Unset means the origin root.' },
@@ -86,7 +87,7 @@ export const ENV_CATALOG: readonly EnvVariable[] = [
   { name: 'MAGNUS_RESOURCE_LEASES_ENABLED', group: 'agents', default: 'false', description: 'Enable durable node and shared-resource lease coordination.' },
 
   // ── Hive IAM ──
-  { name: 'IAM_CORE_URL', group: 'iam', description: 'Hive IAM base URL. When set, RS256 tokens from Hive IAM replace local JWTs. Must be HTTPS; HTTP is accepted only for a loopback host (or with ALLOW_INSECURE_HTTP in development).' },
+  { name: 'IAM_CORE_URL', group: 'iam', description: 'Deprecated (removed in 4.0.0; use OATHWEAVE_ISSUER). Hive IAM base URL. When set, RS256 tokens from Hive IAM replace local JWTs; each must carry `jti` and exactly the configured audience. Must be HTTPS; HTTP is accepted only for a loopback host (or with ALLOW_INSECURE_HTTP in development).' },
   { name: 'IAM_TOKEN_ISSUER', group: 'iam', requiredWhen: 'IAM_CORE_URL set', description: 'Exact `iss` claim required on IAM access tokens.' },
   { name: 'IAM_TOKEN_AUDIENCE', group: 'iam', requiredWhen: 'IAM_CORE_URL set', description: 'Exact `aud` claim required on IAM access tokens.' },
 

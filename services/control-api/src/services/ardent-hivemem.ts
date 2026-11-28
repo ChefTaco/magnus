@@ -12,7 +12,7 @@
  */
 import { createHash } from 'node:crypto';
 import { HttpError } from '../middleware/error-handler.js';
-import { OathweaveClientToken, OathweaveClientTokenError } from './oathweave-client-credentials.js';
+import { createServiceTokenProvider, isServiceTokenError, type ServiceTokenProvider } from '@hivemagnus/hive-common/oathweave';
 
 /** HiveMem permissions an Ardent profile uses: private memories and conversation sessions. */
 export const ARDENT_HIVEMEM_SCOPES = ['memories:read', 'memories:write', 'sessions:read', 'sessions:write'] as const;
@@ -170,23 +170,32 @@ async function refusal(response: Response): Promise<string> {
   return `HTTP ${response.status}${detail ? `: ${detail.replace(JWT, '[token]')}` : ''}`;
 }
 
-/** One cached token per service client; replaced when its settings change. */
-const clientTokens = new Map<string, OathweaveClientToken>();
-function clientToken(auth: Extract<ArdentHiveMemAuth, { kind: 'oathweave' }>): OathweaveClientToken {
+/**
+ * One cached token per service client; replaced when its settings (or, in tests, the fetch
+ * implementation) change. HiveCommon's provider fetches on first use, refreshes before expiry,
+ * shares one request between concurrent callers and backs off for a few seconds after a failure.
+ */
+let clientTokenCache: { key: string; fetcher: typeof fetch; provider: ServiceTokenProvider } | undefined;
+function clientToken(auth: Extract<ArdentHiveMemAuth, { kind: 'oathweave' }>, fetcher: typeof fetch): ServiceTokenProvider {
   const key = createHash('sha256').update(JSON.stringify([auth.tokenUrl, auth.clientId, auth.clientSecret, auth.scope])).digest('hex');
-  let provider = clientTokens.get(key);
-  if (!provider) { clientTokens.clear(); provider = new OathweaveClientToken(auth); clientTokens.set(key, provider); }
-  return provider;
+  if (clientTokenCache?.key !== key || clientTokenCache.fetcher !== fetcher) {
+    // The token URL is HTTPS-only (ardentHiveMemSettings refuses anything else).
+    const provider = createServiceTokenProvider({ tokenUrl: auth.tokenUrl, clientId: auth.clientId, clientSecret: auth.clientSecret, scope: auth.scope,
+      fetch: (input, init) => fetcher(input, init) });
+    clientTokenCache = { key, fetcher, provider };
+  }
+  return clientTokenCache.provider;
 }
 
 /** Forget cached service tokens (tests, or after a configuration change). */
-export function resetArdentHiveMemTokens(): void { clientTokens.clear(); }
+export function resetArdentHiveMemTokens(): void { clientTokenCache = undefined; }
 
 async function bearer(settings: ArdentHiveMemSettings, fetcher: typeof fetch): Promise<string> {
   if (settings.auth.kind === 'token') return settings.auth.token;
-  try { return await clientToken(settings.auth).token(fetcher); }
+  try { return await clientToken(settings.auth, fetcher).token(); }
   catch (error: unknown) {
-    const reason = error instanceof OathweaveClientTokenError ? error.message : 'Oathweave token request failed';
+    // ServiceTokenError messages are fixed per reason (plus the HTTP status) and never carry the secret or the response body.
+    const reason = isServiceTokenError(error) ? error.message : 'Oathweave token request failed';
     throw new HiveMemEnrollmentError(503, `${reason}; check MAGNUS_ARDENT_HIVEMEM_CLIENT_ID, its secret and its Oathweave policy (audience hivemem)`, 'HIVEMEM_IDENTITY_UNAVAILABLE');
   }
 }
@@ -202,7 +211,7 @@ async function callHiveMem(settings: ArdentHiveMemSettings, path: string, body: 
     });
     if (response.status !== 401 || settings.auth.kind !== 'oathweave' || attempt > 0) return response;
     await response.body?.cancel().catch(() => undefined);
-    clientToken(settings.auth).invalidate();
+    clientToken(settings.auth, fetcher).invalidate();
   }
 }
 

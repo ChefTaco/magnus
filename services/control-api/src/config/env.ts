@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import path from 'node:path';
+import { trustedProxies } from '@hivemagnus/hive-common/rate-limit';
 import { parseRouteAliases } from './route-aliases.js';
 import { webhookTypeAliases } from '../services/webhook-types.js';
 
@@ -120,6 +121,12 @@ export const envSchema = z.object({
   // enabled; the runtime additionally confines it to loopback.
   CONTROL_API_BIND_HOST: z.string().min(1).optional(),
   ALLOW_INSECURE_HTTP: booleanEnvSchema,
+  // Proxies whose X-Forwarded-For the rate limiter believes. Unset: the socket peer is the client.
+  MAGNUS_TRUSTED_PROXIES: z.string().optional().superRefine((value, ctx) => {
+    try { trustedProxies(value); } catch (error: unknown) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: error instanceof Error ? error.message : 'Not a trusted proxy list' });
+    }
+  }),
 
   // Node Manager
   NODE_MANAGER_PORT: portSchema.default(4100),
