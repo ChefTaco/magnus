@@ -104,7 +104,7 @@ sudo -u magnus magnus-ui credentials --reencrypt --env-file /etc/magnus-ui/magnu
 It prints the file it checked and exits 0 when nothing is left under the legacy key, 1 while
 something is (or on an error) and 3 when there is no state file at that path (no control node was
 ever saved there, or `--data-dir` is wrong). `--reencrypt` refuses to rewrite a file another account
-owns; run as root, it hands the new file and the backup back to the file's owner. It takes the same
+owns; run as root, it first becomes the file's owner (user and group). It takes the same
 lock file (`control-nodes.json.lock`) as the console's own saves, so it is safe while the console
 runs. Variables already exported in the shell win over `--env-file`.
 

@@ -9,14 +9,14 @@
  * `magnus-ui credentials --reencrypt` runs it on demand. Nothing here logs or returns a credential.
  *
  * Every rewrite holds `control-nodes.json.lock`, which the console's store also takes, so a CLI run
- * never overwrites a save made by a running console. A rewrite keeps the file's owner: run as root,
- * it hands the new file and the backup back to that owner; run as another account, it refuses.
+ * never overwrites a save made by a running console. A rewrite runs only as the account that owns
+ * the file, so the new file and the backup stay readable by the console; `magnus-ui credentials`
+ * run as root first drops to that account.
  */
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import {
   closeSync,
   constants,
-  fchownSync,
   fstatSync,
   fsyncSync,
   lstatSync,
@@ -136,6 +136,17 @@ export function inspectControlNodeCredentials(file) {
   return { present: true, ...summarize(state.records) };
 }
 
+/** The uid and gid owning the state file, or null when there is none. */
+export function controlNodeStateOwner(file) {
+  try {
+    const metadata = lstatSync(file);
+    return { uid: Number(metadata.uid), gid: Number(metadata.gid) };
+  } catch (error) {
+    if (isMissing(error)) return null;
+    throw error;
+  }
+}
+
 /** True when a rewrite under CONTROL_NODE_CREDENTIAL_KEY is still needed. */
 export function credentialsNeedReencryption(counts) {
   return counts.legacy > 0 || counts.plaintext > 0 || counts.retired > 0;
@@ -143,84 +154,146 @@ export function credentialsNeedReencryption(counts) {
 
 // ── Cross-process lock shared with the console's control-node store ──────────────────────────────
 
-/** Older than this, a lock is abandoned whoever holds it: a rewrite takes milliseconds. */
+/**
+ * A lock whose holder cannot be identified (another account's unreadable lock) counts as abandoned
+ * after this long: a rewrite takes milliseconds. A lock whose holder is a live process never does.
+ */
 const LOCK_STALE_MS = 60_000;
 const LOCK_WAIT_MS = 5_000;
 const LOCK_POLL_MS = 50;
-/** Locks this process holds, by path, with the number of holders sharing each one. */
-const heldLocks = new Map();
+
+/**
+ * Locks this process holds, by path: the nonce written into the lock file and the number of holders
+ * sharing it. Kept on globalThis so every bundled copy of this module in the console shares it.
+ * @returns {Map<string, { nonce: string, holders: number }>}
+ */
+function heldLocks() {
+  const key = Symbol.for('magnus.controlNodeStateLocks');
+  const registry = /** @type {Record<symbol, Map<string, { nonce: string, holders: number }>>} */ (/** @type {unknown} */ (globalThis));
+  registry[key] ??= new Map();
+  return registry[key];
+}
 
 /** The lock file every writer of `file` holds while it reads, changes and replaces it. */
 export function controlNodeStateLockFile(file) {
   return `${file}.lock`;
 }
 
-function lockIsStale(lockFile) {
+/** The lock's holder (`pid nonce`), or null when there is no lock. `readable` is false for another account's lock. */
+function readLock(lockFile) {
   let metadata;
   try {
     metadata = lstatSync(lockFile);
   } catch (error) {
-    if (isMissing(error)) return { stale: true, metadata: null };
+    if (isMissing(error)) return null;
     throw error;
   }
-  if (Date.now() - metadata.mtimeMs > LOCK_STALE_MS) return { stale: true, metadata };
-  let pid = NaN;
+  let content = '';
+  let readable = true;
   try {
-    pid = Number.parseInt(readFileSync(lockFile, 'utf8'), 10);
+    content = readFileSync(lockFile, 'utf8');
   } catch (error) {
-    // Another account's lock (root running the CLI, say) may be unreadable; trust its age alone.
-    if (isMissing(error)) return { stale: true, metadata: null };
+    if (isMissing(error)) return null;
     if (errorCode(error) !== 'EACCES') throw error;
+    readable = false;
   }
-  if (!Number.isInteger(pid) || pid <= 0) return { stale: false, metadata };
-  try {
-    process.kill(pid, 0);
-    return { stale: false, metadata };
-  } catch (error) {
-    return { stale: errorCode(error) === 'ESRCH', metadata };
-  }
+  const [pidText = '', nonce = ''] = content.trim().split(/\s+/);
+  const pid = Number.parseInt(pidText, 10);
+  return { pid: Number.isInteger(pid) && pid > 0 ? pid : null, nonce: nonce || null, readable, metadata };
 }
 
+function sameLock(a, b) {
+  if (!a || !b) return false;
+  if (a.nonce && b.nonce) return a.nonce === b.nonce;
+  return a.metadata.dev === b.metadata.dev && a.metadata.ino === b.metadata.ino && a.metadata.mtimeMs === b.metadata.mtimeMs;
+}
+
+/** True when the lock's holder is gone. Liveness decides; age only when the holder is unknown. */
+function lockIsAbandoned(lock) {
+  if (lock.pid !== null) {
+    // The same pid without a holder here is a lock left by an earlier process that had our pid.
+    if (lock.pid === process.pid) return !heldLocks().has(lock.lockFile);
+    try {
+      process.kill(lock.pid, 0);
+      return false;
+    } catch (error) {
+      return errorCode(error) === 'ESRCH';
+    }
+  }
+  return Date.now() - lock.metadata.mtimeMs > LOCK_STALE_MS;
+}
+
+/** Replaceable by tests only, to make the lock write fail. */
+export const lockTestHooks = {
+  /** @param {number} descriptor @param {string} text */
+  writeLock(descriptor, text) {
+    writeFileSync(descriptor, text, 'utf8');
+    fsyncSync(descriptor);
+  },
+};
+
+/** Create the lock with a fresh nonce; returns the nonce, or null when a lock already exists. */
 function createLock(lockFile) {
+  const nonce = randomBytes(16).toString('hex');
+  let descriptor;
   try {
-    writeNewPrivateFile(lockFile, `${process.pid}\n`);
-    return true;
+    descriptor = openSync(lockFile, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
   } catch (error) {
-    if (errorCode(error) === 'EEXIST') return false;
+    if (errorCode(error) === 'EEXIST') return null;
     throw error;
   }
+  try {
+    lockTestHooks.writeLock(descriptor, `${process.pid} ${nonce}\n`);
+  } catch (error) {
+    // Never leave a half-written lock behind: it would read as held by nobody we can check.
+    try { closeSync(descriptor); } catch { /* closing again below is harmless */ }
+    descriptor = undefined;
+    try { unlinkSync(lockFile); } catch { /* already gone */ }
+    throw error;
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+  return nonce;
 }
 
 function tryAcquireLock(lockFile) {
-  const holders = heldLocks.get(lockFile);
-  if (holders) {
-    heldLocks.set(lockFile, holders + 1);
+  const locks = heldLocks();
+  const held = locks.get(lockFile);
+  if (held) {
+    held.holders += 1;
     return true;
   }
-  if (!createLock(lockFile)) {
-    const { stale, metadata } = lockIsStale(lockFile);
-    if (!stale) return false;
-    // Remove the abandoned lock only if it is still the one judged stale.
-    try {
-      const current = lstatSync(lockFile);
-      if (!metadata || (current.ino === metadata.ino && current.dev === metadata.dev)) unlinkSync(lockFile);
-    } catch (error) {
-      if (!isMissing(error)) throw error;
+  let nonce = createLock(lockFile);
+  if (nonce === null) {
+    const judged = readLock(lockFile);
+    // The lock vanished between the two calls: try to create it again, never unlink blindly.
+    if (judged !== null) {
+      if (!lockIsAbandoned({ ...judged, lockFile })) return false;
+      // Take over only the lock judged abandoned, re-read just before unlinking it.
+      if (!sameLock(judged, readLock(lockFile))) return false;
+      try { unlinkSync(lockFile); } catch (error) { if (!isMissing(error)) throw error; }
     }
-    if (!createLock(lockFile)) return false;
+    nonce = createLock(lockFile);
+    if (nonce === null) return false;
   }
-  heldLocks.set(lockFile, 1);
+  locks.set(lockFile, { nonce, holders: 1 });
   return true;
 }
 
 function releaseLock(lockFile) {
-  const holders = heldLocks.get(lockFile) ?? 0;
-  if (holders > 1) {
-    heldLocks.set(lockFile, holders - 1);
+  const locks = heldLocks();
+  const held = locks.get(lockFile);
+  if (!held) return;
+  if (held.holders > 1) {
+    held.holders -= 1;
     return;
   }
-  heldLocks.delete(lockFile);
-  try { unlinkSync(lockFile); } catch (error) { if (!isMissing(error)) throw error; }
+  locks.delete(lockFile);
+  // Remove the lock only while it is still ours (a taken-over lock belongs to someone else now).
+  const current = readLock(lockFile);
+  if (current?.readable && current.nonce === held.nonce) {
+    try { unlinkSync(lockFile); } catch (error) { if (!isMissing(error)) throw error; }
+  }
 }
 
 function lockBusy(lockFile) {
@@ -325,14 +398,10 @@ function syncDirectory(directory) {
   try { fsyncSync(descriptor); } finally { closeSync(descriptor); }
 }
 
-/**
- * Write `contents` to a new private file; never replaces an existing one. With `owner`, the file is
- * handed to that uid/gid before anything is written to it.
- */
-function writeNewPrivateFile(file, contents, owner = null, fchown = fchownSync) {
+/** Write `contents` to a new private file; never replaces an existing one. */
+function writeNewPrivateFile(file, contents) {
   const descriptor = openSync(file, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
   try {
-    if (owner) fchown(descriptor, owner.uid, owner.gid);
     writeFileSync(descriptor, contents, 'utf8');
     fsyncSync(descriptor);
   } finally {
@@ -340,11 +409,11 @@ function writeNewPrivateFile(file, contents, owner = null, fchown = fchownSync) 
   }
 }
 
-function writeBackup(file, raw, now, owner, fchown) {
+function writeBackup(file, raw, now) {
   const base = backupName(file, now);
   for (const candidate of [base, `${base}-${randomBytes(4).toString('hex')}`]) {
     try {
-      writeNewPrivateFile(candidate, raw, owner, fchown);
+      writeNewPrivateFile(candidate, raw);
       syncDirectory(path.dirname(file));
       return candidate;
     } catch (error) {
@@ -361,16 +430,15 @@ function writeBackup(file, raw, now, owner, fchown) {
  * file is first copied to `control-nodes.json.legacy-key-backup-<time>` (mode 0600), every new value
  * is verified by decrypting it again, and the file is replaced atomically; when it changed in the
  * meantime nothing is written. The rewrite holds the state lock shared with the console's store and
- * keeps the file's owner (as root it hands the backup and the new file back to that owner; as any
- * other account than the owner it refuses). Throws, with nothing replaced, when a legacy value
+ * runs only as the account that owns the file (any other account, root included, is refused, so
+ * nothing it writes can end up unreadable by the console or be redirected by that account). Throws, with nothing replaced, when a legacy value
  * cannot be decrypted, when CONTROL_NODE_CREDENTIAL_KEY does not decrypt the values already stored
  * under it, or when the lock stays busy; the console then keeps reading the file as before.
  *
  * @param {string} file
  * @param {Record<string, string | undefined>} [env]
- * @param {{ now?: Date; euid?: number | null; fchown?: (fd: number, uid: number, gid: number) => void; lockWaitMs?: number }} [options]
- *   `euid`, `fchown` and `lockWaitMs` exist for tests; they default to the process's, `fs.fchownSync`
- *   and five seconds.
+ * @param {{ now?: Date; euid?: number | null; lockWaitMs?: number }} [options]
+ *   `euid` and `lockWaitMs` exist for tests; they default to the process's and five seconds.
  */
 export function reencryptLegacyControlNodeCredentials(file, env = process.env, options = {}) {
   const peek = readState(file);
@@ -389,12 +457,10 @@ function rewriteUnderLock(file, env, options) {
 
   // The rewrite must stay readable by the account the console runs as, which owns the file.
   const euid = options.euid ?? (typeof process.geteuid === 'function' ? process.geteuid() : null);
-  if (euid !== null && euid !== 0 && euid !== state.owner.uid) {
+  if (euid !== null && euid !== state.owner.uid) {
     throw new Error(`Control-node state belongs to uid ${state.owner.uid}, not this account (uid ${euid}); `
       + 'run this as the account the console runs as, for example: sudo -u magnus magnus-ui credentials …');
   }
-  const owner = euid === 0 && (state.owner.uid !== 0 || state.owner.gid !== 0) ? state.owner : null;
-  const fchown = options.fchown ?? fchownSync;
 
   const key = dedicatedKey(env);
   // A key that does not open what is already stored is not the console's key (an exported variable
@@ -431,12 +497,12 @@ function rewriteUnderLock(file, env, options) {
     return updated;
   });
 
-  const backup = writeBackup(file, state.raw, options.now ?? new Date(), owner, fchown);
+  const backup = writeBackup(file, state.raw, options.now ?? new Date());
   const directory = path.dirname(file);
   const temporary = path.join(directory, `.control-nodes.${process.pid}.${randomBytes(12).toString('hex')}.tmp`);
   let temporaryExists = false;
   try {
-    writeNewPrivateFile(temporary, `${JSON.stringify(next, null, 2)}\n`, owner, fchown);
+    writeNewPrivateFile(temporary, `${JSON.stringify(next, null, 2)}\n`);
     temporaryExists = true;
     const current = lstatSync(file);
     assertPrivate(current, 'file');

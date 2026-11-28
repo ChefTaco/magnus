@@ -165,6 +165,21 @@ export async function credentialStorageWarnings(env) {
   }
 }
 
+/**
+ * Run as root, become the account that owns the control-node state before rewriting it, so nothing
+ * root writes there can be redirected by that account or end up unreadable by the console.
+ * @param {{ uid: number, gid: number } | null} owner
+ * @param {Pick<NodeJS.Process, 'geteuid' | 'setgid' | 'setuid' | 'setgroups'>} [proc]
+ * @returns {boolean} whether the privileges were dropped
+ */
+export function dropPrivilegesToOwner(owner, proc = process) {
+  if (!owner || typeof proc.geteuid !== 'function' || proc.geteuid() !== 0 || owner.uid === 0) return false;
+  proc.setgroups?.([owner.gid]);
+  proc.setgid(owner.gid);
+  proc.setuid(owner.uid);
+  return true;
+}
+
 /** Exit code of `magnus-ui credentials` when the data directory holds no control-node state. */
 export const CREDENTIALS_NO_STATE_EXIT = 3;
 
@@ -180,6 +195,9 @@ export async function commandCredentials(env, flags) {
   const file = credentials.controlNodeStateFile(dataDirectory(env));
   try {
     if (flags.has('--reencrypt')) {
+      if (dropPrivilegesToOwner(credentials.controlNodeStateOwner(file))) {
+        console.log(`magnus-ui: running as uid ${process.getuid?.()}, the owner of ${file}`);
+      }
       const message = credentials.describeReencryption(credentials.reencryptLegacyControlNodeCredentials(file, env));
       console.log(message ?? 'control-node credentials: nothing to re-encrypt');
     }

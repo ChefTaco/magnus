@@ -61,9 +61,11 @@ key when it starts. No migration, and no new setting.
   it, leaves the file unchanged, and the console keeps reading it as before. `magnus-ui
   credentials` prints the file it checked and counts what remains (exit 1 while any legacy value
   does, 3 when there is no state file), `--reencrypt` runs the step without a restart, and
-  `magnus-ui check` warns about it. The rewrite keeps the file's owner (as root it hands the files
-  back; as another account it refuses) and holds `control-nodes.json.lock`, which the console's
-  control-node saves now take as well
+  `magnus-ui check` warns about it. The rewrite runs only as the file's owner (`magnus-ui
+  credentials` run as root first drops to that user and group; any other account is refused) and
+  holds `control-nodes.json.lock`, which the console's control-node saves and read-time migrations
+  now take as well, inside the store's write queue. The lock carries the holder's pid and a nonce;
+  only a lock whose holder is gone is taken over, and only its holder removes it
   ([UPGRADING.md](UPGRADING.md#unreleased-legacy-control-node-credentials-re-encrypted-at-console-start)).
 - `POST /api/v1/commands/{commandId}/reconcile-resource` takes an ADMIN's decision
   `{ disposition: effects_verified | no_effect_verified, reason }` for any command that is not an

@@ -37,6 +37,20 @@ const CONFIG_FILE = path.join(CONFIG_DIR, 'control-nodes.json');
 let mutexChain: Promise<void> = Promise.resolve();
 
 /**
+ * Run `job` after every earlier write in this process, holding the state lock
+ * that other processes (`magnus-ui credentials --reencrypt`) take too.
+ */
+function serialised<T>(job: () => Promise<T>): Promise<T> {
+  const run = mutexChain.then(async () => {
+    await ensureConfigDirectory(true);
+    return withControlNodeStateLock(CONFIG_FILE, job);
+  });
+  // Ensure chain never rejects — errors propagate only to the caller
+  mutexChain = run.then(() => undefined, () => undefined);
+  return run;
+}
+
+/**
  * Serialise a read-modify-write operation against the control-nodes file.
  * `fn` receives the current list and must return the (possibly mutated) list
  * to be persisted. Returns whatever `fn` returns after writing.
@@ -44,23 +58,17 @@ let mutexChain: Promise<void> = Promise.resolve();
 export async function withNodesMutex<T>(
   fn: (nodes: StoredControlNode[]) => StoredControlNode[] | { nodes: StoredControlNode[]; result: T },
 ): Promise<T> {
-  // Chain operations to serialise access
-  const job = mutexChain.then(async () => {
-    await ensureConfigDirectory(true);
-    return withControlNodeStateLock(CONFIG_FILE, async () => {
-      const nodes = await readNodes();
-      const out = fn(nodes);
-      if (Array.isArray(out)) {
-        await writeNodes(out);
-        return undefined as T;
-      }
-      await writeNodes(out.nodes);
-      return out.result;
-    });
+  return serialised(async () => {
+    // The write below re-encrypts everything, so a pending migration needs no separate write.
+    const { nodes } = await readStoredNodes();
+    const out = fn(nodes);
+    if (Array.isArray(out)) {
+      await writeNodes(out);
+      return undefined as T;
+    }
+    await writeNodes(out.nodes);
+    return out.result;
   });
-  // Ensure chain never rejects — errors propagate only to the caller
-  mutexChain = job.then(() => undefined, () => undefined);
-  return job;
 }
 
 function isMissing(error: unknown): boolean {
@@ -155,8 +163,9 @@ export function toControlNodeDto(node: StoredControlNode): ControlNode {
 export async function readNodes(): Promise<StoredControlNode[]> {
   const first = await readStoredNodes();
   if (!first.migrationRequired) return first.nodes;
-  // Migrate under the state lock, from a fresh read, so a concurrent rewrite is never undone.
-  return withControlNodeStateLock(CONFIG_FILE, async () => {
+  // Migrate in the write queue and under the state lock, from a fresh read, so neither a
+  // concurrent save here nor a rewrite by another process is undone.
+  return serialised(async () => {
     const fresh = await readStoredNodes();
     if (fresh.migrationRequired) await writeNodes(fresh.nodes);
     return fresh.nodes;
