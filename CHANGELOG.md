@@ -21,8 +21,26 @@ no new setting.
 - Leases that earlier agents left `unknown` this way are not settled by the upgrade: settle each
   with the new ADMIN decision (see below), and stop the leftover units of settled commands
   ([UPGRADING.md](UPGRADING.md#unreleased-refused-commands-and-non-ardent-reconciliation)).
+- **HiveSkills executor: Oathweave service tokens, static bearer deprecated.** Nothing changes until
+  you add a `HIVESKILLS_SERVICE` link. Add it only once the server and the fleet gateway both run
+  this release (an earlier one refuses the unknown link role at startup), and remove it before
+  rolling back. Keep `tokenSha256` until the registry sends Oathweave tokens, then drop it.
 
 ### Added
+
+- HiveSkills executor routes (`/api/v1/hiveskills/jobs/:id`, `/api/v1/hiveskills/targets/:target`)
+  accept an Oathweave client-credentials token: audience `magnus`, the permission
+  `magnus:hiveskills`, a service principal only, from a client linked in
+  `MAGNUS_OATHWEAVE_IDENTITIES_JSON` with the new role `HIVESKILLS_SERVICE` whose `localUserId` names
+  the registry in `MAGNUS_HIVESKILLS_DEPLOYMENTS_JSON`. A person's token, an Ardent service client,
+  another audience, a missing permission or a registry without a grant is refused before anything is
+  admitted, and a refused Oathweave token is never tried as the static credential. The link reaches
+  no other route. The audit actor stays `service:hiveskills:<registryId>`, so jobs admitted with
+  either credential reconcile with the other; `skill.push` records `authentication` (`oathweave`
+  with the client ID, or `static`). `tokenSha256` is now optional, so a registry can rely on
+  Oathweave alone ([server README](services/control-api/README.md#hiveskills-execution-bridge)).
+- `@hivemagnus/magnus-oathweave`: `isServiceLink` and `OATHWEAVE_SERVICE_LINK_ROLES`. A person never
+  authenticates or acts (`x-acting-subject`) through any service link.
 
 - `POST /api/v1/commands/{commandId}/reconcile-resource` takes an ADMIN's decision
   `{ disposition: effects_verified | no_effect_verified, reason }` for any command that is not an
@@ -39,8 +57,16 @@ no new setting.
 - Contracts: `CommandReconcileDecisionSchema`, `CommandReconcileDecisionResultSchema` and the optional
   `reconcilable` flag on `ArdentCommandOwnerSchema`.
 
+### Deprecated
+
+- The static HiveSkills executor bearer (`tokenSha256` in `MAGNUS_HIVESKILLS_DEPLOYMENTS_JSON`).
+  It keeps working beside an Oathweave link; the server logs a warning the first time each registry
+  uses it.
+
 ### Fixed
 
+- HiveSkills executor routes refuse a target or a registry named like an inherited object property
+  (`constructor`, for example) with 403 instead of an internal error.
 - Agent: a supervised agent refuses a command it cannot prove finished (no completion registry
   entry, or a registered command without its fence) before its ledger claim, before the mutation
   barrier records anything and before the server is asked to confirm the claim. A managed request
