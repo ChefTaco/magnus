@@ -19,6 +19,15 @@ The rules every upgrade path follows:
   `slow` or `one-way`). Upgrades print slow and one-way migrations and wait for confirmation
   (`--yes`). Startup auto-migrate refuses them unless `MAGNUS_AUTO_MIGRATE_ALLOW_SLOW=true` is set.
 
+## Version 3.5.1: Ardent 3.6.0
+
+No Magnus code, setting or migration changes. Magnus pins Ardent 3.6.0, so node agents stage Ardent
+3.6.0 for managed profiles; upgrade the node agents, then the server and console, then move profiles
+to Ardent 3.6.0 when you choose (a 3.5.1 agent still manages Ardent 3.5.1 profiles). From Ardent 3.6.0
+a profile's `GET /health/ready` answers `status: not_ready` with its 503 instead of `degraded`; status
+codes are unchanged, and monitors that matched the word should match the status code. From 3.5.0
+there is nothing else to do; from an earlier release, follow the 3.5.0 notes below.
+
 ## Version 3.5.0: Emberpath client keys for New Agent and one fast migration
 
 Upgrade in this order: node agents, then the server and console, then HiveXUI. Ardent stays at

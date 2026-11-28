@@ -1,20 +1,20 @@
 {
   "name": "@hivemagnus/magnus-server",
-  "version": "3.5.0",
+  "version": "3.5.1",
   "lockfileVersion": 3,
   "requires": true,
   "packages": {
     "": {
       "name": "@hivemagnus/magnus-server",
-      "version": "3.5.0",
+      "version": "3.5.1",
       "bundleDependencies": [
         "@hivemagnus/magnus-oathweave"
       ],
       "license": "Apache-2.0",
       "dependencies": {
         "@hivemagnus/hive-common": "^0.7.0",
-        "@hivemagnus/magnus-contracts": "3.5.0",
-        "@hivemagnus/magnus-oathweave": "3.5.0",
+        "@hivemagnus/magnus-contracts": "3.5.1",
+        "@hivemagnus/magnus-oathweave": "3.5.1",
         "@hono/node-server": "^2.1.11",
         "@hono/swagger-ui": "^0.6.2",
         "@prisma/adapter-pg": "7.10.1",
@@ -31,7 +31,7 @@
         "ssh2": "^1.17.0",
         "yaml": "2.9.1",
         "zod": "^4.6.7",
-        "@hivemagnus/magnus-skills": "3.5.0",
+        "@hivemagnus/magnus-skills": "3.5.1",
         "prisma": "^7.10.1"
       },
       "bin": {
@@ -103,9 +103,9 @@
       }
     },
     "node_modules/@hivemagnus/magnus-contracts": {
-      "version": "3.5.0",
-      "resolved": "https://registry.npmjs.org/@hivemagnus/magnus-contracts/-/magnus-contracts-3.5.0.tgz",
-      "integrity": "sha512-B3xVzq+PAixUav1agdS15JED+VqPKOVb6z1wSAANChHb0auHGX80S889d3A5JOYYl/gzUcGQaifePugHcViNmA==",
+      "version": "3.5.1",
+      "resolved": "https://registry.npmjs.org/@hivemagnus/magnus-contracts/-/magnus-contracts-3.5.1.tgz",
+      "integrity": "sha512-oyfaLm1JGQjOVIfLAwJuNgLtT8rTKL08IrmYeCbqdprqa5XmHs5ZeA7F4cXjgIh0UU7CEMtVBdSNOPEZr2z4UQ==",
       "license": "Apache-2.0",
       "dependencies": {
         "openapi-fetch": "^0.17.0",
@@ -116,7 +116,7 @@
       }
     },
     "node_modules/@hivemagnus/magnus-oathweave": {
-      "version": "3.5.0",
+      "version": "3.5.1",
       "inBundle": true,
       "license": "Apache-2.0",
       "engines": {
@@ -124,9 +124,9 @@
       }
     },
     "node_modules/@hivemagnus/magnus-skills": {
-      "version": "3.5.0",
-      "resolved": "https://registry.npmjs.org/@hivemagnus/magnus-skills/-/magnus-skills-3.5.0.tgz",
-      "integrity": "sha512-8fp7YSX0HNlPfsARwo0nPpTHMA7ePc6UScXCeg0XelzND1r62FtqeD1vQexgIj5XYhHExsN/m3nMeS2diClnFw==",
+      "version": "3.5.1",
+      "resolved": "https://registry.npmjs.org/@hivemagnus/magnus-skills/-/magnus-skills-3.5.1.tgz",
+      "integrity": "sha512-OPhmQuemm9h1nbzbdVMr5eUrbeTO1H13E7ARZv7auUEzI+AlIjqqEfzpm3YmivH0T6VStu8pZvcJ9dU86pJgfw==",
       "license": "Apache-2.0",
       "engines": {
         "node": "^24.22.3 || ^26.13.1"
