@@ -178,7 +178,9 @@ describe('embedded dashboard paths and headers', () => {
   });
 
   it('ships a compatibility script that parses', () => {
-    const body = isolation.FRAME_COMPAT_SCRIPT.replace(/^<script>/, '').replace(/<\/script>$/, '');
+    const open = '<script>', close = '</script>';
+    expect(isolation.FRAME_COMPAT_SCRIPT.startsWith(open) && isolation.FRAME_COMPAT_SCRIPT.endsWith(close)).toBe(true);
+    const body = isolation.FRAME_COMPAT_SCRIPT.slice(open.length, -close.length);
     expect(() => new Function(body)).not.toThrow();
     expect(body).toContain('magnus-frame-refresh');
   });
