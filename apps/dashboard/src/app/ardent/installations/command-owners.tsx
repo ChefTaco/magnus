@@ -17,7 +17,7 @@ function Owner({ owner, installation, admin, refresh }: { owner: ArdentCommandOw
   const ready = Date.now() >= Date.parse(owner.reconcilableAfter);
   const complete = disposition !== '' && reason.trim().length >= 10 && reason.trim().length <= 500;
   async function reconcile(): Promise<void> {
-    if (!admin || !ready || !complete || busy) return;
+    if (!admin || owner.reconcilable === false || !ready || !complete || busy) return;
     setConfirming(false); setBusy(true); setError('');
     try {
       const decision = { disposition, reason: reason.trim() };
@@ -35,6 +35,7 @@ function Owner({ owner, installation, admin, refresh }: { owner: ArdentCommandOw
     <p className="font-semibold">{owner.action ? `${owner.action} on ${owner.profile}` : 'Node command'} · {owner.state}</p>
     <p className="break-all font-mono">{owner.commandId}</p>
     {owner.state !== 'unknown' ? <p>Still running; other Ardent actions wait until it finishes.</p>
+      : owner.reconcilable === false ? <p>This scheduled run or skill publication settles only from its own retained evidence on the node, not from a decision. See docs/COMMAND_RESOURCE_LEASES.md.</p>
       : !admin ? <p>An ADMIN must inspect and reconcile this command.</p> : <>
         <p>{owner.ardent ? 'Check the profile’s service state, journal, files and Ardent status on the node before recording what happened.'
           : 'This is a node command, not an Ardent action. Check what it ran and the node’s journal before recording what happened.'}</p>

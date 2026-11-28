@@ -188,6 +188,30 @@ for (const role of ['ADMIN', 'OPERATOR', 'VIEWER']) {
   });
 }
 
+test('standalone installations offer no decision for a scheduled run or skill publication', async ({ page }) => {
+  await page.goto('/ardent/installations');
+  if (new URL(page.url()).pathname === '/login') {
+    await page.getByLabel('Username').fill(process.env.TEST_USERNAME ?? 'ci-admin');
+    await page.getByLabel('Password', { exact: true }).fill(process.env.TEST_PASSWORD ?? 'ci-only-browser-password');
+    await page.getByRole('button', { name: 'Sign In', exact: true }).click();
+    await expect(page).toHaveURL('/');
+  }
+  await page.route('**/api/auth/me', route => route.fulfill({ json: { username: 'admin', role: 'ADMIN' } }));
+  const owner = { commandId: 'held-skill-publication', state: 'unknown', label: null, profile: null, action: null, ardent: false, reconcilable: false,
+    acquiredAt: '2026-01-01T00:00:00Z', dispatchedAt: '2026-01-01T00:00:00Z', deadline: '2026-01-01T00:01:00Z', reconcilableAfter: '2026-01-01T00:02:00Z' };
+  const writes: string[] = [];
+  await page.route('**/api/proxy/**', async route => {
+    if (route.request().method() !== 'GET') { writes.push(route.request().url()); return route.abort(); }
+    if (!route.request().url().includes('/api/proxy/ardent/')) return route.fallback();
+    return route.fulfill({ json: { success: true, data: [{ ...installation, commandOwners: [owner], commandReconciliation: { configured: true } }] } });
+  });
+  await page.goto('/ardent/installations');
+  const section = page.getByRole('region', { name: 'Unsettled commands on Fixture node' });
+  await expect(section).toContainText('settles only from its own retained evidence');
+  await expect(section.getByRole('button', { name: 'Review reconciliation' })).toHaveCount(0);
+  expect(writes).toEqual([]);
+});
+
 test('standalone installations reconcile a node command through the command route', async ({ page }) => {
   await page.goto('/ardent/installations');
   if (new URL(page.url()).pathname === '/login') {

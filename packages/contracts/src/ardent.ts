@@ -158,6 +158,8 @@ export const ArdentCommandOwnerSchema = z.object({
   action: z.string().nullable(),
   /** An Ardent action, which the `command-reconcile` action can settle. Other commands use POST /commands/{id}/reconcile-resource with the same decision. */
   ardent: z.boolean(),
+  /** False for a scheduler occurrence or skill publication, which settle only from their own retained evidence. Absent from older servers. */
+  reconcilable: z.boolean().optional(),
   acquiredAt: z.string(),
   dispatchedAt: z.string().nullable(),
   deadline: z.string(),

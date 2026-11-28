@@ -51,6 +51,17 @@ export interface ReconcileScope {
 }
 export interface ReconcileActor { actorId: string; details: Record<string, unknown> }
 
+/**
+ * Owners that settle only from their own retained evidence, never from a decision: a
+ * managed scheduler occurrence (managed cron settlement) and a skill publication (its
+ * bundle recovery). A signed no-effect decision would release the lease while the
+ * occurrence stays open, or record a publication that may have happened as none.
+ * `recoverAbsentLeases` leaves the same owners alone.
+ */
+export function settlesOnlyFromRetainedEvidence(lease: { completionClass?: string | null; completionDescriptorId: string | null }): boolean {
+  return lease.completionClass === 'managed-scheduler' || lease.completionDescriptorId === 'skill-install';
+}
+
 const inflight = new Set<string>();
 
 /**
@@ -97,6 +108,8 @@ async function decide(commandId: string, input: CommandReconcileDecision, actorI
     throw new HttpError(409, 'NOT_ARDENT_COMMAND', 'This command is not an Ardent action; reconcile it with POST /api/v1/commands/{commandId}/reconcile-resource');
   if (scope.kind === 'command' && ardent)
     throw new HttpError(409, 'ARDENT_COMMAND', 'This command is an Ardent action; reconcile it with the Ardent command-reconcile action, which binds the profile inventory');
+  if (scope.kind === 'command' && settlesOnlyFromRetainedEvidence(lease))
+    throw new HttpError(409, 'RETAINED_EVIDENCE_REQUIRED', 'This command is a managed scheduler occurrence or a skill publication; it settles only from its own retained evidence, never from a decision');
   if (lease.deadline.getTime() + ABSENT_RECEIPT_MARGIN_MS > now)
     throw new HttpError(409, 'COMMAND_IN_PROGRESS', `The command may still be running until ${new Date(lease.deadline.getTime() + ABSENT_RECEIPT_MARGIN_MS).toISOString()}; try again after that`);
   const node = await db.node.findUnique({ where: { id: nodeId }, select: { id: true, hostname: true, ipAddress: true, port: true } });

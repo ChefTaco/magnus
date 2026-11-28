@@ -1,4 +1,5 @@
 import { createHmac } from 'node:crypto';
+import { HTTPError } from 'ky';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // These cases exercise shared-secret paths, which 3.0.0 keeps only under an explicit NODE_AUTH_MODE=compat (or warn).
 beforeEach(() => { process.env['NODE_AUTH_MODE'] = 'compat'; });
@@ -8,7 +9,7 @@ import { verifyNodeDecision } from './server-authorization.js';
 vi.mock('./node-credential-store.js', async () => ({ nodeCredentialStore: (await import('./node-credential-test-fixture.js')).createFakeCredentialStore().store }));
 
 
-type Lease = { commandId: string; nodeId: string; state: string; label: string | null; completionDescriptorId: string | null;
+type Lease = { commandId: string; nodeId: string; state: string; label: string | null; completionDescriptorId: string | null; completionClass?: string | null;
   requestSha256: string; coordinationJson: string; acquiredAt: Date; dispatchedAt: Date | null; deadline: Date;
   settlement: string | null; evidenceSha256: string | null };
 const RECONCILE_KEY = 'fixture-command-reconciliation-key-0123456789';
@@ -133,5 +134,35 @@ describe('reconciling a non-Ardent command owner', () => {
     expect(state.audit.map(event => [event.action, event.details['outcome'], event.details['code']])).toEqual([
       ['command.resource_reconcile', 'refused', 'COMMAND_IN_PROGRESS'], ['command.resource_reconcile', 'refused', 'NOT_FOUND'],
       ['command.resource_reconcile', 'refused', 'ARDENT_COMMAND']]);
+  });
+
+  it.each([
+    ['a managed scheduler occurrence', { completionClass: 'managed-scheduler' }],
+    ['a skill publication', { completionDescriptorId: 'skill-install', completionClass: 'native-http' }],
+  ])('never takes a decision for %s, which settles only from its own retained evidence', async (_name, overrides) => {
+    state.leases.set('plain-1', lease(overrides));
+    state.receipt.mockResolvedValue({ commandId: 'plain-1', requestSha256: 'a'.repeat(64), state: 'unknown' });
+    await expect(reconcileCommandOwner('plain-1', decision, actor, scope, NOW)).rejects.toMatchObject({ status: 409, code: 'RETAINED_EVIDENCE_REQUIRED' });
+    expect(state.receipt).not.toHaveBeenCalled();
+    expect(state.reconcile).not.toHaveBeenCalled();
+    expect(state.leases.get('plain-1')!.state).toBe('unknown');
+    expect(state.audit).toEqual([expect.objectContaining({ action: 'command.resource_reconcile',
+      details: expect.objectContaining({ outcome: 'refused', code: 'RETAINED_EVIDENCE_REQUIRED' }) })]);
+  });
+
+  it('settles a command with no receipt only when the signed ledger trace proves it never ran', async () => {
+    const notFound = () => new HTTPError(new Response('{}', { status: 404 }), new Request('https://node-1.example.com/'), {} as never);
+    state.receipt.mockRejectedValue(notFound());
+    state.recover.mockResolvedValueOnce([{ commandId: 'plain-1', outcome: 'unverified', code: 'LEDGER_NO_FENCE', detail: 'no fence' }]);
+    await expect(reconcileCommandOwner('plain-1', decision, actor, scope, NOW)).rejects.toMatchObject({ code: 'RECEIPT_ABSENT_UNPROVEN',
+      message: expect.stringContaining('LEDGER_NO_FENCE: no fence') });
+    expect(state.leases.get('plain-1')!.state).toBe('unknown');
+    state.recover.mockImplementationOnce(async () => { settle('not-dispatched'); return [{ commandId: 'plain-1', outcome: 'settled' }]; });
+    expect(await reconcileCommandOwner('plain-1', decision, actor, scope, NOW)).toMatchObject({ outcome: 'settled', receipt: 'absent',
+      settlement: 'not-dispatched', decisionId: null });
+    expect(state.recover).toHaveBeenCalledWith('node-1', 'alice', NOW);
+    // A missing receipt is never covered by a signed decision.
+    expect(state.reconcile).not.toHaveBeenCalled();
+    expect(state.audit.map(event => event.details['outcome'])).toEqual(['refused', 'settled']);
   });
 });

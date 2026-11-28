@@ -14,10 +14,10 @@ import { getDb } from '../db/index.js';
 import { HttpError } from '../middleware/error-handler.js';
 import { managedCommandOf } from '../sdk/node-api-client.js';
 import { ABSENT_RECEIPT_MARGIN_MS, HELD_RESOURCE_STATES } from './command-resource-leases.js';
-import { reconcileCommandOwner } from './command-owner-reconcile.js';
+import { reconcileCommandOwner, settlesOnlyFromRetainedEvidence } from './command-owner-reconcile.js';
 
 type Lease = {
-  commandId: string; nodeId: string; state: string; label: string | null; completionDescriptorId: string | null;
+  commandId: string; nodeId: string; state: string; label: string | null; completionDescriptorId: string | null; completionClass?: string | null;
   requestSha256: string; coordinationJson: string; acquiredAt: Date; dispatchedAt: Date | null; deadline: Date;
   settlement: string | null; evidenceSha256: string | null;
 };
@@ -30,6 +30,7 @@ function ownerView(lease: Lease): ArdentCommandOwner {
     commandId: lease.commandId, state: lease.state as ArdentCommandOwner['state'], label: lease.label,
     profile: label ? label[1]! : null, action: label ? label[2]! : null,
     ardent: lease.completionDescriptorId === 'ardent-action',
+    reconcilable: !settlesOnlyFromRetainedEvidence(lease),
     acquiredAt: lease.acquiredAt.toISOString(), dispatchedAt: lease.dispatchedAt?.toISOString() ?? null,
     deadline: lease.deadline.toISOString(), reconcilableAfter: new Date(lease.deadline.getTime() + ABSENT_RECEIPT_MARGIN_MS).toISOString(),
   };

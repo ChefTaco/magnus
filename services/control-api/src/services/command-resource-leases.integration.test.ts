@@ -547,6 +547,30 @@ try { const row = await admitResourceCommand(JSON.parse(process.argv[2]), JSON.p
       ? json({ features: { managedMutations: 1, restrictedFileWrite: 2 } }) : reply(await req.json() as never)));
     const fenceRow = () => db.commandResourceFence.findUniqueOrThrow({ where: { resourceKey: `node:${nodeId}` } });
 
+    it('settles a supervised agent\'s signed UNREGISTERED_COMMAND refusal of a plain command as not-dispatched, and the command as FAILED', async () => {
+      let refusals = 0;
+      vi.stubGlobal('fetch', vi.fn(async (req: Request) => {
+        if (req.url.endsWith('/ping')) return json({ features: { commandFencing: 1, managedMutations: 1 } });
+        // The agent's reply to /commands/execute: a refusal before anything started, bound to the claim the server sent.
+        const claim = JSON.parse(req.headers.get('x-magnus-resource-claim')!) as { leaseId: string; nodeFqdn: string };
+        const value = await req.json() as CommandRequest; refusals++;
+        const unsigned = { commandId: value.commandId, requestSha256: commandRequestDigest(value), code: 'UNREGISTERED_COMMAND', highWater: null,
+          nodeFqdn: claim.nodeFqdn, leaseId: claim.leaseId };
+        return new Response(JSON.stringify({ success: false, error: { code: 'UNREGISTERED_COMMAND', message: 'no command executed', dispatched: false, executed: false,
+          refusal: { ...unsigned, signature: createHmac('sha256', secret).update(commandRefusalSigningPayload(unsigned)).digest('hex') } } }),
+        { status: 409, headers: { 'content-type': 'application/json' } });
+      }));
+      const req: CommandRequest = { commandId: `cmd-${randomUUID()}`, command: 'uptime -p', args: [], timeoutSeconds: 60 };
+      await expect(client().executeCommand(req)).rejects.toMatchObject({ certainRefusal: { code: 'UNREGISTERED_COMMAND' } });
+      expect(refusals).toBe(1);
+      expect(await db.commandResourceLease.findUniqueOrThrow({ where: { commandId: req.commandId } }))
+        .toMatchObject({ state: 'released', settlement: 'not-dispatched', completionClass: 'unverified' });
+      expect((await db.remoteCommand.findUniqueOrThrow({ where: { id: req.commandId } })).status).toBe('FAILED');
+      expect((await db.commandResult.findUniqueOrThrow({ where: { commandId: req.commandId } })).stderr).toContain('UNREGISTERED_COMMAND');
+      // Nothing is held: the next command on the node is admitted.
+      expect((await lease.admitResourceCommand(context, request()))?.leaseId).toBeTruthy();
+    });
+
     it('settles a signed STALE_FENCE as not-dispatched and moves the generation past the agent, so the next request passes', async () => {
       const highWater = 1789962351090n;
       agent(value => refusalReply(value, 'STALE_FENCE', highWater.toString()));

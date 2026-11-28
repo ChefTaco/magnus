@@ -29,12 +29,15 @@ no new setting.
   Ardent action, as the Ardent `command-reconcile` action does for Ardent actions: the node's own
   result or decision, or a signed ledger trace that proves the command never ran, settles the owner
   first; only an outcome the node agent itself records as `unknown` takes the decision, which the
-  server signs for that node and the agent records under its execution lock. Every attempt is
-  audited as `command.resource_reconcile`. Operators can still only read receipts or submit an
+  server signs for that node and the agent records under its execution lock. Managed scheduler
+  occurrences and skill publications are refused (`RETAINED_EVIDENCE_REQUIRED`), since they settle
+  only from their own retained evidence. Every attempt is audited as `command.resource_reconcile`. Operators can still only read receipts or submit an
   assertion already signed for the node.
 - Console: the Ardent installations page reconciles a held node command through that route, with the
-  same review and confirmation as an Ardent action, instead of pointing at the API.
-- Contracts: `CommandReconcileDecisionSchema` and `CommandReconcileDecisionResultSchema`.
+  same review and confirmation as an Ardent action, instead of pointing at the API. It offers no
+  decision for a scheduler occurrence or skill publication (`reconcilable: false` on the owner).
+- Contracts: `CommandReconcileDecisionSchema`, `CommandReconcileDecisionResultSchema` and the optional
+  `reconcilable` flag on `ArdentCommandOwnerSchema`.
 
 ### Fixed
 

@@ -114,7 +114,9 @@ below; adding a diagnostic never relabels historical execution.
   node agent's own result or decision, or a signed ledger trace that proves the command never ran,
   settles the lease first. Only when the agent's own receipt is `unknown` does the server sign the
   decision for that node, bound to the exact request, fence and reason, and the agent records it
-  under its execution lock. Every attempt is audited as `command.resource_reconcile`. The standalone
+  under its execution lock. Scheduler occurrences and skill publications are refused with 409
+  `RETAINED_EVIDENCE_REQUIRED`: they settle only from their own retained evidence, as above. Every
+  attempt is audited as `command.resource_reconcile`. The standalone
   console offers it on the Ardent installations page, where the held owners of each node are listed.
 
 ## Native requests
