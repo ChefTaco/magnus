@@ -65,7 +65,9 @@ Main areas:
   (Cindertrace) when `MAGNUS_SECURITY_CONSOLE_URL` is set; see [Cindertrace migration](CINDERTRACE_MIGRATION.md).
 - Embedded services: the Hermes dashboard under `/api/hermes/dashboard` and a router admin UI under
   `/api/hive-router/dashboard`, each only when its integration is configured. Emberpath's current
-  source has no admin UI to embed; only a release that still bundles one does.
+  source has no admin UI to embed; only a release that still bundles one does. Both run sandboxed in
+  an opaque origin, authorized by a per-session frame grant instead of the console cookie, so their
+  script has no console authority ([design note](HERMES_DASHBOARD_HIVEXUI.md)).
 
 ### Sign-in
 
@@ -78,7 +80,9 @@ attempts cannot lock the administrator out. The TLS front end ignores inbound fo
 takes the client address from the socket, or, for a reverse proxy listed in
 `DASHBOARD_TRUSTED_PROXIES`, from the right-most untrusted `X-Forwarded-For` hop, so the throttle
 cannot be bypassed with a spoofed header. State-changing API requests must come from the console's own
-origin (`Origin` or `Sec-Fetch-Site`), and every page carries a same-origin Content Security Policy.
+origin (`Origin` or `Sec-Fetch-Site`); API reads from an opaque origin (`Origin: null`) or another
+site are refused too, except navigations and the public endpoints. Every page carries a same-origin
+Content Security Policy.
 
 Named users can sign in through an OIDC provider such as Oathweave (formerly Hive IAM) when the
 `HIVE_OAUTH_*` variables are set. The provider remains the identity provider; Magnus does not

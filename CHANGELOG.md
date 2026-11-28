@@ -21,6 +21,10 @@ no new setting.
 - Leases that earlier agents left `unknown` this way are not settled by the upgrade: settle each
   with the new ADMIN decision (see below), and stop the leftover units of settled commands
   ([UPGRADING.md](UPGRADING.md#unreleased-refused-commands-and-non-ardent-reconciliation)).
+- **Console: reload open Hermes dashboards after the upgrade.** A dashboard tab or frame opened
+  before it keeps calling the old URLs, which now redirect or need a grant; reconnecting the frame
+  fixes it. Inside the sandbox, dashboard preferences (theme, language) last only until the frame
+  reloads, and clipboard writes from the frame may be refused. Nothing to configure.
 
 ### Added
 
@@ -38,6 +42,29 @@ no new setting.
   decision for a scheduler occurrence or skill publication (`reconcilable: false` on the owner).
 - Contracts: `CommandReconcileDecisionSchema`, `CommandReconcileDecisionResultSchema` and the optional
   `reconcilable` flag on `ArdentCommandOwnerSchema`.
+- Docs: [Hosting the Hermes dashboard in HiveXUI](docs/HERMES_DASHBOARD_HIVEXUI.md), a design note.
+
+### Security
+
+- **Console: the embedded Hermes dashboard and router admin UI no longer run with console
+  authority.** Both proxies (`/api/hermes/dashboard`, `/api/hive-router/dashboard`) serve every
+  response with a `sandbox` Content Security Policy without `allow-same-origin`, and the Web Gateway
+  frame drops `allow-same-origin`, so the dashboard's script runs in an opaque origin, also in its own
+  tab. The entry URL needs the console session, only from the console itself or a typed address, and
+  redirects to `…/_frame/<grant>/…`: a grant signed with a key derived from `SESSION_SECRET`, scoped
+  to that dashboard (and Hermes installation), expiring with the console session and revoked on
+  sign-out. Frame requests and the Hermes WebSocket bridge accept only the grant (and `Origin: null`
+  for the sandboxed page); they ignore console cookies and set none. The Hermes session token and the
+  router's cookies are kept server-side.
+- **Console: cross-site API reads are refused.** Any `/api` request with `Origin: null`, and any
+  cross-site or same-site `/api` request that is not a navigation, gets 403
+  `cross_site_request_refused`, as cross-site writes already did. Navigations (the sign-in callback)
+  and the public endpoints are unchanged.
+
+### Fixed
+
+- Console: the router admin proxy no longer rewrites an asset URL twice (`/assets/` became
+  `…/dashboard/api/hive-router/dashboard/assets/`).
 
 ### Fixed
 

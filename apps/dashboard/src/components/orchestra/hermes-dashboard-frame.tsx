@@ -6,6 +6,13 @@ import { api } from '@/lib/api-client';
 import { Badge, statusVariant } from '@/components/ui/badge';
 import type { HermesInstallation } from '@/types/orchestra';
 
+/**
+ * The dashboard runs in an opaque origin (no `allow-same-origin`), so its script has no console
+ * authority. Matches `EMBED_IFRAME_SANDBOX` in `runtime-embed-isolation.mjs`; the proxy also
+ * sends a `sandbox` policy, which applies when the dashboard is opened in its own tab.
+ */
+export const HERMES_FRAME_SANDBOX = 'allow-scripts allow-forms allow-popups allow-downloads';
+
 export type HermesDashboardAction = 'install' | 'start' | 'stop' | 'restart' | 'status' | 'launch';
 
 interface HermesDashboardFrameProps {
@@ -158,7 +165,8 @@ export function HermesDashboardFrame({
             title={frameTitle}
             src={src}
             className={`${heightClass} w-full bg-bg`}
-            sandbox="allow-forms allow-same-origin allow-scripts allow-popups allow-downloads"
+            sandbox={HERMES_FRAME_SANDBOX}
+            referrerPolicy="no-referrer"
           />
         </div>
       ) : (

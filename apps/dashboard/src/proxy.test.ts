@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-import proxy from './proxy';
+
+const SESSION_ID = '00000000-0000-4000-8000-000000000004';
+vi.mock('../runtime-local-sessions.mjs', () => ({
+  verifyLocalSession: async (session: { sessionId?: string; provider?: string }) => session.provider === 'hive' || session.sessionId === SESSION_ID,
+}));
+process.env['SESSION_SECRET'] ??= 'test-only-session-secret-0123456789abcdef';
+const { default: proxy } = await import('./proxy');
+const { mintFrameGrant } = await import('../runtime-embed-isolation.mjs');
 
 describe('dashboard authentication proxy', () => {
   it('no longer exempts the retired internal drain route from authentication', async () => {
@@ -46,5 +53,40 @@ describe('cross-site requests', () => {
     expect((await post('/api/proxy/commands', { 'sec-fetch-site': 'same-origin' })).status).toBe(401);
     expect((await post('/api/proxy/commands', {})).status).toBe(401);
     expect((await proxy(new NextRequest('https://magnus.example.com/api/proxy/nodes', { headers: { origin: 'https://evil.example.com' } }))).status).toBe(401);
+  });
+});
+
+describe('embedded dashboard isolation', () => {
+  const get = (path: string, headers: Record<string, string> = {}, method = 'GET') =>
+    proxy(new NextRequest(`https://magnus.example.com${path}`, { method, headers: { host: 'magnus.example.com', ...headers } }));
+  const session = { username: 'admin', sessionId: SESSION_ID, exp: Math.floor(Date.now() / 1000) + 3600 };
+
+  it('lets a frame request through on its grant alone, cross-site writes included', async () => {
+    const grant = await mintFrameGrant({ app: 'hermes', installationId: 'install-a', session });
+    const path = `/api/hermes/dashboard/_frame/${grant}/api/status`;
+    expect((await get(path, { origin: 'null', 'sec-fetch-site': 'cross-site' })).headers.get('x-middleware-next')).toBe('1');
+    expect((await get(path, { origin: 'null' }, 'POST')).headers.get('x-middleware-next')).toBe('1');
+    expect((await get(path, { origin: 'null' }, 'OPTIONS')).headers.get('x-middleware-next')).toBe('1');
+  });
+
+  it('refuses a frame request with a bad or foreign grant, even with a console cookie', async () => {
+    const router = await mintFrameGrant({ app: 'router', session });
+    for (const grant of ['forged', router]) {
+      const response = await get(`/api/hermes/dashboard/_frame/${grant}/api/status`, { cookie: 'magnus_session=x', origin: 'null' });
+      expect(response.status).toBe(401);
+      expect(response.headers.get('access-control-allow-origin')).toBe('null');
+    }
+  });
+
+  it('refuses console API reads from a sandboxed page or another site', async () => {
+    for (const headers of <Record<string, string>[]>[{ origin: 'null' }, { 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'cors' }, { 'sec-fetch-site': 'same-site', 'sec-fetch-mode': 'no-cors' }]) {
+      const response = await get('/api/proxy/nodes', { cookie: 'magnus_session=x', ...headers });
+      expect(response.status, JSON.stringify(headers)).toBe(403);
+      await expect(response.json()).resolves.toEqual({ error: 'cross_site_request_refused' });
+    }
+    // Navigations (an identity provider returning to the callback) and same-origin reads still pass.
+    expect((await get('/api/auth/hive/callback', { 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate' })).status).not.toBe(403);
+    expect((await get('/api/proxy/nodes', { 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'cors' })).status).toBe(401);
+    expect((await get('/api/health', { 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'cors' })).status).not.toBe(403);
   });
 });

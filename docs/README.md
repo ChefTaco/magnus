@@ -12,6 +12,8 @@ README is the reference for its installation, configuration and environment vari
   node agent, managed configuration and the plugin API.
 - [Hermes registry](HERMES_REGISTRY.md): revisioned skills, plugins, MCP servers and tool policy,
   staged rollouts and host enrollment.
+- [Hosting the Hermes dashboard in HiveXUI](HERMES_DASHBOARD_HIVEXUI.md): how the console isolates
+  the embedded Hermes dashboard today, and what HiveXUI needs to host it instead (design note).
 - [Codex CLI management](APP_ARCHITECTURE_CODEX.md): version checks, updates and ChatGPT sign-in for
   the Codex CLI on managed hosts.
 - [Console API route inventory](console-api.md): browser-facing and machine-only routes, the ingress

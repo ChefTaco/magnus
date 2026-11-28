@@ -1,7 +1,9 @@
 import { defineConfig } from '@playwright/test';
+// The harness points HIVE_ROUTER_ADMIN_URL here (scripts/start-ui-ci.mjs); tests/embedded-isolation.spec.ts serves it.
+process.env['MAGNUS_EMBED_FIXTURE_PORT'] = '55443';
 export default defineConfig({
   testDir: './tests',
-  testMatch: ['ci-workflows.spec.ts', 'ardent.spec.ts', 'console-security.spec.ts'],
+  testMatch: ['ci-workflows.spec.ts', 'ardent.spec.ts', 'console-security.spec.ts', 'embedded-isolation.spec.ts'],
   workers: 1,
   forbidOnly: true,
   retries: 0,

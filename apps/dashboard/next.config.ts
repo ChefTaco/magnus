@@ -36,6 +36,19 @@ const CONTENT_SECURITY_POLICY = [
   "frame-ancestors 'none'",
 ].join('; ');
 
+const EMBEDDED_DASHBOARD_POLICY = [
+  'sandbox allow-scripts allow-forms allow-popups allow-downloads allow-modals',
+  "frame-ancestors 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+].join('; ');
+const EMBEDDED_DASHBOARD_SOURCES = [
+  '/api/hive-router/dashboard',
+  '/api/hive-router/dashboard/:path+',
+  '/api/hermes/dashboard',
+  '/api/hermes/dashboard/:path+',
+];
+
 const nextConfig: NextConfig = {
   // Standalone output bundles everything for deployment — no npm install needed on target
   output: 'standalone',
@@ -56,57 +69,21 @@ const nextConfig: NextConfig = {
   },
   async headers() {
     return [
-      {
-        // Hive Router dashboard proxy — allow same-origin iframe embedding
-        source: '/api/hive-router/dashboard',
+      // Proxied third-party dashboards: sandboxed into an opaque origin (no allow-same-origin), so
+      // their script has no console authority, and frameable by the console only. Same policy as
+      // the route handlers send (EMBED_CONTENT_SECURITY_POLICY in runtime-embed-isolation.mjs).
+      ...EMBEDDED_DASHBOARD_SOURCES.map((source) => ({
+        source,
         headers: [
-          { key: 'Content-Security-Policy', value: "object-src 'none'; base-uri 'self'; frame-ancestors 'self'" },
+          { key: 'Content-Security-Policy', value: EMBEDDED_DASHBOARD_POLICY },
           { key: 'X-Content-Type-Options', value: 'nosniff' },
           { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
           { key: 'X-XSS-Protection', value: '1; mode=block' },
           { key: 'Strict-Transport-Security', value: 'max-age=31536000; includeSubDomains' },
-          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+          { key: 'Referrer-Policy', value: 'no-referrer' },
           { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
         ],
-      },
-      {
-        source: '/api/hive-router/dashboard/:path+',
-        headers: [
-          { key: 'Content-Security-Policy', value: "object-src 'none'; base-uri 'self'; frame-ancestors 'self'" },
-          { key: 'X-Content-Type-Options', value: 'nosniff' },
-          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
-          { key: 'X-XSS-Protection', value: '1; mode=block' },
-          { key: 'Strict-Transport-Security', value: 'max-age=31536000; includeSubDomains' },
-          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
-          { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
-        ],
-      },
-
-      {
-        // Hermes dashboard proxy — allow same-origin iframe embedding
-        source: '/api/hermes/dashboard',
-        headers: [
-          { key: 'Content-Security-Policy', value: "object-src 'none'; base-uri 'self'; frame-ancestors 'self'" },
-          { key: 'X-Content-Type-Options', value: 'nosniff' },
-          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
-          { key: 'X-XSS-Protection', value: '1; mode=block' },
-          { key: 'Strict-Transport-Security', value: 'max-age=31536000; includeSubDomains' },
-          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
-          { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
-        ],
-      },
-      {
-        source: '/api/hermes/dashboard/:path+',
-        headers: [
-          { key: 'Content-Security-Policy', value: "object-src 'none'; base-uri 'self'; frame-ancestors 'self'" },
-          { key: 'X-Content-Type-Options', value: 'nosniff' },
-          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
-          { key: 'X-XSS-Protection', value: '1; mode=block' },
-          { key: 'Strict-Transport-Security', value: 'max-age=31536000; includeSubDomains' },
-          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
-          { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
-        ],
-      },
+      })),
       {
         source: '/((?!api/hive-router/dashboard|api/hermes/dashboard).*)',
         headers: [

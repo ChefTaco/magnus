@@ -31,7 +31,7 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 // Load exact production bridge functions without evaluating server bootstrap
 // (which reads production certs and opens listeners). All bridge control flow,
 // resolver invocation, admission ordering and forwardOut calls remain native.
-function websocketFixture(selected: typeof installation, enabled = true) {
+function websocketFixture(selected: typeof installation, enabled = true, options: { frame?: boolean; grant?: boolean; origin?: string } = {}) {
   const path = new URL('../../server-tls.mjs', import.meta.url);
   const text = readFileSync(path, 'utf8');
   const ast = ts.createSourceFile(path.pathname, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
@@ -44,7 +44,9 @@ function websocketFixture(selected: typeof installation, enabled = true) {
   const bindings = {
     parseRequestTarget, rejectUpgrade,
     randomUUID: () => 'fixture', websocketPathFor: () => '/ws', isHermesUpgradeNamespace: () => true, isHermesWebSocketUpgrade: () => true,
-    cookieHeaderAllowed: () => true, websocketOriginAllowed: () => true, websocketAllowedOrigins: 'https://fixture', verifyDashboardSession: async () => true,
+    cookieHeaderAllowed: () => true, websocketOriginAllowed: (origin: string | undefined) => origin === 'https://fixture', websocketAllowedOrigins: 'https://fixture',
+    hermesFrameFor: () => (options.frame ?? true) ? { app: 'hermes', grant: 'fixture-grant', upstreamPath: '/ws' } : null,
+    verifyFrameGrant: async (grant: string) => (options.grant ?? true) && grant === 'fixture-grant' ? { app: 'hermes', installationId: selected.id } : null,
     recordHermesSecurityEvent: vi.fn(), resolveHermesInstallation: async () => ({ installation: selected }),
     resolveApprovedHermesSshTarget: fixture.approved, resolveHermesDashboardForwardTarget,
     beginManagedSshWork: fixture.begin, observeManagedSshEnd: vi.fn(), connectSsh: connect,
@@ -53,7 +55,7 @@ function websocketFixture(selected: typeof installation, enabled = true) {
   const attach = new Function(...Object.keys(bindings), `${source}\nreturn attachHermesWebSocketBridge;`)(...Object.values(bindings));
   const server = new EventEmitter(); attach(server);
   const socket = { destroyed: false, write: vi.fn(), destroy: vi.fn() };
-  server.emit('upgrade', { headers: {}, url: '/api/hermes/dashboard/ws' }, socket, Buffer.alloc(0));
+  server.emit('upgrade', { headers: { origin: options.origin ?? 'null' }, url: '/api/hermes/dashboard/_frame/fixture-grant/ws' }, socket, Buffer.alloc(0));
   return { ssh, stream, socket, connect, upgraded };
 }
 describe('actual Hermes HTTP/WebSocket forwarding selection', () => {
@@ -62,6 +64,21 @@ describe('actual Hermes HTTP/WebSocket forwarding selection', () => {
     expect(ws.socket.write).toHaveBeenCalledWith(expect.stringContaining('503 Service Unavailable'));
     expect(ws.connect).not.toHaveBeenCalled();
     expect(fixture.begin).not.toHaveBeenCalled();
+  });
+  it('WebSocket bridge needs a valid frame grant, never a console cookie', async () => {
+    for (const options of [{ frame: false }, { grant: false }]) {
+      const ws = websocketFixture(installation, true, options); await tick();
+      expect(ws.socket.write).toHaveBeenCalledWith(expect.stringContaining('401 Unauthorized'));
+      expect(ws.connect).not.toHaveBeenCalled();
+      expect(ws.upgraded).not.toHaveBeenCalled();
+    }
+  });
+  it('WebSocket bridge accepts the sandboxed page (Origin: null) and configured origins only', async () => {
+    const foreign = websocketFixture(installation, true, { origin: 'https://evil.example.com' }); await tick();
+    expect(foreign.socket.write).toHaveBeenCalledWith(expect.stringContaining('403 Forbidden'));
+    expect(foreign.connect).not.toHaveBeenCalled();
+    const configured = websocketFixture(installation, true, { origin: 'https://fixture' }); await tick();
+    expect(configured.upgraded).toHaveBeenCalledOnce();
   });
   it('HTTP forwards to approved observed private listener after durable admission', async () => {
     const response = await requestHermesDashboardOverSsh({ installation: installation as any, req: { headers: new Headers(), nextUrl: { protocol: 'https:' }, method: 'GET' } as any, upstreamPath: '/', search: '' });
