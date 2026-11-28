@@ -39,4 +39,14 @@ describe('magnus-ui CLI', () => {
     expect(errors).toContain('REDIS_URL is required');
     expect(errors.some((error: string) => error.includes('TLS_CERT_PATH'))).toBe(true);
   });
+
+  it('warns when named sign-in tokens are not issued for the Control API\'s Oathweave audience', async () => {
+    const named = { HIVE_OAUTH_DISCOVERY_URL: 'https://identity.example.com/.well-known/openid-configuration', HIVE_OAUTH_CLIENT_ID: 'magnus-ui',
+      HIVE_OAUTH_ISSUER: 'https://identity.example.com' };
+    const legacy = await checkEnvironment({ ...valid, ...named, HIVE_OAUTH_API_AUDIENCE: 'magnus-api' });
+    expect(legacy.warnings).toContainEqual(expect.stringContaining('HIVE_OAUTH_API_AUDIENCE is "magnus-api"'));
+    const current = await checkEnvironment({ ...valid, ...named, HIVE_OAUTH_API_AUDIENCE: 'magnus' });
+    expect(current.warnings.some((warning: string) => warning.includes('HIVE_OAUTH_API_AUDIENCE'))).toBe(false);
+    expect((await checkEnvironment(valid)).warnings.some((warning: string) => warning.includes('HIVE_OAUTH_API_AUDIENCE'))).toBe(false);
+  });
 });

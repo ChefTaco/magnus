@@ -44,6 +44,29 @@ the upgrade switches back to the 3.x release, which still reads them. After the 
 console's environment; the server still uses its own `JWT_SECRET`. The re-encryption tool
 `apps/dashboard/scripts/migrate-control-node-credentials.mjs` also refuses legacy values now.
 
+## 4.0.0 (breaking, unreleased): external IAM mode removed
+
+The external IAM mode deprecated in 3.6.0 is gone. A server with `IAM_CORE_URL` set refuses to
+start:
+
+```text
+IAM_CORE_URL (external IAM token verification) was removed in Magnus 4.0.0; configure Oathweave mode …
+```
+
+Before upgrading, move to Oathweave mode: set `OATHWEAVE_ISSUER`, `OATHWEAVE_JWKS_URL`,
+`OATHWEAVE_USERINFO_URL` and `MAGNUS_OATHWEAVE_IDENTITIES_JSON` (one exact issuer and subject link
+per person; see [the console API](docs/console-api.md#authentication)), then remove `IAM_CORE_URL`,
+`IAM_TOKEN_ISSUER` and `IAM_TOKEN_AUDIENCE`. Set a dedicated `JWT_SECRET` (32+ characters) if the
+server ran without one: it is now always required for local user tokens. Local logins keep working
+throughout. `x-api-secret` and service credentials are unchanged.
+
+**Named OIDC sign-in to the standalone console** (`HIVE_OAUTH_*`) depends on this too: the console
+sends each named user's own access token to the Control API, which the external IAM mode used to
+verify. Move the server to Oathweave mode with an identity link for each of those users, have the
+provider issue their tokens for the audience `magnus`, and set `HIVE_OAUTH_API_AUDIENCE=magnus` on
+the console. Otherwise named users can sign in to the console but every API call they make is
+refused. `magnus-ui check` warns while `HIVE_OAUTH_API_AUDIENCE` is anything else.
+
 ## Unreleased: refused commands and non-Ardent reconciliation
 
 Upgrade the node agents first, then the server and console. No setting or migration changes.

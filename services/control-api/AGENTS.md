@@ -21,7 +21,7 @@ tokens) and the standalone console in `apps/dashboard`.
 | ORM | Prisma 7 on PostgreSQL with the `pg` adapter; client generated into `src/db/generated` and compiled into `dist` |
 | Queue | BullMQ on Redis |
 | Validation | Zod 4 schemas and `parseBody()` helpers |
-| Auth | Purpose-specific API and node credentials; local HS256 user JWTs, Oathweave resource tokens, or (deprecated) external IAM RS256 tokens |
+| Auth | Purpose-specific API and node credentials; local HS256 user JWTs and Oathweave resource tokens |
 
 ## Commands
 

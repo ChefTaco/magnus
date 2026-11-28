@@ -9,7 +9,11 @@ import { webhookTypeAliases } from '../services/webhook-types.js';
 const portSchema = z.coerce.number().int().min(1).max(65535);
 import { isConsoleBasePath } from './console-path.js';
 import { oathweaveConfigurationIssues } from './oathweave.js';
-import { iamCoreUrlProblem } from './iam.js';
+
+/** Why a configuration that still sets IAM_CORE_URL is refused, and what replaces it. */
+export const IAM_CORE_URL_REMOVED = 'IAM_CORE_URL (external IAM token verification) was removed in Magnus 4.0.0; configure Oathweave mode '
+  + '(OATHWEAVE_ISSUER, OATHWEAVE_JWKS_URL, OATHWEAVE_USERINFO_URL, MAGNUS_OATHWEAVE_IDENTITIES_JSON), set a dedicated JWT_SECRET '
+  + 'for local user tokens, and remove IAM_CORE_URL, IAM_TOKEN_ISSUER and IAM_TOKEN_AUDIENCE. See UPGRADING.md.';
 import { emberpathConfigurationIssues } from '../services/llm-providers/emberpath.js';
 
 const booleanEnvSchema = z.enum(['true', 'false']).default('false').transform((value) => value === 'true');
@@ -161,9 +165,8 @@ export const envSchema = z.object({
   WEBHOOK_ENCRYPTION_KEY: z.string().min(32).optional(),
   WEBHOOK_ALLOWED_ORIGINS: z.string().default(''),
   JWT_EXPIRY: z.string().default('24h'),
-  IAM_CORE_URL: z.string().url().optional(),
-  IAM_TOKEN_ISSUER: z.string().min(1).optional(),
-  IAM_TOKEN_AUDIENCE: z.string().min(1).optional(),
+  /** Removed in 4.0.0; still read only to refuse a configuration that relies on it. */
+  IAM_CORE_URL: z.string().optional(),
   OATHWEAVE_ISSUER: z.string().url().optional(),
   OATHWEAVE_JWKS_URL: z.string().url().optional(),
   OATHWEAVE_USERINFO_URL: z.string().url().optional(),
@@ -300,16 +303,8 @@ export const envSchema = z.object({
   }
 
   if (env.IAM_CORE_URL) {
-    const iamUrlProblem = iamCoreUrlProblem(env.IAM_CORE_URL, env.ALLOW_INSECURE_HTTP);
-    if (iamUrlProblem) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['IAM_CORE_URL'], message: iamUrlProblem });
-    for (const field of ['IAM_TOKEN_ISSUER', 'IAM_TOKEN_AUDIENCE'] as const) {
-      if (env[field]) continue;
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: [field],
-        message: `${field} is required when IAM_CORE_URL is configured`,
-      });
-    }
+    // Ignoring it would silently turn every external-IAM sign-in into a refusal; say why instead.
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['IAM_CORE_URL'], message: IAM_CORE_URL_REMOVED });
   }
 
   if (env.NODE_ENV === 'production' && env.MAGNUS_SECRET) {

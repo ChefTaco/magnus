@@ -9,14 +9,13 @@
  * At startup, `validateSecrets()` performs both fail-fast missing-secret
  * checks AND full Zod schema validation via `config/env.ts`.
  */
-import { loadEnv, type Env } from '../config/env.js';
+import { IAM_CORE_URL_REMOVED, loadEnv, type Env } from '../config/env.js';
 import { resolveCredentialSecret } from '../services/credential-rotation-service.js';
 import { nodeAuthMode } from '../services/node-auth-config.js';
 
 // ── Exported resolved secrets ──
 
-// JWT_SECRET kept for backward-compat with non-IAM environments.
-// When IAM_CORE_URL is set, RS256 tokens from IAM Core are used instead.
+// HS256 key for locally issued user tokens.
 export const JWT_SECRET = process.env['JWT_SECRET'] ?? '';
 export const API_SECRET = process.env['API_SECRET'] ?? '';
 export const NODE_MANAGER_SECRET = process.env['NODE_MANAGER_SECRET'] ?? '';
@@ -30,12 +29,6 @@ export const MAGNUS_COLLECTOR_TOKEN_SHA256 =
   process.env['MAGNUS_COLLECTOR_TOKEN_SHA256'] ?? '';
 /** Dedicated audit-chain HMAC key; deliberately has no master-secret fallback. */
 export const AUDIT_HMAC_SECRET = process.env['AUDIT_HMAC_SECRET'] ?? '';
-
-/** IAM Core API URL — when set, enables RS256 JWT verification via IAM. */
-export const IAM_CORE_URL = process.env['IAM_CORE_URL'] ?? '';
-/** Exact registered claims required for every IAM access token. */
-export const IAM_TOKEN_ISSUER = process.env['IAM_TOKEN_ISSUER'] ?? '';
-export const IAM_TOKEN_AUDIENCE = process.env['IAM_TOKEN_AUDIENCE'] ?? '';
 
 /** HMAC secret for verifying agent command result signatures. */
 export const RESULT_SIGNING_SECRET = process.env['RESULT_SIGNING_SECRET'] ?? '';
@@ -105,10 +98,12 @@ export const SHARED_NODE_SECRET_NAMES = ['NODE_MANAGER_SECRET', 'RESULT_SIGNING_
 export function listMissingSecrets(): string[] {
   const missing: string[] = [];
 
-  const usingIam = !!IAM_CORE_URL;
-  if (!usingIam && JWT_SECRET.length < 32) missing.push('JWT_SECRET (dedicated, min 32 chars)');
-  if (usingIam && !IAM_TOKEN_ISSUER) missing.push('IAM_TOKEN_ISSUER');
-  if (usingIam && !IAM_TOKEN_AUDIENCE) missing.push('IAM_TOKEN_AUDIENCE');
+  // A former external-IAM server never needed JWT_SECRET: say why it is missing now.
+  if (JWT_SECRET.length < 32) {
+    missing.push(process.env['IAM_CORE_URL']
+      ? 'JWT_SECRET (dedicated, min 32 chars; required since the external IAM mode was removed in 4.0.0)'
+      : 'JWT_SECRET (dedicated, min 32 chars)');
+  }
   if (API_SECRET.length < 32) missing.push('API_SECRET (dedicated, min 32 chars)');
   // Only the shared-secret modes need the fleet-wide node credentials (docs/NODE_CREDENTIALS.md).
   const sharedSecrets = nodeAuthMode() !== 'enforce';
@@ -138,6 +133,12 @@ export function listMissingSecrets(): string[] {
  */
 export function validateSecrets(): void {
   if (process.env['NODE_ENV'] === 'test') return;
+
+  // The removed mode is the root cause of what else would be reported missing, so name it first.
+  if (process.env['IAM_CORE_URL']) {
+    console.error(`\n❌ ${IAM_CORE_URL_REMOVED}\n`);
+    process.exit(1);
+  }
 
   const missing = listMissingSecrets();
   if (missing.length > 0) {

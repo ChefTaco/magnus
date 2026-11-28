@@ -4,15 +4,12 @@ import { Hono } from 'hono';
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT, type JSONWebKeySet } from 'jose';
 import type { AppVariables, AuthTokenPayload } from '../types/index.js';
 
-const fixture = vi.hoisted(() => ({ iamCoreUrl: '', pluginEnabled: false }));
+const fixture = vi.hoisted(() => ({ pluginEnabled: false }));
 
 vi.mock('../utils/env.js', async (original) => ({
   ...await original<typeof import('../utils/env.js')>(),
   JWT_SECRET: 'fixture-jwt-secret-for-unit-tests-at-least-32',
   API_SECRET: 'fixture-api-secret-for-unit-tests-at-least-32',
-  get IAM_CORE_URL() { return fixture.iamCoreUrl; },
-  IAM_TOKEN_ISSUER: 'https://iam.example.com',
-  IAM_TOKEN_AUDIENCE: 'magnus',
   MAGNUS_FLEET_CHECK_TOKEN_SHA256: createHash('sha256').update('fixture-fleet-token').digest('hex'),
 }));
 const userStatus = vi.hoisted(() => ({ get: vi.fn(async () => ({ active: true, role: 'OPERATOR' })) }));
@@ -100,7 +97,6 @@ function app() {
 const get = (token: string, path = '/probe') => app().request(path, { headers: { Authorization: `Bearer ${token}` } });
 
 beforeEach(() => {
-  fixture.iamCoreUrl = '';
   userStatus.get.mockClear();
   resetOathweaveVerifier();
   vi.stubEnv('OATHWEAVE_ISSUER', ISSUER);
@@ -251,8 +247,7 @@ describe('explicit Oathweave account links', () => {
 });
 
 describe('authentication branch isolation', () => {
-  it('does not fall through to IAM verification when an Oathweave token fails', async () => {
-    fixture.iamCoreUrl = 'https://iam.example.com';
+  it('fetches nothing else when an Oathweave token fails', async () => {
     const response = await get(await mint({ audience: 'cindertrace' }));
     expect(response.status).toBe(401);
     expect(otherCalls).toEqual([]);

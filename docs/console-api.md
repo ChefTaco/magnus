@@ -65,7 +65,7 @@ count against the window, so wait that long before retrying instead of retrying 
 
 | Variable | Purpose |
 |---|---|
-| `OATHWEAVE_ISSUER` | Exact `iss`. Refused at startup together with `IAM_CORE_URL` |
+| `OATHWEAVE_ISSUER` | Exact `iss` |
 | `OATHWEAVE_JWKS_URL` | HTTPS key set that verifies signatures |
 | `OATHWEAVE_USERINFO_URL` | HTTPS userinfo endpoint for online revocation |
 | `MAGNUS_OATHWEAVE_IDENTITIES_JSON` | Array of `{issuer,subject,localUserId,role}` |

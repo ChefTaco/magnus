@@ -58,7 +58,7 @@ export const ENV_CATALOG: readonly EnvVariable[] = [
   // ── Required secrets ──
   secret32('API_SECRET', 'Dashboard-to-server shared secret (x-api-secret).'),
   { name: 'MAGNUS_API_SECRET_BYPASS', group: 'secrets', default: 'on', description: 'Where the x-api-secret ADMIN bypass is honoured: `on` (from any peer), `loopback` (only from a loopback socket peer, never judged by forwarding headers) or `off` (ignored; callers need a bearer token). Use `off` or `loopback` when HiveXUI with Oathweave, not the standalone console, is the browser client.' },
-  { ...secret32('JWT_SECRET', 'HS256 key for locally issued user tokens.'), required: false, requiredWhen: 'IAM_CORE_URL unset' },
+  secret32('JWT_SECRET', 'HS256 key for locally issued user tokens.'),
   { ...secret32('NODE_MANAGER_SECRET', 'Shared node secret (x-node-token) of agents without their own key. Deprecated: accepted and sent only under an explicit NODE_AUTH_MODE=compat or warn, removed in the next major.'),
     required: false, requiredWhen: 'NODE_AUTH_MODE=compat or warn' },
   secret32('AUDIT_HMAC_SECRET', 'Dedicated audit-chain HMAC key.'),
@@ -86,13 +86,8 @@ export const ENV_CATALOG: readonly EnvVariable[] = [
   { name: 'MAGNUS_DOCKER_USER', group: 'agents', description: 'Account whose docker group membership the server checks on its own host.' },
   { name: 'MAGNUS_RESOURCE_LEASES_ENABLED', group: 'agents', default: 'false', description: 'Enable durable node and shared-resource lease coordination.' },
 
-  // ── External IAM (deprecated) ──
-  { name: 'IAM_CORE_URL', group: 'iam', description: 'Deprecated (removed in 4.0.0; use OATHWEAVE_ISSUER). External IAM base URL (Oathweave, formerly Hive IAM). When set, its RS256 access tokens replace local JWTs; each must carry `jti` and exactly the configured audience. Must be HTTPS; HTTP is accepted only for a loopback host (or with ALLOW_INSECURE_HTTP in development).' },
-  { name: 'IAM_TOKEN_ISSUER', group: 'iam', requiredWhen: 'IAM_CORE_URL set', description: 'Exact `iss` claim required on IAM access tokens.' },
-  { name: 'IAM_TOKEN_AUDIENCE', group: 'iam', requiredWhen: 'IAM_CORE_URL set', description: 'Exact `aud` claim required on IAM access tokens.' },
-
   // ── Oathweave browser console tokens ──
-  { name: 'OATHWEAVE_ISSUER', group: 'iam', description: 'Exact `iss` claim of Oathweave resource tokens (audience `magnus`). Cannot be combined with IAM_CORE_URL.' },
+  { name: 'OATHWEAVE_ISSUER', group: 'iam', description: 'Exact `iss` claim of Oathweave resource tokens (audience `magnus`).' },
   { name: 'OATHWEAVE_JWKS_URL', group: 'iam', requiredWhen: 'OATHWEAVE_ISSUER set', description: 'HTTPS JWKS URL that verifies Oathweave token signatures.' },
   { name: 'OATHWEAVE_USERINFO_URL', group: 'iam', requiredWhen: 'OATHWEAVE_ISSUER set', description: 'HTTPS userinfo URL used for online session revocation (logout takes effect within 15 seconds, including on open streams).' },
   { name: 'MAGNUS_OATHWEAVE_IDENTITIES_JSON', group: 'iam', requiredWhen: 'OATHWEAVE_ISSUER set', description: 'JSON array of {issuer,subject,localUserId,role}. Exact issuer and subject match, never by email; a missing or duplicate link is refused. `role` caps what the token permissions magnus:admin, magnus:operate and magnus:view can grant. Service roles link a machine client (subject = client ID) and never a person: ARDENT_SERVICE (Ardent bridge, magnus:ardent) and HIVESKILLS_SERVICE (HiveSkills executor routes of the registry localUserId names, magnus:hiveskills).' },
