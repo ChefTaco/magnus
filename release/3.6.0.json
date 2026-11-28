@@ -1,0 +1,16 @@
+{
+  "summary": "The server adopts @hivemagnus/hive-common 0.11.1. Optional MAGNUS_TRUSTED_PROXIES names the proxies whose X-Forwarded-For the rate limiter believes (unset: the socket peer). Inbound request IDs are validated (1-128 safe characters, otherwise a generated UUID). Hive IAM mode (IAM_CORE_URL) is deprecated for removal in 4.0.0 and its tokens now need a jti and an exact single audience. When Redis is unavailable, rate limits that are not fail-closed fall back to a per-process limiter with the same budget instead of none. Redaction keeps a secret's name while masking its value. Ardent stays 3.6.0. No migration.",
+  "breaking": false,
+  "minUpgradeFrom": "2.10.2",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [
+    {
+      "name": "MAGNUS_TRUSTED_PROXIES",
+      "component": "server",
+      "secret": false,
+      "description": "Comma-separated proxies whose X-Forwarded-For the rate limiter believes: IP addresses, CIDR ranges and the presets loopback, private and linklocal, read from the right past every trusted hop. Unset: the socket peer is the client. An invalid entry is refused at startup."
+    }
+  ],
+  "removedEnv": [],
+  "migrations": []
+}

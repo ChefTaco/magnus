@@ -7,6 +7,12 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [3.6.0] - 2026-11-28
+
+The server adopts `@hivemagnus/hive-common` 0.11.1: optional `MAGNUS_TRUSTED_PROXIES` for rate
+limiting behind a proxy, validated request IDs, a stricter and deprecated Hive IAM mode, and a
+per-process rate-limit fallback when Redis is unavailable. Ardent stays 3.6.0. No migration.
+
 ### Upgrade notes
 
 - **Hive IAM mode (`IAM_CORE_URL`) is deprecated** and is removed in 4.0.0; move to Oathweave mode
@@ -50,6 +56,17 @@ All notable changes to this project are documented in this file. The format is b
   `Bearer [REDACTED]`. Every value masked before is still masked; Magnus keeps three text rules
   HiveCommon does not cover (an `sk-` key or `Bearer` glued to a word character, a bearer of under
   four characters, and a secret value that continues after `&`).
+
+### New environment variables
+
+Optional (server):
+
+- `MAGNUS_TRUSTED_PROXIES`: proxies whose `X-Forwarded-For` the rate limiter believes; unset keeps
+  limiting by the socket peer.
+
+### Migration impact
+
+None.
 
 ## [3.5.1] - 2026-11-28
 
