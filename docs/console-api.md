@@ -65,7 +65,7 @@ count against the window, so wait that long before retrying instead of retrying 
 
 | Variable | Purpose |
 |---|---|
-| `OATHWEAVE_ISSUER` | Exact `iss`. Refused at startup together with `IAM_CORE_URL` |
+| `OATHWEAVE_ISSUER` | Exact `iss` |
 | `OATHWEAVE_JWKS_URL` | HTTPS key set that verifies signatures |
 | `OATHWEAVE_USERINFO_URL` | HTTPS userinfo endpoint for online revocation |
 | `MAGNUS_OATHWEAVE_IDENTITIES_JSON` | Array of `{issuer,subject,localUserId,role}` |
@@ -377,7 +377,7 @@ The standalone dashboard computes these in its own server, so a static console n
 - `/api/federation` (fan-out over several control nodes) and `/api/control-nodes`. Federation stays in
   the console: HiveXUI implements its own.
 - `/api/terminal/*`, replaced by the [fleet gateway](../services/fleet-gateway/README.md)
-- The Hermes dashboard proxy and the router admin proxy
+- The Hermes dashboard proxy
 
 The mission-control Hermes tiles come from `GET /api/v1/hermes/summary` (any role), which counts
 installations, healthy installations, profiles and running gateways over the same lists

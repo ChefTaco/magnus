@@ -132,7 +132,6 @@ export const NAV_GROUPS: NavGroup[] = [
 /** Integration state with every optional integration disabled. */
 export const NO_INTEGRATIONS: IntegrationFlags = {
   securityConsoleUrl: null,
-  hiveRouter: false,
   hiveLogin: false,
   hermes: false,
 };

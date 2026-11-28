@@ -46,6 +46,28 @@ hold a later enrollment drain at `DRAIN_EVIDENCE_UNAVAILABLE supervisor-unverifi
 reinstall. Stop them as root once their commands are settled: `systemctl stop <unit>`, and
 `systemctl reset-failed <unit>` if one is left failed.
 
+## 4.0.0 (breaking, unreleased): external IAM mode and embedded router admin proxy removed
+
+**Server.** The external IAM mode deprecated in 3.6.0 is gone. A server with `IAM_CORE_URL` set
+refuses to start:
+
+```text
+IAM_CORE_URL (external IAM token verification) was removed in Magnus 4.0.0; configure Oathweave mode …
+```
+
+Before upgrading, move to Oathweave mode: set `OATHWEAVE_ISSUER`, `OATHWEAVE_JWKS_URL`,
+`OATHWEAVE_USERINFO_URL` and `MAGNUS_OATHWEAVE_IDENTITIES_JSON` (one exact issuer and subject link
+per person; see [the console API](docs/console-api.md#authentication)), then remove `IAM_CORE_URL`,
+`IAM_TOKEN_ISSUER` and `IAM_TOKEN_AUDIENCE`. Set a dedicated `JWT_SECRET` (32+ characters) if the
+server ran without one: it is now always required for local user tokens. Local logins keep working
+throughout. `x-api-secret` and service credentials are unchanged.
+
+**Console.** `/api/hive-router/dashboard`, the embedded admin UI of older Emberpath releases, is
+gone, and with it `HIVE_ROUTER_ADMIN_URL` and `HIVE_ROUTER_CA_PATH`. Current Emberpath has no admin
+UI; use Emberpath's own tools. Remove both settings from the console's environment;
+`magnus-ui check` warns while they are present. Model routing for managed Hermes Agents
+(`MAGNUS_ROUTER_URL` and its `HIVE_ROUTER_*` aliases on the server) is unchanged.
+
 ## Unreleased: legacy control-node credentials re-encrypted at console start
 
 Nothing to do for most installs. The standalone console (`magnus-ui`) now re-encrypts, when it

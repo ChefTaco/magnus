@@ -1,14 +1,10 @@
 /**
  * auth.ts — Control API authentication middleware.
  *
- * When IAM_CORE_URL is configured, access tokens are RS256 JWTs issued by the
- * external Hive IAM service. Magnus verifies those tokens; IAM administration
- * happens in Hive IAM itself.
- *
- * If IAM_CORE_URL is not set, local Magnus HS256/API-secret auth remains active.
- *
- * When OATHWEAVE_ISSUER is configured instead, RS256 bearer tokens are Oathweave
- * resource tokens (see oathweave.ts). The two RS256 verifiers refuse to coexist.
+ * Local Magnus HS256 user tokens and purpose-specific API and service
+ * credentials. When OATHWEAVE_ISSUER is configured, RS256 bearer tokens are
+ * Oathweave resource tokens (see oathweave.ts). The external IAM mode
+ * (IAM_CORE_URL) was removed in 4.0.0.
  */
 
 import type { Context, Next } from 'hono';
@@ -20,9 +16,6 @@ import { HttpError } from './error-handler.js';
 import {
   JWT_SECRET as jwtSecretRaw,
   API_SECRET as configuredApiSecret,
-  IAM_CORE_URL,
-  IAM_TOKEN_AUDIENCE,
-  IAM_TOKEN_ISSUER,
   MAGNUS_COLLECTOR_TOKEN_SHA256,
   MAGNUS_PLUGIN_API_ENABLED,
   MAGNUS_PLUGIN_READ_TOKEN_DIGESTS_JSON,
@@ -33,87 +26,13 @@ import {
   MAGNUS_FLEET_CHECK_TOKEN_SHA256,
 } from '../utils/env.js';
 import { verifyWithRotation } from '../services/credential-rotation-service.js';
-import { verifyIamAccessToken } from './iam-token.js';
 import { getCurrentUserStatus } from './user-status.js';
 import { matchesSha256Digest, timingSafeEqualString as safeEqual } from '@hivemagnus/hive-common/secrets';
 import { OathweaveAccessDenied, oathweaveAuthentication } from './oathweave.js';
-import { iamCoreUrlProblem } from '../config/iam.js';
 import { normalizeIpAddress } from '../utils/ip.js';
 
 // ──────────────────────────────────────────────────────────
-// RS256 public-key cache (external Hive IAM verification mode)
-// ──────────────────────────────────────────────────────────
-
-type JoseKey = Awaited<ReturnType<typeof jose.importSPKI>>;
-
-let cachedPublicKey: JoseKey | null = null;
-let publicKeyCachedAt = 0;
-let lastForcedRefreshAt = 0;
-let publicKeyFetch: Promise<JoseKey> | null = null;
-const PUBLIC_KEY_TTL_MS = 60 * 60 * 1_000; // 1 hour
-// A forged or expired token must not turn every request into an IAM fetch.
-const FORCED_REFRESH_MIN_INTERVAL_MS = 60 * 1_000;
-
-const PUBLIC_KEY_FETCH_TIMEOUT_MS = 5_000;
-
-async function fetchIamPublicKey(): Promise<JoseKey> {
-  // The env schema refuses such a URL at startup; this guards callers that skipped validation.
-  const urlProblem = iamCoreUrlProblem(IAM_CORE_URL, process.env['ALLOW_INSECURE_HTTP'] === 'true' && process.env['NODE_ENV'] !== 'production');
-  if (urlProblem) throw new Error(urlProblem);
-  const url = `${IAM_CORE_URL.replace(/\/+$/, '')}/api/v1/auth/public-key`;
-  // A redirect could hand the trust anchor to another host, so it is an error, not followed.
-  const res = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(PUBLIC_KEY_FETCH_TIMEOUT_MS) });
-  if (!res.ok) {
-    throw new Error(`Failed to fetch IAM public key: ${res.status}`);
-  }
-  const body = await res.json() as { publicKey?: unknown };
-  if (typeof body.publicKey !== 'string') throw new Error('IAM public key response has no publicKey');
-  const key = await jose.importSPKI(body.publicKey, 'RS256');
-  cachedPublicKey = key;
-  publicKeyCachedAt = Date.now();
-  return key;
-}
-
-async function getIamPublicKey(forceRefresh = false): Promise<JoseKey> {
-  const now = Date.now();
-  if (cachedPublicKey) {
-    if (!forceRefresh && now - publicKeyCachedAt < PUBLIC_KEY_TTL_MS) return cachedPublicKey;
-    // Rotation refresh is rate-limited; within the window the cached key stays authoritative.
-    if (forceRefresh && now - lastForcedRefreshAt < FORCED_REFRESH_MIN_INTERVAL_MS) return cachedPublicKey;
-  }
-  if (forceRefresh) lastForcedRefreshAt = now;
-  // Concurrent callers share one in-flight fetch.
-  publicKeyFetch ??= fetchIamPublicKey().finally(() => { publicKeyFetch = null; });
-  return publicKeyFetch;
-}
-
-// ──────────────────────────────────────────────────────────
-// Role mapping: Hive IAM roles → Magnus UserRole
-// ──────────────────────────────────────────────────────────
-
-const IAM_ROLE_MAP: Record<string, UserRole> = {
-  SUPER_ADMIN: 'ADMIN',
-  IAM_ADMIN: 'ADMIN',
-  OPERATOR: 'OPERATOR',
-  VIEWER: 'VIEWER',
-  SERVICE: 'OPERATOR',
-  DEPLOY_AGENT: 'OPERATOR',
-};
-
-const ROLE_RANK: Record<UserRole, number> = { VIEWER: 0, OPERATOR: 1, ADMIN: 2 };
-
-/** The highest Magnus role any of the IAM roles maps to, whatever their order; VIEWER when none maps. */
-export function mapIamRoles(roles: string[]): UserRole {
-  let best: UserRole = 'VIEWER';
-  for (const r of roles) {
-    const mapped = IAM_ROLE_MAP[r];
-    if (mapped && ROLE_RANK[mapped] > ROLE_RANK[best]) best = mapped;
-  }
-  return best;
-}
-
-// ──────────────────────────────────────────────────────────
-// HS256 legacy key (non-IAM mode)
+// HS256 key for locally issued user tokens
 // ──────────────────────────────────────────────────────────
 
 const JWT_SECRET_KEY = jwtSecretRaw
@@ -261,15 +180,12 @@ function apiSecretBypassAllowed(c: Context): boolean {
 /** Verify token and attach AuthTokenPayload to context. */
 export async function authMiddleware(c: Context<AppVariables>, next: Next): Promise<void> {
   // API-secret bypass (system calls from the dashboard, etc.)
-  // When IAM Core is configured, this is a bootstrap-only fallback. MAGNUS_API_SECRET_BYPASS=off
+  // MAGNUS_API_SECRET_BYPASS=off
   // ignores the header everywhere, and `loopback` honours it only from a loopback socket peer;
   // an ignored header falls through to bearer authentication.
   const apiSecret = c.req.header('x-api-secret');
   if (apiSecret && configuredApiSecret && apiSecretBypassAllowed(c)
     && verifyWithRotation('API_SECRET', configuredApiSecret, apiSecret)) {
-    if (IAM_CORE_URL) {
-      console.warn(`[auth] API_SECRET bypass used while IAM is active — path: ${new URL(c.req.url).pathname} (should migrate to IAM tokens)`);
-    }
     c.set('user', {
       userId: 'system',
       email: 'system@magnus.local',
@@ -383,48 +299,9 @@ export async function authMiddleware(c: Context<AppVariables>, next: Next): Prom
     return;
   }
 
-  // ── External Hive IAM verification mode: RS256 ────────
-  if (IAM_CORE_URL) {
-    let payload: jose.JWTPayload;
-    try {
-      const key = await getIamPublicKey();
-      payload = await verifyIamAccessToken(
-        token,
-        key,
-        IAM_TOKEN_ISSUER,
-        IAM_TOKEN_AUDIENCE,
-      );
-    } catch {
-      // Might be a key rotation — refresh once and retry
-      try {
-        const freshKey = await getIamPublicKey(true);
-        payload = await verifyIamAccessToken(
-          token,
-          freshKey,
-          IAM_TOKEN_ISSUER,
-          IAM_TOKEN_AUDIENCE,
-        );
-      } catch {
-        throw new HttpError(401, 'UNAUTHORIZED', 'Invalid or expired IAM token');
-      }
-    }
-
-    const roles = (payload['roles'] as string[] | undefined) ?? [];
-    c.set('user', {
-      userId: payload.sub!,
-      email: (payload['email'] as string) ?? '',
-      role: mapIamRoles(roles),
-      iat: payload.iat ?? 0,
-      exp: payload.exp ?? 0,
-    } satisfies AuthTokenPayload);
-
-    await next();
-    return;
-  }
-
-  // ── Legacy HS256 mode ─────────────────────────────────
+  // ── Local HS256 user tokens ───────────────────────────
   if (!JWT_SECRET_KEY) {
-    throw new HttpError(500, 'CONFIGURATION_ERROR', 'No JWT_SECRET or IAM_CORE_URL configured');
+    throw new HttpError(500, 'CONFIGURATION_ERROR', 'No JWT_SECRET configured');
   }
 
   let claims: AuthTokenPayload;
@@ -454,10 +331,10 @@ export async function authMiddleware(c: Context<AppVariables>, next: Next): Prom
   await next();
 }
 
-/** Create a signed HS256 JWT (local Magnus mode only). */
+/** Create a signed HS256 JWT for a local user. */
 export async function signUserToken(payload: Omit<AuthTokenPayload, 'iat' | 'exp'>): Promise<string> {
   if (!JWT_SECRET_KEY) {
-    throw new Error('signUserToken is not available in IAM Core mode');
+    throw new Error('signUserToken needs JWT_SECRET');
   }
   const expiry = process.env['JWT_EXPIRY'] ?? '24h';
   return new jose.SignJWT(payload as unknown as jose.JWTPayload)

@@ -57,32 +57,6 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
-        // Hive Router dashboard proxy — allow same-origin iframe embedding
-        source: '/api/hive-router/dashboard',
-        headers: [
-          { key: 'Content-Security-Policy', value: "object-src 'none'; base-uri 'self'; frame-ancestors 'self'" },
-          { key: 'X-Content-Type-Options', value: 'nosniff' },
-          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
-          { key: 'X-XSS-Protection', value: '1; mode=block' },
-          { key: 'Strict-Transport-Security', value: 'max-age=31536000; includeSubDomains' },
-          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
-          { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
-        ],
-      },
-      {
-        source: '/api/hive-router/dashboard/:path+',
-        headers: [
-          { key: 'Content-Security-Policy', value: "object-src 'none'; base-uri 'self'; frame-ancestors 'self'" },
-          { key: 'X-Content-Type-Options', value: 'nosniff' },
-          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
-          { key: 'X-XSS-Protection', value: '1; mode=block' },
-          { key: 'Strict-Transport-Security', value: 'max-age=31536000; includeSubDomains' },
-          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
-          { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
-        ],
-      },
-
-      {
         // Hermes dashboard proxy — allow same-origin iframe embedding
         source: '/api/hermes/dashboard',
         headers: [
@@ -108,7 +82,7 @@ const nextConfig: NextConfig = {
         ],
       },
       {
-        source: '/((?!api/hive-router/dashboard|api/hermes/dashboard).*)',
+        source: '/((?!api/hermes/dashboard).*)',
         headers: [
           { key: 'Content-Security-Policy', value: CONTENT_SECURITY_POLICY },
           { key: 'X-Content-Type-Options', value: 'nosniff' },

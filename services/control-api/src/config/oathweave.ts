@@ -9,7 +9,6 @@ export {
 } from '@hivemagnus/magnus-oathweave';
 
 type OathweaveEnv = {
-  IAM_CORE_URL?: string | undefined;
   OATHWEAVE_ISSUER?: string | undefined;
   OATHWEAVE_JWKS_URL?: string | undefined;
   OATHWEAVE_USERINFO_URL?: string | undefined;
@@ -22,9 +21,6 @@ export function oathweaveConfigurationIssues(env: OathweaveEnv): Array<{ path: k
   const fields = ['OATHWEAVE_ISSUER', 'OATHWEAVE_JWKS_URL', 'OATHWEAVE_USERINFO_URL'] as const;
   if (!fields.some((field) => env[field]) && !env.MAGNUS_OATHWEAVE_IDENTITIES_JSON) return issues;
 
-  if (env.IAM_CORE_URL && env.OATHWEAVE_ISSUER) {
-    issues.push({ path: 'OATHWEAVE_ISSUER', message: 'IAM_CORE_URL and OATHWEAVE_ISSUER cannot both be configured; choose one RS256 token verifier' });
-  }
   for (const field of fields) {
     const value = env[field];
     if (!value) issues.push({ path: field, message: `${field} is required when Oathweave authentication is configured` });

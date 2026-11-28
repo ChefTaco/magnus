@@ -13,6 +13,22 @@ covers every route, and the console's mission-control Hermes counts come from a 
 standalone console re-encrypts control-node credentials left under the legacy `JWT_SECRET`-derived
 key when it starts. No migration, and no new setting.
 
+### Breaking changes (4.0.0)
+
+- **Server: the external IAM mode (`IAM_CORE_URL`) is gone**, as announced in 3.6.0. The RS256
+  verifier for IAM-issued access tokens (`middleware/iam-token.ts`), its public-key fetch and role
+  mapping, `IAM_TOKEN_ISSUER`/`IAM_TOKEN_AUDIENCE`, the `hive-iam-verifier` health check and the
+  `iam` feature flag are removed. The server **refuses to start while `IAM_CORE_URL` is set**,
+  naming the Oathweave settings that replace it, instead of silently refusing every IAM token.
+  `JWT_SECRET` is now always required, and `POST /api/v1/auth/login` is always available.
+  `magnus-server check` lists `Oathweave` instead.
+- **Console: the embedded Emberpath admin proxy is gone.** `/api/hive-router/dashboard`, its
+  same-origin framing exemption, `HIVE_ROUTER_ADMIN_URL` and `HIVE_ROUTER_CA_PATH` are removed;
+  current Emberpath has no admin UI. `magnus-ui check` and `start` warn when either setting is still
+  present. The server's router settings (`MAGNUS_ROUTER_*` and the `HIVE_ROUTER_URL`/`_MODEL`/
+  `_API_KEY`/`_HEALTH_URL` aliases) are unchanged
+  ([UPGRADING.md](UPGRADING.md#400-breaking-unreleased-external-iam-mode-and-embedded-router-admin-proxy-removed)).
+
 ### Upgrade notes
 
 - **Upgrade the node agents, then the server and console.** A supervised agent
@@ -101,9 +117,9 @@ key when it starts. No migration, and no new setting.
 
 - Documentation, env examples and CLI output call the integrations by their current names:
   Oathweave (formerly Hive IAM) and Emberpath (formerly Hive Router). `magnus-server check` lists
-  `External IAM` (marked deprecated when on) and `Model router`, and `magnus-ui check` lists
-  `Emberpath admin (deprecated)` and `OIDC login`. No variable is renamed: `HIVE_OAUTH_*`,
-  `HIVE_ROUTER_*` and `IAM_*` keep working, as does the `hive-router` application-probe kind.
+  `Model router` and `magnus-ui check` lists `OIDC login`. No variable is renamed: `HIVE_OAUTH_*`
+  and the server's `HIVE_ROUTER_*` aliases keep working, as does the `hive-router` application-probe
+  kind.
 - **Standard error envelope.** `/api/v1/credentials/*` (400 `UNKNOWN_CREDENTIAL`, 410
   `CREDENTIAL_ROTATION_RETIRED` and `CREDENTIAL_ROLLOUT_RETIRED`), `GET /security-integration/inventory`
   and `POST /security-integration/backups` (401 `UNAUTHORIZED`, 400 `VALIDATION_ERROR`, 409

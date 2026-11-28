@@ -20,9 +20,8 @@ describe('Oathweave environment contract', () => {
     expect(loadEnv(oathweave).OATHWEAVE_ISSUER).toBe(issuer);
   });
 
-  it('refuses IAM_CORE_URL and OATHWEAVE_ISSUER together', () => {
-    expect(() => loadEnv({ ...oathweave, IAM_CORE_URL: 'https://iam.example.com', IAM_TOKEN_ISSUER: 'iam', IAM_TOKEN_AUDIENCE: 'magnus' }))
-      .toThrow(/cannot both be configured/);
+  it('refuses IAM_CORE_URL next to Oathweave: the external IAM mode is gone', () => {
+    expect(() => loadEnv({ ...oathweave, IAM_CORE_URL: 'https://iam.example.com' })).toThrow(/was removed in Magnus 4\.0\.0/);
   });
 
   it.each(['OATHWEAVE_ISSUER', 'OATHWEAVE_JWKS_URL', 'OATHWEAVE_USERINFO_URL', 'MAGNUS_OATHWEAVE_IDENTITIES_JSON'] as const)(
@@ -59,7 +58,7 @@ describe('Oathweave environment contract', () => {
   });
 });
 
-describe('Hive IAM environment contract', () => {
+describe('environment contract', () => {
   it('keeps resource enrollment disabled unless explicitly enabled', () => {
     expect(loadEnv({}).MAGNUS_RESOURCE_LEASES_ENABLED).toBe(false);
     expect(loadEnv({ MAGNUS_RESOURCE_LEASES_ENABLED: 'true' }).MAGNUS_RESOURCE_LEASES_ENABLED).toBe(true);
@@ -113,35 +112,11 @@ describe('Hive IAM environment contract', () => {
     })).toThrow(/READ_RETENTION_DAYS cannot exceed/);
   });
 
-  it.each(['IAM_TOKEN_ISSUER', 'IAM_TOKEN_AUDIENCE'] as const)(
-    'requires %s whenever IAM mode is enabled',
-    (missing) => {
-      const values = {
-        AUDIT_HMAC_SECRET: 'a'.repeat(32),
-        IAM_CORE_URL: 'https://hive.example.test/api/iam',
-        IAM_TOKEN_ISSUER: 'hive-iam',
-        IAM_TOKEN_AUDIENCE: 'magnus',
-        [missing]: undefined,
-      };
-      expect(() => loadEnv(values)).toThrow(new RegExp(missing));
-    },
-  );
-
-  it('refuses a cleartext IAM_CORE_URL outside loopback', () => {
-    const values = { AUDIT_HMAC_SECRET: 'a'.repeat(32), IAM_TOKEN_ISSUER: 'hive-iam', IAM_TOKEN_AUDIENCE: 'magnus' };
-    expect(() => loadEnv({ ...values, IAM_CORE_URL: 'http://iam.example.test' })).toThrow(/IAM_CORE_URL must use HTTPS/);
-    expect(loadEnv({ ...values, IAM_CORE_URL: 'http://127.0.0.1:4001' }).IAM_CORE_URL).toBe('http://127.0.0.1:4001');
-  });
-
-  it('accepts an explicit issuer and audience contract', () => {
-    const env = loadEnv({
-      AUDIT_HMAC_SECRET: 'a'.repeat(32),
-      IAM_CORE_URL: 'https://hive.example.test/api/iam',
-      IAM_TOKEN_ISSUER: 'hive-iam',
-      IAM_TOKEN_AUDIENCE: 'magnus',
-    });
-    expect(env.IAM_TOKEN_ISSUER).toBe('hive-iam');
-    expect(env.IAM_TOKEN_AUDIENCE).toBe('magnus');
+  it('refuses the removed external IAM mode instead of ignoring it', () => {
+    for (const IAM_CORE_URL of ['https://iam.example.com', 'http://127.0.0.1:4001']) {
+      expect(() => loadEnv({ AUDIT_HMAC_SECRET: 'a'.repeat(32), IAM_CORE_URL, IAM_TOKEN_ISSUER: 'iam', IAM_TOKEN_AUDIENCE: 'magnus' }))
+        .toThrow(/IAM_CORE_URL \(external IAM token verification\) was removed in Magnus 4\.0\.0; configure Oathweave mode/);
+    }
   });
 
   it('validates accepted approval-assertion signature domains', () => {
