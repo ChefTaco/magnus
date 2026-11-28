@@ -38,7 +38,7 @@ export const dashboardEnvironmentSchema = Object.freeze({
   SSH_HOST_KEY_PINNING: string({ default: 'enforce', purpose: 'Terminal SSH host-key pinning: enforce refuses a host whose key differs from the pinned one; warn only logs the mismatch and connects anyway (never use warn in production). Any other value means enforce.' }),
   SSH_HOST_KEYS_FILE: path({ default: 'terminal-audit/known-hosts.json', purpose: 'Pinned terminal SSH host keys (trust on first use), relative to the working directory.' }),
   TERMINAL_AUDIT_DIR: path({ default: 'terminal-audit', purpose: 'Directory of the terminal host-key trust audit log, relative to the working directory.' }),
-  DASHBOARD_DEPENDENCY_TIMEOUT_MS: integer({ default: 8_000, minimum: 1, purpose: 'Timeout of console requests to the Control API and Hive Router, in milliseconds.' }),
+  DASHBOARD_DEPENDENCY_TIMEOUT_MS: integer({ default: 8_000, minimum: 1, purpose: 'Timeout of console requests to the Control API and the Emberpath admin plane, in milliseconds.' }),
   MAGNUS_CONTROL_NODES_CONFIG_DIR: path({ optional: true, purpose: 'Test-only override of the control-node registry directory; honoured only with NODE_ENV=test (otherwise .magnus/ in the working directory).' }),
   DASHBOARD_SSH_PRIVATE_KEY_PATH: path({ optional: true, requirement: 'Required for the terminal and Hermes proxy (or DASHBOARD_SSH_PASSWORD)', purpose: 'Restricted dashboard-proxy private key with no deployment privileges.' }),
   NEXT_PUBLIC_API_URL: url({ default: 'https://localhost:4000', public: true, purpose: 'Legacy build-time Control API URL; must never contain a secret.' }),

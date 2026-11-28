@@ -81,6 +81,28 @@ Runtime state (the control-node registry, Hermes SSH bindings, terminal audit an
 authentication audit log) is written under the data directory, mostly in `.magnus/`. Keep it on
 persistent storage and readable only by the service account.
 
+### Stored control-node credentials
+
+The control-node registry (`.magnus/control-nodes.json`) keeps each saved node's API secret and
+token encrypted under `CONTROL_NODE_CREDENTIAL_KEY`, and only that key is read. Entries saved
+before that key existed, under a key derived from `JWT_SECRET`, were re-encrypted by the 3.x
+console at start; if any remain, this release refuses to start and `magnus-ui check` reports an
+error (see [UPGRADING.md](../../UPGRADING.md)). A value saved unencrypted by a very old release is
+encrypted at start, after the file is copied to `control-nodes.json.legacy-key-backup-<time>`
+(mode `0600`).
+
+Run the command as the account the console runs as (`magnus` with the example unit):
+
+```bash
+sudo -u magnus magnus-ui credentials --env-file /etc/magnus-ui/magnus-ui.env --data-dir /var/lib/magnus-ui   # count by key
+```
+
+It prints the file it checked and exits 0 when every value is under `CONTROL_NODE_CREDENTIAL_KEY`,
+1 while one is not (or on an error) and 3 when there is no state file at that path (no control
+node was ever saved there, or `--data-dir` is wrong). Rewrites run only as the file's owner (run as
+root, `--reencrypt` first becomes that user and group) and take the same lock file
+(`control-nodes.json.lock`) as the console's own saves.
+
 ### systemd
 
 `deploy/magnus-ui.service` in the package is an example unit that runs `magnus-ui start` as a
@@ -101,8 +123,8 @@ current state.
 | Integration | Enable with | Adds |
 | --- | --- | --- |
 | External security console | `MAGNUS_SECURITY_CONSOLE_URL` | Security navigation, fleet security summary, links and redirects to the console |
-| Hive Router | `HIVE_ROUTER_ADMIN_URL` (optional `HIVE_ROUTER_CA_PATH`) | Embedded router admin UI at `/api/hive-router/dashboard` |
-| Hive IAM login | `HIVE_OAUTH_DISCOVERY_URL`, `HIVE_OAUTH_CLIENT_ID`, `HIVE_OAUTH_ISSUER`, `HIVE_OAUTH_API_AUDIENCE` (+ `DASHBOARD_PUBLIC_ORIGIN`) | Named-user OIDC sign-in next to the local administrator |
+| Emberpath admin UI (deprecated, removed in 4.0.0) | `HIVE_ROUTER_ADMIN_URL` (optional `HIVE_ROUTER_CA_PATH`) | Embedded admin UI of an older Emberpath (formerly Hive Router) release at `/api/hive-router/dashboard`; current Emberpath has none |
+| OIDC login | `HIVE_OAUTH_DISCOVERY_URL`, `HIVE_OAUTH_CLIENT_ID`, `HIVE_OAUTH_ISSUER`, `HIVE_OAUTH_API_AUDIENCE` (+ `DASHBOARD_PUBLIC_ORIGIN`) | Named-user sign-in through an OIDC provider such as Oathweave (formerly Hive IAM), next to the local administrator |
 | Hermes Agent | `MAGNUS_HERMES_ENABLED=true`, `HERMES_SSH_AUTHORIZATIONS_FILE`, `DASHBOARD_SSH_*` | Hermes installation, profile, drift and proxy-security pages, and the embedded Hermes dashboard over SSH |
 
 ## Environment reference
@@ -142,7 +164,7 @@ Every variable the runtime configuration accepts. `magnus-ui env-schema` prints 
 | `SSH_HOST_KEY_PINNING` | Optional | `enforce` | Terminal SSH host-key pinning: enforce refuses a host whose key differs from the pinned one; warn only logs the mismatch and connects anyway (never use warn in production). Any other value means enforce. |
 | `SSH_HOST_KEYS_FILE` | Optional | `terminal-audit/known-hosts.json` | Pinned terminal SSH host keys (trust on first use), relative to the working directory. |
 | `TERMINAL_AUDIT_DIR` | Optional | `terminal-audit` | Directory of the terminal host-key trust audit log, relative to the working directory. |
-| `DASHBOARD_DEPENDENCY_TIMEOUT_MS` | Optional | `8000` | Timeout of console requests to the Control API and Hive Router, in milliseconds. |
+| `DASHBOARD_DEPENDENCY_TIMEOUT_MS` | Optional | `8000` | Timeout of console requests to the Control API and the Emberpath admin plane, in milliseconds. |
 | `MAGNUS_CONTROL_NODES_CONFIG_DIR` | Optional | None | Test-only override of the control-node registry directory; honoured only with NODE_ENV=test (otherwise .magnus/ in the working directory). |
 | `DASHBOARD_SSH_PRIVATE_KEY_PATH` | Required for the terminal and Hermes proxy (or DASHBOARD_SSH_PASSWORD) | None | Restricted dashboard-proxy private key with no deployment privileges. |
 | `NEXT_PUBLIC_API_URL` | Optional | `https://localhost:4000` | Legacy build-time Control API URL; must never contain a secret. |

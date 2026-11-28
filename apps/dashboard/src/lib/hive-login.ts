@@ -114,7 +114,7 @@ function oauthError(text: string): unknown {
 export class HiveClientRejected extends Error {
   constructor() {
     super(
-      'Hive IAM refused the OAuth client credentials (invalid_client). A client registered as confidential must authenticate when it exchanges the authorization code: set HIVE_OAUTH_CLIENT_SECRET to its secret, or register HIVE_OAUTH_CLIENT_ID as a public PKCE client and leave the secret unset.',
+      'The OIDC provider refused the OAuth client credentials (invalid_client). A client registered as confidential must authenticate when it exchanges the authorization code: set HIVE_OAUTH_CLIENT_SECRET to its secret, or register HIVE_OAUTH_CLIENT_ID as a public PKCE client and leave the secret unset.',
     );
     this.name = 'HiveClientRejected';
   }

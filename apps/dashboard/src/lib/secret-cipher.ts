@@ -3,9 +3,10 @@ import 'server-only';
 /**
  * AES-256-GCM encryption helpers for secrets stored at rest on disk.
  *
- * New records use the dedicated CONTROL_NODE_CREDENTIAL_KEY. Legacy `enc:`
- * records are decrypted with the historical JWT/SESSION derivation and are
- * atomically rewritten by control-nodes-store as `enc2:` records.
+ * Records use the dedicated CONTROL_NODE_CREDENTIAL_KEY. Legacy `enc:` records
+ * (under a key derived from JWT_SECRET) are no longer decrypted: 3.x releases
+ * re-encrypted them at console start, and since 4.0.0 the console refuses to
+ * start while any remain (`runtime-control-node-credentials.mjs`).
  *
  * Encrypted format: `enc2:<iv_b64>:<authTag_b64>:<ciphertext_b64>`
  *   - iv        — 12-byte random IV (standard for GCM)
@@ -43,12 +44,6 @@ function getDedicatedKey(): Buffer {
   return deriveKey(secret);
 }
 
-function getLegacyKey(): Buffer {
-  const secret = process.env['JWT_SECRET'] ?? process.env['SESSION_SECRET'] ?? '';
-  if (!secret) throw new Error('Legacy control-node credential key is unavailable');
-  return deriveKey(secret);
-}
-
 /**
  * Encrypt a plaintext secret string.
  * Returns the encrypted value in `enc2:<iv>:<tag>:<ct>` format.
@@ -75,15 +70,16 @@ export function encryptSecret(plaintext: string): string {
  */
 export function decryptSecret(value: string): string {
   if (!value || (!value.startsWith(MARKER) && !value.startsWith(LEGACY_MARKER))) return value;
+  if (!value.startsWith(MARKER)) {
+    throw new Error('Stored control-node credential uses the legacy JWT_SECRET-derived key, which Magnus 4 no longer reads');
+  }
 
-  const legacy = value.startsWith(LEGACY_MARKER) && !value.startsWith(MARKER);
-  const marker = legacy ? LEGACY_MARKER : MARKER;
-  const parts = value.slice(marker.length).split(':');
+  const parts = value.slice(MARKER.length).split(':');
   if (parts.length !== 3) throw new Error('Stored control-node credential ciphertext is malformed');
 
   const [ivB64, tagB64, ctB64] = parts as [string, string, string];
   try {
-    const key = legacy ? getLegacyKey() : getDedicatedKey();
+    const key = getDedicatedKey();
     const iv = Buffer.from(ivB64, 'base64');
     const tag = Buffer.from(tagB64, 'base64');
     const ct = Buffer.from(ctB64, 'base64');

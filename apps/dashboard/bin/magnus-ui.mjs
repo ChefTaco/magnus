@@ -3,7 +3,8 @@
  * magnus-ui — run the prebuilt Magnus UI (Next.js standalone server).
  *
  *   magnus-ui [start] [--env-file FILE] [--port N] [--host ADDR] [--data-dir DIR]
- *   magnus-ui check [--env-file FILE]
+ *   magnus-ui check [--env-file FILE] [--data-dir DIR]
+ *   magnus-ui credentials [--reencrypt] [--env-file FILE] [--data-dir DIR]
  *   magnus-ui env-schema [--json]
  */
 import { spawn } from 'node:child_process';
@@ -20,6 +21,13 @@ const USAGE = `Usage: magnus-ui [command] [options]
 Commands:
   start         Start the Magnus UI server (default)
   check         Validate the configuration and list enabled integrations
+  credentials   Count stored control-node credentials by key in
+                DIR/.magnus/control-nodes.json: exit 0 when all are under
+                CONTROL_NODE_CREDENTIAL_KEY, 1 while any are unencrypted or under
+                the legacy JWT_SECRET-derived key, which this release no longer
+                reads (or on an error), 3 when there is no state file there. With
+                --reencrypt, encrypt unencrypted ones. Run it as the account the
+                console runs as.
   env-schema    Print every supported environment variable (--json for JSON)
 
 Options:
@@ -27,6 +35,7 @@ Options:
   --port N          Listen port (PORT, default 3000)
   --host ADDR       Listen address (HOST, default 0.0.0.0)
   --data-dir DIR    Runtime state directory (MAGNUS_UI_DATA_DIR, default: current directory)
+  --reencrypt       credentials: encrypt unencrypted values (backs up the file first)
   -h, --help        Show this help
   -v, --version     Print the version`;
 
@@ -136,8 +145,86 @@ async function printIntegrations(env) {
   }
 }
 
+function dataDirectory(env) {
+  return resolve(env.MAGNUS_UI_DATA_DIR?.trim() || process.cwd());
+}
+
+/**
+ * Problems with the stored control-node credentials in the data directory. Values under the legacy
+ * JWT_SECRET-derived key are errors: the console refuses to start while any remain.
+ * @param {Record<string, string | undefined>} env
+ * @returns {Promise<{ errors: string[]; warnings: string[] }>}
+ */
+export async function credentialStorageProblems(env) {
+  const { controlNodeStateFile, credentialsNeedReencryption, describeCredentialCounts, inspectControlNodeCredentials } = await runtimeModule('runtime-control-node-credentials.mjs');
+  try {
+    const file = controlNodeStateFile(dataDirectory(env));
+    const counts = inspectControlNodeCredentials(file);
+    if (!credentialsNeedReencryption(counts)) return { errors: [], warnings: [] };
+    if (counts.legacy) {
+      return { errors: [`${describeCredentialCounts(counts, file)}; this release cannot read legacy values, so the console refuses to start (see UPGRADING.md, 4.0.0)`], warnings: [] };
+    }
+    return { errors: [], warnings: [`${describeCredentialCounts(counts, file)}; the console encrypts them when it starts, or run \`magnus-ui credentials --reencrypt\``] };
+  } catch (error) {
+    return { errors: [], warnings: [`control-node credentials could not be inspected: ${error instanceof Error ? error.message : String(error)}`] };
+  }
+}
+
+/**
+ * Run as root, become the account that owns the control-node state before rewriting it, so nothing
+ * root writes there can be redirected by that account or end up unreadable by the console.
+ * @param {{ uid: number, gid: number } | null} owner
+ * @param {Pick<NodeJS.Process, 'geteuid' | 'setgid' | 'setuid' | 'setgroups'>} [proc]
+ * @returns {boolean} whether the privileges were dropped
+ */
+export function dropPrivilegesToOwner(owner, proc = process) {
+  if (!owner || typeof proc.geteuid !== 'function' || proc.geteuid() !== 0 || owner.uid === 0) return false;
+  proc.setgroups?.([owner.gid]);
+  proc.setgid(owner.gid);
+  proc.setuid(owner.uid);
+  return true;
+}
+
+/** Exit code of `magnus-ui credentials` when the data directory holds no control-node state. */
+export const CREDENTIALS_NO_STATE_EXIT = 3;
+
+/**
+ * `magnus-ui credentials [--reencrypt]`: 0 when every stored value is under
+ * CONTROL_NODE_CREDENTIAL_KEY, 1 while one is not or on an error, CREDENTIALS_NO_STATE_EXIT when there is no state file (a
+ * wrong --data-dir must not read as all clear).
+ * @param {Record<string, string | undefined>} env
+ * @param {Set<string>} flags
+ */
+export async function commandCredentials(env, flags) {
+  const credentials = await runtimeModule('runtime-control-node-credentials.mjs');
+  const file = credentials.controlNodeStateFile(dataDirectory(env));
+  try {
+    if (flags.has('--reencrypt')) {
+      if (dropPrivilegesToOwner(credentials.controlNodeStateOwner(file))) {
+        console.log(`magnus-ui: running as uid ${process.getuid?.()}, the owner of ${file}`);
+      }
+      const message = credentials.describeReencryption(credentials.reencryptLegacyControlNodeCredentials(file, env));
+      console.log(message ?? 'control-node credentials: nothing to encrypt');
+    }
+    const counts = credentials.inspectControlNodeCredentials(file);
+    console.log(credentials.describeCredentialCounts(counts, file));
+    if (!counts.present) return CREDENTIALS_NO_STATE_EXIT;
+    if (!credentials.credentialsNeedReencryption(counts)) return 0;
+    console.error(counts.legacy
+      ? 'This release cannot read values under the legacy key: re-encrypt them with the last 3.x console (start it once, or `magnus-ui credentials --reencrypt`), or re-add those control nodes.'
+      : 'Run `magnus-ui credentials --reencrypt` (or restart the console) to encrypt them under CONTROL_NODE_CREDENTIAL_KEY.');
+    return 1;
+  } catch (error) {
+    console.error(`magnus-ui: ${error instanceof Error ? error.message : String(error)}`);
+    return 1;
+  }
+}
+
 async function commandCheck(env) {
   const { errors, warnings } = await checkEnvironment(env);
+  const stored = await credentialStorageProblems(env);
+  errors.push(...stored.errors);
+  warnings.push(...stored.warnings);
   for (const warning of warnings) console.warn(`warning: ${warning}`);
   await printIntegrations(env);
   if (errors.length) {
@@ -176,7 +263,7 @@ async function commandStart(env) {
     for (const error of errors) console.error(`  - ${error}`);
     return 1;
   }
-  const dataDir = resolve(env.MAGNUS_UI_DATA_DIR?.trim() || process.cwd());
+  const dataDir = dataDirectory(env);
   const childEnv = {
     ...env,
     NODE_ENV: 'production',
@@ -219,6 +306,7 @@ async function main(argv) {
     return 2;
   }
   if (command === 'check') return commandCheck(env);
+  if (command === 'credentials') return commandCredentials(env, flags);
   if (command === 'start') return commandStart(env);
   console.error(`magnus-ui: unknown command "${command}"\n\n${USAGE}`);
   return 2;

@@ -74,11 +74,7 @@ function decryptEnvelope(value, secret, marker) {
   const [iv, tag, ciphertext] = parts.map((part) => Buffer.from(part, 'base64'));
   if (iv.length !== 12 || tag.length !== 16) fail('stored credential ciphertext has invalid parameters');
   try {
-    const decipher = createDecipheriv(
-      'aes-256-gcm',
-      keyBytes(secret, 'credential decryption key', marker === LEGACY_MARKER ? 1 : 32),
-      iv,
-    );
+    const decipher = createDecipheriv('aes-256-gcm', keyBytes(secret, 'credential decryption key'), iv);
     decipher.setAuthTag(tag);
     return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
   } catch (error) {
@@ -123,7 +119,7 @@ function atomicWrite(file, contents) {
   }
 }
 
-function migrateState(file, oldKey, legacyKeys, newKey) {
+function migrateState(file, oldKey, newKey) {
   assertRegularPrivateFile(file);
   let records;
   try { records = JSON.parse(readFileSync(file, 'utf8')); } catch { fail('control-node state is not valid JSON'); }
@@ -146,13 +142,7 @@ function migrateState(file, oldKey, legacyKeys, newKey) {
         if (!oldKey) fail('existing enc2 credentials have no current CONTROL_NODE_CREDENTIAL_KEY');
         plaintext = decryptEnvelope(value, oldKey, NEW_MARKER);
       } else if (value.startsWith(LEGACY_MARKER)) {
-        if (legacyKeys.length === 0) fail('legacy credentials have no prior JWT_SECRET or SESSION_SECRET');
-        const authenticated = [];
-        for (const legacyKey of legacyKeys) {
-          try { authenticated.push(decryptEnvelope(value, legacyKey, LEGACY_MARKER)); } catch {}
-        }
-        if (authenticated.length !== 1) fail('legacy credential did not authenticate against exactly one prior key');
-        [plaintext] = authenticated;
+        fail('a credential is still under the legacy JWT_SECRET-derived key, which Magnus 4 no longer reads; re-encrypt it with a 3.x console first');
       } else {
         plaintext = value;
       }
@@ -183,10 +173,6 @@ for (const name of ['API_SECRET', 'SESSION_SECRET', 'JWT_SECRET']) {
 }
 if (args.mode === 'rotate' && oldKey.length >= 32 && oldKey === newKey) fail('explicit rotation did not change CONTROL_NODE_CREDENTIAL_KEY');
 setEnvironmentValue(candidate, 'CONTROL_NODE_CREDENTIAL_KEY', newKey);
-const legacyKeys = [...new Set([
-  current.values.get('JWT_SECRET') ?? '',
-  current.values.get('SESSION_SECRET') ?? '',
-].filter(Boolean))];
-if (args.state !== '-') migrateState(args.state, oldKey, legacyKeys, newKey);
+if (args.state !== '-') migrateState(args.state, oldKey, newKey);
 atomicWrite(args['candidate-env'], `${candidate.lines.join('\n').replace(/\n+$/, '')}\n`);
 process.stdout.write(`dashboard-credential-migration=${oldKey.length >= 32 && oldKey !== newKey ? 'rekeyed' : 'verified'}\n`);

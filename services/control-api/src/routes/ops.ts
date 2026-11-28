@@ -285,7 +285,7 @@ opsRouter.post('/lessons/:id/supersede', requireRole('ADMIN','OPERATOR'), async 
 opsRouter.post('/applications/:id/canary', requireRole('ADMIN','OPERATOR'), async c => {
   const config=getApplicationConfigs().find(a=>a.id===c.req.param('id')&&a.kind==='hive-router');
   const token=config?.tokenEnv?process.env[config.tokenEnv]:undefined;
-  if(!config?.canaryModel||!token)return c.json({success:false,error:{message:'A scoped Hive Router credential and canary model must be configured'}},409);
+  if(!config?.canaryModel||!token)return c.json({success:false,error:{message:'A scoped router credential and canary model must be configured'}},409);
   const { boundedJson }=await import('../services/application-probes.js');
   const started=Date.now();let data:{status:string;durationMs:number;totalTokens:number|null};
   try {const response=await fetch(new URL('/v1/chat/completions',config.baseUrl),{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({model:config.canaryModel,messages:[{role:'user',content:'Reply OK.'}],max_tokens:1,stream:false}),signal:AbortSignal.timeout(8000),redirect:'error'});

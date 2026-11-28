@@ -42,6 +42,7 @@ import { recordHermesSecurityEvent } from './runtime-hermes-security-events.mjs'
 import { resolveSessionSecret } from './runtime-session-secret.mjs';
 import { dashboardCredentialDiagnostics, resolveDashboardSshCredentials } from './runtime-dashboard-credentials.mjs';
 import { hermesEnabled } from './runtime-integrations.mjs';
+import { controlNodeStateFile, describeReencryption, LegacyControlNodeCredentialsError, reencryptLegacyControlNodeCredentials } from './runtime-control-node-credentials.mjs';
 import { guardFrameworkUpgradeListener, parseRequestTarget, rejectUpgrade } from './runtime-upgrade.mjs';
 import {
   FRAME_SESSION_RECHECK_MS,
@@ -505,6 +506,22 @@ const nextServer = existsSync(resolve(__dirname, 'server.js'))
   ? './server.js'
   : './apps/dashboard/server.js';
 const dataDir = process.env['MAGNUS_UI_DATA_DIR']?.trim();
+
+// Refuse to start while control-node credentials remain under the legacy JWT_SECRET-derived key,
+// which Magnus 4 no longer reads, and encrypt any unencrypted ones before a request can read them.
+try {
+  const stateRoot = dataDir ? resolve(dataDir) : dirname(resolve(__dirname, nextServer));
+  const message = describeReencryption(reencryptLegacyControlNodeCredentials(controlNodeStateFile(stateRoot)));
+  if (message) console.log(`magnus-ui: ${message}`);
+} catch (error) {
+  if (error instanceof LegacyControlNodeCredentialsError) {
+    console.error(`magnus-ui: refusing to start: ${error.message}. See UPGRADING.md (4.0.0).`);
+    process.exit(1);
+  }
+  console.error(`magnus-ui: control-node credentials were not encrypted: ${error instanceof Error ? error.message : String(error)}. `
+    + '`magnus-ui credentials` shows what remains.');
+}
+
 if (dataDir) {
   // server.js changes into its own directory; keep mutable state in the data
   // directory instead. Next.js resolves its build output from `dir`, not cwd.
