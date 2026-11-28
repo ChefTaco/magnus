@@ -727,5 +727,5 @@ plugins continue to use the regular package action.
 
 Release order: an extension package that pins an exact `@hivemagnus/ardent` peer must be released
 for the new Ardent **before** Magnus moves its Ardent pin. Otherwise the strict-peer reinstall fails
-and the upgrade holds the current runtime. For Ardent 3.2.0, release those extension packages right
-after Ardent 3.2.0 and before the Magnus release that pins it.
+and the upgrade holds the current runtime. So for every Ardent release, release those extension
+packages right after it and before the Magnus release that pins it.

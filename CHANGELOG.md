@@ -91,6 +91,13 @@ migration, and no new setting.
 
 ### Changed
 
+- `npm run docs:check` (and so `npm run verify` and CI) fails when a document names a version that
+  is no longer current (`scripts/check-doc-versions.mjs`, tests in `npm run docs:test`): Magnus
+  package and image versions, "pins Ardent X" (must match the agent's `@hivemagnus/ardent`
+  dependency), links into a Hive suite release, and "Hive X.Y.Z pins …" claims, which name no version
+  because the signed suite release manifest is their only source. `CHANGELOG.md` and `UPGRADING.md`
+  (per-release history) are exempt. `docs/ARDENT.md` no longer ties the extension release order to
+  Ardent 3.2.0.
 - **Standard error envelope.** `/api/v1/credentials/*` (400 `UNKNOWN_CREDENTIAL`, 410
   `CREDENTIAL_ROTATION_RETIRED` and `CREDENTIAL_ROLLOUT_RETIRED`), `GET /security-integration/inventory`
   and `POST /security-integration/backups` (401 `UNAUTHORIZED`, 400 `VALIDATION_ERROR`, 409
