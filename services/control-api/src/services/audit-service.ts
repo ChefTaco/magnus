@@ -239,6 +239,37 @@ export async function logAuditEvent(params: AuditLogParams): Promise<void> {
   return operation;
 }
 
+const DAY_FILE = /^(\d{4}-\d{2}-\d{2})\.jsonl$/;
+
+/**
+ * Delete whole audit days older than `beforeDay` (YYYY-MM-DD, exclusive). Each day is its own HMAC
+ * chain, so removing an old day never breaks the verification of a later one. Today's file and the
+ * file appends currently go to are never removed. Runs in the append queue, so it never races an
+ * append. Returns the removed day keys, oldest first.
+ */
+export async function pruneAuditDays(beforeDay: string, now = new Date()): Promise<string[]> {
+  const operation = appendQueue.then(async () => {
+    const dir = getAuditDir();
+    let entries: string[];
+    try {
+      entries = await fs.readdir(dir);
+    } catch {
+      return [];
+    }
+    const today = dateToKey(now);
+    const removed: string[] = [];
+    for (const name of entries.sort()) {
+      const day = DAY_FILE.exec(name)?.[1];
+      if (!day || day >= beforeDay || day >= today || logFilePath(day) === activeChainPath) continue;
+      await fs.rm(path.join(dir, name), { force: true });
+      removed.push(day);
+    }
+    return removed;
+  });
+  appendQueue = operation.then(() => undefined, () => undefined);
+  return operation;
+}
+
 /** List available day keys (YYYY-MM-DD) that have audit log files. */
 export async function listAuditDays(): Promise<string[]> {
   const dir = getAuditDir();

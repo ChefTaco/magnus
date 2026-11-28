@@ -18,6 +18,9 @@ describe('magnus-server argument parsing', () => {
       command: 'restore', file: '/var/lib/magnus/backups/a.dump', envFiles: ['x'], yes: true,
     });
     expect(() => parseArgs(['restore'])).toThrow(UsageError);
+    expect(parseArgs(['prune-backups', '--dry-run', '--env-file', 'x'])).toMatchObject({ command: 'prune-backups', dryRun: true, envFiles: ['x'] });
+    expect(parseArgs(['prune-backups']).dryRun).toBe(false);
+    expect(() => parseArgs(['check', '--dry-run'])).toThrow(UsageError);
     expect(parseArgs(['env-schema', '--format', 'table'])).toMatchObject({ command: 'env-schema', format: 'table' });
     expect(parseArgs(['check', '--help']).command).toBe('help');
     expect(parseArgs(['-v']).command).toBe('version');

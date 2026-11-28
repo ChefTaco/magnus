@@ -11,7 +11,8 @@ A supervised agent no longer leaves an unknown command owner behind when it refu
 an ADMIN can settle an unknown non-Ardent command from the API and the console. The OpenAPI document
 covers every route, and the console's mission-control Hermes counts come from a new ADMIN route. The
 standalone console re-encrypts control-node credentials left under the legacy `JWT_SECRET`-derived
-key when it starts. No migration, and no new setting.
+key when it starts. Dump pruning also keeps recent dumps and the newest good one, history retention
+covers the tables it missed, and the audit log can be given an opt-in retention. No migration.
 
 ### Breaking changes (4.0.0)
 
@@ -46,8 +47,41 @@ key when it starts. No migration, and no new setting.
   before it keeps calling the old URLs, which now redirect or need a grant; reconnecting the frame
   fixes it. Inside the sandbox, dashboard preferences (theme, language) last only until the frame
   reloads, and clipboard writes from the frame may be refused. Nothing to configure.
+- **Dump pruning keeps recent dumps.** `magnus upgrade`, startup auto-migrate and
+  `magnus-server backup` now keep every dump younger than seven days on top of the newest five, and
+  always the newest good dump. Several upgrades in one week can leave more than five dumps for a few
+  days. Set `keepBackupDays: 0` in `magnus-project.json` (or `MAGNUS_BACKUP_KEEP_DAYS=0`) for the
+  previous rule. `magnus backups prune --dry-run` shows what would go.
+- **With `MAGNUS_HISTORY_RETENTION_DAYS` set**, the first daily run after the upgrade also deletes old
+  finished file pushes, rollouts, remediation executions, deploy and Hermes operation jobs, and
+  superseded drift scans, Ardent agent operations and Hermes registry receipts (see Changed). Unset,
+  nothing changes.
+- The audit log is still kept forever by default; the new `MAGNUS_AUDIT_RETENTION_DAYS` is opt-in.
 
 ### Added
+
+- **`magnus backups [prune] [--dry-run]`** (installer): lists the dumps in `backups/` with the reason
+  each one stays (newest `keepBackups`, younger than `keepBackupDays`, newest good dump, rollback
+  dump) and, with `prune`, deletes the rest under the upgrade lock. `--dry-run` deletes nothing;
+  `--keep`, `--keep-days` and `--json` as for a one-off run. New optional `keepBackupDays` in
+  `magnus-project.json` (default 7).
+- **`magnus-server prune-backups [--dry-run]`**: the same pruning of `MAGNUS_BACKUP_DIR` for installs
+  without a managed project, by `MAGNUS_BACKUP_KEEP` and the new `MAGNUS_BACKUP_KEEP_DAYS` (default
+  7; `0` turns the age rule off). Prints JSON.
+- **`MAGNUS_BACKUP_PRUNE`** (server, default `true`): `false` makes `magnus-server backup` and startup
+  auto-migrate write dumps without pruning. `magnus` sets it when it has the server dump an external
+  database and prunes afterwards itself. Whatever the setting, no server-side prune (backup, startup
+  auto-migrate, `prune-backups`) deletes a dump that the managed project in `MAGNUS_PROJECT_DIR`
+  would restore on rollback. Protected dumps are matched by file name, so a project reached through
+  a symlinked path stays protected.
+- **`MAGNUS_AUDIT_RETENTION_DAYS`** (server, unset by default): at least 90; once a day the daily audit
+  files older than that are deleted and the deletion is audited as `audit.retention` in today's file.
+  Each day is its own HMAC chain, so later days still verify. Unset, the audit log is kept forever:
+  set it only where your compliance rules allow deleting audit records.
+- History retention runs that delete anything are audited as `history.retention` with the counts.
+- `GET /api/v1/ops/retention` (and the `magnus_retention_summary` MCP tool) reports the history policy
+  for commands, deploy and Hermes operation jobs instead of "manual review", and an `AuditLog` row
+  (days on disk, oldest day, policy).
 
 - HiveSkills executor routes (`/api/v1/hiveskills/jobs/:id`, `/api/v1/hiveskills/targets/:target`)
   accept an Oathweave client-credentials token: audience `magnus`, the permission
@@ -123,6 +157,17 @@ key when it starts. No migration, and no new setting.
   because the signed suite release manifest is their only source. `CHANGELOG.md` and `UPGRADING.md`
   (per-release history) are exempt. `docs/ARDENT.md` no longer ties the extension release order to
   Ardent 3.2.0.
+- **Dump pruning** (installer and server) keeps the newest `keep` dumps, every dump younger than the
+  keep-days window and the newest good dump (non-empty, with metadata, not marked unverified), so a
+  run of failed or partial dumps can never push out the last usable one. The installer also always
+  keeps the dump the last upgrade's rollback would restore.
+- **History retention covers the tables it missed** (`MAGNUS_HISTORY_RETENTION_DAYS`, still off by
+  default): finished file pushes (which carry the pushed content), finished rollouts with their
+  targets (not one a remediation still waiting for admission reads), finished remediation executions
+  whose command is no longer in flight, finished deploy and Hermes operation jobs, drift scans except
+  the newest per node, Ardent agent operations except the newest per profile and kind and the newest
+  success per profile (HiveMem credential adoption reads it), and Hermes registry receipts except the
+  newest per item.
 - **Standard error envelope.** `/api/v1/credentials/*` (400 `UNKNOWN_CREDENTIAL`, 410
   `CREDENTIAL_ROTATION_RETIRED` and `CREDENTIAL_ROLLOUT_RETIRED`), `GET /security-integration/inventory`
   and `POST /security-integration/backups` (401 `UNAUTHORIZED`, 400 `VALIDATION_ERROR`, 409

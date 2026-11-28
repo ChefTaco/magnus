@@ -20,7 +20,7 @@ import {
   type ReleaseEnvChange,
   type UpgradePath,
 } from '@hivemagnus/magnus-contracts';
-import { backupDatabase, databaseBytes, pruneBackups, restoreCommandFor, type Backup } from './database.js';
+import { backupDatabase, databaseBytes, pruneBackups, restoreCommandFor, rollbackDumps, type Backup } from './database.js';
 import { appendMissing, generateSecret, readEnvFile } from './env-file.js';
 import { waitForHealthy, type HealthResult } from './health.js';
 import {
@@ -498,7 +498,7 @@ export async function applyInstalled(io: Io, project: Project, current: string, 
 
     publishPins(project, target);
     const pruned = pruneVersions(project, project.state.keepVersions, compareVersions);
-    const dumps = pruneBackups(project.path('backups'), project.keepBackups(), backup ? [backup.file] : []);
+    const dumps = pruneBackups(project.path('backups'), project.backupRetention(), [...(backup ? [backup.file] : []), ...rollbackDumps(project)], { now: io.now().getTime() });
     finish(entry('ok'));
     io.log(`Upgraded to ${target}: ${health.detail}.${pruned.length ? ` Removed old versions ${pruned.join(', ')}.` : ''}${dumps.length ? ` Removed ${dumps.length} old dump(s).` : ''}`);
     io.log('Agents keep running their version until you upgrade them: `magnus-server agents upgrade` or the "Upgrade agents" button on the Nodes page.');

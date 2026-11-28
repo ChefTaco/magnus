@@ -184,7 +184,7 @@ async function commandMigrations(format: 'json' | 'table'): Promise<number> {
 /** `pg_dump -Fc` into MAGNUS_BACKUP_DIR; prints JSON with the file and restore command. */
 async function commandBackup(label: string | undefined): Promise<number> {
   const { resolveDatabaseUrl } = await import('./db/client.js');
-  const { backupDatabase, backupKeep, readMigrationState } = await import('./cli/migrations.js');
+  const { backupDatabase, backupKeep, backupKeepDays, backupPruneEnabled, managedRollbackDumps, readMigrationState } = await import('./cli/migrations.js');
   const { defaultBackupDir, migrateDatabaseUrl } = await import('./cli/auto-migrate.js');
   const { magnusHome } = await import('./utils/magnus-home.js');
   const pg = (await import('pg')).default;
@@ -193,12 +193,25 @@ async function commandBackup(label: string | undefined): Promise<number> {
   await client.connect();
   try {
     const state = await readMigrationState(client, MIGRATIONS_DIR).catch(() => null);
-    const result = await backupDatabase({ databaseUrl, client, backupDir: defaultBackupDir(process.env, magnusHome()), label: label ?? `manual-${await version()}`, ...optional("pgDump", process.env['MAGNUS_PG_DUMP']), lastApplied: state?.lastApplied ?? null, keep: backupKeep() });
+    const result = await backupDatabase({ databaseUrl, client, backupDir: defaultBackupDir(process.env, magnusHome()), label: label ?? `manual-${await version()}`, ...optional("pgDump", process.env['MAGNUS_PG_DUMP']), lastApplied: state?.lastApplied ?? null, keep: backupPruneEnabled() ? backupKeep() : 0, keepDays: backupKeepDays(), protect: managedRollbackDumps() });
     console.log(JSON.stringify(result));
     return 0;
   } finally {
     await client.end().catch(() => undefined);
   }
+}
+
+/** Delete dumps beyond the retention (MAGNUS_BACKUP_KEEP, MAGNUS_BACKUP_KEEP_DAYS); prints JSON. */
+async function commandPruneBackups(dryRun: boolean): Promise<number> {
+  const { backupKeep, backupKeepDays, managedRollbackDumps, pruneBackups } = await import('./cli/migrations.js');
+  const { defaultBackupDir } = await import('./cli/auto-migrate.js');
+  const { magnusHome } = await import('./utils/magnus-home.js');
+  const dir = defaultBackupDir(process.env, magnusHome());
+  const keep = backupKeep();
+  const keepDays = backupKeepDays();
+  const removed = pruneBackups(dir, keep, { keepDays, dryRun, protect: managedRollbackDumps() });
+  console.log(JSON.stringify({ dir, keep, keepDays, dryRun, [dryRun ? 'wouldRemove' : 'removed']: removed }));
+  return 0;
 }
 
 /** Replace the database with a dump; refuses while this host's server is running. */
@@ -314,6 +327,9 @@ async function run(argv: readonly string[]): Promise<number> {
     case 'backup':
       loadEnvFiles(options.envFiles);
       return commandBackup(options.label);
+    case 'prune-backups':
+      loadEnvFiles(options.envFiles);
+      return commandPruneBackups(options.dryRun);
     case 'restore':
       loadEnvFiles(options.envFiles);
       return commandRestore(options.file!, options.yes);

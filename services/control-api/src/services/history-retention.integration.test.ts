@@ -71,6 +71,73 @@ describe.skipIf(!process.env['TEST_DATABASE_URL'])('history retention (PostgreSQ
     expect(await db.remoteCommand.count({ where: { id: leased.id } })).toBe(1);
   });
 
+  it('prunes finished pushes, rollouts, remediations and jobs, and keeps the newest drift scan, Ardent operation and receipt', async () => {
+    const recent = new Date();
+    const older = new Date(old.getTime() - 86_400_000);
+    const push = (status: string, createdAt: Date) => db.filePatchTask.create({ data: { nodeId: id, filePath: '/etc/fixture', content: 'x', status, createdBy: 'system', createdAt } });
+    const pushOld = await push('completed', old); const pushPending = await push('pending', old); const pushRecent = await push('failed', recent);
+
+    const run = (key: string, status: string, completedAt: Date | null) => db.executionRun.create({ data: { id: `${id}-${key}`, type: 'command', status, createdBy: 'system', createdAt: old, completedAt,
+      targets: { create: [{ nodeId: id, status: 'completed' }] } } });
+    await run('done', 'completed', old); await run('running', 'running', null); await run('recent', 'failed', recent);
+
+    const rule = await db.remediationRule.create({ data: { name: `${id}-remediation`, agentDefinitionId: 'restart-service.v1' } });
+    const remediation = (status: string, triggeredAt: Date, completedAt: Date | null) => db.remediationExecution.create({ data: { ruleId: rule.id, anomalyEventId: 'fixture', nodeId: id, status, triggeredAt, completedAt } });
+    const remediationOld = await remediation('completed', old, old);
+    const remediationApproving = await remediation('approving', old, null);
+    const remediationInFlight = await remediation('failed', old, old);
+    await db.remoteCommand.create({ data: { nodeId: id, command: 'uptime', status: 'RUNNING', idempotencyKey: `${id}-remediation`, createdBy: 'system', createdAt: recent, correlationId: `remediation_${remediationInFlight.id}` } });
+    // The approving remediation's admitted rollout is kept even though it is old and finished.
+    await db.executionRun.create({ data: { id: `remediation_${remediationApproving.id}`, type: 'remediation', status: 'completed', createdBy: 'system', createdAt: old, completedAt: old } });
+
+    await db.driftScan.create({ data: { nodeId: id, status: 'clean', findings: '[]', scannedAt: older } });
+    const newestScan = await db.driftScan.create({ data: { nodeId: id, status: 'drifted', findings: '[]', scannedAt: old } });
+
+    const operation = (key: string, kind: string, status: string, at: Date) => db.ardentAgentOperation.create({ data: { id: `${id}-${key}`, kind, nodeId: id, profile: 'p1', status,
+      requestJson: '{}', createdBy: 'system', createdAt: at, completedAt: at } });
+    await operation('enroll-old', 'hivemem', 'succeeded', older);
+    await operation('enroll-newest-success', 'hivemem', 'succeeded', old);
+    await operation('enroll-failed', 'hivemem', 'failed', new Date(old.getTime() + 1000));
+    await operation('deploy-old', 'deploy', 'failed', older);
+    await operation('deploy-new', 'deploy', 'failed', old);
+
+    const receipt = (slug: string, createdAt: Date) => db.hermesRegistryReceipt.create({ data: { nodeId: id, installationId: `${id}-install`, kind: 'skill', slug, revision: 1, sha256: 'b'.repeat(64), status: 'applied', createdAt } });
+    const receiptOld = await receipt('one', older); const receiptNewest = await receipt('one', old); const receiptOther = await receipt('two', older);
+
+    const deploy = await db.deployJob.create({ data: { type: 'deploy', status: 'completed', targets: '[]', createdBy: 'system', startedAt: old, completedAt: old } });
+    const deployRunning = await db.deployJob.create({ data: { type: 'deploy', status: 'running', targets: '[]', createdBy: 'system', startedAt: old } });
+
+    const counts = await retention.pruneHistory(90);
+    for (const key of ['filePatches', 'driftScans', 'hermesRegistryReceipts', 'deployJobs', 'rollouts', 'remediations'] as const) expect(counts[key]).toBeGreaterThanOrEqual(1);
+    expect(counts.ardentOperations).toBeGreaterThanOrEqual(2);
+    expect(await db.filePatchTask.findMany({ where: { nodeId: id }, select: { id: true } })).toEqual(expect.arrayContaining([{ id: pushPending.id }, { id: pushRecent.id }]));
+    expect(await db.filePatchTask.count({ where: { id: pushOld.id } })).toBe(0);
+
+    const runs = (await db.executionRun.findMany({ where: { OR: [{ id: { startsWith: id } }, { id: `remediation_${remediationApproving.id}` }] }, select: { id: true } })).map(row => row.id).sort();
+    expect(runs).toEqual([`${id}-recent`, `${id}-running`, `remediation_${remediationApproving.id}`].sort());
+    expect(await db.rolloutTarget.count({ where: { rolloutId: `${id}-done` } })).toBe(0);
+
+    const remediations = (await db.remediationExecution.findMany({ where: { ruleId: rule.id }, select: { id: true } })).map(row => row.id).sort();
+    expect(remediations).toEqual([remediationApproving.id, remediationInFlight.id].sort());
+    expect(remediations).not.toContain(remediationOld.id);
+
+    expect((await db.driftScan.findMany({ where: { nodeId: id }, select: { id: true } }))).toEqual([{ id: newestScan.id }]);
+    expect((await db.ardentAgentOperation.findMany({ where: { nodeId: id }, select: { id: true } })).map(row => row.id).sort())
+      .toEqual([`${id}-deploy-new`, `${id}-enroll-failed`, `${id}-enroll-newest-success`].sort());
+    expect((await db.hermesRegistryReceipt.findMany({ where: { nodeId: id }, select: { id: true } })).map(row => row.id).sort()).toEqual([receiptNewest.id, receiptOther.id].sort());
+    expect(await db.hermesRegistryReceipt.count({ where: { id: receiptOld.id } })).toBe(0);
+    expect(await db.deployJob.count({ where: { id: deploy.id } })).toBe(0);
+    expect(await db.deployJob.count({ where: { id: deployRunning.id } })).toBe(1);
+
+    await db.remoteCommand.deleteMany({ where: { correlationId: `remediation_${remediationInFlight.id}` } });
+    await db.remediationExecution.deleteMany({ where: { ruleId: rule.id } });
+    await db.remediationRule.delete({ where: { id: rule.id } });
+    await db.executionRun.deleteMany({ where: { OR: [{ id: { startsWith: id } }, { id: `remediation_${remediationApproving.id}` }] } });
+    await db.ardentAgentOperation.deleteMany({ where: { nodeId: id } });
+    await db.hermesRegistryReceipt.deleteMany({ where: { nodeId: id } });
+    await db.deployJob.delete({ where: { id: deployRunning.id } });
+  });
+
   it('is off unless MAGNUS_HISTORY_RETENTION_DAYS is set to at least 7', () => {
     vi.stubEnv('MAGNUS_HISTORY_RETENTION_DAYS', '');
     expect(retention.historyRetentionDays()).toBeNull();

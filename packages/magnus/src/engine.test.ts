@@ -1,8 +1,9 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { pruneBackups } from './database.js';
+import { backups } from './backups.js';
+import { backupDatabase, planBackupPrune, pruneBackups } from './database.js';
 import { appendMissing, quoteEnvValue, readEnvFile, renderEnv } from './env-file.js';
 import { init, type InitOptions } from './init.js';
 import type { Io, RunOptions, RunResult } from './io.js';
@@ -613,11 +614,129 @@ describe('generated files', () => {
       writeFileSync(join(dir, `${i}.dump`), 'PGDMP');
       writeFileSync(join(dir, `${i}.dump.json`), JSON.stringify({ label: `pre-upgrade-3.0.${i}-to-3.0.${i + 1}`, createdAt: `2026-11-0${i + 1}T00:00:00Z` }));
     }
-    const removed = pruneBackups(dir, 3, [join(dir, '0.dump')]).map((file) => file.slice(dir.length + 1));
+    const now = Date.parse('2026-12-01T00:00:00Z');
+    const removed = pruneBackups(dir, { keep: 3, keepDays: 7 }, [join(dir, '0.dump')], { now }).map((file) => file.slice(dir.length + 1));
     expect(removed).toEqual(['4.dump', '3.dump', '2.dump', '1.dump']);
     expect(['0.dump', '5.dump', '6.dump', '7.dump'].every((name) => existsSync(join(dir, name)))).toBe(true);
     expect(existsSync(join(dir, '1.dump.json'))).toBe(false);
-    expect(pruneBackups(dir, 3, [join(dir, '0.dump')])).toEqual([]);
+    expect(pruneBackups(dir, { keep: 3, keepDays: 7 }, [join(dir, '0.dump')], { now })).toEqual([]);
+  });
+});
+
+describe('magnus backups', () => {
+  const dumpAt = (dir: string, name: string, createdAt: string | null, extra: Record<string, unknown> = {}, body = 'PGDMP') => {
+    writeFileSync(join(dir, name), body);
+    if (createdAt) writeFileSync(join(dir, `${name}.json`), JSON.stringify({ label: name.replace('.dump', ''), createdAt, ...extra }));
+  };
+
+  it('keeps every dump younger than keepDays, even beyond keep', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'magnus-dumps-'));
+    const now = Date.parse('2026-11-28T12:00:00Z');
+    for (let day = 20; day <= 28; day++) dumpAt(dir, `d${day}.dump`, `2026-11-${day}T00:00:00Z`);
+    const plan = planBackupPrune(dir, { keep: 2, keepDays: 5 }, [], now);
+    expect(plan.remove.map((dump) => dump.file.slice(dir.length + 1))).toEqual(['d23.dump', 'd22.dump', 'd21.dump', 'd20.dump']);
+    expect(plan.keep.find((dump) => dump.file.endsWith('d24.dump'))?.reasons).toEqual(['younger than 5d']);
+    // keepDays 0 turns the age rule off: only the newest two stay.
+    expect(planBackupPrune(dir, { keep: 2, keepDays: 0 }, [], now).keep.map((dump) => dump.file.slice(dir.length + 1))).toEqual(['d28.dump', 'd27.dump']);
+  });
+
+  it('never removes the newest good dump, whatever failed or unverified dumps came after it', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'magnus-dumps-'));
+    const now = Date.parse('2026-11-28T00:00:00Z');
+    dumpAt(dir, 'good-old.dump', '2026-10-01T00:00:00Z');
+    dumpAt(dir, 'good-older.dump', '2026-09-01T00:00:00Z');
+    dumpAt(dir, 'unverified.dump', '2026-11-01T00:00:00Z', { verified: false });
+    dumpAt(dir, 'empty.dump', '2026-11-02T00:00:00Z', {}, '');
+    dumpAt(dir, 'no-metadata.dump', null);
+    const removed = pruneBackups(dir, { keep: 1, keepDays: 0 }, [], { now }).map((file) => file.slice(dir.length + 1)).sort();
+    expect(existsSync(join(dir, 'good-old.dump'))).toBe(true);
+    expect(removed).toEqual(['empty.dump', 'good-older.dump', 'unverified.dump']);
+    // The newest by time is the file without metadata (mtime now): it is one of the newest `keep`.
+    expect(existsSync(join(dir, 'no-metadata.dump'))).toBe(true);
+  });
+
+  it('keeps the dump the last upgrade would roll back to', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'magnus-dumps-'));
+    dumpAt(dir, 'a.dump', '2026-01-01T00:00:00Z');
+    dumpAt(dir, 'b.dump', '2026-02-01T00:00:00Z');
+    dumpAt(dir, 'c.dump', '2026-03-01T00:00:00Z');
+    const plan = planBackupPrune(dir, { keep: 1, keepDays: 0 }, [join(dir, 'a.dump')], Date.parse('2026-11-28T00:00:00Z'));
+    expect(plan.remove.map((dump) => dump.file.slice(dir.length + 1))).toEqual(['b.dump']);
+    expect(plan.keep.find((dump) => dump.file.endsWith('a.dump'))?.reasons).toEqual(['rollback dump']);
+    // keep below 1 never prunes.
+    expect(pruneBackups(dir, { keep: 0, keepDays: 0 }, [])).toEqual([]);
+  });
+
+  it('lists and dry-runs without deleting, then prunes by the project retention under the upgrade lock', async () => {
+    const project = makeProject({ keepBackups: 1, keepBackupDays: 0 });
+    const host = makeHost(project, {});
+    const dir = project.path('backups');
+    mkdirSync(dir);
+    dumpAt(dir, 'old.dump', '2026-09-01T00:00:00Z');
+    dumpAt(dir, 'rollback.dump', '2026-09-15T00:00:00Z');
+    dumpAt(dir, 'new.dump', '2026-10-01T00:00:00Z');
+    project.state.history.push({ action: 'upgrade', from: '1.0.2', to: '1.0.3', at: '2026-09-15T00:00:00Z', result: 'ok', migrations: [], backup: join(dir, 'rollback.dump') });
+    project.save();
+
+    expect(await backups(host.io, { dir: project.dir, prune: false, dryRun: false, json: false })).toBe(0);
+    expect(host.logs.join('\n')).toMatch(/old\s+prunable/);
+    expect(await backups(host.io, { dir: project.dir, prune: true, dryRun: true, json: false })).toBe(0);
+    expect(host.logs.join('\n')).toMatch(/would be removed \(dry run; nothing deleted\)/);
+    expect(existsSync(join(dir, 'old.dump'))).toBe(true);
+
+    mkdirSync(project.path('run'), { recursive: true });
+    writeFileSync(project.path('run', 'upgrade.lock'), `${process.pid}\n`);
+    await expect(backups(host.io, { dir: project.dir, prune: true, dryRun: false, json: false })).rejects.toThrow(/holds the lock/);
+
+    host.logs.length = 0;
+    expect(await backups(host.io, { dir: project.dir, prune: true, dryRun: false, json: true, breakLock: true })).toBe(0);
+    const report = JSON.parse(host.logs.join('\n')) as { removed: string[]; keep: Array<{ file: string; reasons: string[] }> };
+    expect(report.removed).toEqual([join(dir, 'old.dump')]);
+    expect(existsSync(join(dir, 'old.dump'))).toBe(false);
+    expect(existsSync(join(dir, 'old.dump.json'))).toBe(false);
+    expect(report.keep.map((dump) => dump.file.slice(dir.length + 1)).sort()).toEqual(['new.dump', 'rollback.dump']);
+    expect(existsSync(project.path('run', 'upgrade.lock'))).toBe(false);
+
+    await expect(backups(host.io, { dir: project.dir, prune: true, dryRun: true, json: false, keep: 0 })).rejects.toThrow(/--keep/);
+  });
+
+  it('protects the rollback dump when the project is reached through a symlink', () => {
+    const real = mkdtempSync(join(tmpdir(), 'magnus-real-'));
+    const linked = join(mkdtempSync(join(tmpdir(), 'magnus-link-')), 'project');
+    symlinkSync(real, linked);
+    const dir = join(real, 'backups');
+    mkdirSync(dir);
+    dumpAt(dir, 'rollback.dump', '2026-01-01T00:00:00Z');
+    dumpAt(dir, 'b.dump', '2026-02-01T00:00:00Z');
+    dumpAt(dir, 'c.dump', '2026-03-01T00:00:00Z');
+    const plan = planBackupPrune(join(linked, 'backups'), { keep: 1, keepDays: 0 }, [join(linked, 'backups', 'rollback.dump')], Date.parse('2026-11-28T00:00:00Z'));
+    expect(plan.remove.map((dump) => dump.file.split('/').pop())).toEqual(['b.dump']);
+    expect(planBackupPrune(dir, { keep: 1, keepDays: 0 }, [join(linked, 'backups', 'rollback.dump')]).keep.map((dump) => dump.file.split('/').pop()).sort())
+      .toEqual(['c.dump', 'rollback.dump']);
+  });
+
+  it('asks the server not to prune when it dumps an external database, so the rollback dump survives failed attempts', async () => {
+    const project = makeProject();
+    const host = makeHost(project, {});
+    const seen: Array<NodeJS.ProcessEnv | undefined> = [];
+    const run = host.io.run;
+    host.io.run = async (command, args, options = {}) => {
+      if (args.some((arg) => arg.endsWith(join('magnus-server', 'dist', 'cli.js'))) && args.includes('backup')) seen.push(options.env);
+      return run(command, args, options);
+    };
+    const backup = await backupDatabase(host.io, project, '1.0.3', 'pre-upgrade-1.0.3-to-1.0.4');
+    expect(backup.file).toBe(join(project.dir, 'backups', 'x.dump'));
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.['MAGNUS_BACKUP_PRUNE']).toBe('false');
+    expect(seen[0]?.['MAGNUS_BACKUP_DIR']).toBe(project.path('backups'));
+  });
+
+  it('parses backups prune and its options', () => {
+    const parsed = parseArgs(['backups', 'prune', '--dry-run', '--keep', '3', '--keep-days=14']);
+    expect(parsed.command).toBe('backups');
+    expect(parsed.args).toEqual(['prune']);
+    expect(parsed.values.get('--keep-days')).toBe('14');
+    expect(() => parseArgs(['backups', 'delete'])).toThrow(ArgsError);
   });
 });
 

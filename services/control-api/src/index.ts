@@ -38,6 +38,7 @@ const { stopHealthRetention } = await import('./services/health-retention.js');
 const { startNotificationRetention, stopNotificationRetention } = await import('./services/notification-retention.js');
 const { startAiScheduler, stopAiScheduler } = await import('./services/ai-schedule-service.js');
 const { startHistoryRetention, stopHistoryRetention } = await import('./services/history-retention.js');
+const { startAuditRetention, stopAuditRetention } = await import('./services/audit-retention.js');
 
 const { startCommandWorker, closeCommandQueue } = await import('./queue/workers.js');
 const { startUpdateCheck, stopUpdateCheck } = await import('./services/update-check-service.js');
@@ -98,6 +99,7 @@ function startBackgroundServices(listenPort: number): void {
   startHealthRetention();
   startNotificationRetention();
   startHistoryRetention();
+  startAuditRetention();
 
   startSecurityExporter();
   startCommandWorker();
@@ -193,6 +195,7 @@ async function shutdown(signal: string) {
       stopRolloutReconciler();
       stopAiScheduler();
       stopHistoryRetention();
+      stopAuditRetention();
       stopNodeIssueMonitor();
       stopUpgradeReadinessMonitor();
       stopApplicationProbes();

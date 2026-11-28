@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { restoreAsideSchema, restoreFinishSql, restoreRevertSql, restoreSwapSql } from '@hivemagnus/magnus-contracts';
 import type pg from 'pg';
 
@@ -184,6 +184,10 @@ export interface BackupOptions {
   lastApplied?: string | null;
   /** Dumps to keep in backupDir (MAGNUS_BACKUP_KEEP), the new one included. */
   keep?: number;
+  /** Dumps younger than this many days are kept too (MAGNUS_BACKUP_KEEP_DAYS). */
+  keepDays?: number;
+  /** Dumps a prune must never delete (compared by file name), such as a managed project's rollback dump. */
+  protect?: readonly string[];
 }
 
 interface BackupMetadata {
@@ -223,22 +227,43 @@ export function findReusableBackup(dir: string, label: string, lastApplied: stri
   return best?.file ?? null;
 }
 
+export interface BackupPruneOptions {
+  /** Dumps younger than this many days are kept whatever `keep` says (MAGNUS_BACKUP_KEEP_DAYS); 0 turns it off. */
+  keepDays?: number;
+  now?: Date;
+  /** Report what would go; delete nothing. */
+  dryRun?: boolean;
+  /** Dumps never deleted, compared by file name (they all live in `dir`), so a symlinked path still matches. */
+  protect?: readonly string[];
+}
+
 /**
- * Keep the newest `keep` dumps; older ones go. The dump just written is the newest, so it always
- * stays. Labels name a version (`pre-migrate-X.Y.Z`, `manual-X.Y.Z`), so exempting the newest dump of
- * each label would keep one dump per release forever. Returns removed files.
+ * Keep the newest `keep` dumps, every dump younger than `keepDays`, and the newest verified dump
+ * (non-empty, with metadata, not marked unverified), so failed dumps can never push out the last
+ * usable one; older ones go. The dump just written is the newest, so it always stays. Labels name a
+ * version (`pre-migrate-X.Y.Z`, `manual-X.Y.Z`), so exempting the newest dump of each label would
+ * keep one dump per release forever. Returns the removed (with `dryRun`: removable) files.
  */
-export function pruneBackups(dir: string, keep: number): string[] {
+export function pruneBackups(dir: string, keep: number, options: BackupPruneOptions = {}): string[] {
   if (!Number.isInteger(keep) || keep < 1) return [];
+  const now = (options.now ?? new Date()).getTime();
+  const maxAgeMs = Math.max(0, options.keepDays ?? 0) * 86_400_000;
   const dumps = dumpsIn(dir).map(file => {
     const meta = readMetadata(file);
-    return { file, at: Date.parse(meta?.createdAt ?? '') || statSync(file).mtimeMs };
-  }).sort((a, b) => b.at - a.at);
+    const created = Date.parse(meta?.createdAt ?? '');
+    const bytes = statSync(file).size;
+    return { file, at: Number.isFinite(created) ? created : statSync(file).mtimeMs,
+      good: bytes > 0 && meta !== null && Number.isFinite(created) && (meta as { verified?: boolean }).verified !== false };
+  }).sort((a, b) => b.at - a.at || b.file.localeCompare(a.file));
+  const newestGood = dumps.find(dump => dump.good)?.file;
+  const protectedNames = new Set((options.protect ?? []).map(file => basename(file)));
   const removed: string[] = [];
   dumps.forEach((dump, index) => {
-    if (index < keep) return;
-    rmSync(dump.file, { force: true });
-    rmSync(`${dump.file}.json`, { force: true });
+    if (index < keep || dump.file === newestGood || protectedNames.has(basename(dump.file)) || (maxAgeMs > 0 && now - dump.at < maxAgeMs)) return;
+    if (!options.dryRun) {
+      rmSync(dump.file, { force: true });
+      rmSync(`${dump.file}.json`, { force: true });
+    }
     removed.push(dump.file);
   });
   return removed;
@@ -247,6 +272,42 @@ export function pruneBackups(dir: string, keep: number): string[] {
 export function backupKeep(env: NodeJS.ProcessEnv = process.env): number {
   const value = Number.parseInt(env['MAGNUS_BACKUP_KEEP'] ?? '', 10);
   return Number.isInteger(value) && value > 0 ? value : 5;
+}
+
+/**
+ * MAGNUS_BACKUP_PRUNE=false: dumps are written but never pruned by this server. `magnus` sets it when
+ * it runs `magnus-server backup` for a managed project and prunes afterwards itself, knowing which
+ * dump a rollback restores. `magnus-server prune-backups` still prunes when asked explicitly.
+ */
+export function backupPruneEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env['MAGNUS_BACKUP_PRUNE']?.trim().toLowerCase() !== 'false';
+}
+
+/**
+ * The dumps a `magnus` rollback of the managed project in MAGNUS_PROJECT_DIR could still restore
+ * (the interrupted upgrade's and the last successful upgrade's), so no server-side prune deletes
+ * them. Empty without a readable magnus-project.json.
+ */
+export function managedRollbackDumps(env: NodeJS.ProcessEnv = process.env): string[] {
+  const dir = env['MAGNUS_PROJECT_DIR']?.trim();
+  if (!dir) return [];
+  try {
+    const state = JSON.parse(readFileSync(join(dir, 'magnus-project.json'), 'utf8')) as {
+      inProgress?: { backup?: string }; history?: Array<{ action?: string; result?: string; backup?: string }>;
+    };
+    const lastUpgrade = (state.history ?? []).findLast(entry => entry.action === 'upgrade' && entry.result === 'ok' && entry.backup);
+    return [state.inProgress?.backup, lastUpgrade?.backup].filter((file): file is string => typeof file === 'string' && file !== '');
+  } catch {
+    return [];
+  }
+}
+
+/** MAGNUS_BACKUP_KEEP_DAYS: dumps younger than this are never pruned (default 7; 0 turns it off). */
+export function backupKeepDays(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env['MAGNUS_BACKUP_KEEP_DAYS']?.trim();
+  if (!raw) return 7;
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? value : 7;
 }
 
 /**
@@ -300,7 +361,7 @@ export async function backupDatabase(options: BackupOptions): Promise<BackupResu
     verified: listed !== null,
     restoreCommand: restore,
   }, null, 2)}\n`, { mode: 0o600 });
-  if (options.keep) pruneBackups(options.backupDir, options.keep);
+  if (options.keep) pruneBackups(options.backupDir, options.keep, { keepDays: options.keepDays ?? 0, now, ...(options.protect ? { protect: options.protect } : {}) });
   return { file, metadataFile, restoreCommand: restore };
 }
 

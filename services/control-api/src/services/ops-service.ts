@@ -4,7 +4,9 @@ import { getRedis } from '../queue/redis.js';
 import { withReadRetry } from '../db/read-retry.js';
 import { API_SECRET, IAM_CORE_URL, getNodeManagerSecret, getValidatedEnv } from '../utils/env.js';
 import { secretFingerprint } from './credential-rotation-service.js';
-import { queryAuditEvents } from './audit-service.js';
+import { listAuditDays, queryAuditEvents } from './audit-service.js';
+import { auditRetentionDays } from './audit-retention.js';
+import { historyRetentionDays } from './history-retention.js';
 import { getRateLimitHealth } from '../middleware/rate-limit.js';
 import { listHermesInstallations } from './hermes-service.js';
 import { getHealthRetentionCutoffs, getHealthRetentionPolicy, getRetentionPolicyReadiness } from './health-retention.js';
@@ -343,6 +345,9 @@ export async function getRetentionSummary(): Promise<Record<string, unknown>> {
   const notificationPolicy = getNotificationRetentionPolicy();
   const notificationReadCutoff = new Date(generatedAt.getTime() - notificationPolicy.readDays * 86_400_000);
   const notificationMaximumCutoff = new Date(generatedAt.getTime() - notificationPolicy.maximumDays * 86_400_000);
+  const historyDays = historyRetentionDays();
+  const historyPolicy = historyDays === null ? 'kept (MAGNUS_HISTORY_RETENTION_DAYS unset)' : `${historyDays} days once finished`;
+  const auditDays = await listAuditDays();
   const [health, gpu, engineeringMetrics, recoveryExercises, logs, notifications, securityEvents, commands, deploys, hermesJobs,
     oldestHealth, oldestGpu, oldestEngineeringMetric, oldestRecoveryExercise, oldestLog, oldestNotification, oldestSecurityEvent] = await withReadRetry(
     'retention summary',
@@ -381,9 +386,11 @@ export async function getRetentionSummary(): Promise<Record<string, unknown>> {
       { name: 'LogEntry', count: logs, oldestAt: oldestLog?.timestamp.toISOString() ?? null, policy: `${process.env['LOG_RETENTION_DAYS'] ?? 30} days` },
       { name: 'Notification', count: notifications, oldestAt: oldestNotification?.createdAt.toISOString() ?? null, policy: `read ${notificationPolicy.readDays}d; maximum ${notificationPolicy.maximumDays}d`, cutoffs: { readBefore: notificationReadCutoff.toISOString(), expiresBefore: notificationMaximumCutoff.toISOString() } },
       { name: 'SecurityFusionEvent', count: securityEvents, oldestAt: oldestSecurityEvent?.observedAt.toISOString() ?? null, policy: '90 days; linked evidence preserved by case policy' },
-      { name: 'RemoteCommand', count: commands, oldestAt: null, policy: 'manual review' },
-      { name: 'DeployJob', count: deploys, oldestAt: null, policy: 'manual review' },
-      { name: 'HermesOperationJob', count: hermesJobs, oldestAt: null, policy: 'manual review' },
+      { name: 'RemoteCommand', count: commands, oldestAt: null, policy: historyPolicy },
+      { name: 'DeployJob', count: deploys, oldestAt: null, policy: historyPolicy },
+      { name: 'HermesOperationJob', count: hermesJobs, oldestAt: null, policy: historyPolicy },
+      { name: 'AuditLog', count: auditDays.length, oldestAt: auditDays.at(-1) ? `${auditDays.at(-1)}T00:00:00.000Z` : null,
+        policy: auditRetentionDays() !== null ? `${auditRetentionDays()} days (daily files)` : 'kept forever (MAGNUS_AUDIT_RETENTION_DAYS unset)' },
     ],
   };
 }

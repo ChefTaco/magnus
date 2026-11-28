@@ -1,5 +1,5 @@
 /** Argument parsing for the `magnus-server` CLI (no dependencies, strict). */
-export type CliCommand = 'start' | 'check' | 'migrate' | 'migrations' | 'verify-migrations' | 'verify-initialization' | 'backup' | 'restore' | 'upgrade' | 'rollback' | 'agents' | 'node-auth' | 'env-schema' | 'help' | 'version';
+export type CliCommand = 'start' | 'check' | 'migrate' | 'migrations' | 'verify-migrations' | 'verify-initialization' | 'backup' | 'prune-backups' | 'restore' | 'upgrade' | 'rollback' | 'agents' | 'node-auth' | 'env-schema' | 'help' | 'version';
 
 export interface CliOptions {
   command: CliCommand;
@@ -16,6 +16,8 @@ export interface CliOptions {
   file?: string;
   /** `restore`: do not ask for confirmation. */
   yes: boolean;
+  /** `prune-backups`: list what would be deleted, delete nothing. */
+  dryRun: boolean;
   /** `upgrade`, `rollback` and `agents`: arguments passed through unparsed. */
   passthrough: string[];
 }
@@ -32,6 +34,7 @@ Commands:
   verify-initialization Verify migrations and committed base initialization without changes
   migrations    Show applied and pending migrations with their impact notes
   backup        Dump PostgreSQL (pg_dump -Fc) into MAGNUS_BACKUP_DIR and print the restore command
+  prune-backups Delete dumps in MAGNUS_BACKUP_DIR beyond MAGNUS_BACKUP_KEEP / MAGNUS_BACKUP_KEEP_DAYS (--dry-run lists them)
   restore FILE  Replace the database with a dump (stop the server first; asks unless --yes)
   upgrade       Upgrade a \`magnus init\` project (runs \`magnus upgrade\`; see --help there)
   rollback      Switch a \`magnus init\` project back to the previous version
@@ -47,16 +50,17 @@ Options:
   --format <fmt>      env-schema (default json), check and migrations (default table): json or table
   --label <text>      backup: label in the dump file name
   --yes               restore: do not ask for confirmation
+  --dry-run           prune-backups: list the dumps that would be deleted; delete nothing
   -h, --help          Show this help
   -v, --version       Print the version
 `;
 
-const COMMANDS = new Set<CliCommand>(['start', 'check', 'migrate', 'migrations', 'verify-migrations', 'verify-initialization', 'backup', 'restore', 'upgrade', 'rollback', 'agents', 'node-auth', 'env-schema', 'help', 'version']);
+const COMMANDS = new Set<CliCommand>(['start', 'check', 'migrate', 'migrations', 'verify-migrations', 'verify-initialization', 'backup', 'prune-backups', 'restore', 'upgrade', 'rollback', 'agents', 'node-auth', 'env-schema', 'help', 'version']);
 /** Commands whose remaining arguments belong to another tool. */
 const PASSTHROUGH = new Set<CliCommand>(['upgrade', 'rollback', 'agents', 'node-auth']);
 
 export function parseArgs(argv: readonly string[]): CliOptions {
-  const options: CliOptions = { command: 'start', envFiles: [], migrate: false, format: 'json', formatGiven: false, passthrough: [], yes: false };
+  const options: CliOptions = { command: 'start', envFiles: [], migrate: false, format: 'json', formatGiven: false, passthrough: [], yes: false, dryRun: false };
   let commandSeen = false;
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index]!;
@@ -83,6 +87,7 @@ export function parseArgs(argv: readonly string[]): CliOptions {
       options.formatGiven = true;
     } else if (arg === '--label' || arg.startsWith('--label=')) options.label = value('--label');
     else if (arg === '--yes') options.yes = true;
+    else if (arg === '--dry-run' && options.command === 'prune-backups') options.dryRun = true;
     else if (arg.startsWith('-')) throw new UsageError(`unknown option ${arg}`);
     else if (commandSeen && options.command === 'restore' && options.file === undefined) options.file = arg;
     else if (!commandSeen && COMMANDS.has(arg as CliCommand)) {

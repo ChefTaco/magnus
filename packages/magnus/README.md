@@ -70,7 +70,12 @@ Slow or one-way migrations need `--yes`. An upgrade that is interrupted is recor
 ```bash
 magnus rollback [--restore-db] [--force]   # back to the previous version
 magnus restore <dump>                      # stop, restore into a clean schema, start again
+magnus backups [prune] [--dry-run]         # list dumps; delete those the retention does not keep
 ```
+
+Dumps in `backups/` are pruned after every successful upgrade: the newest `keepBackups` (5) and any
+younger than `keepBackupDays` (7) stay, as do the newest good dump and the one a rollback would
+restore.
 
 `magnus-server upgrade` hands the same command to the project it was installed into.
 
