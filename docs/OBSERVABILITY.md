@@ -105,9 +105,9 @@ file that is a regular file (not a symlink), at most 128 KB, and not group- or w
 | `healthPath` | yes | Unauthenticated reachability check |
 | `readinessPath`, `queuePath` | no | Authenticated readiness and worker-queue checks |
 | `tokenEnv` | no | Name of the server environment variable that holds the probe's bearer token |
-| `kind` | no | `http` (default), `workflow-queue`, `backend-pool`, `hive-router` or `hivemem` |
+| `kind` | no | `http` (default), `workflow-queue`, `backend-pool`, `hive-router` (an Emberpath router; the value keeps the former Hive Router name) or `hivemem` |
 | `maxQueueAgeMs` | no | Queue latency limit for `workflow-queue` (default 300000) |
-| `canaryModel` | no | Model expected in a `hive-router` readiness response |
+| `canaryModel` | no | Model expected in a `hive-router` (Emberpath) readiness response |
 | `restartService` | no | systemd unit an approved remediation plan may restart |
 | `dependsOn` | no | IDs of other probes this one depends on |
 

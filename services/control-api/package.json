@@ -1,7 +1,7 @@
 {
   "name": "@hivemagnus/magnus-server",
   "version": "3.6.0",
-  "description": "Magnus server: the fleet control plane API (Hono, PostgreSQL, Redis) for nodes running magnus-agent, with optional Hive IAM, Hive Router, HiveMem, Hermes Agent and external security console integrations.",
+  "description": "Magnus server: the fleet control plane API (Hono, PostgreSQL, Redis) for nodes running magnus-agent, with optional Oathweave, Emberpath, HiveMem, Hermes Agent and external security console integrations.",
   "keywords": [
     "magnus",
     "fleet",
