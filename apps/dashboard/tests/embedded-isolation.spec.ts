@@ -150,8 +150,7 @@ async function signIn(page: Page): Promise<void> {
  * Every console API response the dashboard document received, by path, read from the browser's
  * network layer (Chromium reports responses that CORS then hides from the page's script).
  */
-async function watchConsoleApi(page: Page): Promise<Map<string, number[]>> {
-  const seen = new Map<string, number[]>();
+async function watchConsoleApi(page: Page): Promise<() => Map<string, number[]>> {
   const cdp = await page.context().newCDPSession(page);
   await cdp.send('Network.enable');
   const frameRequests = new Map<string, string>();
@@ -160,15 +159,29 @@ async function watchConsoleApi(page: Page): Promise<Map<string, number[]>> {
     if (event.type === 'Document' || !event.documentURL.includes('/_frame/')) return;
     if (/^\/api\/(proxy|auth)\//.test(path) || path === '/api/hive-router/dashboard') frameRequests.set(event.requestId, path);
   });
-  // The raw response, which also arrives for requests that CORS then hides from the page.
-  cdp.on('Network.responseReceivedExtraInfo', (event) => {
-    const path = frameRequests.get(event.requestId);
-    if (path) seen.set(path, [...(seen.get(path) ?? []), event.statusCode]);
-  });
-  return seen;
+  // One outcome per request: the raw response (which also arrives for requests that CORS then
+  // hides from the page), the ordinary response event, or 0 when the connection failed (the
+  // console refuses a cross-site write before reading its body, so the browser may see a reset).
+  // A real status always wins over a failure seen first.
+  const outcomes = new Map<string, number>();
+  const settle = (requestId: string, status: number) => {
+    if (!frameRequests.has(requestId) || (status === 0 && outcomes.has(requestId))) return;
+    outcomes.set(requestId, status);
+  };
+  cdp.on('Network.responseReceivedExtraInfo', (event) => settle(event.requestId, event.statusCode));
+  cdp.on('Network.responseReceived', (event) => settle(event.requestId, event.response.status));
+  cdp.on('Network.loadingFailed', (event) => settle(event.requestId, 0));
+  return () => {
+    const seen = new Map<string, number[]>();
+    for (const [requestId, status] of outcomes) {
+      const path = frameRequests.get(requestId)!;
+      seen.set(path, [...(seen.get(path) ?? []), status]);
+    }
+    return seen;
+  };
 }
 
-async function expectIsolated(result: Record<string, unknown>, seen: Map<string, number[]>): Promise<void> {
+async function expectIsolated(result: Record<string, unknown>, seen: () => Map<string, number[]>): Promise<void> {
   expect(result['origin']).toBe('null');
   expect(String(result['cookie'])).not.toContain('magnus_session');
   // The stand-in storage keeps sandboxed pages working without touching the console's.
@@ -179,10 +192,10 @@ async function expectIsolated(result: Record<string, unknown>, seen: Map<string,
   expect(attempts['writeNoCors']).toBe('opaque');
   // What reached the console was refused before any handler ran (network events can trail the page).
   for (const path of ['/api/proxy/nodes', '/api/auth/me', '/api/proxy/commands', '/api/hive-router/dashboard']) {
-    await expect.poll(() => seen.get(path)?.length ?? 0, { message: `${path} reached the console`, timeout: 5_000 }).toBeGreaterThan(0);
+    await expect.poll(() => seen().get(path)?.length ?? 0, { message: `${path} reached the console`, timeout: 5_000 }).toBeGreaterThan(0);
   }
-  for (const [path, statuses] of seen) {
-    for (const status of statuses) expect([401, 403], `${path} answered ${status}`).toContain(status);
+  for (const [path, statuses] of seen()) {
+    for (const status of statuses) expect([0, 401, 403], `${path} answered ${status}`).toContain(status);
   }
   expect(result['own']).toBe('200 router-admin');
   // The console session never reached the router; its own login cookie did, from the server-side jar.
