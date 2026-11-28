@@ -147,6 +147,15 @@ key when it starts. No migration, and no new setting.
   mission-control heartbeat stream panel. An ingress that follows the inventory allows them, and
   `GET /api/v1/hermes/summary`, from this release. The rest of `/heartbeat` and `/discovery` stays
   machine-only.
+- Documentation, env examples and CLI output call the integrations by their current names:
+  Oathweave (formerly Hive IAM) and Emberpath (formerly Hive Router). `magnus-server check` lists
+  `External IAM` (marked deprecated when on) and `Model router`, and `magnus-ui check` lists
+  `Emberpath admin (deprecated)` and `OIDC login`. No variable is renamed: `HIVE_OAUTH_*`,
+  `HIVE_ROUTER_*` and `IAM_*` keep working, as does the `hive-router` application-probe kind.
+- Console CI: the browser suite also runs the sign-in, navigation, overview, API docs and webhook
+  specs, a sign-in lockout test (five wrong passwords, then even the right one gets `429` with
+  `Retry-After` until the window ends) and an axe-core (`@axe-core/playwright` 4.14.0) WCAG 2.1 AA
+  scan of 28 console pages and the command palette that fails on serious or critical findings.
 
 ### Security
 
@@ -172,14 +181,6 @@ key when it starts. No migration, and no new setting.
   cross-site or same-site `/api` request that is not a navigation, gets 403
   `cross_site_request_refused`, as cross-site writes already did. Navigations (the sign-in callback)
   and the public endpoints are unchanged.
-
-### Changed
-
-- Documentation, env examples and CLI output call the integrations by their current names:
-  Oathweave (formerly Hive IAM) and Emberpath (formerly Hive Router). `magnus-server check` lists
-  `External IAM` (marked deprecated when on) and `Model router`, and `magnus-ui check` lists
-  `Emberpath admin (deprecated)` and `OIDC login`. No variable is renamed: `HIVE_OAUTH_*`,
-  `HIVE_ROUTER_*` and `IAM_*` keep working, as does the `hive-router` application-probe kind.
 
 ### Deprecated
 
@@ -230,13 +231,6 @@ key when it starts. No migration, and no new setting.
   GPU collection and running commands), and `PrivateTmp` is described as it works: commands the
   agent starts share its private `/tmp`, emptied on restart, while supervised commands, Embermend
   actions and Codex updates run in their own units with the host `/tmp`.
-
-### Changed
-
-- Console CI: the browser suite also runs the sign-in, navigation, overview, API docs and webhook
-  specs, a sign-in lockout test (five wrong passwords, then even the right one gets `429` with
-  `Retry-After` until the window ends) and an axe-core (`@axe-core/playwright` 4.14.0) WCAG 2.1 AA
-  scan of 28 console pages and the command palette that fails on serious or critical findings.
 
 ## [3.6.0] - 2026-11-28
 
