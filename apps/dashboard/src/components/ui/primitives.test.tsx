@@ -26,6 +26,9 @@ describe('UI primitives (server render)', () => {
     const html = renderToStaticMarkup(<MeterBar value={null} showValue />);
     expect(html).toContain('—');
     expect(html).not.toContain('aria-valuenow');
+    // role="meter" requires a current value, so an unknown reading is not announced as one.
+    expect(html).not.toContain('role="meter"');
+    expect(renderToStaticMarkup(<MeterBar value={null} label="CPU" />)).toContain('role="img" aria-label="CPU: no data"');
   });
 
   it('Gauge labels its value for assistive tech', () => {

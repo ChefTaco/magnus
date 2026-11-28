@@ -14,7 +14,7 @@ export default async function Page() {
   const consoleUrl = await configuredSecurityConsoleUrl();
   if (!consoleUrl) {
     return (
-      <main className="p-6">
+      <div className="p-6">
         <FusionHeader eyebrow="Optional integration" title="Cindertrace" copy="Connect an Cindertrace to investigate cases and evidence." />
         <EmptyState
           tone="muted"
@@ -22,7 +22,7 @@ export default async function Page() {
           title="Security console not configured"
           description="Set MAGNUS_SECURITY_CONSOLE_URL on the Magnus UI server and restart it to enable this page."
         />
-      </main>
+      </div>
     );
   }
   const result = await fleetSystemFetch<{
@@ -30,7 +30,7 @@ export default async function Page() {
   }>('security-integration/summary').catch(() => null);
 
   return (
-    <main className="p-6">
+    <div className="p-6">
       <FusionHeader eyebrow="Security console" title="Cindertrace" copy="Investigations, evidence and security response run in the Cindertrace." />
       <a
         href={consoleUrl}
@@ -67,6 +67,6 @@ export default async function Page() {
           description="Fleet operations remain available."
         />
       )}
-    </main>
+    </div>
   );
 }

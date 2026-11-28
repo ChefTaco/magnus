@@ -106,7 +106,7 @@ test.describe('Optional integrations', () => {
   test('Security nav links to the configured console', async ({ page }) => {
     test.skip(securityConsoleUrl === null, 'Security console is not configured');
     await page.goto('/security-fusion');
-    await expect(page.getByRole('heading', { name: 'Security', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Cindertrace', exact: true })).toBeVisible();
     await expect(page.locator(`nav a[href="${securityConsoleUrl!.replace(/\/+$/, '')}"]`)).toHaveCount(1);
   });
 });

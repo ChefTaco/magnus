@@ -51,12 +51,10 @@ export function MeterBar({
   return (
     <div className={cn('flex min-w-0 items-center gap-2', className)} data-testid={testId}>
       <div
-        role="meter"
-        aria-label={label}
-        aria-valuemin={0}
-        aria-valuemax={max}
-        aria-valuenow={known ? value : undefined}
-        aria-valuetext={text}
+        {...(known
+          ? { role: 'meter', 'aria-label': label, 'aria-valuemin': 0, 'aria-valuemax': max, 'aria-valuenow': value as number, 'aria-valuetext': text }
+          // role="meter" requires a current value; an unknown one is announced as an image.
+          : { role: 'img', 'aria-label': label ? `${label}: no data` : 'No data' })}
         className={cn('relative flex-1 overflow-hidden rounded-full bg-border/70', HEIGHT[size])}
       >
         <div
