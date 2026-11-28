@@ -696,7 +696,7 @@ Each row is a non-browser route that a broader `browser` pattern also matches. D
 | POST | `/api/v1/assistant/conversations/:id/archive` | exclude | `user:ADMIN\|OPERATOR` | No call site: an unused client wrapper only. Add when a console feature needs it. |
 | GET | `/api/v1/assistant/conversations/:id/export` | exclude | `user:any` | No call site: an unused client wrapper only. Add when a console feature needs it. |
 | POST | `/api/v1/assistant/conversations/:id/fork` | exclude | `user:ADMIN\|OPERATOR` | No call site: an unused client wrapper only. Add when a console feature needs it. |
-| POST | `/api/v1/assistant/conversations/:id/read` | exclude | `user:any` | No call site: an unused client wrapper only. Add when a console feature needs it. |
+| POST | `/api/v1/assistant/conversations/:id/read` | exclude | `user:any` | No call site: an unused client wrapper only. Add when a console feature needs it. Read state is shared, so the shared heartbeat conversation takes ADMIN or OPERATOR (403 for VIEWER). |
 | DELETE | `/api/v1/assistant/conversations/:id/scratchpad` | exclude | `user:ADMIN\|OPERATOR` | No call site: an unused client wrapper only. Add when a console feature needs it. |
 | GET | `/api/v1/assistant/conversations/:id/scratchpad` | exclude | `user:any` | No call site: an unused client wrapper only. Add when a console feature needs it. |
 | POST | `/api/v1/assistant/conversations/:id/share` | exclude | `user:ADMIN\|OPERATOR` | No call site: an unused client wrapper only. Add when a console feature needs it. |
@@ -706,7 +706,7 @@ Each row is a non-browser route that a broader `browser` pattern also matches. D
 | POST | `/api/v1/assistant/messages/:id/approve` | exclude | `user:ADMIN\|OPERATOR` | No call site: an unused client wrapper only. Add when a console feature needs it. |
 | POST | `/api/v1/assistant/messages/:id/confirm` | exclude | `user:ADMIN\|OPERATOR` | No call site: an unused client wrapper only. Add when a console feature needs it. |
 | POST | `/api/v1/assistant/messages/:id/reject` | exclude | `user:ADMIN\|OPERATOR` | No call site: an unused client wrapper only. Add when a console feature needs it. |
-| POST | `/api/v1/assistant/messages/read` | exclude | `user:any` | No call site: an unused client wrapper only. Add when a console feature needs it. |
+| POST | `/api/v1/assistant/messages/read` | exclude | `user:any` | No call site: an unused client wrapper only. Add when a console feature needs it. For a VIEWER, messages of the shared heartbeat conversation are left unread. |
 | GET | `/api/v1/assistant/model-profiles` | exclude | `user:any` | No call site: an unused client wrapper only. Add when a console feature needs it. |
 | PATCH | `/api/v1/assistant/model-profiles` | exclude | `user:ADMIN` | No call site: an unused client wrapper only. Add when a console feature needs it. |
 | GET | `/api/v1/assistant/models` | exclude | `user:any` | No call site: an unused client wrapper only. Add when a console feature needs it. |
@@ -732,9 +732,9 @@ Each row is a non-browser route that a broader `browser` pattern also matches. D
 | GET | `/api/v1/drift/:nodeId` | exclude | `user:any` | No dashboard call site. Add when a console feature needs it. |
 | GET | `/api/v1/drift/:nodeId/latest` | exclude | `user:any` | No dashboard call site. Add when a console feature needs it. |
 | POST | `/api/v1/drift/scan` | exclude | `user:ADMIN\|OPERATOR` | No dashboard call site. Add when a console feature needs it. |
-| GET | `/api/v1/fleet-checks/files` | exclude | `user:any` | No dashboard call site. Add when a console feature needs it. |
-| GET | `/api/v1/fleet-checks/latest` | exclude | `user:any` | No dashboard call site. Add when a console feature needs it. |
-| GET | `/api/v1/fleet-checks/runs` | exclude | `user:any` | No dashboard call site. Add when a console feature needs it. |
+| GET | `/api/v1/fleet-checks/files` | exclude | `user:any` | No dashboard call site. Add when a console feature needs it. The server log `directory` is returned to ADMIN only. |
+| GET | `/api/v1/fleet-checks/latest` | exclude | `user:any` | No dashboard call site. Add when a console feature needs it. The server log `directory` is returned to ADMIN only. |
+| GET | `/api/v1/fleet-checks/runs` | exclude | `user:any` | No dashboard call site. Add when a console feature needs it. The server log `directory` is returned to ADMIN only. |
 | GET | `/api/v1/health/dependencies` | exclude | `user:any` | No dashboard call site. Add when a console feature needs it. |
 | GET | `/api/v1/health/details` | exclude | `user:any` | No dashboard call site. Add when a console feature needs it. |
 | GET | `/api/v1/health/forecast/at-risk` | exclude | `user:any` | No dashboard call site. Add when a console feature needs it. |
