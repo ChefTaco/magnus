@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import SwaggerParser from '@apidevtools/swagger-parser';
 
 const specPath = resolve('services/control-api/dist/openapi/spec.js');
 if (!existsSync(specPath)) {
@@ -21,6 +22,13 @@ for (const [path, methods] of Object.entries(spec.paths ?? {})) {
     if (!Array.isArray(operation.tags) || operation.tags.length === 0) failures.push(`${method.toUpperCase()} ${path} missing tags`);
     if (!operation.responses || Object.keys(operation.responses).length === 0) failures.push(`${method.toUpperCase()} ${path} missing responses`);
   }
+}
+
+// The document must also be valid OpenAPI 3.1 with every $ref resolvable, so generated clients work.
+try {
+  await SwaggerParser.validate(structuredClone(spec));
+} catch (error) {
+  failures.push(`spec is not valid OpenAPI: ${error instanceof Error ? error.message : String(error)}`);
 }
 
 if (failures.length > 0) {
