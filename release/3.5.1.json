@@ -1,0 +1,9 @@
+{
+  "summary": "Magnus pins Ardent 3.6.0: node agents stage Ardent 3.6.0 for managed profiles, and the generated Ardent client types follow its readiness change (a 503 from GET /health/ready now says status not_ready instead of degraded; memory status still says degraded). Ardent 3.6.0's retention options are configuration only, so no node agent allowlist changes. No Magnus code, setting or migration changes.",
+  "breaking": false,
+  "minUpgradeFrom": "2.10.2",
+  "newRequiredEnv": [],
+  "newOptionalEnv": [],
+  "removedEnv": [],
+  "migrations": []
+}

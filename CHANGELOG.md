@@ -7,6 +7,40 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [3.5.1] - 2026-11-28
+
+Magnus pins Ardent 3.6.0. No Magnus code, route or setting changes, and no migration.
+
+### Upgrade notes
+
+Order: Magnus node agents, then the Magnus server and console, then managed Ardent profiles when you
+choose to move them.
+
+- **Node agents stage Ardent 3.6.0 for managed profiles.** The 3.5.1 node agent is built and tested
+  against Ardent 3.6.0 (management API types, journal policy), and 3.6.0 is the Ardent version to
+  stage and install for profiles. Existing profiles keep running their installed Ardent until an
+  operator upgrades them; a 3.5.1 agent still manages Ardent 3.5.1 profiles.
+- **Ardent readiness answers `not_ready` with its 503.** From Ardent 3.6.0 a profile's
+  `GET /health/ready` reports `status: not_ready` with a 503 (it said `degraded`); status codes are
+  unchanged and `GET /api/v1/memory/status` still says `degraded`. The generated Ardent client types
+  in `@hivemagnus/magnus-contracts` follow, and no Magnus code reads that word. External monitors
+  that matched `degraded` in an Ardent readiness body should match the status code or `not_ready`.
+- **Ardent 3.6.0 retention options are profile configuration only.** `retention.min_profile_mb`,
+  `retention.peer_sessions` and `ardent prune --min-size-mb/--peer-sessions/--vacuum` add no
+  management routes, so the node agent's Ardent allowlists are unchanged. The journal schema and
+  journal policy version are unchanged.
+- **No migration.** Upgrading from 3.5.0 needs nothing beyond the packages; from an earlier release,
+  follow the 3.5.0 and 3.4.0 upgrade notes.
+
+### Changed
+
+- Pin `@hivemagnus/ardent` 3.6.0 (root and node agent, agent shrinkwrap) and regenerate the Ardent
+  management API types: the readiness `status` enum is `ready | not_ready`.
+
+### Migration impact
+
+None.
+
 ## [3.5.0] - 2026-11-27
 
 New Agent and agent definition installs deliver the Emberpath client key an Emberpath alias model
