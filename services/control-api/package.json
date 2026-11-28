@@ -94,10 +94,10 @@
     "@prisma/adapter-pg": "7.10.1",
     "@prisma/client": "^7.10.1",
     "argon2": "^0.45.2",
-    "bullmq": "^6.7.8",
+    "bullmq": "^6.7.10",
     "dotenv": "^18.0.10",
-    "hono": "4.13.19",
-    "ioredis": "^6.0.0",
+    "hono": "4.13.22",
+    "ioredis": "^6.1.0",
     "jose": "^6.2.18",
     "ky": "^2.2.0",
     "nanoid": "^6.0.2",
@@ -112,12 +112,12 @@
     "@hivemagnus/magnus-oathweave"
   ],
   "devDependencies": {
-    "@types/node": "^24.19.2",
+    "@types/node": "^24.19.4",
     "@types/pg": "^8.23.1",
     "@types/ssh2": "^1.15.6",
     "tsx": "^4.23.15",
     "typescript": "6.0.3",
-    "vitest": "^5.1.1"
+    "vitest": "^5.1.2"
   },
   "prisma": {
     "schema": "prisma/schema.prisma",
