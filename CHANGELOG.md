@@ -7,6 +7,45 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+A supervised agent no longer leaves an unknown command owner behind when it refuses a command, and
+an ADMIN can settle an unknown non-Ardent command from the API and the console. No migration, and
+no new setting.
+
+### Upgrade notes
+
+- **Upgrade the node agents, then the server and console.** A supervised agent
+  (`MAGNUS_EXECUTION_SUPERVISOR_ENABLED=true`, as a full-node install sets it) now refuses a command
+  outside the command completion registry with 409 `UNREGISTERED_COMMAND` before anything starts,
+  instead of running it in a transient `magnus-exec-*.service` unit and then holding it as an
+  unknown outcome. Such commands never succeeded on a supervised agent; they now fail cleanly.
+- Leases that earlier agents left `unknown` this way are not settled by the upgrade: settle each
+  with the new ADMIN decision (see below), and stop the leftover units of settled commands
+  ([UPGRADING.md](UPGRADING.md#unreleased-refused-commands-and-non-ardent-reconciliation)).
+
+### Added
+
+- `POST /api/v1/commands/{commandId}/reconcile-resource` takes an ADMIN's decision
+  `{ disposition: effects_verified | no_effect_verified, reason }` for any command that is not an
+  Ardent action, as the Ardent `command-reconcile` action does for Ardent actions: the node's own
+  result or decision, or a signed ledger trace that proves the command never ran, settles the owner
+  first; only an outcome the node agent itself records as `unknown` takes the decision, which the
+  server signs for that node and the agent records under its execution lock. Every attempt is
+  audited as `command.resource_reconcile`. Operators can still only read receipts or submit an
+  assertion already signed for the node.
+- Console: the Ardent installations page reconciles a held node command through that route, with the
+  same review and confirmation as an Ardent action, instead of pointing at the API.
+- Contracts: `CommandReconcileDecisionSchema` and `CommandReconcileDecisionResultSchema`.
+
+### Fixed
+
+- Agent: a supervised agent refuses a command it cannot prove finished (no completion registry
+  entry, or a registered command without its fence) before its ledger claim, before the mutation
+  barrier records anything and before the server is asked to confirm the claim. A managed request
+  gets a signed `executed: false` refusal, so the server releases the lease as `not-dispatched`
+  and records the command as failed with nothing run, instead of keeping an `unknown` lease that
+  blocks every later Ardent action and the activation quiescence check. No transient unit is
+  started, so none is left to hold a later enrollment drain at `supervisor-unverified`.
+
 ## [3.6.0] - 2026-11-28
 
 The server adopts `@hivemagnus/hive-common` 0.11.1: optional `MAGNUS_TRUSTED_PROXIES` for rate

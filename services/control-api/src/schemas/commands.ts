@@ -3,6 +3,7 @@
  */
 
 import { z } from 'zod';
+import { CommandReconcileDecisionSchema } from '@hivemagnus/magnus-contracts';
 import { commandReconciliationSchema } from './command-reconciliation.js';
 import { isSensitiveDetailKey } from '../services/audit-service.js';
 
@@ -50,6 +51,12 @@ export const quickCommandSchema = z.object({
 });
 
 // Empty body refreshes the existing signed node receipt; no unsigned unlock.
-export const reconcileCommandResourceSchema = z.object({
-  assertion: commandReconciliationSchema.optional(),
-}).strict();
+/**
+ * Either ask the node for its evidence (an empty body, or a reconciliation assertion
+ * already signed for the node), or, as an ADMIN, record a decision about an unknown
+ * outcome that the server signs for the node (`services/command-owner-reconcile.ts`).
+ */
+export const reconcileCommandResourceSchema = z.union([
+  z.object({ assertion: commandReconciliationSchema.optional() }).strict(),
+  CommandReconcileDecisionSchema,
+]);

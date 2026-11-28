@@ -133,6 +133,23 @@ commandRoutes.post('/execute', async (c) => {
 });
 
 /**
+ * The refusal of a command the execution supervisor cannot prove finished, or
+ * undefined. The supervisor proves completion only for registered finite
+ * commands (`security/command-completion-registry.ts`). Anything else would run
+ * in a transient unit and then stay an unknown outcome that holds the node, so
+ * it is refused before the ledger claim and before any unit exists: a certain
+ * refusal the server settles as not dispatched.
+ */
+export function unregisteredSupervisedCommand(opts: ExecuteBody | z.input<typeof executeBodySchema>): CommandAdmissionError | undefined {
+  if (!MAGNUS_EXECUTION_SUPERVISOR_ENABLED) return undefined;
+  // A malformed request is left to validation, which refuses it without running anything.
+  const parsed = executeBodySchema.safeParse(opts);
+  if (!parsed.success || commandCompletionDescriptor(parsed.data)) return undefined;
+  return new CommandAdmissionError('UNREGISTERED_COMMAND',
+    'This node runs commands under its execution supervisor, which accepts only registered finite commands; no command executed', { notStarted: true });
+}
+
+/**
  * Execute a shell command with timeout, capturing stdout and stderr.
  *
  * @param opts - Execution options from the API request body.
@@ -151,6 +168,8 @@ export async function executeCommand(input: ExecuteBody): Promise<CommandReceipt
   if (resultSigningKey().length < 32) throw new CommandAdmissionError('LEDGER_UNAVAILABLE', 'Command signing is unavailable; no command executed');
   if (opts.coordination && !MAGNUS_EXECUTION_SUPERVISOR_ENABLED)
     throw new CommandAdmissionError('LEDGER_UNAVAILABLE', 'Managed commands require the node execution supervisor; no command executed', { notStarted: true });
+  const unregistered = unregisteredSupervisedCommand(opts);
+  if (unregistered) throw unregistered;
   const pending = commandLedger.execute(opts, (digest) => MAGNUS_EXECUTION_SUPERVISOR_ENABLED
     ? executeSupervised(opts, digest) : executeProcess(opts, digest), managedExecution.getStore()?.claim);
   pendingExecutions.add(pending);
@@ -161,9 +180,9 @@ async function executeSupervised(opts: ExecuteBody, digest: string): Promise<Com
   const descriptor = commandCompletionDescriptor(opts);
   const completionOwner = descriptor ? { version: 1 as const, registrySha256: COMMAND_COMPLETION_REGISTRY_SHA256,
     descriptorId: descriptor.id } : undefined;
+  // executeCommand refuses unregistered commands before the ledger; never start a unit without an owner.
+  if (!completionOwner) throw new CommandAdmissionError('UNREGISTERED_COMMAND', 'No registered completion evidence for this command; no command executed');
   const observation = await executionSupervisor.run(opts, completionOwner);
-  if (!completionOwner) throw new CommandAdmissionError('OUTCOME_UNKNOWN',
-    'The immediate process ended without registered whole-effect evidence; retain ownership');
   if (observation.state !== 'completed' || !observation.result || observation.evidence.requestSha256 !== digest)
     throw new CommandAdmissionError('OUTCOME_UNKNOWN', 'Execution supervisor has not proven completion; retain ownership and reconcile');
   if (JSON.stringify(observation.evidence.completionOwner) !== JSON.stringify(completionOwner))

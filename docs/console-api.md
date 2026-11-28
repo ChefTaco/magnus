@@ -10,9 +10,9 @@ moved without updating it.
 
 | Class | Meaning | Rows | At the ingress |
 |---|---|---|---|
-| `browser` | A person's console drives it with a user token | 163 | Allow the exact method and path |
+| `browser` | A person's console drives it with a user token | 164 | Allow the exact method and path |
 | `machine` | Agents, services and integrations, with their own credentials | 86 | Deny |
-| `exclude` | Reachable with a user token, but no console needs it, or it was written for a server-side caller | 149 | Deny until a feature needs it and it is reviewed |
+| `exclude` | Reachable with a user token, but no console needs it, or it was written for a server-side caller | 148 | Deny until a feature needs it and it is reviewed |
 | `retired` | Always answers 404 or 410 | 10 | Deny |
 
 The `Wave 1` column marks routes whose request and response shapes are published in
@@ -428,6 +428,7 @@ unless these rows change. `POST /api/v1/hermes/deploy` is retired and always ans
 | POST | `/api/v1/commands` | browser | `user:ADMIN\|OPERATOR` | yes |
 | GET | `/api/v1/commands/:commandId` | browser | `user:any` | yes |
 | POST | `/api/v1/commands/:commandId/cancel` | browser | `user:ADMIN\|OPERATOR` | yes |
+| POST | `/api/v1/commands/:commandId/reconcile-resource` | browser | `user:ADMIN\|OPERATOR` |  |
 | GET | `/api/v1/commands/:commandId/result` | browser | `user:any` | yes |
 | GET | `/api/v1/console/session` | browser | `user:any` | yes |
 | GET | `/api/v1/cron` | browser | `user:any` | yes |
@@ -706,7 +707,6 @@ Each row is a non-browser route that a broader `browser` pattern also matches. D
 | GET | `/api/v1/audit/logs/export` | exclude | `user:any` | No dashboard call site. Add when a console feature needs it. |
 | GET | `/api/v1/audit/verify` | exclude | `user:any` | No dashboard call site. Add when a console feature needs it. |
 | POST | `/api/v1/auth/login` | exclude | `public` | Local password login; the console authenticates elsewhere. |
-| POST | `/api/v1/commands/:commandId/reconcile-resource` | exclude | `user:ADMIN\|OPERATOR` | No dashboard call site. Add when a console feature needs it. |
 | GET | `/api/v1/commands/:commandId/resource-lease` | exclude | `user:any` | No dashboard call site. Add when a console feature needs it. |
 | POST | `/api/v1/credentials/:name/retire-previous` | exclude | `user:ADMIN` | Credential lifecycle action for reviewed runbooks; no console caller. |
 | GET | `/api/v1/credentials/:name/status` | exclude | `user:ADMIN` | Credential lifecycle status for reviewed runbooks; no console caller. |

@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { CONTROL_API_URL, HOST_FQDN, MAGNUS_EXECUTION_SUPERVISOR_ENABLED } from '../env.js';
 import { markLocalDispatch } from '../middleware.js';
 import { nodeApiFetch } from '../node-auth.js';
-import { commandLedger, executeBodySchema } from './command-executor.js';
+import { commandLedger, executeBodySchema, unregisteredSupervisedCommand } from './command-executor.js';
 import { refusalError, refusalStatus } from './command-refusal.js';
 import { admissionCause, CommandAdmissionError, commandFenceSchema, commandRequestDigest, isArdentScopedCommand, type CommandIdentity } from './command-ledger.js';
 import { managedExecution } from '../security/managed-context.js';
@@ -89,6 +89,9 @@ export const managedMutationGuard: MiddlewareHandler = async (c, next) => {
     try {
       const claim = managedClaimSchema.parse(JSON.parse(encoded));
       input = await c.req.json<CommandIdentity>();
+      // Before the claim is confirmed or any unit exists: a certain, signed refusal.
+      const unregistered = unregisteredSupervisedCommand(input);
+      if (unregistered) return await refused(unregistered.code, unregistered.message);
       await confirm(claim, input);
       confirmed = true;
       return await managedExecution.run({ claim, commandId: input.commandId, requestSha256: commandRequestDigest(input),
@@ -111,6 +114,9 @@ export const managedMutationGuard: MiddlewareHandler = async (c, next) => {
   try {
     const command = path === '/commands/execute' && c.req.method === 'POST'
       ? executeBodySchema.safeParse(await c.req.json().catch(() => null)) : undefined;
+    // Refused before the mutation barrier records anything, so no uncertain mutation is retained.
+    const unregistered = command?.success ? unregisteredSupervisedCommand(command.data) : undefined;
+    if (unregistered) return c.json({ success: false, error: { code: unregistered.code, message: unregistered.message } }, 409);
     token = await mutationBarrier.begin(c.req.method, path, command?.success ? command.data : undefined);
     if (command && !command.success) return c.json({ success: false, error: { code: 'VALIDATION_ERROR',
       message: command.error.issues.map(error => error.message).join('; ') } }, 400);

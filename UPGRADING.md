@@ -19,6 +19,33 @@ The rules every upgrade path follows:
   `slow` or `one-way`). Upgrades print slow and one-way migrations and wait for confirmation
   (`--yes`). Startup auto-migrate refuses them unless `MAGNUS_AUTO_MIGRATE_ALLOW_SLOW=true` is set.
 
+## Unreleased: refused commands and non-Ardent reconciliation
+
+Upgrade the node agents first, then the server and console. No setting or migration changes.
+
+A supervised agent (`MAGNUS_EXECUTION_SUPERVISOR_ENABLED=true`, which a full-node install sets) now
+refuses a command outside the command completion registry with 409 `UNREGISTERED_COMMAND` before
+anything starts, and the server settles that refusal as `not-dispatched`. Earlier agents ran such a
+command in a transient unit and then held its outcome as `unknown`, which blocks Ardent actions and
+the activation quiescence check on that node until it is settled. The upgrade does not settle those
+leases. For each one, once you have checked what the command did:
+
+```bash
+curl -fsS -X POST "https://magnus.example.com/api/v1/commands/<commandId>/reconcile-resource" \
+  -H "authorization: Bearer <ADMIN token>" -H 'content-type: application/json' \
+  -d '{"disposition":"no_effect_verified","reason":"Read-only probe the agent refused; nothing changed."}'
+```
+
+or use **Reconcile** on the Ardent installations page, which lists every held owner of a node. Use
+`effects_verified` when the command changed something. The server signs the decision only when the
+agent's own receipt is `unknown`; a recorded result or a signed proof that it never ran settles the
+lease first. Every attempt is audited as `command.resource_reconcile`.
+
+Units such a command left loaded (`systemctl list-units 'magnus-exec-*'`, active and exited) can
+hold a later enrollment drain at `DRAIN_EVIDENCE_UNAVAILABLE supervisor-unverified` after a
+reinstall. Stop them as root once their commands are settled: `systemctl stop <unit>`, and
+`systemctl reset-failed <unit>` if one is left failed.
+
 ## Version 3.6.0: HiveCommon 0.11.1, trusted proxies and Hive IAM deprecation
 
 If the server runs in Hive IAM mode (`IAM_CORE_URL`), make sure its access tokens carry a `jti`

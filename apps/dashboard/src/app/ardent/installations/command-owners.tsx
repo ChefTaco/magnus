@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { ArdentCommandReconcileResultSchema, type ArdentCommandOwner, type ArdentFleetInstallation } from '@hivemagnus/magnus-contracts';
+import { CommandReconcileDecisionResultSchema, type ArdentCommandOwner, type ArdentFleetInstallation } from '@hivemagnus/magnus-contracts';
 import { api } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
 import { Modal, selectClass, textareaClass } from '@/components/ui/modal';
@@ -20,10 +20,12 @@ function Owner({ owner, installation, admin, refresh }: { owner: ArdentCommandOw
     if (!admin || !ready || !complete || busy) return;
     setConfirming(false); setBusy(true); setError('');
     try {
-      const profile = owner.profile ?? installation.profiles[0]?.id ?? 'default';
-      const response = await api.ardent.action(installation.nodeId, profile, 'command-reconcile',
-        { disposition, reason: reason.trim() }, owner.commandId);
-      const result = ArdentCommandReconcileResultSchema.parse(response.data);
+      const decision = { disposition, reason: reason.trim() };
+      // An Ardent action is bound to the profile inventory; any other command goes to the generic command route.
+      const response = owner.ardent
+        ? await api.ardent.action(installation.nodeId, owner.profile ?? installation.profiles[0]?.id ?? 'default', 'command-reconcile', decision, owner.commandId)
+        : await api.commands.reconcileResource(owner.commandId, decision);
+      const result = CommandReconcileDecisionResultSchema.parse(response.data);
       if (result.commandId !== owner.commandId) throw new Error('The node returned another command receipt');
       await refresh();
     } catch (cause) { setError(await ardentError(cause)); }
@@ -33,9 +35,9 @@ function Owner({ owner, installation, admin, refresh }: { owner: ArdentCommandOw
     <p className="font-semibold">{owner.action ? `${owner.action} on ${owner.profile}` : 'Node command'} · {owner.state}</p>
     <p className="break-all font-mono">{owner.commandId}</p>
     {owner.state !== 'unknown' ? <p>Still running; other Ardent actions wait until it finishes.</p>
-      : !owner.ardent ? <p>This command needs receipt reconciliation through POST /commands/{owner.commandId}/reconcile-resource.</p>
       : !admin ? <p>An ADMIN must inspect and reconcile this command.</p> : <>
-        <p>Check the profile’s service state, journal, files and Ardent status on the node before recording what happened.</p>
+        <p>{owner.ardent ? 'Check the profile’s service state, journal, files and Ardent status on the node before recording what happened.'
+          : 'This is a node command, not an Ardent action. Check what it ran and the node’s journal before recording what happened.'}</p>
         {!ready && <p>Reconciliation is available after {new Date(owner.reconcilableAfter).toLocaleString()}. Refresh then.</p>}
         {installation.commandReconciliation?.configured === false && <p>No reconciliation key is configured. Only the node’s own evidence can settle this command.</p>}
         <label className="block">What did it do?

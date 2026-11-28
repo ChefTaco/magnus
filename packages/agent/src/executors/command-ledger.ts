@@ -69,7 +69,7 @@ const receiptSchema = z.object({
 }).strict();
 type Receipt = z.infer<typeof receiptSchema>;
 export type CommandAdmissionCode = 'RESOURCE_BUSY' | 'OUTCOME_UNKNOWN' | 'IDEMPOTENCY_CONFLICT' | 'STALE_FENCE' | 'LEASE_EXPIRED'
-  | 'LEDGER_UNAVAILABLE' | 'INVALID_RECONCILIATION' | 'UNMANAGED_MUTATION' | 'RESOURCE_CLAIM_INVALID';
+  | 'LEDGER_UNAVAILABLE' | 'INVALID_RECONCILIATION' | 'UNMANAGED_MUTATION' | 'RESOURCE_CLAIM_INVALID' | 'UNREGISTERED_COMMAND';
 /** What went wrong underneath an admission error, for a WARN line. */
 export const admissionCause = (error: CommandAdmissionError): string => error.cause === undefined ? '' : ` (cause: ${error.cause instanceof Error ? error.cause.message : String(error.cause)})`;
 export class CommandAdmissionError extends Error {
